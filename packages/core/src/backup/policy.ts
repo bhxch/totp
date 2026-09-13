@@ -7,6 +7,8 @@ export function backupFileName(now: Date): string {
 }
 
 export const BACKUP_NAME_RE = /^vault-\d{8}-\d{6}\.totpbackup$/
+// 可读（恢复）范围：时间戳名或 overwrite 名均可；滚动删除仍仅认 BACKUP_NAME_RE（overwrite 名永不滚动删除）
+export const READABLE_BACKUP_RE = /^vault-(\d{8}-\d{6}|backup)\.totpbackup$/
 
 export function selectBackupsToKeep(names: string[], keep: number): string[] {
   const valid = names.filter((n) => BACKUP_NAME_RE.test(n)).sort() // 字典序=时间序

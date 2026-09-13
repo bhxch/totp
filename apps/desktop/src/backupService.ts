@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { mkdir, readDir, readTextFile, rename, writeTextFile, BaseDirectory } from '@tauri-apps/plugin-fs'
-import { backupFileName, selectBackupsToKeep, BACKUP_NAME_RE, OVERWRITE_NAME, createBackupEnvelope, type BackupEnvelopeV1 } from '@totp/core'
+import { backupFileName, selectBackupsToKeep, READABLE_BACKUP_RE, OVERWRITE_NAME, createBackupEnvelope, type BackupEnvelopeV1 } from '@totp/core'
 
 const dir = 'backups'
 
@@ -34,7 +34,7 @@ export async function listBackups(): Promise<Array<{ name: string }>> {
 }
 
 export async function readBackupByName(name: string): Promise<string> {
-  if (!BACKUP_NAME_RE.test(name)) throw new Error('invalid backup name')
+  if (!READABLE_BACKUP_RE.test(name)) throw new Error('invalid backup name')
   return readTextFile(`${dir}/${name}`, { baseDir: BaseDirectory.AppData })
 }
 
