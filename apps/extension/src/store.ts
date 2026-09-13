@@ -1,79 +1,19 @@
-import {
-  addEntry, addGroup, createVault, DEFAULT_SETTINGS, loadSettings, loadVault, removeEntry, removeGroup,
-  renameGroup, reorderEntries, saveSettings, saveVault, updateEntry,
-  type AppSettings, type OtpEntry, type Vault,
-} from '@totp/core'
-import { reactive, toRaw } from 'vue'
+import { createVueStore } from '@totp/ui'
 import { createChromeStorage } from './chromeStorage'
 
-const adapter = createChromeStorage()
+export const store = createVueStore(createChromeStorage(), {
+  registerSync: (cb) =>
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== 'local') return
+      cb({ vault: !!changes['vault'], settings: !!changes['settings'] })
+    }),
+})
 
-export const vault = reactive<Vault>(createVault())
-export const settings = reactive<AppSettings>({ ...DEFAULT_SETTINGS })
-
-let inited = false
-const lastSelfWrite = { vault: 0, settings: 0 }
-let queue: Promise<void> = Promise.resolve()
-
-export async function initStore(): Promise<void> {
-  if (inited) return
-  const [v, s] = await Promise.all([loadVault(adapter), loadSettings(adapter)])
-  replaceVault(v)
-  Object.assign(settings, s)
-  inited = true
-}
-
-function replaceVault(v: Vault): void {
-  vault.version = v.version
-  vault.updatedAt = v.updatedAt
-  vault.entries.splice(0, vault.entries.length, ...v.entries)
-  vault.groups.splice(0, vault.groups.length, ...v.groups)
-}
-
-export function registerStorageSync(): void {
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local') return
-    if (changes['vault']) {
-      if (Date.now() - lastSelfWrite.vault < 500) return
-      void loadVault(adapter)
-        .then(replaceVault)
-        .catch(() => {})
-    }
-    if (changes['settings']) {
-      if (Date.now() - lastSelfWrite.settings < 500) return
-      void loadSettings(adapter)
-        .then((s) => Object.assign(settings, s))
-        .catch(() => {})
-    }
-  })
-}
-
-export async function commit(fn: (v: Vault) => Vault): Promise<void> {
-  queue = queue.then(async () => {
-    replaceVault(fn(vault))
-    try {
-      lastSelfWrite.vault = Date.now()
-      await saveVault(adapter, toRaw(vault) as Vault)
-    } catch (e) {
-      console.error('[store] saveVault failed:', e)
-    }
-  })
-  return queue
-}
-
-export async function commitSettings(): Promise<void> {
-  try {
-    lastSelfWrite.settings = Date.now()
-    await saveSettings(adapter, toRaw(settings) as AppSettings)
-  } catch (e) {
-    console.error('[store] saveSettings failed:', e)
-  }
-}
-
-export const addEntryOp = (entry: OtpEntry) => commit((v) => addEntry(v, entry))
-export const updateEntryOp = (uuid: string, patch: Partial<Omit<OtpEntry, 'uuid'>>) => commit((v) => updateEntry(v, uuid, patch))
-export const removeEntryOp = (uuid: string) => commit((v) => removeEntry(v, uuid))
-export const addGroupOp = (name: string) => commit((v) => addGroup(v, name))
-export const renameGroupOp = (id: string, name: string) => commit((v) => renameGroup(v, id, name))
-export const removeGroupOp = (id: string) => commit((v) => removeGroup(v, id))
-export const reorderOp = (uuids: string[]) => commit((v) => reorderEntries(v, uuids))
+export const { vault, settings, initStore, registerStorageSync, commit, commitSettings } = store
+export const addEntryOp = store.addEntryOp
+export const updateEntryOp = store.updateEntryOp
+export const removeEntryOp = store.removeEntryOp
+export const addGroupOp = store.addGroupOp
+export const renameGroupOp = store.renameGroupOp
+export const removeGroupOp = store.removeGroupOp
+export const reorderOp = store.reorderOp

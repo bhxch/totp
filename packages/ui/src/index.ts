@@ -1,4 +1,5 @@
 export * from './composables/useOtpCodes'
+export * from './store'
 export { default as OtpListItem } from './components/OtpListItem.vue'
 export { default as SearchBar } from './components/SearchBar.vue'
 export { default as EntryForm } from './components/EntryForm.vue'
