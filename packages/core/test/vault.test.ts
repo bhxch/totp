@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createVault, addEntry, removeEntry, updateEntry, addGroup, removeGroup, reorderEntries, newEntryFromUri } from '../src/vault'
+import { createVault, addEntry, removeEntry, updateEntry, addGroup, renameGroup, removeGroup, reorderEntries, newEntryFromUri } from '../src/vault'
 import type { OtpEntry } from '../src/model'
 
 const mkEntry = (uuid: string, order = 0): OtpEntry => ({
@@ -20,6 +20,17 @@ describe('vault 操作', () => {
 
     const v3 = removeEntry(v2, 'a')
     expect(v3.entries).toHaveLength(0)
+  })
+
+  it('renameGroup 返回新对象且只改目标分组名，原 vault 不变', () => {
+    const v0 = createVault()
+    const v1 = addGroup(v0, '旧名')
+    const gid = v1.groups[0]!.id
+    const v2 = renameGroup(v1, gid, '新名')
+    expect(v2.groups[0]!.name).toBe('新名')
+    expect(v2).not.toBe(v1)
+    expect(v1.groups[0]!.name).toBe('旧名')
+    expect(v0.groups).toHaveLength(0)
   })
 
   it('分组：加入、移除时条目引用被清理', () => {

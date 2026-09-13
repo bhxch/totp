@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { addEntry, base32Decode, buildOtpUri, loadVault, newEntryFromUri, saveVault, type OtpEntry, type Vault } from '@totp/core'
+import { addEntry, base32Decode, loadVault, saveVault, type OtpEntry, type Vault } from '@totp/core'
 import { OtpListItem, useOtpCodes } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
 import { createChromeStorage } from '../../src/chromeStorage'
@@ -37,10 +37,12 @@ async function add() {
     try {
       base32Decode(secret)
     } catch {
-      error.value = '密钥不是有效的 base32 编码（不能包含 0、1、8、9 以外的非法字符，请检查）'
+      error.value = '密钥不是有效的 base32 编码（base32 仅允许字母 A–Z 和数字 2–7）'
       return
     }
-    const uri = buildOtpUri({
+    // 直接构造条目，避免 buildOtpUri → parseOtpUri 往返把 issuer=Steam 的 TOTP 强制改判为 Steam 类型
+    const entry: OtpEntry = {
+      uuid: crypto.randomUUID(),
       type: form.value.type,
       issuer: form.value.issuer.trim(),
       label: form.value.label.trim(),
@@ -48,8 +50,10 @@ async function add() {
       algorithm: 'SHA1',
       digits: form.value.type === 'steam' ? 5 : 6,
       period: 30,
-    })
-    const entry = newEntryFromUri(uri)
+      groupIds: [],
+      order: 0, // addEntry 会覆写为 maxOrder + 1
+      createdAt: Date.now(),
+    }
     await persist((v) => addEntry(v, entry))
     entries.value = [...entries.value, entry]
     showForm.value = false

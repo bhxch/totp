@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { totp, verifyTotp } from '../src/otp/totp'
+import { hotp } from '../src/otp/hotp'
 import { base32Decode } from '../src/encoding/base32'
 
 // RFC 6238 Appendix B 官方向量（8 位）
@@ -31,8 +32,9 @@ describe('totp period/digits', () => {
   it('默认 30 秒周期、6 位，与 hotp(counter=floor(t/30)) 一致', async () => {
     const secret = base32Decode('JBSWY3DPEHPK3PXP')
     const tMs = 1_700_000_000_000
-    const expected = await totp(secret, tMs, { algorithm: 'SHA1', digits: 6 })
+    const expected = await totp(secret, tMs)
     expect(expected).toHaveLength(6)
+    expect(expected).toBe(await hotp(secret, Math.floor(tMs / 1000 / 30)))
   })
 })
 
