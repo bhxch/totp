@@ -22,16 +22,20 @@ export const SETTINGS_KEY = 'settings'
 
 export interface AppSettings {
   urlFilterEnabled: boolean
+  blurHideEnabled: boolean
 }
 
-export const DEFAULT_SETTINGS: AppSettings = { urlFilterEnabled: true }
+export const DEFAULT_SETTINGS: AppSettings = { urlFilterEnabled: true, blurHideEnabled: false }
 
 export async function loadSettings(adapter: StorageAdapter): Promise<AppSettings> {
   const raw = await adapter.get(SETTINGS_KEY)
   if (raw === null) return { ...DEFAULT_SETTINGS }
   try {
     const parsed = JSON.parse(raw) as Partial<AppSettings>
-    return { urlFilterEnabled: typeof parsed.urlFilterEnabled === 'boolean' ? parsed.urlFilterEnabled : DEFAULT_SETTINGS.urlFilterEnabled }
+    return {
+      urlFilterEnabled: typeof parsed.urlFilterEnabled === 'boolean' ? parsed.urlFilterEnabled : DEFAULT_SETTINGS.urlFilterEnabled,
+      blurHideEnabled: typeof parsed.blurHideEnabled === 'boolean' ? parsed.blurHideEnabled : DEFAULT_SETTINGS.blurHideEnabled,
+    }
   } catch {
     return { ...DEFAULT_SETTINGS }
   }
