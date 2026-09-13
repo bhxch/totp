@@ -66,7 +66,7 @@ describe('createVueStore', () => {
     const s = createVueStore(adapter)
     await s.initStore()
     const next = { version: 1 as const, entries: [{ uuid: 'r' }], groups: [], updatedAt: 42 }
-    await s.replaceAllOp(next as Vault)
+    await s.replaceAllOp(next as unknown as Vault)
     expect(s.vault.updatedAt).toBe(42)
     expect(JSON.parse((await adapter.get('vault'))!).entries[0]).toEqual({ uuid: 'r' })
   })

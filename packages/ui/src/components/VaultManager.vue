@@ -3,16 +3,20 @@ import type { OtpEntry } from '@totp/core'
 import { computed, ref } from 'vue'
 import { useOtpCodes } from '../composables/useOtpCodes'
 import type { VueStore } from '../store'
+import BackupCard from './BackupCard.vue'
 import EntryForm from './EntryForm.vue'
 import OtpListItem from './OtpListItem.vue'
 import SearchBar from './SearchBar.vue'
+import type { BackupPlatform } from './backupPlatform'
 import type { EntryFormData } from './entryForm'
 
 const props = withDefaults(defineProps<{
   store: VueStore
   /** 点击条目是否触发复制。true 时 emit('copy', code)，剪贴板写入由宿主决定；false 时仅展示 */
   enableCopy?: boolean
-}>(), { enableCopy: false })
+  /** 备份平台实现；null/缺省不渲染备份卡（popup 零影响） */
+  platform?: BackupPlatform | null
+}>(), { enableCopy: false, platform: null })
 
 const emit = defineEmits<{ copy: [code: string] }>()
 
@@ -26,6 +30,8 @@ const renameValue = ref('')
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
 
 const sorted = computed(() => [...props.store.vault.entries].sort((a, b) => a.order - b.order))
+/** 备份内容快照（saveVault 同款 JSON）：序列化 reactive 代理以保持 computed 依赖追踪（toRaw 会丢失嵌套依赖导致快照过期） */
+const vaultJson = computed(() => JSON.stringify(props.store.vault))
 const { codes } = useOtpCodes(sorted)
 const visible = computed(() => {
   const q = query.value.trim().toLowerCase()
@@ -111,6 +117,8 @@ function onCopy(entry: OtpEntry) {
       </div>
     </div>
   </section>
+
+  <BackupCard :platform="platform" :vault-json="vaultJson" />
 </template>
 
 <style scoped>
