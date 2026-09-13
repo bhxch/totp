@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { pbkdf2Sync } from 'node:crypto'
 import { base32Decode } from '../src/encoding/base32'
 import {
   blowfishEcbDecrypt,
@@ -18,8 +19,8 @@ const bytesToB64 = (bytes: Uint8Array): string => {
   return btoa(s)
 }
 
-// 官方 secretdata 格式（Authenticator.cs SecretData 属性）：hex(SecretKey) + "\t" + digits + "\t" + HMAC + "\t" + period
-// HOTP 再追加 "|counter"（HOTPAuthenticator.cs）
+// 官方 secretdata 格式（Authenticator.cs SecretData 属性 L179-218）：
+// hex(SecretKey) + "\t" + digits + "\t" + HMAC + "\t" + period；HOTP 再追加 "|counter"（HOTPAuthenticator.cs L88-107）
 const SECRET = 'JBSWY3DPEHPK3PXP'
 const SECRET_HEX = hex(base32Decode(SECRET))
 const secretData = (digits = 6, hmac = 'SHA1', period = 30, counter?: number): string =>
@@ -62,6 +63,13 @@ describe('deriveExplicitKey（PBKDF2-HMAC-SHA1，RFC 6070 向量）', () => {
     expect(hex(await deriveExplicitKey('password', utf8('salt'), 20, 4096))).toBe(
       '4b007901b765489abead49d926f721d065a429c1',
     )
+  })
+  // WinAuth 实际口径：Authenticator.cs L70 PBKDF2_KEYSIZE=256 + L1266 GetBytes(PBKDF2_KEYSIZE)
+  // —— .NET GetBytes 参数为字节数 → 派生 256 字节（多 block），用 node:crypto(OpenSSL) 独立交叉验证
+  it('2000 次 × 256 字节与 node:crypto 交叉验证', async () => {
+    const key = await deriveExplicitKey('winauth-pass', utf8('0123456789abcdef'), 256, 2000)
+    expect(key).toHaveLength(256)
+    expect(hex(key)).toBe(pbkdf2Sync('winauth-pass', utf8('0123456789abcdef'), 2000, 256, 'sha1').toString('hex'))
   })
 })
 
@@ -138,8 +146,15 @@ describe('importWinauth DPAPI 条目', () => {
   })
 })
 
-describe('importWinauth 口令保护（官方算法：PBKDF2-SHA1×2000 + Blowfish/ISO10126）', () => {
+describe('importWinauth 口令保护（官方算法，Authenticator.cs L1250-1309 Decrypt：PBKDF2-SHA1×2000 派生 256 字节密钥 + Blowfish/ISO10126）', () => {
   const pass = 'winauth-pass'
+  it('fixture 锚定官方序列布局：大写 WINAUTH3 头 + 256 字节派生密钥可解开', async () => {
+    // 序列布局 Authenticator.cs L1114-1184 EncryptSequence；头 = L75 ByteArrayToString(UTF8("WINAUTH3"))，
+    // ByteArrayToString（L934-937）经 BitConverter 输出大写 hex——真实 .wauth 密文整串全大写
+    const seq = await buildWinauthSequence('00ff', 'y', pass)
+    expect(seq.startsWith('57494E4155544833')).toBe(true)
+    expect(seq).toBe(seq.toUpperCase())
+  })
   it('条目级 encrypted="y"：无口令/错口令失败，对口令成功', async () => {
     const payloadHex = hex(utf8(PLAIN_AUTH_DATA(secretData())))
     const seq = await buildWinauthSequence(payloadHex, 'y', pass)

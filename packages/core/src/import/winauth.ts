@@ -250,10 +250,14 @@ export function blowfishEcbDecrypt(key: Uint8Array, block: Uint8Array): Uint8Arr
 // ---------- 口令层原语（Authenticator.cs Decrypt(data, password, PBKDF2=true)） ----------
 
 export const PBKDF2_ITERATIONS = 2000 // Authenticator.cs: private const int PBKDF2_ITERATIONS = 2000
+// Authenticator.cs L70: private const int PBKDF2_KEYSIZE = 256 —— 配合 L1266/L1208 的
+// kg.GetBytes(PBKDF2_KEYSIZE)：.NET DeriveBytes.GetBytes(int cb) 参数是「字节数」，
+// 故实际派生 256 字节 Blowfish 密钥（BC 1.7.0 BlowfishEngine 无 56 字节上限，全 key 循环异或）。
+export const PBKDF2_KEY_BYTES = 256
 
 /**
  * 口令层密钥派生：Rfc2898DeriveBytes（默认 HMAC-SHA1）。
- * length/iterations 参数化仅为对齐 RFC 6070 测试向量；WinAuth 固定 2000 次 × 32 字节。
+ * length/iterations 参数化仅为对齐 RFC 6070 测试向量；WinAuth 固定 2000 次 × 256 字节。
  */
 export async function deriveExplicitKey(
   password: string,
@@ -281,15 +285,19 @@ function blowfishDecryptIso10126(key: Uint8Array, cipher: Uint8Array): Uint8Arra
     writeU32be(out, off, l)
     writeU32be(out, off + 4, r)
   }
-  // ISO10126d2：末字节 = 填充长度（1..8），其余填充位随机（对应 BouncyCastle ISO10126d2Padding.PadCount）
+  // ISO10126d2：末字节 = 填充长度；BC 1.7.0 ISO10126d2Padding.PadCount 仅在
+  // count > 可用长度时抛「pad block corrupted」（pad=0 合法=不去填充，官方 Decrypt
+  // 的口令错最终由 DecryptSequence 的 SHA256 校验兜底）
   const pad = out[out.length - 1]!
-  if (pad < 1 || pad > 8 || pad > out.length) throw new WinauthDecryptError('password')
+  if (pad > out.length) throw new WinauthDecryptError('password')
   return out.slice(0, out.length - pad)
 }
 
 // ---------- DecryptSequence 移植（Authenticator.cs） ----------
 
-const ENCRYPTION_HEADER = bytesToHex(textEncoder.encode('WINAUTH3')) // Authenticator.cs ENCRYPTION_HEADER
+const ENCRYPTION_HEADER = bytesToHex(textEncoder.encode('WINAUTH3')).toUpperCase()
+// Authenticator.cs L75：ENCRYPTION_HEADER = ByteArrayToString(UTF8("WINAUTH3"))，
+// ByteArrayToString（L934-937）经 BitConverter.ToString 输出大写 hex——真实 .wauth 密文整串全大写
 const SALT_HEX_LEN = 8 * 2 // Authenticator.cs SALT_LENGTH = 8
 const SHA256_HEX_LEN = 32 * 2 // SafeHasher("SHA256").HashSize/8*2
 
@@ -323,11 +331,12 @@ async function dpapiLayer(dataHex: string, opts: DecryptOptions): Promise<string
   return bytesToHex(textEncoder.encode(plainText))
 }
 
-/** 口令层（Authenticator.cs Decrypt(data, password, PBKDF2=true)） */
+/** 口令层（Authenticator.cs Decrypt(data, password, PBKDF2=true)，L1250-1309） */
 async function explicitLayer(dataHex: string, opts: DecryptOptions): Promise<string> {
   if (!opts.password) throw new WinauthDecryptError('password')
   const salt = hexToBytes(dataHex.slice(0, SALT_HEX_LEN))
-  const key = await deriveExplicitKey(opts.password, salt, 32)
+  // L1264-1266：GetBytes(PBKDF2_KEYSIZE=256) → 256 字节密钥（非 256 bit）
+  const key = await deriveExplicitKey(opts.password, salt, PBKDF2_KEY_BYTES)
   const plain = blowfishDecryptIso10126(key, hexToBytes(dataHex.slice(SALT_HEX_LEN)))
   return bytesToHex(plain)
 }
@@ -342,12 +351,13 @@ async function decryptSequenceNoHash(dataHex: string, types: PasswordTypes, opts
   return data
 }
 
-/** Authenticator.cs DecryptSequence：剥 WINAUTH3 头 + salt + SHA256，解层后校验哈希（口令错判定点） */
+/** Authenticator.cs DecryptSequence（L948-980）：剥 WINAUTH3 头 + salt + SHA256，解层后校验哈希（口令错判定点） */
 async function decryptSequence(dataHex: string, encrypted: string | undefined, opts: DecryptOptions): Promise<string> {
   const types = decodePasswordTypes(encrypted)
   const data = dataHex.trim()
-  if (!data.startsWith(ENCRYPTION_HEADER)) {
-    // 旧版（v2 secretdata）无头：直接按层解，无哈希校验（ReadXmlv2 路径）
+  // 大小写不敏感剥头：真实文件密文整串大写（BitConverter），小写输入（历史 fixture/手构造）同样接受；
+  // 不匹配走 v2 无头路径（ReadXmlv2 的旧 secretdata）
+  if (data.slice(0, ENCRYPTION_HEADER.length).toUpperCase() !== ENCRYPTION_HEADER) {
     return decryptSequenceNoHash(data, types, opts)
   }
   const salt = data.slice(ENCRYPTION_HEADER.length, ENCRYPTION_HEADER.length + SALT_HEX_LEN)
@@ -367,6 +377,13 @@ async function decryptSequence(dataHex: string, encrypted: string | undefined, o
  * （Authenticator.cs Encrypt(plain, password)：hex(salt) + hex(Blowfish(ISO10126 填充))；
  * 随机盐与随机填充位取 0，保证 fixture 确定性）。
  */
+/**
+ * 按 EncryptSequence（Authenticator.cs L1114-1184）布局构造密文序列（无 DPAPI/YubiKey 层，测试构造 fixture 用）：
+ * HEADER + hex(salt 8B) + hex(SHA256(salt‖明文hex)) + payload，payload 按 encrypted 串做口令层
+ * （L1192-1211 Encrypt(plain, password)：hex(salt)+hex(Blowfish(ISO10126 填充))；
+ * 密钥 = L1266 GetBytes(PBKDF2_KEYSIZE=256) → 256 字节）。
+ * 盐/填充随机位取 0；序列整体大写（对齐真实文件 ByteArrayToString 输出），保证测试走大写剥头路径。
+ */
 export async function buildWinauthSequence(payloadHex: string, encrypted: string, password?: string): Promise<string> {
   const types = decodePasswordTypes(encrypted)
   // 官方 EncryptSequence 顺序：先对 (salt + 明文 hex) 计算 SHA256，再对各层加密
@@ -377,7 +394,7 @@ export async function buildWinauthSequence(payloadHex: string, encrypted: string
   if (types.explicit) {
     if (!password) throw new Error('buildWinauthSequence: explicit 层需要口令')
     const innerSalt = new Uint8Array(8)
-    const key = await deriveExplicitKey(password, innerSalt, 32)
+    const key = await deriveExplicitKey(password, innerSalt, PBKDF2_KEY_BYTES)
     const plain = hexToBytes(payload)
     const padLen = 8 - (plain.length % 8)
     const padded = new Uint8Array(plain.length + padLen)
@@ -392,7 +409,7 @@ export async function buildWinauthSequence(payloadHex: string, encrypted: string
     }
     payload = bytesToHex(innerSalt) + bytesToHex(out)
   }
-  return ENCRYPTION_HEADER + saltHex + hash + payload
+  return (ENCRYPTION_HEADER + saltHex + hash + payload).toUpperCase()
 }
 
 // ---------- 极简 XML 解析（WinAuth 导出为良构 XML，无需完整 XML 解析器） ----------
