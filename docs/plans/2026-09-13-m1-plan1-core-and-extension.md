@@ -163,7 +163,7 @@ git commit -m "chore: 搭建pnpm workspace与core包脚手架"
 - Test: `packages/core/test/base32.test.ts`
 
 **Interfaces:**
-- Produces: `base32Decode(input: string, opts?: { alphabet?: string }): Uint8Array`（容错：大小写、空格/连字符、`=` padding 可省略；非法字符抛 `Error('invalid base32')`）；`base32Encode(bytes: Uint8Array): string`（RFC 4648，带 padding）；`RFC4648_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'`；`STEAM_ALPHABET = '23456789BCDFGHJKMNPQRTVWXY'`（26 字符，仅用于 Steam 码输出，不是解码表）
+- Produces: `base32Decode(input: string, alphabet?: string): Uint8Array`（容错：大小写、空格/连字符、`=` padding 可省略；非法字符抛 `Error('invalid base32')`）；`base32Encode(bytes: Uint8Array, alphabet?: string): string`（RFC 4648，带 padding）；`RFC4648_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'`；`STEAM_ALPHABET = '23456789BCDFGHJKMNPQRTVWXY'`（Valve 官方 26 字符，含 8/9，无 0/1；仅用于 Steam 码取模输出）
 
 - [ ] **Step 1: 写失败测试**
 
