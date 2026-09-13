@@ -21,7 +21,7 @@ export function parseOtpUri(uri: string): OtpUriParams {
     throw new Error('invalid otpauth uri')
   }
   if (url.protocol !== 'otpauth:') throw new Error('invalid otpauth uri')
-  const type = url.host as OtpUriParams['type']
+  const type = url.host.toLowerCase() as OtpUriParams['type']
   if (!['totp', 'hotp', 'steam'].includes(type)) throw new Error('invalid otpauth uri')
 
   const q = url.searchParams
@@ -29,7 +29,12 @@ export function parseOtpUri(uri: string): OtpUriParams {
   if (!secret) throw new Error('invalid otpauth uri')
 
   // path 形如 /Issuer:label 或 /label（可能整体编码过）
-  const rawPath = decodeURIComponent(url.pathname.replace(/^\/+/, ''))
+  let rawPath: string
+  try {
+    rawPath = decodeURIComponent(url.pathname.replace(/^\/+/, ''))
+  } catch {
+    throw new Error('invalid otpauth uri')
+  }
   const colon = rawPath.indexOf(':')
   let prefixIssuer = ''
   let label = rawPath

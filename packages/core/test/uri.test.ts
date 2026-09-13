@@ -34,8 +34,16 @@ describe('parseOtpUri', () => {
     'https://example.com',
     'otpauth://totp/x?secret=',
     'otpauth://zzz/x?secret=AB',
+    'otpauth://totp/a%ZZb?secret=JBSWY3DPEHPK3PXP',
   ])('非法输入 %s 抛错', (uri) => {
     expect(() => parseOtpUri(uri)).toThrow('invalid otpauth uri')
+  })
+
+  it('大写 host 按 RFC3986 大小写不敏感归一化', () => {
+    const p = parseOtpUri('otpauth://TOTP/MyBank:alice?secret=JBSWY3DPEHPK3PXP')
+    expect(p.type).toBe('totp')
+    expect(p.issuer).toBe('MyBank')
+    expect(p.label).toBe('alice')
   })
 })
 
