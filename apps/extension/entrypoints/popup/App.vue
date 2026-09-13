@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { addEntry, buildOtpUri, loadVault, newEntryFromUri, saveVault, createVault, type OtpEntry, type Vault } from '@totp/core'
+import { addEntry, base32Decode, buildOtpUri, loadVault, newEntryFromUri, saveVault, type OtpEntry, type Vault } from '@totp/core'
 import { OtpListItem, useOtpCodes } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
 import { createChromeStorage } from '../../src/chromeStorage'
@@ -11,9 +11,14 @@ const form = ref({ issuer: '', label: '', secret: '', type: 'totp' as 'totp' | '
 const error = ref('')
 
 onMounted(async () => {
-  const vault = await loadVault(createChromeStorage())
-  entries.value = [...vault.entries].sort((a, b) => a.order - b.order)
-  loaded.value = true
+  try {
+    const vault = await loadVault(createChromeStorage())
+    entries.value = [...vault.entries].sort((a, b) => a.order - b.order)
+  } catch (e) {
+    error.value = '本地数据读取失败：' + (e instanceof Error ? e.message : String(e))
+  } finally {
+    loaded.value = true
+  }
 })
 
 const { codes } = useOtpCodes(entries)
@@ -27,12 +32,19 @@ async function persist(fn: (v: Vault) => Vault) {
 
 async function add() {
   error.value = ''
+  const secret = form.value.secret.replace(/\s+/g, '').toUpperCase()
   try {
+    try {
+      base32Decode(secret)
+    } catch {
+      error.value = '密钥不是有效的 base32 编码（不能包含 0、1、8、9 以外的非法字符，请检查）'
+      return
+    }
     const uri = buildOtpUri({
       type: form.value.type,
       issuer: form.value.issuer.trim(),
       label: form.value.label.trim(),
-      secret: form.value.secret.replace(/\s+/g, '').toUpperCase(),
+      secret,
       algorithm: 'SHA1',
       digits: form.value.type === 'steam' ? 5 : 6,
       period: 30,
@@ -62,6 +74,8 @@ async function copy(entry: OtpEntry) {
       <button @click="showForm = !showForm">{{ showForm ? '取消' : '＋ 添加' }}</button>
     </header>
 
+    <div v-if="error" class="error">{{ error }}</div>
+
     <form v-if="showForm" class="add-form" @submit.prevent="add">
       <input v-model="form.issuer" placeholder="服务名（如 GitHub）" />
       <input v-model="form.label" placeholder="账户名" />
@@ -70,7 +84,6 @@ async function copy(entry: OtpEntry) {
         <option value="totp">TOTP</option>
         <option value="steam">Steam</option>
       </select>
-      <div v-if="error" class="error">{{ error }}</div>
       <button type="submit">保存</button>
     </form>
 
