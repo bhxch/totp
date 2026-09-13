@@ -55,16 +55,16 @@ function downloadEnvelope(envelope: BackupEnvelopeV1, name: string): void {
 }
 
 /**
- * 动态 input[type=file] 选择备份文件。
+ * 动态 input[type=file] 选择文件（accept 指定扩展名过滤）。
  * 取消：input cancel 事件（Chromium 113+）→ null；旧内核无 cancel 事件会永挂起 → 30s 超时 reject「文件选择超时」兜底
  * （选超时而非 window focus 监听：系统文件选择器的焦点恢复语义跨内核不一致，超时是无条件、最简可靠的兜底）。
  * input 挂到 body（部分内核 detached input 不触发文件框），结算后移除。
  */
-function pickBackupFile(): Promise<File | null> {
+function pickFile(accept: string): Promise<File | null> {
   return new Promise((resolve, reject) => {
     const input = document.createElement('input')
     input.type = 'file'
-    input.accept = '.totpbackup'
+    input.accept = accept
     let settled = false
     let timer: ReturnType<typeof setTimeout> | undefined
     const finish = (f: File | null) => {
@@ -87,6 +87,8 @@ function pickBackupFile(): Promise<File | null> {
   })
 }
 
+const pickBackupFile = (): Promise<File | null> => pickFile('.totpbackup')
+
 const backupPlatform: BackupPlatform = {
   get mode() { return backupMode.value },
   async setMode(m) {
@@ -105,6 +107,12 @@ const backupPlatform: BackupPlatform = {
     return { json: await openBackupEnvelope(JSON.parse(await file.text()), password) }
   },
   replaceAllOp: (v) => replaceAllOp(v),
+  // 导入：浏览器 input file 读取文本；无 DPAPI 能力，WinAuth DPAPI 条目由 core 逐条 failure「请用桌面版」
+  async readImportFile() {
+    const file = await pickFile('.json,.jsonl,.wauth,.txt,.aegis,.xml')
+    if (!file) return null
+    return { text: await file.text(), name: file.name }
+  },
 }
 </script>
 

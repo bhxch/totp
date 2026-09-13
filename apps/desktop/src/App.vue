@@ -6,6 +6,7 @@ import { backupFileName, createBackupEnvelope, openBackupEnvelope } from '@totp/
 import { VaultManager, createVueStore, type BackupMode, type BackupPlatform, type VueStore } from '@totp/ui'
 import { onMounted, onScopeDispose, ref } from 'vue'
 import { createBackupToDir, listBackups, readBackupByName, readBackupFileOs, writeBackupFileOs } from './backupService'
+import { decryptDpapiOs, readImportFileOs } from './importService'
 import { createTauriFs } from './tauriFs'
 
 const store = ref<VueStore | null>(null)
@@ -43,6 +44,8 @@ async function openBackupText(text: string, password: string): Promise<string> {
 }
 
 const BACKUP_FILE_FILTERS = [{ name: 'TOTP 备份', extensions: ['totpbackup'] }]
+// 与 Rust 端 read_import_file_os 扩展名白名单一致（.json/.wauth/.xml/.txt/.aegis）
+const IMPORT_FILE_FILTERS = [{ name: '导入文件', extensions: ['json', 'wauth', 'txt', 'aegis', 'xml'] }]
 
 const backupPlatform: BackupPlatform = {
   get mode() { return backupMode.value },
@@ -73,6 +76,12 @@ const backupPlatform: BackupPlatform = {
     if (!s) throw new Error('数据尚未就绪')
     await s.replaceAllOp(v)
   },
+  async readImportFile() {
+    const path = await open({ multiple: false, directory: false, filters: IMPORT_FILE_FILTERS })
+    if (typeof path !== 'string') return null
+    return { text: await readImportFileOs(path), name: path.split(/[\\/]/).pop() ?? path }
+  },
+  decryptDpapi: (b64) => decryptDpapiOs(b64),
 }
 
 onMounted(async () => {
