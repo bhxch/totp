@@ -28,4 +28,10 @@ describe('EntryForm', () => {
     await w.find('form').trigger('submit')
     expect(w.emitted('save')![0]![0]).toMatchObject({ groupIds: ['g1'] })
   })
+  it('编辑已有 hotp 时类型下拉锁定且含 hotp 选项', async () => {
+    const w = mount(EntryForm, { props: { initial: { ...entry, type: 'hotp' }, groups: [] } })
+    const select = w.find('select')
+    expect(select.attributes('disabled')).toBeDefined()
+    expect(select.html()).toContain('hotp')
+  })
 })

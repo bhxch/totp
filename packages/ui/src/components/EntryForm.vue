@@ -34,7 +34,7 @@ function submit() {
       return
     }
   }
-  emit('save', { ...form, secret: cleanSecret() })
+  emit('save', { ...form, issuer: form.issuer.trim(), label: form.label.trim(), secret: cleanSecret() })
 }
 </script>
 

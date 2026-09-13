@@ -53,8 +53,14 @@ const confirmingDelete = ref<string | null>(null)
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
 
 async function onSave(data: EntryFormData) {
-  if (editing.value) await updateEntryOp(editing.value.uuid, data)
-  else await addEntryOp({ ...data, uuid: crypto.randomUUID(), algorithm: 'SHA1', digits: data.type === 'steam' ? 5 : 6, period: 30, order: 0, createdAt: Date.now() })
+  if (editing.value) {
+    // type 变更时重算 digits（steam→其他保持 5 会显示错位数）；type 未变则不带，保留原值
+    const patch = { ...data } as EntryFormData & { digits?: number }
+    if (data.type !== editing.value.type) patch.digits = data.type === 'steam' ? 5 : 6
+    await updateEntryOp(editing.value.uuid, patch)
+  } else {
+    await addEntryOp({ ...data, uuid: crypto.randomUUID(), algorithm: 'SHA1', digits: data.type === 'steam' ? 5 : 6, period: 30, order: 0, createdAt: Date.now() })
+  }
   editing.value = null; creating.value = false
 }
 function askRemove(uuid: string) {
@@ -89,7 +95,7 @@ async function copy(entry: OtpEntry) {
       <span v-else-if="filterOn" class="hint">匹配 {{ matched.length }} 条</span>
     </div>
 
-    <EntryForm v-if="creating || editing" :initial="editing" :groups="vault.groups" @save="onSave" @cancel="editing = null; creating = false" />
+    <EntryForm v-if="creating || editing" :key="editing?.uuid ?? 'new'" :initial="editing" :groups="vault.groups" @save="onSave" @cancel="editing = null; creating = false" />
 
     <div v-if="loaded && sorted.length === 0" class="empty">暂无条目，点击右上角「＋ 添加」录入。</div>
     <div v-else-if="loaded && visible.length === 0" class="empty">无匹配结果</div>
@@ -119,7 +125,7 @@ h1 { font-size: 16px; margin: 0; }
 .empty { text-align: center; opacity: .6; padding: 32px 0; }
 .item-wrap { position: relative; }
 .ops { position: absolute; top: 4px; right: 4px; display: flex; gap: 4px; opacity: 0; transition: opacity .15s; }
-.item-wrap:hover .ops, .otp-item:hover .ops, .ops:focus-within { opacity: 1; }
+.item-wrap:hover .ops, .ops:focus-within { opacity: 1; }
 .ops .icon { border: none; background: none; cursor: pointer; font-size: 14px; padding: 2px 4px; }
 .ops .danger { border: none; background: none; cursor: pointer; color: #d9534f; font-size: 12px; font-weight: 600; }
 </style>
