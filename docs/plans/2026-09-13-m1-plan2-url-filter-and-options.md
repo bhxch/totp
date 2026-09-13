@@ -692,7 +692,7 @@ import type { EntryFormData } from '@totp/ui'
 import { EntryForm, OtpListItem, SearchBar, useOtpCodes } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
 import {
-  addEntryOp, addGroupOp, initStore, registerStorageSync, removeEntryOp, removeGroupOp, renameGroupOp, settings, updateEntryOp, vault,
+  addEntryOp, addGroupOp, initStore, registerStorageSync, removeEntryOp, removeGroupOp, renameGroupOp, updateEntryOp, vault,
 } from '../../src/store'
 
 const query = ref('')
