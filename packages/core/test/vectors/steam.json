@@ -1,0 +1,17 @@
+{
+  "secretBase32": "MZLVOVJQVEWROFJVOUQ4EJCVOFRKGADG",
+  "vectors": [
+    {
+      "tMs": 1789277850000,
+      "code": "JHHW2"
+    },
+    {
+      "tMs": 1789277880000,
+      "code": "QD2VJ"
+    },
+    {
+      "tMs": 1789277910000,
+      "code": "HK4DT"
+    }
+  ]
+}
