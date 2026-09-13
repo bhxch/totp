@@ -14,14 +14,15 @@ const password = ref('')
 const confirmPw = ref('')
 const busy = ref(false)
 const msg = ref('')
-const msgOk = ref(false)
+const msgKind = ref<'ok' | 'err' | 'hint'>('ok')
 const backups = ref<Array<{ name: string }>>([])
+
 /** 已解密待确认覆盖的 vault（两步确认防误覆盖） */
 const pending = ref<Vault | null>(null)
 
 function fail(e: unknown): void {
   msg.value = e instanceof Error ? e.message : String(e)
-  msgOk.value = false
+  msgKind.value = 'err'
 }
 
 /** 备份/导出口令校验：非空且两次一致 */
@@ -39,7 +40,7 @@ async function onBackup(): Promise<void> {
   try {
     const r = await props.platform!.createBackup(props.vaultJson, password.value)
     msg.value = r === 'overwritten' ? '备份成功（覆盖）' : '备份成功（新文件）'
-    msgOk.value = true
+    msgKind.value = 'ok'
     if (props.platform?.listBackups) await refreshList()
   } catch (e) {
     fail(e)
@@ -54,9 +55,14 @@ async function onExport(): Promise<void> {
   busy.value = true
   msg.value = ''
   try {
-    await props.platform!.exportToFile!(props.vaultJson, password.value)
-    msg.value = '已导出到文件'
-    msgOk.value = true
+    const saved = await props.platform!.exportToFile!(props.vaultJson, password.value)
+    if (saved === false) {
+      msg.value = '已取消'
+      msgKind.value = 'hint'
+    } else {
+      msg.value = '已导出到文件'
+      msgKind.value = 'ok'
+    }
   } catch (e) {
     fail(e)
   } finally {
@@ -122,7 +128,7 @@ async function confirmRestore(): Promise<void> {
     await p.replaceAllOp!(pending.value)
     pending.value = null
     msg.value = '恢复成功'
-    msgOk.value = true
+    msgKind.value = 'ok'
   } catch (e) {
     fail(e)
   } finally {
@@ -175,7 +181,7 @@ async function confirmRestore(): Promise<void> {
       <button class="danger" :disabled="busy" @click="confirmRestore">确认覆盖</button>
       <button @click="pending = null">取消</button>
     </div>
-    <div v-if="msg" :class="msgOk ? 'ok' : 'err'" role="status">{{ msg }}</div>
+    <div v-if="msg" :class="msgKind" role="status">{{ msg }}</div>
   </section>
 </template>
 
@@ -195,4 +201,5 @@ h2 { font-size: 15px; margin: 0; }
 .danger { color: #d9534f; }
 .ok { color: #2e7d32; font-size: 13px; }
 .err { color: #d9534f; font-size: 13px; }
+.hint { opacity: .65; font-size: 13px; }
 </style>

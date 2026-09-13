@@ -52,10 +52,12 @@ const backupPlatform: BackupPlatform = {
   },
   createBackup: (vaultJson, password) => createBackupToDir(vaultJson, password, backupMode.value),
   async exportToFile(vaultJson, password) {
-    const envelope = await createBackupEnvelope(vaultJson, password)
+    // 先出 save 对话框拿路径（取消则直接 false），再做 Argon2id 加密写文件，省一次白跑的 KDF
     const path = await save({ defaultPath: backupFileName(new Date()), filters: BACKUP_FILE_FILTERS })
-    if (!path) return
+    if (!path) return false
+    const envelope = await createBackupEnvelope(vaultJson, password)
     await writeBackupFileOs(path, envelope)
+    return true
   },
   async restoreFromPicker(password) {
     const path = await open({ multiple: false, directory: false, filters: BACKUP_FILE_FILTERS })

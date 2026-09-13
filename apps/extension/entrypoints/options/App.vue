@@ -54,14 +54,35 @@ function downloadEnvelope(envelope: BackupEnvelopeV1, name: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-/** 动态 input[type=file] 选择备份文件；用户取消（cancel 事件）返回 null */
+/**
+ * 动态 input[type=file] 选择备份文件。
+ * 取消：input cancel 事件（Chromium 113+）→ null；旧内核无 cancel 事件会永挂起 → 30s 超时 reject「文件选择超时」兜底
+ * （选超时而非 window focus 监听：系统文件选择器的焦点恢复语义跨内核不一致，超时是无条件、最简可靠的兜底）。
+ * input 挂到 body（部分内核 detached input 不触发文件框），结算后移除。
+ */
 function pickBackupFile(): Promise<File | null> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const input = document.createElement('input')
     input.type = 'file'
     input.accept = '.totpbackup'
-    input.onchange = () => resolve(input.files?.[0] ?? null)
-    input.oncancel = () => resolve(null)
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const finish = (f: File | null) => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      input.remove()
+      resolve(f)
+    }
+    timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      input.remove()
+      reject(new Error('文件选择超时'))
+    }, 30_000)
+    input.onchange = () => finish(input.files?.[0] ?? null)
+    input.oncancel = () => finish(null)
+    document.body.appendChild(input)
     input.click()
   })
 }
