@@ -1,0 +1,66 @@
+import { aesGcmDecrypt, aesGcmEncrypt, base64ToBytes, bytesToBase64, deriveKek, randomBytes } from '../crypto/aesgcm'
+
+// 契约：wrapNonce/dataNonce 各自独立随机，禁止同 KEK/DEK 下复用 nonce（GCM 语义）
+export interface BackupEnvelopeV1 {
+  v: 1
+  kdf: { alg: 'argon2id'; m: number; t: number; p: number; salt: string }
+  wrapNonce: string
+  wrappedDek: string
+  dataNonce: string
+  ciphertext: string
+}
+
+export function isBackupEnvelope(x: unknown): x is BackupEnvelopeV1 {
+  if (typeof x !== 'object' || x === null) return false
+  const o = x as Record<string, unknown>
+  return (
+    o['v'] === 1 &&
+    typeof o['kdf'] === 'object' && o['kdf'] !== null &&
+    typeof o['wrapNonce'] === 'string' &&
+    typeof o['wrappedDek'] === 'string' &&
+    typeof o['dataNonce'] === 'string' &&
+    typeof o['ciphertext'] === 'string'
+  )
+}
+
+export async function createBackupEnvelope(vaultJson: string, password: string): Promise<BackupEnvelopeV1> {
+  const salt = randomBytes(16)
+  const dek = randomBytes(32)
+  const kek = await deriveKek(password, salt)
+  const wrapNonce = randomBytes(12)
+  const wrappedDek = await aesGcmEncrypt(kek, dek, wrapNonce)
+  const dataNonce = randomBytes(12)
+  const ciphertext = await aesGcmEncrypt(dek, new TextEncoder().encode(vaultJson), dataNonce)
+  return {
+    v: 1,
+    kdf: { alg: 'argon2id', m: 65536, t: 3, p: 1, salt: bytesToBase64(salt) },
+    wrapNonce: bytesToBase64(wrapNonce),
+    wrappedDek: bytesToBase64(wrappedDek),
+    dataNonce: bytesToBase64(dataNonce),
+    ciphertext: bytesToBase64(ciphertext),
+  }
+}
+
+export async function openBackupEnvelope(env: unknown, password: string): Promise<string> {
+  if (!isBackupEnvelope(env)) throw new Error('invalid backup envelope')
+  const kdf = env.kdf as { alg?: string; m?: number; t?: number; p?: number; salt?: string }
+  if (kdf.alg !== 'argon2id' || typeof kdf.salt !== 'string') throw new Error('invalid backup envelope')
+  let kek: Uint8Array
+  try {
+    kek = await deriveKek(password, base64ToBytes(kdf.salt), { m: kdf.m, t: kdf.t, p: kdf.p })
+  } catch {
+    throw new Error('invalid backup envelope')
+  }
+  let dek: Uint8Array
+  try {
+    dek = await aesGcmDecrypt(kek, base64ToBytes(env.wrappedDek), base64ToBytes(env.wrapNonce))
+  } catch {
+    throw new Error('bad password or corrupted backup')
+  }
+  try {
+    const pt = await aesGcmDecrypt(dek, base64ToBytes(env.ciphertext), base64ToBytes(env.dataNonce))
+    return new TextDecoder().decode(pt)
+  } catch {
+    throw new Error('bad password or corrupted backup')
+  }
+}
