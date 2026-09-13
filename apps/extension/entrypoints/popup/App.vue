@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { addEntry, base32Decode, loadVault, saveVault, type OtpEntry, type Vault } from '@totp/core'
+import { base32Decode, type OtpEntry } from '@totp/core'
 import { OtpListItem, useOtpCodes } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
-import { createChromeStorage } from '../../src/chromeStorage'
+import { addEntryOp, initStore, registerStorageSync, vault } from '../../src/store'
 
-const entries = ref<OtpEntry[]>([])
 const loaded = ref(false)
 const showForm = ref(false)
 const form = ref({ issuer: '', label: '', secret: '', type: 'totp' as 'totp' | 'steam' })
@@ -12,8 +11,8 @@ const error = ref('')
 
 onMounted(async () => {
   try {
-    const vault = await loadVault(createChromeStorage())
-    entries.value = [...vault.entries].sort((a, b) => a.order - b.order)
+    await initStore()
+    registerStorageSync()
   } catch (e) {
     error.value = '本地数据读取失败：' + (e instanceof Error ? e.message : String(e))
   } finally {
@@ -21,14 +20,8 @@ onMounted(async () => {
   }
 })
 
-const { codes } = useOtpCodes(entries)
-const sorted = computed(() => [...entries.value].sort((a, b) => a.order - b.order))
-
-async function persist(fn: (v: Vault) => Vault) {
-  const adapter = createChromeStorage()
-  const vault = await loadVault(adapter)
-  await saveVault(adapter, fn(vault))
-}
+const sorted = computed(() => [...vault.entries].sort((a, b) => a.order - b.order))
+const { codes } = useOtpCodes(sorted)
 
 async function add() {
   error.value = ''
@@ -54,8 +47,7 @@ async function add() {
       order: 0, // addEntry 会覆写为 maxOrder + 1
       createdAt: Date.now(),
     }
-    await persist((v) => addEntry(v, entry))
-    entries.value = [...entries.value, entry]
+    await addEntryOp(entry)
     showForm.value = false
     form.value = { issuer: '', label: '', secret: '', type: 'totp' }
   } catch (e) {
