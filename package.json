@@ -1,0 +1,14 @@
+{
+  "name": "totp-workspace",
+  "private": true,
+  "scripts": {
+    "test": "pnpm -r --no-bail run test",
+    "typecheck": "pnpm -r run typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.2",
+    "steam-totp": "^2.1.2",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

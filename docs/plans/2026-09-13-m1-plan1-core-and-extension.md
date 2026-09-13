@@ -163,7 +163,7 @@ git commit -m "chore: 搭建pnpm workspace与core包脚手架"
 - Test: `packages/core/test/base32.test.ts`
 
 **Interfaces:**
-- Produces: `base32Decode(input: string, opts?: { alphabet?: string }): Uint8Array`（容错：大小写、空格/连字符、`=` padding 可省略；非法字符抛 `Error('invalid base32')`）；`base32Encode(bytes: Uint8Array): string`（RFC 4648，带 padding）；`RFC4648_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'`；`STEAM_ALPHABET = '23456789BCDFGHJKMNPQRTVWXY'`（26 字符，仅用于 Steam 码输出，不是解码表）
+- Produces: `base32Decode(input: string, alphabet?: string): Uint8Array`（容错：大小写、空格/连字符、`=` padding 可省略；非法字符抛 `Error('invalid base32')`）；`base32Encode(bytes: Uint8Array, alphabet?: string): string`（RFC 4648，带 padding）；`RFC4648_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'`；`STEAM_ALPHABET = '23456789BCDFGHJKMNPQRTVWXY'`（Valve 官方 26 字符，含 8/9，无 0/1；仅用于 Steam 码取模输出）
 
 - [ ] **Step 1: 写失败测试**
 
@@ -389,7 +389,7 @@ git commit -m "feat(core): RFC4226 HOTP，SHA1/256/512 + 动态截断"
 
 **Interfaces:**
 - Consumes: `hotp`（Task 3）
-- Produces: `async function totp(secret: Uint8Array, timeMs: number, opts?: { period?: number; algorithm?: HashAlgorithm; digits?: number }): Promise<string>`（period 默认 30；`timeMs` 为毫秒时间戳）；`async function verifyTotp(secret: string, code: string, opts & { window?: number }): Promise<boolean>`（供后续同步校验用，window 默认 1，向前/后 window 个周期尝试）
+- Produces: `async function totp(secret: Uint8Array, timeMs: number, opts?: { period?: number; algorithm?: HashAlgorithm; digits?: number }): Promise<string>`（period 默认 30；`timeMs` 为毫秒时间戳）；`async function verifyTotp(secret: Uint8Array, code: string, opts & { window?: number; nowMs?: number }): Promise<boolean>`（供后续同步校验用，window 默认 1，向前/后 window 个周期尝试）
 
 - [ ] **Step 1: 写失败测试**
 
@@ -512,7 +512,7 @@ git commit -m "feat(core): RFC6238 TOTP，多算法/周期/位数 + verifyTotp"
 
 **Interfaces:**
 - Consumes: `base32Decode`、`STEAM_ALPHABET`（Task 2）、`hmac` 逻辑（此处自含 HMAC-SHA1 调用，与 Task 3 相同原语）
-- Produces: `async function steamCode(secret: Uint8Array, timeMs: number): Promise<string>`（5 字符，字母表 `23456789BCDFGHJKMNPQRTVWXY`；算法：HMAC-SHA1(secret, counterBigEndian8) 取 HMAC 最后 4 字节为无符号数，循环 5 次 `code += alphabet[n % 26]; n = floor(n / 26)`）
+- Produces: `async function steamCode(secret: Uint8Array, timeMs: number): Promise<string>`（5 字符，字母表 `23456789BCDFGHJKMNPQRTVWXY`；算法与 node-steam-totp/WinAuth 一致：HMAC-SHA1(secret, counterBigEndian8) 后做 RFC 4226 动态截断——`start = mac[19] & 0x0F`，取 mac[start..start+3] 大端 4 字节并 `& 0x7FFFFFFF`，循环 5 次 `code += alphabet[n % 26]; n = floor(n / 26)`。注：初版计划误写"取 mac[28..31] 不做截断"，HMAC-SHA1 仅 20 字节，该写法越界恒输出错码，已在实施中勘误）
 
 - [ ] **Step 1: 生成对拍向量**
 
@@ -605,8 +605,11 @@ export async function steamCode(secret: Uint8Array, timeMs: number): Promise<str
   const message = new Uint8Array(8)
   new DataView(message.buffer).setUint32(4, counter)
   const mac = await hmacSha1(secret, message)
-  // 取 HMAC 最后 4 字节（与 Steam 官方实现一致，不做动态截断）
-  let n = ((mac[28]! << 24) | (mac[29]! << 16) | (mac[30]! << 8) | mac[31]!) >>> 0
+  // RFC 4226 动态截断（与 node-steam-totp/WinAuth 一致）：offset 取 mac[19] 低 4 位
+  const start = mac[19]! & 0x0f
+  let n =
+    (((mac[start]! << 24) | (mac[start + 1]! << 16) | (mac[start + 2]! << 8) | mac[start + 3]!) >>> 0) &
+    0x7fffffff
   let code = ''
   for (let i = 0; i < 5; i++) {
     code += STEAM_ALPHABET[n % 26]
