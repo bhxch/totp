@@ -24,7 +24,8 @@ onMounted(async () => {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
     if (tab?.url?.startsWith('http')) tabUrl.value = tab.url
-  } catch {
+  } catch (e) {
+    console.warn('[popup] 无法读取当前标签页 URL:', e)
     // 读不到标签页 URL（如非扩展环境）时 tabUrl 保持 null，不过滤
   }
 })

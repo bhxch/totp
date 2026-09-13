@@ -12,7 +12,7 @@ export const vault = reactive<Vault>(createVault())
 export const settings = reactive<AppSettings>({ ...DEFAULT_SETTINGS })
 
 let inited = false
-let lastSelfWriteAt = 0
+const lastSelfWrite = { vault: 0, settings: 0 }
 let queue: Promise<void> = Promise.resolve()
 
 export async function initStore(): Promise<void> {
@@ -33,13 +33,14 @@ function replaceVault(v: Vault): void {
 export function registerStorageSync(): void {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return
-    if (Date.now() - lastSelfWriteAt < 500) return
     if (changes['vault']) {
+      if (Date.now() - lastSelfWrite.vault < 500) return
       void loadVault(adapter)
         .then(replaceVault)
         .catch(() => {})
     }
     if (changes['settings']) {
+      if (Date.now() - lastSelfWrite.settings < 500) return
       void loadSettings(adapter)
         .then((s) => Object.assign(settings, s))
         .catch(() => {})
@@ -51,7 +52,7 @@ export async function commit(fn: (v: Vault) => Vault): Promise<void> {
   queue = queue.then(async () => {
     replaceVault(fn(vault))
     try {
-      lastSelfWriteAt = Date.now()
+      lastSelfWrite.vault = Date.now()
       await saveVault(adapter, toRaw(vault) as Vault)
     } catch (e) {
       console.error('[store] saveVault failed:', e)
@@ -61,8 +62,12 @@ export async function commit(fn: (v: Vault) => Vault): Promise<void> {
 }
 
 export async function commitSettings(): Promise<void> {
-  lastSelfWriteAt = Date.now()
-  await saveSettings(adapter, toRaw(settings) as AppSettings)
+  try {
+    lastSelfWrite.settings = Date.now()
+    await saveSettings(adapter, toRaw(settings) as AppSettings)
+  } catch (e) {
+    console.error('[store] saveSettings failed:', e)
+  }
 }
 
 export const addEntryOp = (entry: OtpEntry) => commit((v) => addEntry(v, entry))

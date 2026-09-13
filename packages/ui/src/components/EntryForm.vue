@@ -15,7 +15,7 @@ const form = reactive({
   secret: props.initial?.secret ?? '',
   note: props.initial?.note ?? '',
   groupIds: [...(props.initial?.groupIds ?? [])],
-  matchRules: [...(props.initial?.matchRules ?? [])],
+  matchRules: (props.initial?.matchRules ?? []).map((r) => ({ ...r })),
 })
 const error = ref('')
 const isNew = !props.initial
