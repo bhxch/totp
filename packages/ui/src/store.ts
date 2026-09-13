@@ -75,6 +75,8 @@ export function createVueStore(
     renameGroupOp: (id: string, name: string) => commit((v) => renameGroup(v, id, name)),
     removeGroupOp: (id: string) => commit((v) => removeGroup(v, id)),
     reorderOp: (uuids: string[]) => commit((v) => reorderEntries(v, uuids)),
+    // 整体替换（恢复备份/导入）：replaceVault 用 splice 逐项拷入，保证响应式与深拷贝语义
+    replaceAllOp: (v: Vault) => commit(() => v),
   }
 }
 
