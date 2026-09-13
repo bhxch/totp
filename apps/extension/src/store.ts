@@ -17,3 +17,4 @@ export const addGroupOp = store.addGroupOp
 export const renameGroupOp = store.renameGroupOp
 export const removeGroupOp = store.removeGroupOp
 export const reorderOp = store.reorderOp
+export const replaceAllOp = store.replaceAllOp

@@ -37,6 +37,34 @@ pnpm --filter @totp/desktop tauri build  # 构建，产物为 exe + NSIS 安装�
   - 全局快捷键 `Alt+Shift+T`
   - mini 窗失焦自动隐藏（mini 窗固定启用）
 
+## 备份
+
+备份入口在管理页（桌面主窗口 / 插件 options 页）的「备份」卡；popup 不含备份功能。
+
+### 加密格式（envelope v1）
+
+- 备份文件为 JSON 文本，扩展名 `.totpbackup`，结构：`v`、`kdf`、`wrapNonce`、`wrappedDek`、`dataNonce`、`ciphertext`
+- 加密流程：Argon2id（m=65536, t=3, p=1，随机 16 字节 salt）由口令派生 KEK → KEK 以 AES-256-GCM 包裹随机 32 字节 DEK → DEK 以 AES-256-GCM 加密 vault 明文（wrap/data 两段 nonce 各自独立随机）
+- 口令错误或文件损坏时解密失败并明确报错，不会输出错误数据
+
+### 桌面本地备份
+
+- 目录：`%APPDATA%/com.totp.desktop/backups/`，写入为临时文件 + 重命名的原子写
+- 两种模式（偏好持久化，可在卡内切换）：
+  - 保留 N 份：按 `vault-日期-时间.totpbackup` 命名，滚动删除超出 N 的最旧备份
+  - 覆盖：固定写入 `vault-backup.totpbackup`
+- 恢复：卡内备份列表（新在前）选择一份，输入口令解密，两步确认后整体替换当前 vault
+
+### 导出 / 导入文件
+
+- 桌面：系统对话框选择保存/打开路径（`.totpbackup` 过滤器）
+- 插件：浏览器下载保存 / 文件选择器导入
+
+### 口令自管
+
+- 备份口令不存储、不上传，仅用于本地加解密；无任何云端同步
+- 口令丢失则备份无法恢复（无后门、无找回手段），请自行妥善保管
+
 ## 插件功能（M1）
 
 - 录入：手动（base32 校验）、TOTP/Steam

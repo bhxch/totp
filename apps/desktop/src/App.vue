@@ -1,13 +1,79 @@
 <script setup lang="ts">
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
-import { VaultManager, createVueStore, type VueStore } from '@totp/ui'
+import { open, save } from '@tauri-apps/plugin-dialog'
+import { backupFileName, createBackupEnvelope, openBackupEnvelope } from '@totp/core'
+import { VaultManager, createVueStore, type BackupMode, type BackupPlatform, type VueStore } from '@totp/ui'
 import { onMounted, onScopeDispose, ref } from 'vue'
+import { createBackupToDir, listBackups, readBackupByName, readBackupFileOs, writeBackupFileOs } from './backupService'
 import { createTauriFs } from './tauriFs'
 
 const store = ref<VueStore | null>(null)
 const loadError = ref('')
 let unlistenFocus: (() => void) | null = null
+
+// ---------- 备份平台实现 ----------
+// 模式与保留份数属本地偏好（非同步内容）：存桌面 localStorage，key backupMode/backupKeepN
+const BACKUP_MODE_KEY = 'backupMode'
+const BACKUP_KEEP_N_KEY = 'backupKeepN'
+const DEFAULT_KEEP_N = 3
+
+function loadBackupMode(): BackupMode {
+  try {
+    if (localStorage.getItem(BACKUP_MODE_KEY) === 'overwrite') return { type: 'overwrite' }
+    const n = Number(localStorage.getItem(BACKUP_KEEP_N_KEY))
+    return { type: 'keep', n: Number.isInteger(n) && n >= 1 ? n : DEFAULT_KEEP_N }
+  } catch {
+    return { type: 'keep', n: DEFAULT_KEEP_N }
+  }
+}
+
+function persistBackupMode(m: BackupMode): void {
+  try {
+    localStorage.setItem(BACKUP_MODE_KEY, m.type)
+    if (m.type === 'keep') localStorage.setItem(BACKUP_KEEP_N_KEY, String(m.n))
+  } catch { /* 偏好持久化失败不影响功能 */ }
+}
+
+const backupMode = ref<BackupMode>(loadBackupMode())
+
+/** envelope 文本 → 解密出明文 vault JSON（口令错误/文件损坏由 openBackupEnvelope 抛错，卡片统一展示） */
+async function openBackupText(text: string, password: string): Promise<string> {
+  return openBackupEnvelope(JSON.parse(text), password)
+}
+
+const BACKUP_FILE_FILTERS = [{ name: 'TOTP 备份', extensions: ['totpbackup'] }]
+
+const backupPlatform: BackupPlatform = {
+  get mode() { return backupMode.value },
+  async setMode(m) {
+    backupMode.value = m
+    persistBackupMode(m)
+  },
+  createBackup: (vaultJson, password) => createBackupToDir(vaultJson, password, backupMode.value),
+  async exportToFile(vaultJson, password) {
+    // 先出 save 对话框拿路径（取消则直接 false），再做 Argon2id 加密写文件，省一次白跑的 KDF
+    const path = await save({ defaultPath: backupFileName(new Date()), filters: BACKUP_FILE_FILTERS })
+    if (!path) return false
+    const envelope = await createBackupEnvelope(vaultJson, password)
+    await writeBackupFileOs(path, envelope)
+    return true
+  },
+  async restoreFromPicker(password) {
+    const path = await open({ multiple: false, directory: false, filters: BACKUP_FILE_FILTERS })
+    if (typeof path !== 'string') return null
+    return { json: await openBackupText(await readBackupFileOs(path), password) }
+  },
+  listBackups: () => listBackups(),
+  async restoreByName(name, password) {
+    return { json: await openBackupText(await readBackupByName(name), password) }
+  },
+  async replaceAllOp(v) {
+    const s = store.value
+    if (!s) throw new Error('数据尚未就绪')
+    await s.replaceAllOp(v)
+  },
+}
 
 onMounted(async () => {
   // 主窗口失焦自动隐藏：仅注册一次，回调内实时读取开关值（勿在 watch 里叠加监听）
@@ -49,7 +115,7 @@ async function onBlurHideChange(e: Event) {
       </div>
     </header>
     <div v-if="loadError" class="error">{{ loadError }}</div>
-    <VaultManager v-else-if="store" :store="store" enable-copy @copy="copyToClipboard" />
+    <VaultManager v-else-if="store" :store="store" :platform="backupPlatform" enable-copy @copy="copyToClipboard" />
   </main>
 </template>
 

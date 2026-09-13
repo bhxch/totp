@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createMemoryStorage } from '@totp/core'
+import { createMemoryStorage, type Vault } from '@totp/core'
 import { createVueStore } from '../src/store'
 import { newEntryFromUri } from '@totp/core'
 
@@ -59,6 +59,16 @@ describe('createVueStore', () => {
     notify!({ vault: true })
     await flush()
     expect(s.vault.updatedAt).toBe(10) // 500ms 内抑制了对端值
+  })
+
+  it('replaceAllOp 整体替换 vault 并落盘', async () => {
+    const adapter = createMemoryStorage()
+    const s = createVueStore(adapter)
+    await s.initStore()
+    const next = { version: 1 as const, entries: [{ uuid: 'r' }], groups: [], updatedAt: 42 }
+    await s.replaceAllOp(next as unknown as Vault)
+    expect(s.vault.updatedAt).toBe(42)
+    expect(JSON.parse((await adapter.get('vault'))!).entries[0]).toEqual({ uuid: 'r' })
   })
 
   it('settings 同步：对端写入重读，未知字段丢弃', async () => {

@@ -113,14 +113,15 @@ interface OtpEntry {
 ```json
 {
   "v": 1,
-  "kdf": { "alg": "argon2id", "m": ..., "t": ..., "p": ..., "salt": "..." },
-  "cipher": "AES-256-GCM",
-  "nonce": "...",
+  "kdf": { "alg": "argon2id", "m": 65536, "t": 3, "p": 1, "salt": "..." },
+  "wrapNonce": "...",
   "wrappedDek": "...",
-  "ciphertext": "...",
-  "mac": "..."
+  "dataNonce": "...",
+  "ciphertext": "..."
 }
 ```
+
+二进制字段均为 base64；AES-GCM 认证标签内嵌于 wrappedDek/ciphertext 尾部（WebCrypto 默认拼接，无独立 mac 字段）；wrapNonce/dataNonce 各自独立随机生成——同一密钥下 GCM nonce 禁止复用。
 
 自描述、带版本号，向后兼容升级。
 
