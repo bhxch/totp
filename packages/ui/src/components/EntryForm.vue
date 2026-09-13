@@ -34,7 +34,7 @@ function submit() {
       return
     }
   }
-  emit('save', { ...form, issuer: form.issuer.trim(), label: form.label.trim(), secret: cleanSecret() })
+  emit('save', { ...form, issuer: form.issuer.trim(), label: form.label.trim(), secret: cleanSecret(), matchRules: form.matchRules.filter((r) => r.pattern.trim()) })
 }
 </script>
 
@@ -55,8 +55,22 @@ function submit() {
         <input type="checkbox" :value="g.id" v-model="form.groupIds" /> {{ g.name }}
       </label>
     </fieldset>
-    <!-- matchRules 编辑区：Task 6 填充实现 -->
-    <div class="match-rules-placeholder"></div>
+    <!-- matchRules 编辑区 -->
+    <fieldset>
+      <legend>URL 匹配规则（浏览器插件按当前页过滤用）</legend>
+      <div v-for="(r, i) in form.matchRules" :key="i" class="rule-row">
+        <select class="rule-strategy" v-model="r.strategy">
+          <option value="baseDomain">基础域名</option>
+          <option value="host">主机</option>
+          <option value="exact">精确</option>
+          <option value="startsWith">前缀</option>
+          <option value="regex">正则</option>
+        </select>
+        <input class="rule-pattern" v-model="r.pattern" placeholder="如 github.com 或 ^https://" />
+        <button type="button" class="rm-rule" @click="form.matchRules.splice(i, 1)">✕</button>
+      </div>
+      <button type="button" class="add-rule" @click="form.matchRules.push({ strategy: 'baseDomain', pattern: '' })">＋ 添加匹配规则</button>
+    </fieldset>
     <div v-if="error" class="error">{{ error }}</div>
     <div class="row">
       <button type="submit">{{ isNew ? '添加' : '保存' }}</button>
@@ -71,6 +85,9 @@ function submit() {
 .entry-form textarea { resize: vertical; font-family: inherit; }
 fieldset { border: 1px solid rgba(128,128,128,.3); border-radius: 6px; display: flex; gap: 10px; flex-wrap: wrap; }
 .group-check { font-size: 13px; display: flex; align-items: center; gap: 4px; }
+.rule-row { display: flex; gap: 6px; }
+.rule-strategy { width: 110px; }
+.rule-pattern { flex: 1; }
 .error { color: #d9534f; font-size: 12px; }
 .row { display: flex; gap: 8px; }
 </style>
