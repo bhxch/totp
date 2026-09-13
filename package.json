@@ -1,0 +1,12 @@
+{
+  "name": "totp-workspace",
+  "private": true,
+  "scripts": {
+    "test": "pnpm -r --no-bail run test",
+    "typecheck": "pnpm -r run typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
