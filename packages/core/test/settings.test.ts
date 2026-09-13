@@ -21,4 +21,9 @@ describe('settingsStore', () => {
     await s.set(SETTINGS_KEY, JSON.stringify({ urlFilterEnabled: true, hacked: 1 }))
     expect(await loadSettings(s)).toEqual({ urlFilterEnabled: true })
   })
+  it('类型非法的值回退默认', async () => {
+    const s = createMemoryStorage()
+    await s.set(SETTINGS_KEY, JSON.stringify({ urlFilterEnabled: 'false' }))
+    expect(await loadSettings(s)).toEqual(DEFAULT_SETTINGS)
+  })
 })

@@ -1,5 +1,5 @@
 import {
-  addEntry, addGroup, createVault, loadSettings, loadVault, removeEntry, removeGroup,
+  addEntry, addGroup, createVault, DEFAULT_SETTINGS, loadSettings, loadVault, removeEntry, removeGroup,
   renameGroup, reorderEntries, saveSettings, saveVault, updateEntry,
   type AppSettings, type OtpEntry, type Vault,
 } from '@totp/core'
@@ -9,12 +9,11 @@ import { createChromeStorage } from './chromeStorage'
 const adapter = createChromeStorage()
 
 export const vault = reactive<Vault>(createVault())
-export const settings = reactive<AppSettings>({ urlFilterEnabled: true })
+export const settings = reactive<AppSettings>({ ...DEFAULT_SETTINGS })
 
 let inited = false
 let lastSelfWriteAt = 0
 let queue: Promise<void> = Promise.resolve()
-let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 export async function initStore(): Promise<void> {
   if (inited) return
@@ -33,20 +32,30 @@ function replaceVault(v: Vault): void {
 
 export function registerStorageSync(): void {
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local' || !changes['vault']) return
+    if (area !== 'local') return
     if (Date.now() - lastSelfWriteAt < 500) return
-    void loadVault(adapter).then(replaceVault)
+    if (changes['vault']) {
+      void loadVault(adapter)
+        .then(replaceVault)
+        .catch(() => {})
+    }
+    if (changes['settings']) {
+      void loadSettings(adapter)
+        .then((s) => Object.assign(settings, s))
+        .catch(() => {})
+    }
   })
 }
 
 export async function commit(fn: (v: Vault) => Vault): Promise<void> {
   queue = queue.then(async () => {
     replaceVault(fn(vault))
-    if (saveTimer) clearTimeout(saveTimer)
-    saveTimer = setTimeout(async () => {
+    try {
       lastSelfWriteAt = Date.now()
       await saveVault(adapter, toRaw(vault) as Vault)
-    }, 300)
+    } catch (e) {
+      console.error('[store] saveVault failed:', e)
+    }
   })
   return queue
 }
