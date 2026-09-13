@@ -36,6 +36,52 @@ fn show_main(app: &AppHandle) {
     }
 }
 
+// ---------- 备份文件命令 ----------
+// 信任边界：read/write_text_file_os 的路径由前端系统对话框产生，命令内仅做基本防护（非目录/非空路径），
+// 不做 scope 限制；remove_backup_file 仅允许 AppData/backups 下的合法备份名（白名单防路径穿越）。
+
+fn valid_backup_name(name: &str) -> bool {
+    // 白名单：vault- 前缀、.totpbackup 后缀、不含路径分隔符与 ..，防路径穿越
+    name.starts_with("vault-")
+        && name.ends_with(".totpbackup")
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains("..")
+}
+
+#[tauri::command]
+fn remove_backup_file(app: tauri::AppHandle, name: String) -> Result<(), String> {
+    if !valid_backup_name(&name) {
+        return Err("invalid backup name".into());
+    }
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("backups");
+    std::fs::remove_file(dir.join(name)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn read_text_file_os(path: String) -> Result<String, String> {
+    let p = std::path::Path::new(&path);
+    if !p.is_file() {
+        return Err("not a file".into());
+    }
+    std::fs::read_to_string(p).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn write_text_file_os(path: String, contents: String) -> Result<(), String> {
+    if path.is_empty() {
+        return Err("empty path".into());
+    }
+    if std::path::Path::new(&path).is_dir() {
+        return Err("path is a directory".into());
+    }
+    std::fs::write(path, contents).map_err(|e| e.to_string())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
@@ -98,6 +144,11 @@ pub fn run() {
                 _ => {}
             }
         })
+        .invoke_handler(tauri::generate_handler![
+            write_text_file_os,
+            read_text_file_os,
+            remove_backup_file
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
