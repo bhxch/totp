@@ -38,7 +38,8 @@ fn show_main(app: &AppHandle) {
 
 // ---------- 备份文件命令 ----------
 // 信任边界：read/write_text_file_os 的路径由前端系统对话框产生，命令内仅做基本防护（非目录/非空路径），
-// 不做 scope 限制；remove_backup_file 仅允许 AppData/backups 下的合法备份名（白名单防路径穿越）。
+// 并限定 .totpbackup 扩展名白名单（防被前端脚本当任意读写原语）；不做 scope 限制；
+// remove_backup_file 仅允许 AppData/backups 下的合法备份名（白名单防路径穿越）。
 
 fn valid_backup_name(name: &str) -> bool {
     // 白名单：vault- 前缀、.totpbackup 后缀、不含路径分隔符与 ..，防路径穿越
@@ -64,6 +65,11 @@ fn remove_backup_file(app: tauri::AppHandle, name: String) -> Result<(), String>
 
 #[tauri::command]
 fn read_text_file_os(path: String) -> Result<String, String> {
+    // 扩展名白名单：与写侧对齐；本命令唯一用途是读取备份文件，
+    // 限定 .totpbackup 防止被前端 XSS 当作任意文件读取原语
+    if !path.ends_with(".totpbackup") {
+        return Err("invalid backup file extension".into());
+    }
     let p = std::path::Path::new(&path);
     if !p.is_file() {
         return Err("not a file".into());

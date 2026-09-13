@@ -33,4 +33,20 @@ describe('BackupCard', () => {
     await w.find('button.backup-now').trigger('click')
     expect(platform.createBackup).not.toHaveBeenCalled()
   })
+  it('恢复内容缺 groups：不进入确认流程、不调用 replaceAllOp 并显示错误', async () => {
+    const restorePlatform = {
+      createBackup: vi.fn().mockResolvedValue('created'),
+      mode: { type: 'keep' as const, n: 5 },
+      setMode: vi.fn().mockResolvedValue(undefined),
+      restoreFromPicker: vi.fn().mockResolvedValue({ json: JSON.stringify({ version: 1, entries: [] }) }),
+      replaceAllOp: vi.fn().mockResolvedValue(undefined),
+    }
+    const w = mount(BackupCard, { props: { platform: restorePlatform, vaultJson: '{}' } })
+    await w.findAll('input[type="password"]')[0]!.setValue('a')
+    const btn = w.findAll('button').find((b) => b.text() === '从文件恢复')!
+    await btn.trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('备份内容不是有效的 vault 数据'))
+    expect(restorePlatform.replaceAllOp).not.toHaveBeenCalled()
+    expect(w.find('.confirm-row').exists()).toBe(false)
+  })
 })
