@@ -5,10 +5,12 @@ import { useOtpCodes } from '../composables/useOtpCodes'
 import type { VueStore } from '../store'
 import BackupCard from './BackupCard.vue'
 import EntryForm from './EntryForm.vue'
+import ImportCard from './ImportCard.vue'
 import OtpListItem from './OtpListItem.vue'
 import SearchBar from './SearchBar.vue'
 import type { BackupPlatform } from './backupPlatform'
 import type { EntryFormData } from './entryForm'
+import type { ImportPlatform } from './importPlatform'
 
 const props = withDefaults(defineProps<{
   store: VueStore
@@ -32,6 +34,12 @@ let confirmTimer: ReturnType<typeof setTimeout> | null = null
 const sorted = computed(() => [...props.store.vault.entries].sort((a, b) => a.order - b.order))
 /** 备份内容快照（saveVault 同款 JSON）：序列化 reactive 代理以保持 computed 依赖追踪（toRaw 会丢失嵌套依赖导致快照过期） */
 const vaultJson = computed(() => JSON.stringify(props.store.vault))
+/** 导入平台：宿主 platform 提供了 readImportFile 才渲染导入卡（popup platform=null 零影响） */
+const importPlatform = computed<ImportPlatform | null>(() => {
+  const p = props.platform
+  if (!p?.readImportFile) return null
+  return { readImportFile: p.readImportFile, decryptDpapi: p.decryptDpapi, store: props.store }
+})
 const { codes } = useOtpCodes(sorted)
 const visible = computed(() => {
   const q = query.value.trim().toLowerCase()
@@ -119,6 +127,7 @@ function onCopy(entry: OtpEntry) {
   </section>
 
   <BackupCard :platform="platform" :vault-json="vaultJson" />
+  <ImportCard :platform="importPlatform" />
 </template>
 
 <style scoped>

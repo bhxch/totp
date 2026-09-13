@@ -29,4 +29,8 @@ export interface BackupPlatform {
   restoreByName?(name: string, password: string): Promise<{ json: string } | null>
   /** [可选] 恢复确认覆盖后整体替换当前 vault（宿主绑定 store.replaceAllOp） */
   replaceAllOp?(v: Vault): Promise<void>
+  /** [可选] 选择并读取导入文件（desktop：dialog open + OS 白名单读取；extension：动态 input file）；用户取消返回 null（ImportCard 用） */
+  readImportFile?(): Promise<{ text: string; name: string } | null>
+  /** [可选] WinAuth DPAPI 层解密（base64 密文 → UTF-8 明文），仅桌面端提供（ImportCard 用） */
+  decryptDpapi?(b64: string): Promise<string>
 }
