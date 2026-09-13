@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { mkdir, readDir, readTextFile, rename, writeTextFile, BaseDirectory } from '@tauri-apps/plugin-fs'
-import { backupFileName, selectBackupsToKeep, OVERWRITE_NAME, createBackupEnvelope, type BackupEnvelopeV1 } from '@totp/core'
+import { backupFileName, selectBackupsToKeep, BACKUP_NAME_RE, OVERWRITE_NAME, createBackupEnvelope, type BackupEnvelopeV1 } from '@totp/core'
 
 const dir = 'backups'
 
@@ -29,10 +29,12 @@ export async function createBackupToDir(vaultJson: string, password: string, mod
 
 export async function listBackups(): Promise<Array<{ name: string }>> {
   const entries = await readDir(dir, { baseDir: BaseDirectory.AppData })
-  return entries.filter((e) => e.name.endsWith('.totpbackup')).map((e) => ({ name: e.name })).reverse()
+  // 显式排序保证确定性（不依赖文件系统返回顺序），倒序=新在前
+  return entries.filter((e) => e.name.endsWith('.totpbackup')).map((e) => ({ name: e.name })).sort((a, b) => a.name.localeCompare(b.name)).reverse()
 }
 
 export async function readBackupByName(name: string): Promise<string> {
+  if (!BACKUP_NAME_RE.test(name)) throw new Error('invalid backup name')
   return readTextFile(`${dir}/${name}`, { baseDir: BaseDirectory.AppData })
 }
 

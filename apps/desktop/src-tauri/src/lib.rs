@@ -76,6 +76,11 @@ fn write_text_file_os(path: String, contents: String) -> Result<(), String> {
     if path.is_empty() {
         return Err("empty path".into());
     }
+    // 扩展名白名单：本命令唯一用途是备份导出；CSP 为 null 的现状下，
+    // 任意路径+任意内容写入等于 XSS 任意文件覆写原语，故限定 .totpbackup
+    if !path.ends_with(".totpbackup") {
+        return Err("invalid backup file extension".into());
+    }
     if std::path::Path::new(&path).is_dir() {
         return Err("path is a directory".into());
     }

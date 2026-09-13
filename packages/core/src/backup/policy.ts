@@ -6,10 +6,10 @@ export function backupFileName(now: Date): string {
   return `vault-${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}${BACKUP_EXT}`
 }
 
-const NAME_RE = /^vault-\d{8}-\d{6}\.totpbackup$/
+export const BACKUP_NAME_RE = /^vault-\d{8}-\d{6}\.totpbackup$/
 
 export function selectBackupsToKeep(names: string[], keep: number): string[] {
-  const valid = names.filter((n) => NAME_RE.test(n)).sort() // 字典序=时间序
+  const valid = names.filter((n) => BACKUP_NAME_RE.test(n)).sort() // 字典序=时间序
   const excess = keep > 0 ? valid.slice(0, Math.max(0, valid.length - keep)) : valid
   return excess
 }
