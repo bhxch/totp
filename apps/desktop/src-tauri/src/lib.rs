@@ -93,6 +93,94 @@ fn write_text_file_os(path: String, contents: String) -> Result<(), String> {
     std::fs::write(path, contents).map_err(|e| e.to_string())
 }
 
+// ---------- 导入文件命令 ----------
+// 与 read_text_file_os 同构：信任边界一致（路径由前端系统对话框产生，仅做基本防护），
+// 扩展名白名单限定导入用途，防止被前端 XSS 当作任意文件读取原语。
+
+#[tauri::command]
+fn read_import_file_os(path: String) -> Result<String, String> {
+    // WinAuth(.wauth/.xml)、Aegis(.json/.aegis)、纯文本 URI 批量(.txt)
+    const IMPORT_EXTENSIONS: [&str; 5] = [".json", ".wauth", ".xml", ".txt", ".aegis"];
+    let lower = path.to_lowercase();
+    if !IMPORT_EXTENSIONS.iter().any(|ext| lower.ends_with(ext)) {
+        return Err("invalid import file extension".into());
+    }
+    let p = std::path::Path::new(&path);
+    if !p.is_file() {
+        return Err("not a file".into());
+    }
+    std::fs::read_to_string(p).map_err(|e| e.to_string())
+}
+
+// WinAuth DPAPI 层解密（ CryptUnprotectData，无附加熵，CRYPTPROTECT_UI_FORBIDDEN）。
+// 输入/输出约定与 core importWinauth 的 decryptDpapi 回调对齐：输入 base64(密文)，
+// 输出 UTF-8 明文——WinAuth 的 DPAPI 明文恒为下一层 payload 的 hex ASCII
+// （Authenticator.cs DecryptSequenceNoHash decode=false 路径），故 UTF-8 往返无损。
+// 最小 base64 解码：仅接受标准字母表（前端 bytesToBase64 输出带 padding），避免为此引第三方依赖。
+fn base64_decode(input: &str) -> Option<Vec<u8>> {
+    fn val(c: u8) -> Option<u32> {
+        match c {
+            b'A'..=b'Z' => Some((c - b'A') as u32),
+            b'a'..=b'z' => Some((c - b'a' + 26) as u32),
+            b'0'..=b'9' => Some((c - b'0' + 52) as u32),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let cleaned: Vec<u8> = input.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
+    let pad = cleaned.iter().rev().take_while(|&&b| b == b'=').count();
+    if pad > 2 {
+        return None;
+    }
+    let data = &cleaned[..cleaned.len() - pad];
+    let mut out = Vec::with_capacity(data.len() * 3 / 4 + 3);
+    let mut acc: u32 = 0;
+    let mut bits = 0u32;
+    for &b in data {
+        acc = (acc << 6) | val(b)?;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push(((acc >> bits) & 0xff) as u8);
+        }
+    }
+    Some(out)
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn decrypt_dpapi(b64: String) -> Result<String, String> {
+    use windows::Win32::Foundation::{HLOCAL, LocalFree};
+    use windows::Win32::Security::Cryptography::{
+        CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB, CryptUnprotectData,
+    };
+
+    let mut cipher = base64_decode(&b64).ok_or("invalid base64")?;
+    if cipher.is_empty() {
+        return Err("empty data".into());
+    }
+    unsafe {
+        let in_blob = CRYPT_INTEGER_BLOB {
+            cbData: cipher.len() as u32,
+            pbData: cipher.as_mut_ptr(),
+        };
+        let mut out_blob = CRYPT_INTEGER_BLOB::default();
+        CryptUnprotectData(&in_blob, None, None, None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut out_blob)
+            .map_err(|e| format!("DPAPI 解密失败: {e}"))?;
+        let plain = std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize);
+        let result = String::from_utf8(plain.to_vec()).map_err(|_| "DPAPI 明文不是合法 UTF-8".to_string());
+        let _ = LocalFree(Some(HLOCAL(out_blob.pbData.cast())));
+        result
+    }
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn decrypt_dpapi(_b64: String) -> Result<String, String> {
+    Err("仅 Windows 支持 DPAPI 解密".into())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
@@ -159,7 +247,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             write_text_file_os,
             read_text_file_os,
-            remove_backup_file
+            read_import_file_os,
+            remove_backup_file,
+            decrypt_dpapi
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
