@@ -1,4 +1,5 @@
 import type { HashAlgorithm } from './otp/hotp'
+import type { MatchRule } from './match/engine'
 
 export type EntryType = 'totp' | 'hotp' | 'steam'
 
@@ -13,6 +14,7 @@ export interface OtpEntry {
   period: number
   counter?: number
   note?: string
+  matchRules?: MatchRule[]
   groupIds: string[]
   order: number
   createdAt: number
