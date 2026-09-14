@@ -40,7 +40,8 @@ describe('Google Drive 后端', () => {
     expect(createInit!.method).toBe('POST')
     expect(headersOf(createInit).Authorization).toBe('Bearer tok')
     expect(headersOf(createInit)['Content-Type']).toBe('application/json')
-    expect(JSON.parse(createInit!.body as string)).toEqual({ name: PATH })
+    // 创建文件必须声明 mimeType=application/json,使后续 files.list 查询可按 mimeType 限定
+    expect(JSON.parse(createInit!.body as string)).toEqual({ name: PATH, mimeType: 'application/json' })
 
     const [upUrl, upInit] = fetchMock.mock.calls[1]!
     expect(upUrl).toBe('https://www.googleapis.com/upload/drive/v3/files/fid123?uploadType=media')
@@ -70,13 +71,14 @@ describe('Google Drive 后端', () => {
     await expect(backend.put(PATH, BYTES)).rejects.toThrow('Google Drive 请求失败（HTTP 403）')
   })
 
-  it('get：无 fileId——按 name 查 files.list（trashed=false）取 id 后 alt=media 拉取字节', async () => {
+  it('get：无 fileId——按 name 查 files.list（trashed=false + mimeType）取 id 后 alt=media 拉取字节，并回写 fileId', async () => {
     const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
       const u = new URL(String(url))
       if (u.origin + u.pathname === 'https://www.googleapis.com/drive/v3/files') {
-        expect(decodeURIComponent(u.searchParams.get('q')!)).toBe(`name='${PATH}' and trashed=false`)
-        expect(u.searchParams.get('fields')).toBe('files(id,name)')
-        return jsonRes({ files: [{ id: 'fid123', name: PATH }] })
+        // 查询必须同时限定 mimeType,防止同名非加密文件被误命中
+        expect(decodeURIComponent(u.searchParams.get('q')!)).toBe(`name='${PATH}' and mimeType='application/json' and trashed=false`)
+        expect(u.searchParams.get('fields')).toBe('files(id,name,mimeType)')
+        return jsonRes({ files: [{ id: 'fid123', name: PATH, mimeType: 'application/json' }] })
       }
       if (String(url) === 'https://www.googleapis.com/drive/v3/files/fid123?alt=media' && init!.method === 'GET') {
         return new Response(BYTES, { status: 200 })
@@ -84,8 +86,11 @@ describe('Google Drive 后端', () => {
       throw new Error(`意外请求：${init!.method} ${url}`)
     })
     vi.stubGlobal('fetch', fetchMock)
-    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok' })
+    const onCredChange = vi.fn()
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok' }, { onCredChange })
     expect(new TextDecoder().decode((await backend.get(PATH))!)).toBe('hello')
+    // 首次按 name 解析到 fileId 时应回写凭据,避免后续每次重复查询
+    expect(onCredChange).toHaveBeenCalledWith({ backend: 'gdrive', accessToken: 'tok', fileId: 'fid123' })
   })
 
   it('get：name 查询无匹配返回 null（不发起 media 请求）', async () => {
@@ -146,11 +151,14 @@ describe('Google Drive 后端', () => {
   })
 
   it('exists：无 fileId 查询非空 → true，空 → false；有 fileId 元数据 200 → true，404 → false', async () => {
-    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok' })
+    const backend1 = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok' })
     vi.stubGlobal('fetch', vi.fn(async () => jsonRes({ files: [{ id: 'fid1' }] })))
-    expect(await backend.exists(PATH)).toBe(true)
+    expect(await backend1.exists(PATH)).toBe(true)
+
+    // 另起 backend 实例(fileId 内存独立)验证空查询路径
+    const backend2 = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok' })
     vi.stubGlobal('fetch', vi.fn(async () => jsonRes({ files: [] })))
-    expect(await backend.exists(PATH)).toBe(false)
+    expect(await backend2.exists(PATH)).toBe(false)
 
     const withId = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok', fileId: 'fid9' })
     vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL) => {
@@ -160,6 +168,22 @@ describe('Google Drive 后端', () => {
     expect(await withId.exists(PATH)).toBe(true)
     vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 404 })))
     expect(await withId.exists(PATH)).toBe(false)
+  })
+  it('name 含单引号：files.list q 中单引号转义为 \\’，防止破坏查询字符串', async () => {
+    const trickyName = "it's-totp-backup.totpbackup"
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      const u = new URL(String(url))
+      expect(u.origin + u.pathname).toBe('https://www.googleapis.com/drive/v3/files')
+      // 单引号已转义为 \',Drive 查询解析器视为字面量
+      expect(decodeURIComponent(u.searchParams.get('q')!)).toBe(
+        `name='it\\'s-totp-backup.totpbackup' and mimeType='application/json' and trashed=false`,
+      )
+      return jsonRes({ files: [] })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok' })
+    expect(await backend.exists(trickyName)).toBe(false)
+    expect(fetchMock).toHaveBeenCalledOnce()
   })
 
   it('get：网络失败抛中文错误', async () => {

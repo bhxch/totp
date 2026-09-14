@@ -23,7 +23,9 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
     const res = await cloudFetch(LABEL, `${DRIVE_API}/files`, {
       method: 'POST',
       headers: { ...auth, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
+      // 显式 mimeType=application/json:让 queryIdByName 的 mimeType 限定只匹配加密 envelope 文件,
+      // 防止用户同名文档(如 txt/json)被误当作备份命中而覆盖上传内容
+      body: JSON.stringify({ name, mimeType: 'application/json' }),
     })
     ensureHttpOk(LABEL, res)
     const json = (await res.json()) as { id?: string }
@@ -33,16 +35,24 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
     return fileId
   }
 
-  /** 按 name 查询文件 id（排除回收站），取首个匹配。 */
+  /** 按 name + mimeType 查询文件 id（排除回收站），取首个匹配。
+   *  单引号按 Drive 查询语法转义为 \'，防 name 含 ' 时破坏 q 字符串（注入风险）。 */
   const queryIdByName = async (name: string): Promise<string | null> => {
-    const q = `name='${name}' and trashed=false`
-    const res = await cloudFetch(LABEL, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id,name)`, {
+    const safe = name.replace(/'/g, "\\'")
+    const q = `name='${safe}' and mimeType='application/json' and trashed=false`
+    const res = await cloudFetch(LABEL, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id,name,mimeType)`, {
       method: 'GET',
       headers: auth,
     })
     ensureHttpOk(LABEL, res)
     const json = (await res.json()) as { files?: Array<{ id?: string }> }
-    return json.files?.[0]?.id ?? null
+    const found = json.files?.[0]?.id ?? null
+    if (found && found !== fileId) {
+      // 首次按 name 解析到 fileId 时回存凭据,避免后续每次都重复查询
+      fileId = found
+      opts.onCredChange?.({ ...cred, fileId: found })
+    }
+    return found
   }
 
   /** fileId 已知时校验文件仍在（被删→null）；未知时按 name 查询。 */
