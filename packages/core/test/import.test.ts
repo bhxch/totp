@@ -24,6 +24,22 @@ describe('importUriBatch', () => {
     expect(r.entries[1]).toMatchObject({ type: 'steam', digits: 5 })
     expect(r.failures).toEqual([{ index: 2, message: expect.stringContaining('invalid otpauth uri') }])
   })
+
+  it('Firefox 协议处理器 ext+otpauth:// 前缀被还原为 otpauth:// 后正常解析', () => {
+    const SECRET = 'JBSWY3DPEHPK3PXP'
+    // 正常 ext+otpauth:// 写法（href 形式带 //）
+    const r = importUriBatch(
+      `ext+otpauth://totp/GitHub:me@x.com?secret=${SECRET}\n` +
+        // 大小写不敏感
+        `EXT+OTPAUTH://hotp/Hotp:k?secret=${SECRET}&counter=1\n` +
+        // 仍是非 otpauth 行（其他 scheme）
+        `ext+something://nope`,
+    )
+    expect(r.failures).toHaveLength(1)
+    expect(r.failures[0]!.index).toBe(2)
+    expect(r.entries[0]).toMatchObject({ type: 'totp', issuer: 'GitHub', label: 'me@x.com', secret: SECRET })
+    expect(r.entries[1]).toMatchObject({ type: 'hotp', counter: 1 })
+  })
 })
 
 describe('extractGenericRows', () => {

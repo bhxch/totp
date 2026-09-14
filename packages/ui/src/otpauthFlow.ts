@@ -1,4 +1,6 @@
-import { parseOtpUri, type OtpEntry } from '@totp/core'
+import { normalizeExtOtpauth, parseOtpUri, type OtpEntry } from '@totp/core'
+
+export { normalizeExtOtpauth }
 
 /**
  * otpauth URI → EntryForm 预填数据。
@@ -33,11 +35,3 @@ export function parseUriToEntryData(uri: string): ParseUriResult {
   }
 }
 
-/**
- * Firefox protocol_handlers 注册的 ext+otpauth scheme（裸 otpauth 被 Firefox schema 白名单硬校验拒绝）
- * → 还原为 otpauth://。可选吃掉回调里的 `//`（ext+otpauth://… 常见 href 写法），
- * 避免还原出 otpauth:////…（host 空）被 parseOtpUri 拒绝。
- */
-export function normalizeExtOtpauth(uri: string): string {
-  return uri.replace(/^ext\+otpauth:(?:\/\/)?/i, 'otpauth://')
-}
