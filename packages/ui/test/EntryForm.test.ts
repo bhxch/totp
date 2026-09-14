@@ -1,11 +1,26 @@
-import { describe, expect, it } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, expect, it, vi } from 'vitest'
+import { mount, type VueWrapper } from '@vue/test-utils'
+import { zipSync } from 'fflate'
+import { createMemoryStorage, getBuiltinIcons, type OtpEntry } from '@totp/core'
 import EntryForm from '../src/components/EntryForm.vue'
-import type { OtpEntry } from '@totp/core'
+import type { EntryFormData } from '../src/components/entryForm'
+import { createIconStore } from '../src/iconStore'
 
 const entry: OtpEntry = {
   uuid: 'u1', type: 'totp', issuer: 'GitHub', label: 'me@ex.com', secret: 'JBSWY3DPEHPK3PXP',
   algorithm: 'SHA1', digits: 6, period: 30, groupIds: [], order: 0, createdAt: 0,
+}
+
+// jsdom 25 的 Blob 未实现 arrayBuffer()，用 FileReader polyfill（仅测试环境生效）
+if (typeof Blob.prototype.arrayBuffer !== 'function') {
+  Blob.prototype.arrayBuffer = function (this: Blob): Promise<ArrayBuffer> {
+    return new Promise<ArrayBuffer>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as ArrayBuffer)
+      reader.onerror = () => reject(reader.error ?? new Error('FileReader failed'))
+      reader.readAsArrayBuffer(this)
+    })
+  }
 }
 
 describe('EntryForm', () => {
@@ -61,5 +76,115 @@ describe('EntryForm', () => {
     await w.find('input[placeholder="密钥 base32"]').setValue('jbswy3dpehpk3pxp')
     await w.find('form').trigger('submit')
     expect(w.emitted('save')![0]![0]).toMatchObject({ secret: 'JBSWY3DPEHPK3PXP' })
+  })
+})
+
+describe('EntryForm 图标推荐与选择', () => {
+  const icons = () => ({ builtin: getBuiltinIcons(), stored: {} as Readonly<Record<string, string>> })
+  const issuerInput = (w: VueWrapper) => w.find('input[placeholder="服务名（如 GitHub）"]')
+
+  it('issuer 输入 github 防抖后出现推荐气泡，点「使用」后 save 携带 builtin icon', async () => {
+    const w = mount(EntryForm, { props: { initial: null, groups: [], icons: icons() } })
+    expect(w.text()).not.toContain('检测到图标')
+    await issuerInput(w).setValue('github')
+    // 300ms 防抖后才显示推荐
+    await vi.waitFor(() => expect(w.text()).toContain('检测到图标'))
+    expect(w.find('.icon-recommend svg.icon-preview').exists()).toBe(true)
+    await w.find('button.use-recommend-icon').trigger('click')
+    expect(w.text()).not.toContain('检测到图标')
+    await w.find('form').trigger('submit')
+    expect(w.emitted('save')![0]![0]).toMatchObject({ icon: { kind: 'builtin', id: 'github' } })
+  })
+
+  it('issuer 无匹配时不显示推荐气泡', async () => {
+    const w = mount(EntryForm, { props: { initial: null, groups: [], icons: icons() } })
+    await issuerInput(w).setValue('zzz-不存在的服务')
+    await new Promise((r) => setTimeout(r, 400)) // 越过 300ms 防抖
+    expect(w.text()).not.toContain('检测到图标')
+  })
+
+  it('图标选择区默认收起，展示当前图标（builtin→svg），清除后 save 不携带 icon', async () => {
+    const w = mount(EntryForm, {
+      props: { initial: { ...entry, icon: { kind: 'builtin', id: 'github' } }, groups: [], icons: icons() },
+    })
+    const picker = w.find('details.icon-picker')
+    expect(picker.exists()).toBe(true)
+    expect((picker.element as HTMLDetailsElement).open).toBe(false)
+    // 已有图标不弹推荐
+    await issuerInput(w).setValue('github')
+    await new Promise((r) => setTimeout(r, 400))
+    expect(w.text()).not.toContain('检测到图标')
+    await picker.find('summary').trigger('click')
+    expect(picker.find('svg.icon-preview').exists()).toBe(true)
+    await w.find('button.clear-icon').trigger('click')
+    await w.find('form').trigger('submit')
+    expect((w.emitted('save')![0]![0] as EntryFormData).icon).toBeUndefined()
+  })
+
+  it('URL 拉取成功后预览并随 save 携带 {kind:url}；清除按钮收起已设图标', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, blob: async () => new Blob(['png-bytes'], { type: 'image/png' }) })))
+    try {
+      const store = createIconStore(createMemoryStorage())
+      const w = mount(EntryForm, { props: { initial: null, groups: [], icons: { builtin: getBuiltinIcons(), stored: store.icons }, iconStore: store } })
+      await w.find('details.icon-picker summary').trigger('click')
+      await w.find('input.icon-url').setValue('https://example.com/a.png')
+      await w.find('button.fetch-icon').trigger('click')
+      await vi.waitFor(() => expect(w.find('img.icon-current-img').attributes('src')).toMatch(/^data:image\/png;base64,/))
+      await w.find('form').trigger('submit')
+      expect(w.emitted('save')![0]![0]).toMatchObject({ icon: { kind: 'url', url: 'https://example.com/a.png' } })
+      // store 内以 url:<id> 缓存
+      expect(Object.keys(store.icons).some((k) => k.startsWith('url:'))).toBe(true)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('URL 拉取失败显示错误提示且不设置 icon', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, blob: async () => new Blob([]) })))
+    try {
+      const store = createIconStore(createMemoryStorage())
+      const w = mount(EntryForm, { props: { initial: null, groups: [], icons: { builtin: getBuiltinIcons(), stored: store.icons }, iconStore: store } })
+      await w.find('details.icon-picker summary').trigger('click')
+      await w.find('input.icon-url').setValue('https://example.com/a.png')
+      await w.find('button.fetch-icon').trigger('click')
+      await vi.waitFor(() => expect(w.text()).toContain('图标拉取失败'))
+      await w.find('form').trigger('submit')
+      expect((w.emitted('save')![0]![0] as EntryFormData).icon).toBeUndefined()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('导入图标包（zip）：busy 态期间按钮禁用，完成批量入库并提示已导入/跳过数；非法 zip 显示错误', async () => {
+    const store = createIconStore(createMemoryStorage())
+    const w = mount(EntryForm, { props: { initial: null, groups: [], icons: { builtin: getBuiltinIcons(), stored: store.icons }, iconStore: store } })
+    await w.find('details.icon-picker summary').trigger('click')
+    expect(w.find('button.import-pack').exists()).toBe(true)
+    const setFiles = (el: HTMLInputElement, file: File) => {
+      Object.defineProperty(el, 'files', { value: [file], configurable: true })
+    }
+    // 合法 zip：任意字节当 png 内容即可（导入不校验图片内容）；实例上覆写 arrayBuffer 加闸门观察 busy 态
+    const zip = zipSync({ 'a/github.png': new Uint8Array([1]), 'b/google.png': new Uint8Array([2]) })
+    const file = new File([zip], 'pack.zip')
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    ;(file as File & { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer = async () => {
+      await gate
+      return zip.buffer.slice(zip.byteOffset, zip.byteOffset + zip.byteLength) as ArrayBuffer
+    }
+    const packInputEl = () => w.find('input.pack-file').element as HTMLInputElement
+    setFiles(packInputEl(), file)
+    await w.find('input.pack-file').trigger('change')
+    expect(w.find('button.import-pack').attributes('disabled')).toBeDefined()
+    release()
+    await vi.waitFor(() => expect(w.find('.pack-message').text()).toBe('已导入 2 个图标（跳过 0 个）'))
+    expect(w.find('button.import-pack').attributes('disabled')).toBeUndefined()
+    expect(store.icons['github']).toMatch(/^data:image\/png;base64,/)
+    expect(store.icons['google']).toMatch(/^data:image\/png;base64,/)
+    // 非法 zip：unzipSync 抛错 → 图标区错误提示，成功提示清空
+    setFiles(packInputEl(), new File([new Uint8Array([1, 2, 3])], 'bad.zip'))
+    await w.find('input.pack-file').trigger('change')
+    await vi.waitFor(() => expect(w.find('.icon-picker .error').exists()).toBe(true))
+    expect(w.find('.pack-message').exists()).toBe(false)
   })
 })

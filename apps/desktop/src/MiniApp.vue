@@ -1,17 +1,22 @@
 <script setup lang="ts">
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
-import { OtpListItem, createClipboardClearer, createVueStore, useOtpCodes, type VueStore } from '@totp/ui'
+import { OtpListItem, createClipboardClearer, createIconStore, createVueStore, iconView, useOtpCodes, type IconStore, type VueStore } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
 import { createTauriFs } from './tauriFs'
 
 const store = ref<VueStore | null>(null)
+const icons = ref<IconStore | null>(null)
 
 async function load() {
   try {
-    const s = createVueStore(await createTauriFs())
+    const adapter = await createTauriFs()
+    const s = createVueStore(adapter)
     await s.initStore()
     store.value = s
+    const iconStore = createIconStore(adapter)
+    await iconStore.init()
+    icons.value = iconStore
   } catch {
     // 重载失败保留旧数据（mini 窗口只读，无写盘风险）
   }
@@ -47,7 +52,7 @@ async function copy(entry: { uuid: string }) {
   <main class="mini">
     <div v-if="store && store.locked" class="empty">加密启用后迷你窗不可用，请在主窗口解锁使用</div>
     <div v-else-if="!store || sorted.length === 0" class="empty">暂无条目</div>
-    <OtpListItem v-for="e in sorted" :key="e.uuid" :entry="e" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" />
+    <OtpListItem v-for="e in sorted" :key="e.uuid" :entry="e" :icon="iconView(e.icon, icons ?? undefined)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" />
   </main>
 </template>
 

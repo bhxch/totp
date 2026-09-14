@@ -1,7 +1,10 @@
 import { createVueStore } from '@totp/ui'
 import { createChromeStorage } from './chromeStorage'
 
-export const store = createVueStore(createChromeStorage(), {
+/** 共享 chrome.storage.local 适配器：vault 与 icons 同源（popup/options 各自建 IconStore 用） */
+export const storageAdapter = createChromeStorage()
+
+export const store = createVueStore(storageAdapter, {
   registerSync: (cb) =>
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== 'local') return

@@ -1,4 +1,4 @@
-import type { MatchRule } from '@totp/core'
+import type { IconRef, MatchRule } from '@totp/core'
 
 export interface EntryFormData {
   type: 'totp' | 'hotp' | 'steam'
@@ -8,4 +8,6 @@ export interface EntryFormData {
   note: string
   groupIds: string[]
   matchRules: MatchRule[]
+  /** 图标引用：builtin/stored/url；未设置时缺省 */
+  icon?: IconRef
 }

@@ -3,13 +3,14 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { backupFileName, createBackupEnvelope, openBackupEnvelope } from '@totp/core'
-import { LockScreen, VaultManager, createClipboardClearer, createVueStore, type BackupMode, type BackupPlatform, type SecurityPlatform, type VueStore } from '@totp/ui'
+import { LockScreen, VaultManager, createClipboardClearer, createIconStore, createVueStore, type BackupMode, type BackupPlatform, type IconStore, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref } from 'vue'
 import { createBackupToDir, listBackups, readBackupByName, readBackupFileOs, writeBackupFileOs } from './backupService'
 import { decryptDpapiOs, readImportFileOs } from './importService'
 import { createTauriFs } from './tauriFs'
 
 const store = ref<VueStore | null>(null)
+const icons = ref<IconStore | null>(null)
 const loadError = ref('')
 let unlistenFocus: (() => void) | null = null
 
@@ -112,9 +113,13 @@ onMounted(async () => {
   })
   unlistenFocus = un
   try {
-    const s = createVueStore(await createTauriFs())
+    const adapter = await createTauriFs()
+    const s = createVueStore(adapter)
     await s.initStore()
     store.value = s
+    const iconStore = createIconStore(adapter)
+    await iconStore.init()
+    icons.value = iconStore
   } catch (e) {
     loadError.value = '本地数据初始化失败：' + (e instanceof Error ? e.message : String(e))
   }
@@ -152,7 +157,7 @@ async function onBlurHideChange(e: Event) {
     </header>
     <div v-if="loadError && !store" class="error">{{ loadError }}</div>
     <LockScreen v-else-if="store && store.locked" :store="store" />
-    <VaultManager v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" enable-copy @copy="copyToClipboard" />
+    <VaultManager v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :icons="icons ?? undefined" enable-copy @copy="copyToClipboard" />
   </main>
 </template>
 

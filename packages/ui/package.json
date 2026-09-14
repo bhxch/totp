@@ -2,10 +2,16 @@
   "name": "@totp/ui",
   "version": "0.1.0",
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "test": "vitest run", "typecheck": "tsc --noEmit" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
   "dependencies": {
     "@totp/core": "workspace:*",
+    "fflate": "^0.8.3",
     "vue": "^3.5.0"
   },
   "devDependencies": {

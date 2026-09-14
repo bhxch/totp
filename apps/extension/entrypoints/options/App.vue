@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { backupFileName, createBackupEnvelope, openBackupEnvelope, OVERWRITE_NAME, type BackupEnvelopeV1 } from '@totp/core'
-import { CLIPBOARD_CLEAR_DELAY_MS, LockScreen, VaultManager, type BackupMode, type BackupPlatform, type SecurityPlatform } from '@totp/ui'
+import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, LockScreen, VaultManager, type BackupMode, type BackupPlatform, type SecurityPlatform } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
+import { storageAdapter } from '../../src/store'
 import {
   changePassphrase, commitSettings, disableEncryption, enableEncryption, hasEncryption, initStore, locked,
   registerStorageSync, replaceAllOp, settings, store,
 } from '../../src/store'
+
+const icons = createIconStore(storageAdapter)
 
 const loadError = ref('')
 
@@ -13,6 +16,7 @@ onMounted(async () => {
   try {
     await initStore()
     registerStorageSync()
+    await icons.init()
   } catch (e) {
     loadError.value = '本地数据读取失败：' + (e instanceof Error ? e.message : String(e))
   }
@@ -157,7 +161,7 @@ const backupPlatform: BackupPlatform = {
     <LockScreen v-if="locked" :store="store" />
     <template v-else>
       <div v-if="loadError" class="error">{{ loadError }}</div>
-      <VaultManager v-else :store="store" :platform="backupPlatform" :security-platform="securityPlatform" enable-copy @copy="copyToClipboard" />
+      <VaultManager v-else :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :icons="icons" enable-copy @copy="copyToClipboard" />
     </template>
   </main>
 </template>
