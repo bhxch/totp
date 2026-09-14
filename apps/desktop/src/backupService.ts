@@ -13,6 +13,18 @@ async function writeDirFile(name: string, contents: string): Promise<void> {
   await rename(`${dir}/${tmp}`, `${dir}/${name}`, { oldPathBaseDir: BaseDirectory.AppData, newPathBaseDir: BaseDirectory.AppData })
 }
 
+/** C9：从用户对话框返回的完整路径取其父目录，作为 Rust 端 write/read_text_file_os 的 allowed_dir。
+ *  若解析不出父目录（如根目录），回退到 appDataDir 基线。 */
+async function parentDirOf(path: string): Promise<string> {
+  const sep = path.includes('\\') ? '\\' : '/'
+  const idx = path.lastIndexOf(sep)
+  if (idx <= 0) {
+    const { appDataDir } = await import('@tauri-apps/api/path')
+    return await appDataDir()
+  }
+  return path.slice(0, idx)
+}
+
 export async function createBackupToDir(vaultJson: string, password: string, mode: { type: 'keep'; n: number } | { type: 'overwrite' }): Promise<'created' | 'overwritten'> {
   const env = await createBackupEnvelope(vaultJson, password)
   const contents = JSON.stringify(env, null, 2)
@@ -46,9 +58,11 @@ export async function readBackupByName(name: string): Promise<string> {
 }
 
 export async function readBackupFileOs(path: string): Promise<string> {
-  return invoke<string>('read_text_file_os', { path })
+  const allowedDir = await parentDirOf(path)
+  return invoke<string>('read_text_file_os', { path, allowedDir })
 }
 
 export async function writeBackupFileOs(path: string, envelope: BackupEnvelopeV1): Promise<void> {
-  await invoke('write_text_file_os', { path, contents: JSON.stringify(envelope, null, 2) })
+  const allowedDir = await parentDirOf(path)
+  await invoke('write_text_file_os', { path, contents: JSON.stringify(envelope, null, 2), allowedDir })
 }

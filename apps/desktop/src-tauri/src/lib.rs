@@ -89,8 +89,8 @@ fn show_main(app: &AppHandle) {
 }
 
 // ---------- 备份文件命令 ----------
-// 信任边界：read/write_text_file_os 的路径由前端系统对话框产生，命令内仅做基本防护（非目录/非空路径），
-// 并限定 .totpbackup 扩展名白名单（防被前端脚本当任意读写原语）；不做 scope 限制；
+// 信任边界（C9 加固）：read/write_text_file_os 的路径由前端系统对话框产生，并须在 JS 传入
+// 的 allowed_dir 内（含父目录）；扩展名 .totpbackup 白名单防被前端脚本当任意读写原语。
 // remove_backup_file 仅允许 AppData/backups 下的合法备份名（白名单防路径穿越）。
 
 fn valid_backup_name(name: &str) -> bool {
@@ -100,6 +100,20 @@ fn valid_backup_name(name: &str) -> bool {
         && !name.contains('/')
         && !name.contains('\\')
         && !name.contains("..")
+}
+
+/** C9：校验 path.parent() 必须落在 allowed_dir 内，canonicalize 防止 symlink/相对路径逃逸 */
+fn ensure_within(path: &std::path::Path, allowed_dir: &str) -> Result<(), String> {
+    if allowed_dir.is_empty() {
+        return Err("empty allowed dir".into());
+    }
+    let parent = path.parent().ok_or_else(|| "invalid path: no parent".to_string())?;
+    let abs_parent = std::fs::canonicalize(parent).map_err(|e| e.to_string())?;
+    let abs_allowed = std::fs::canonicalize(allowed_dir).map_err(|e| e.to_string())?;
+    if !abs_parent.starts_with(&abs_allowed) {
+        return Err("path outside allowed dir".into());
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -116,7 +130,7 @@ fn remove_backup_file(app: tauri::AppHandle, name: String) -> Result<(), String>
 }
 
 #[tauri::command]
-fn read_text_file_os(path: String) -> Result<String, String> {
+fn read_text_file_os(path: String, allowed_dir: String) -> Result<String, String> {
     // 扩展名白名单：与写侧对齐；本命令唯一用途是读取备份文件，
     // 限定 .totpbackup 防止被前端 XSS 当作任意文件读取原语
     if !path.ends_with(".totpbackup") {
@@ -126,11 +140,16 @@ fn read_text_file_os(path: String) -> Result<String, String> {
     if !p.is_file() {
         return Err("not a file".into());
     }
+    ensure_within(p, &allowed_dir)?;
     std::fs::read_to_string(p).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn write_text_file_os(path: String, contents: String) -> Result<(), String> {
+fn write_text_file_os(
+    path: String,
+    contents: String,
+    allowed_dir: String,
+) -> Result<(), String> {
     if path.is_empty() {
         return Err("empty path".into());
     }
@@ -139,18 +158,20 @@ fn write_text_file_os(path: String, contents: String) -> Result<(), String> {
     if !path.ends_with(".totpbackup") {
         return Err("invalid backup file extension".into());
     }
-    if std::path::Path::new(&path).is_dir() {
+    let p = std::path::Path::new(&path);
+    if p.is_dir() {
         return Err("path is a directory".into());
     }
+    ensure_within(p, &allowed_dir)?;
     std::fs::write(path, contents).map_err(|e| e.to_string())
 }
 
 // ---------- 导入文件命令 ----------
-// 与 read_text_file_os 同构：信任边界一致（路径由前端系统对话框产生，仅做基本防护），
+// 与 read_text_file_os 同构：信任边界一致（路径由前端系统对话框产生，且须落在传入 allowed_dir 内），
 // 扩展名白名单限定导入用途，防止被前端 XSS 当作任意文件读取原语。
 
 #[tauri::command]
-fn read_import_file_os(path: String) -> Result<String, String> {
+fn read_import_file_os(path: String, allowed_dir: String) -> Result<String, String> {
     // WinAuth(.wauth/.xml)、Aegis(.json/.aegis)、纯文本 URI 批量(.txt)
     const IMPORT_EXTENSIONS: [&str; 5] = [".json", ".wauth", ".xml", ".txt", ".aegis"];
     let lower = path.to_lowercase();
@@ -161,13 +182,14 @@ fn read_import_file_os(path: String) -> Result<String, String> {
     if !p.is_file() {
         return Err("not a file".into());
     }
+    ensure_within(p, &allowed_dir)?;
     std::fs::read_to_string(p).map_err(|e| e.to_string())
 }
 
 // 导入文件字节读取（SQLite 等二进制格式，ImportCard 字节入口）：与 read_import_file_os 同构，
 // 白名单在其基础上加 .db/.sqlitedb/.sqlite；返回原始字节（invoke JSON 数组），不经 UTF-8 文本管道
 #[tauri::command]
-fn read_import_file_bytes_os(path: String) -> Result<Vec<u8>, String> {
+fn read_import_file_bytes_os(path: String, allowed_dir: String) -> Result<Vec<u8>, String> {
     const IMPORT_BYTE_EXTENSIONS: [&str; 8] =
         [".json", ".wauth", ".xml", ".txt", ".aegis", ".db", ".sqlitedb", ".sqlite"];
     let lower = path.to_lowercase();
@@ -178,6 +200,7 @@ fn read_import_file_bytes_os(path: String) -> Result<Vec<u8>, String> {
     if !p.is_file() {
         return Err("not a file".into());
     }
+    ensure_within(p, &allowed_dir)?;
     std::fs::read(p).map_err(|e| e.to_string())
 }
 
