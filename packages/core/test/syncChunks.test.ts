@@ -73,6 +73,15 @@ describe('splitIntoChunks', () => {
       expect(c.data.length).toBeLessThanOrEqual(8192 - 90) // 90 字节预留 JSON 包装（含大 rev/updatedAt）
     }
   })
+  it('JSON.stringify 后整片长度 ≤ 8192-50（含包装），严格断言 chrome.storage.sync 单键配额', () => {
+    // 极限 payload：拉满每片到接近边界，且用大 rev/updatedAt 让包装体积达上限
+    const chunks = splitIntoChunks('y'.repeat(100_000), 1_000_000_000, 1_700_000_000_000)
+    expect(chunks.length).toBeGreaterThan(1)
+    for (const c of chunks) {
+      const json = JSON.stringify(c)
+      expect(json.length).toBeLessThanOrEqual(8192 - 50)
+    }
+  })
 })
 
 describe('mergeChunks', () => {
