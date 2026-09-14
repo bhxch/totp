@@ -185,4 +185,24 @@ describe('unlockWithPrf', () => {
     expect(await unlockWithPrf(s2, prfOutputA, { credentialId: 'cred-a' })).toEqual(dek)
     await expect(unlockWithPrf(s2, prfOutputA, { credentialId: 'cred-b' })).rejects.toThrow('passkey 解锁失败')
   })
+  it('C1：prfOutput 不足 32B → 直接抛错，不静默忽略', async () => {
+    const { security } = await setupVaultEncryption('{"v":1}', 'p')
+    await expect(unlockWithPrf(security, randomBytes(16))).rejects.toThrow('invalid prf output')
+  })
+  it('C1：wrappedDekP 解密得到非 32B 数据 → 抛长度错误，不静默返回', async () => {
+    // 用 16B KEK + 16B 密文（< 16B 是 GCM tag 失败，但更短密文+nonce 可能解密成短数据；
+    // 这里改用「直接手工写 wrappedDekP 为空密文让 AES-GCM 解出空串」
+    const { security } = await setupVaultEncryption('{"v":1}', 'p')
+    // 手工构造 wrappedDekP = base64(nonce(12B) ‖ AES-GCM(KEK, ""))——KEK=prfOutput前32B
+    const prfOutput = randomBytes(64)
+    const kek = prfOutput.subarray(0, 32)
+    const nonce = randomBytes(12)
+    const ct = await aesGcmEncrypt(kek, new Uint8Array(0), nonce) // 空串密文，tag 16B
+    const blob = new Uint8Array(12 + ct.length)
+    blob.set(nonce, 0)
+    blob.set(ct, 12)
+    const wrapped = bytesToBase64(blob)
+    const s2 = withPrfSource(security, 'cred-1', 'c2FsdA==', wrapped)
+    await expect(unlockWithPrf(s2, prfOutput, { credentialId: 'cred-1' })).rejects.toThrow('invalid DEK length from PRF unwrap')
+  })
 })

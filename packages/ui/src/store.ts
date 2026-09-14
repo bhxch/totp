@@ -313,6 +313,8 @@ export function createVueStore(
   async function unlockWithDek(key: Uint8Array): Promise<void> {
     if (!security.value) security.value = await readSecurity()
     if (!security.value) throw new Error('encryption not enabled')
+    // C1：调用方应保证 DEK 长度 32B；core unlockWithPrf 已加校验，此处再校验一次防 caller 跳过 core 直接注入
+    if (key.length !== 32) throw new Error('invalid DEK length from PRF unwrap')
     await applyDekAndUnlock(key)
   }
 

@@ -67,6 +67,7 @@ export async function unlockWithPrf(
   prfOutput: Uint8Array,
   match?: { credentialId?: string },
 ): Promise<Uint8Array> {
+  if (prfOutput.length < 32) throw new Error('invalid prf output')
   const sources = kekSourcesOf(s).filter(
     (src): src is PrfSource =>
       src.kind === 'prf' && (match?.credentialId === undefined || src.credentialId === match.credentialId),
@@ -75,8 +76,13 @@ export async function unlockWithPrf(
     try {
       const blob = base64ToBytes(src.wrappedDekP)
       const dek = await aesGcmDecrypt(prfOutput.subarray(0, 32), blob.subarray(12), blob.subarray(0, 12))
-      if (dek.length === 32) return dek
-    } catch {
+      // C1：明示拒绝长度非 32B 的解密结果——wrappedDekP 可被构造产生可控 32B 假明文，
+      // 静默返回会让 addPrfSourceOp 后续把伪 DEK 当真 DEK 用，引发幽灵加密
+      if (dek.length !== 32) throw new Error('invalid DEK length from PRF unwrap')
+      return dek
+    } catch (e) {
+      // 区分「长度校验失败」(C1 真实数据错误) 与「解密失败」(尝试下一 prf 来源)
+      if (e instanceof Error && e.message === 'invalid DEK length from PRF unwrap') throw e
       // 尝试下一 prf 来源
     }
   }
