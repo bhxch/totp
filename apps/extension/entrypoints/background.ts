@@ -26,6 +26,39 @@ async function ensureOffscreenDocument(): Promise<void> {
   }
 }
 
+/**
+ * 发送 clear-clipboard 并等待 offscreen 回执：原实现裸发 sendMessage 后即返回，
+ * SW 冷启动 / offscreen 未就绪时消息丢失，30s 清空承诺静默失效。
+ * 3 次重试 + 每次 1s 超时，每次先 ensureOffscreen 再发，避免「文档存在但 listener 未挂上」竞态。
+ */
+async function clearClipboardWithRetry(): Promise<void> {
+  for (let i = 0; i < 3; i++) {
+    try {
+      await ensureOffscreenDocument()
+    } catch {
+      // createDocument 失败（无 offscreen 权限等）：放弃本次
+      return
+    }
+    const ok = await new Promise<boolean>((resolve) => {
+      let settled = false
+      const finish = (v: boolean): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(t)
+        chrome.runtime.onMessage.removeListener(listener)
+        resolve(v)
+      }
+      const t = setTimeout(() => finish(false), 1000)
+      const listener = (m: { type?: string }): void => {
+        if (m?.type === 'clear-clipboard-ack') finish(true)
+      }
+      chrome.runtime.onMessage.addListener(listener)
+      chrome.runtime.sendMessage({ type: 'clear-clipboard' }).catch(() => finish(false))
+    })
+    if (ok) return
+  }
+}
+
 export default defineBackground(() => {
   // C11：右键菜单在 SW 每次启动时注册，幂等：create 同 id 会抛错（lastError），吞掉即视为成功。
   // 原 onInstalled 注册在浏览器 SW 已被本扩展事件唤醒的场景下不触发，导致菜单偶发缺失。
@@ -86,9 +119,7 @@ export default defineBackground(() => {
   })
   chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name !== CLIPBOARD_CLEAR_ALARM) return
-    void ensureOffscreenDocument()
-      .then(() => chrome.runtime.sendMessage({ type: 'clear-clipboard' }))
-      .catch(() => {}) // offscreen 消息无人应答等场景不打扰
+    void clearClipboardWithRetry()
   })
   // 浏览器同步：sync 区任一键变化（本端 push 或他端经 Chrome 账号同步落库）→ 尝试拉取更新
   chrome.storage.onChanged.addListener((_changes, area) => {
