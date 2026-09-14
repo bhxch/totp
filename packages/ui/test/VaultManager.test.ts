@@ -42,6 +42,24 @@ describe('VaultManager', () => {
   })
 })
 
+describe('VaultManager I49 搜 secret 开关', () => {
+  it('默认关闭：搜密钥片段不命中（issuer/label 不含密钥）；开启后命中', async () => {
+    const s = await readyStore() // 条目 issuer=GitHub, secret=JBSWY3DPEHPK3PXP
+    const w = mount(VaultManager, { props: { store: s } })
+    await vi.waitFor(() => expect(w.text()).toContain('GitHub'))
+    const input = w.find('input[type="search"]')
+    await input.setValue('JBSWY') // 密钥片段
+    // 默认 searchSecret=false → 不显示
+    expect(w.text()).not.toContain('GitHub')
+    // 开启后
+    await w.find('input.secret-toggle-input').setValue(true)
+    expect(w.text()).toContain('GitHub')
+    // 关掉
+    await w.find('input.secret-toggle-input').setValue(false)
+    expect(w.text()).not.toContain('GitHub')
+  })
+})
+
 describe('VaultManager reveal / 右键菜单 / pinned（C16）', () => {
   /** 准备含 2 条条目的 store（a/b） */
   async function storeWithTwo(): Promise<ReturnType<typeof createVueStore>> {

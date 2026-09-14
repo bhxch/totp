@@ -40,6 +40,8 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ copy: [code: string] }>()
 
 const query = ref('')
+/** I49：搜 secret 开关（默认关闭，开启后过滤会包含 secret 串匹配；用户主动启用避免密钥常驻列表） */
+const searchSecret = ref(false)
 const editing = ref<OtpEntry | null>(null)
 const creating = ref(false)
 const confirmingDelete = ref<string | null>(null)
@@ -74,7 +76,14 @@ const entryIcons = computed(() => ({ builtin: getBuiltinIcons(), stored: props.i
 const visible = computed(() => {
   const q = query.value.trim().toLowerCase()
   if (!q) return sorted.value
-  return sorted.value.filter((e) => `${e.issuer} ${e.label} ${e.note ?? ''}`.toLowerCase().includes(q))
+  // I49：仅在用户主动开启时纳入 secret 匹配；secret 已规范为大写无空白，对输入串做同样归一化
+  const qNorm = q.replace(/\s+/g, '')
+  return sorted.value.filter((e) => {
+    const base = `${e.issuer} ${e.label} ${e.note ?? ''}`.toLowerCase().includes(q)
+    if (base) return true
+    if (searchSecret.value) return e.secret.replace(/\s+/g, '').toLowerCase().includes(qNorm)
+    return false
+  })
 })
 
 async function onSave(data: EntryFormData) {
@@ -199,7 +208,7 @@ async function contextTogglePin(entry: OtpEntry) {
       条目（{{ store.vault.entries.length }}）
       <button @click="creating = true; editing = null">＋ 添加</button>
     </h2>
-    <SearchBar v-model="query" />
+    <SearchBar v-model="query" v-model:search-secret="searchSecret" />
     <EntryForm v-if="creating || editing" :key="editing?.uuid ?? 'new'" :initial="editing" :groups="store.vault.groups" :icons="entryIcons" :icon-store="icons ?? undefined" @save="onSave" @cancel="creating = false; editing = null" />
     <div v-if="sorted.length === 0" class="empty">暂无条目，点击「＋ 添加」录入。</div>
     <div v-else-if="visible.length === 0" class="empty">无匹配条目</div>
