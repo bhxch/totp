@@ -1,4 +1,5 @@
 import { parseOtpUri } from '@totp/core'
+import { PENDING_OTPAUTH_KEY } from '../src/pendingOtpauth'
 import { pullSyncIfNewer, pushSync } from '../src/syncEngine'
 
 /** 清剪贴板 alarm 名（chrome.alarms 同名 create 即覆盖 = 重复复制重置计时） */
@@ -11,8 +12,6 @@ const DEFAULT_CLEAR_DELAY_MS = 30_000
 const SYNC_PUSH_MERGE_MS = 1_000
 /** 右键菜单 id：把选中的 otpauth 链接导入为条目 */
 const OTPAUTH_MENU_ID = 'otpauth-add'
-/** 右键菜单导入中转键：background 写入完整 URI，popup onMounted 读取即清除 */
-const PENDING_OTPAUTH_KEY = 'pendingOtpauth'
 
 /** 确保 offscreen document 存在：每扩展仅允许一个，重复 createDocument 会抛错，捕获即「已存在」 */
 async function ensureOffscreenDocument(): Promise<void> {

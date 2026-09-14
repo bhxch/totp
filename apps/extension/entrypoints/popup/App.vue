@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { entryMatchesUrl, getBuiltinIcons, type OtpEntry } from '@totp/core'
-import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, OtpListItem, parseUriToEntryData, SearchBar, useOtpCodes, type EntryFormData } from '@totp/ui'
+import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, normalizeExtOtpauth, OtpListItem, parseUriToEntryData, SearchBar, useOtpCodes, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
+import { PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
 import { storageAdapter } from '../../src/store'
 import {
   addEntryOp, commitSettings, initStore, locked, registerStorageSync, removeEntryOp, settings, store, updateEntryOp, vault,
@@ -98,14 +99,13 @@ async function consumePendingOtpauth(): Promise<void> {
   } catch { /* 无 location 场景忽略 */ }
   if (!uri) {
     try {
-      const got = await chrome.storage.local.get('pendingOtpauth')
-      uri = typeof got['pendingOtpauth'] === 'string' ? got['pendingOtpauth'].trim() : ''
-      if (uri) await chrome.storage.local.remove('pendingOtpauth')
+      const got = await chrome.storage.local.get(PENDING_OTPAUTH_KEY)
+      uri = typeof got[PENDING_OTPAUTH_KEY] === 'string' ? got[PENDING_OTPAUTH_KEY].trim() : ''
+      if (uri) await chrome.storage.local.remove(PENDING_OTPAUTH_KEY)
     } catch { /* 扩展上下文不可用（如纯浏览器调试）忽略 */ }
   }
   if (!uri) return
-  // Firefox 注册的是 ext+otpauth scheme（裸 otpauth 被 schema 拒绝）：回调 URI 还原为 otpauth://
-  const err = applyOtpauthPrefill(uri.replace(/^ext\+otpauth:/i, 'otpauth://'))
+  const err = applyOtpauthPrefill(normalizeExtOtpauth(uri))
   if (err) importError.value = err
 }
 

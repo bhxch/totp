@@ -32,3 +32,12 @@ export function parseUriToEntryData(uri: string): ParseUriResult {
     return { error: '不是有效的 otpauth 链接' }
   }
 }
+
+/**
+ * Firefox protocol_handlers 注册的 ext+otpauth scheme（裸 otpauth 被 Firefox schema 白名单硬校验拒绝）
+ * → 还原为 otpauth://。可选吃掉回调里的 `//`（ext+otpauth://… 常见 href 写法），
+ * 避免还原出 otpauth:////…（host 空）被 parseOtpUri 拒绝。
+ */
+export function normalizeExtOtpauth(uri: string): string {
+  return uri.replace(/^ext\+otpauth:(?:\/\/)?/i, 'otpauth://')
+}
