@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { entryMatchesUrl, getBuiltinIcons, type OtpEntry } from '@totp/core'
-import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, OtpListItem, SearchBar, useOtpCodes, type EntryFormData } from '@totp/ui'
+import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, OtpListItem, parseUriToEntryData, SearchBar, useOtpCodes, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
 import { storageAdapter } from '../../src/store'
 import {
@@ -59,6 +59,41 @@ const creating = ref(false)
 const confirmingDelete = ref<string | null>(null)
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
 
+// ---------- otpauth URI 粘贴导入 ----------
+const otpauthUri = ref('')
+const importError = ref('')
+/** 导入预填对象（OtpEntry 形状，uuid/order/createdAt 为哑值）；与 editing 并存时导入预填优先 */
+const prefill = ref<OtpEntry | null>(null)
+/** 每次导入自增，驱动 EntryForm 重挂载以刷新预填 */
+const formKey = ref(0)
+
+function importOtpauth() {
+  importError.value = ''
+  const r = parseUriToEntryData(otpauthUri.value.trim())
+  if ('error' in r) {
+    importError.value = r.error
+    return
+  }
+  editing.value = null
+  prefill.value = r.data
+  creating.value = true
+  formKey.value++
+  otpauthUri.value = ''
+}
+
+function startCreate() {
+  editing.value = null
+  prefill.value = null
+  creating.value = true
+}
+
+function closeForm() {
+  editing.value = null
+  creating.value = false
+  prefill.value = null
+  importError.value = ''
+}
+
 async function onSave(data: EntryFormData) {
   if (editing.value) {
     // type 变更时重算 digits（steam→其他保持 5 会显示错位数）；type 未变则不带，保留原值
@@ -66,9 +101,20 @@ async function onSave(data: EntryFormData) {
     if (data.type !== editing.value.type) patch.digits = data.type === 'steam' ? 5 : 6
     await updateEntryOp(editing.value.uuid, patch)
   } else {
-    await addEntryOp({ ...data, uuid: crypto.randomUUID(), algorithm: 'SHA1', digits: data.type === 'steam' ? 5 : 6, period: 30, order: 0, createdAt: Date.now() })
+    // URI 导入预填：表单内未改 type 时携带 URI 中的 algorithm/digits/period/counter
+    const carried = prefill.value?.type === data.type ? prefill.value : null
+    await addEntryOp({
+      ...data,
+      uuid: crypto.randomUUID(),
+      algorithm: carried?.algorithm ?? 'SHA1',
+      digits: carried?.digits ?? (data.type === 'steam' ? 5 : 6),
+      period: carried?.period ?? 30,
+      ...(carried?.type === 'hotp' ? { counter: carried.counter ?? 0 } : {}),
+      order: 0,
+      createdAt: Date.now(),
+    })
   }
-  editing.value = null; creating.value = false
+  closeForm()
 }
 function askRemove(uuid: string) {
   if (confirmingDelete.value === uuid) { void removeEntryOp(uuid); confirmingDelete.value = null; return }
@@ -108,7 +154,7 @@ async function copy(entry: OtpEntry) {
   <main v-else>
     <header>
       <h1>TOTP 验证码</h1>
-      <button v-if="!creating && !editing" @click="creating = true; editing = null">＋ 添加</button>
+      <button v-if="!creating && !editing" @click="startCreate">＋ 添加</button>
     </header>
 
     <div v-if="copied" class="copied-banner">已复制到剪贴板</div>
@@ -122,7 +168,16 @@ async function copy(entry: OtpEntry) {
       <span v-else-if="filterOn" class="hint">匹配 {{ matched.length }} 条</span>
     </div>
 
-    <EntryForm v-if="creating || editing" :key="editing?.uuid ?? 'new'" :initial="editing" :groups="vault.groups" :icons="entryIcons" :icon-store="icons" @save="onSave" @cancel="editing = null; creating = false" />
+    <details class="otpauth-import">
+      <summary>粘贴 otpauth 链接导入</summary>
+      <textarea v-model="otpauthUri" rows="2" placeholder="otpauth://totp/GitHub:me?secret=..." />
+      <div class="import-row">
+        <button type="button" @click="importOtpauth">导入</button>
+      </div>
+      <div v-if="importError" class="error">{{ importError }}</div>
+    </details>
+
+    <EntryForm v-if="creating || editing" :key="editing?.uuid ?? (prefill ? `prefill-${formKey}` : 'new')" :initial="editing ?? prefill" :groups="vault.groups" :icons="entryIcons" :icon-store="icons" @save="onSave" @cancel="closeForm" />
 
     <div v-if="loaded && sorted.length === 0" class="empty">暂无条目，点击右上角「＋ 添加」录入。</div>
     <div v-else-if="loaded && visible.length === 0" class="empty">无匹配结果</div>
@@ -149,6 +204,10 @@ h1 { font-size: 16px; margin: 0; }
 .error { color: #d9534f; font-size: 12px; }
 .copied-banner { font-size: 12px; color: #2e7d32; background: #e8f5e9; border-radius: 6px; padding: 4px 8px; margin: 0 4px; }
 .filter-row { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 0 4px; }
+.otpauth-import { font-size: 13px; padding: 0 4px; }
+.otpauth-import summary { cursor: pointer; opacity: .8; }
+.otpauth-import textarea { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 6px 8px; font-family: inherit; resize: vertical; }
+.otpauth-import .import-row { display: flex; justify-content: flex-end; margin-top: 4px; }
 .hint { opacity: .6; }
 .empty { text-align: center; opacity: .6; padding: 32px 0; }
 .item-wrap { position: relative; }
