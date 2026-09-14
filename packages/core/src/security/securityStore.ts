@@ -68,12 +68,12 @@ export function isSecuritySettings(x: unknown): x is SecuritySettings {
 export async function setupVaultEncryption(
   vaultJson: string,
   password: string,
-  params?: { m?: number; t?: number; p?: number },
+  // 故意不接受 params：KDF 写入参数统一走默认 65536/3/1，避免外部调用注入「极弱」配置绕过 argon2id 强度
+  _params?: unknown,
 ): Promise<{ security: SecuritySettings; encrypted: EncryptedVault; dek: Uint8Array }> {
-  if (params) assertKdfParams(params)
   const salt = randomBytes(16)
   const dek = randomBytes(32)
-  const kek = await deriveKek(password, salt, params)
+  const kek = await deriveKek(password, salt)
   const wrapNonce = randomBytes(12)
   const wrappedDek = await aesGcmEncrypt(kek, dek, wrapNonce)
   const security: SecuritySettings = {
@@ -81,9 +81,9 @@ export async function setupVaultEncryption(
     enabled: true,
     kdf: {
       alg: 'argon2id',
-      m: params?.m ?? 65536,
-      t: params?.t ?? 3,
-      p: params?.p ?? 1,
+      m: 65536,
+      t: 3,
+      p: 1,
       salt: bytesToBase64(salt),
     },
     wrapNonce: bytesToBase64(wrapNonce),

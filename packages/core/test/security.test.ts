@@ -20,6 +20,13 @@ describe('securityStore', () => {
     const dek2 = await unlockVaultEncryption(security, '口令123')
     expect(await decryptVaultWithDek(dek2, encrypted)).toBe(vaultJson)
   })
+  it('setupVaultEncryption 忽略外部 params 注入：永远用默认 65536/3/1，防止注入极弱 KDF', async () => {
+    // 故意注入极弱参数，期望被忽略（写入仍为默认 65536/3/1），unlock 用同参数风格不受影响
+    const { security } = await setupVaultEncryption(vaultJson, 'p', { m: 1e9, t: 1, p: 1 } as any)
+    expect(security.kdf.m).toBe(65536)
+    expect(security.kdf.t).toBe(3)
+    expect(security.kdf.p).toBe(1)
+  })
   it('口令错误报中文错误', async () => {
     const { security } = await setupVaultEncryption(vaultJson, '对')
     await expect(unlockVaultEncryption(security, '错')).rejects.toThrow('口令错误或数据已损坏')
