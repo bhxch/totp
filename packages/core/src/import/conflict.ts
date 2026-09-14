@@ -37,7 +37,9 @@ export function findConflicts(existing: OtpEntry[] | Vault, incoming: ParsedEntr
   return idx
 }
 
-// 纯函数：非冲突条目全部新增；冲突条目按策略 skip=不动 / replace=覆盖（保留 uuid/order/groupIds）/ merge=照常新增并存
+// 纯函数：非冲突条目全部新增；冲突条目按策略 skip=不动 / replace=覆盖（保留 uuid/order/groupIds/createdAt/未在 patch 中出现的字段如 note/counter）/ merge=照常新增并存
+// replace 策略仅更新导入来源明确的字段（type/issuer/label/secret/algorithm/digits/period/createdAt）；
+// counter/note 若解析结果中未提供则省略（避免静默覆盖本地 HOTP 计数或用户笔记）
 export function applyImport(v: Vault, entries: ParsedEntry[], policy: ConflictPolicy, conflictIdx: Set<number>): Vault {
   const now = Date.now()
   let out = v
@@ -55,8 +57,8 @@ export function applyImport(v: Vault, entries: ParsedEntry[], policy: ConflictPo
           algorithm: p.algorithm,
           digits: p.digits,
           period: p.period,
-          counter: p.counter,
-          note: p.note,
+          ...(p.counter !== undefined ? { counter: p.counter } : {}),
+          ...(p.note !== undefined ? { note: p.note } : {}),
           createdAt: now,
         })
         return

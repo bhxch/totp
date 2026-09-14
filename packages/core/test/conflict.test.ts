@@ -43,4 +43,31 @@ describe('applyImport', () => {
     expect(v.entries.map((e) => e.order)).toEqual([0, 1])
     expect(v.entries.every((e) => e.createdAt > 0)).toBe(true)
   })
+
+  it('replace：解析结果未提供 note/counter 时，保留现有条目上的 note/counter（HOTP 计数与用户笔记不被静默清空）', () => {
+    // 起点：HOTP 条目已有 counter=42 与 note='重要账号'
+    let v = createVault()
+    const hotpUri = 'otpauth://hotp/Api:token?secret=JBSWY3DPEHPK3PXP&counter=42'
+    v = addEntry(v, { ...newEntryFromUri(hotpUri, 0), note: '重要账号' })
+    const existing = v.entries[0]!
+    // 解析结果只有基础字段，无 counter/note
+    const incomingNoMeta: ParsedEntry[] = [
+      { type: 'hotp', issuer: 'Api', label: 'token', secret: 'JBSWY3DPEHPK3PXP', algorithm: 'SHA1', digits: 6, period: 30 },
+    ]
+    const after = applyImport(v, incomingNoMeta, 'replace', new Set([0]))
+    const updated = after.entries.find((e) => e.uuid === existing.uuid)!
+    expect(updated.counter).toBe(42) // 保留本地 HOTP 计数
+    expect(updated.note).toBe('重要账号') // 保留用户笔记
+    // 反向断言：解析结果显式带 note/counter 时仍会被采用
+    const incomingWithMeta: ParsedEntry[] = [
+      {
+        type: 'hotp', issuer: 'Api', label: 'token', secret: 'JBSWY3DPEHPK3PXP',
+        algorithm: 'SHA1', digits: 6, period: 30, counter: 99, note: '从备份恢复',
+      },
+    ]
+    const after2 = applyImport(v, incomingWithMeta, 'replace', new Set([0]))
+    const updated2 = after2.entries.find((e) => e.uuid === existing.uuid)!
+    expect(updated2.counter).toBe(99)
+    expect(updated2.note).toBe('从备份恢复')
+  })
 })
