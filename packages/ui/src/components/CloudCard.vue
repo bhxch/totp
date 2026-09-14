@@ -22,6 +22,8 @@ const f = reactive({
 })
 /** GDrive 首推自动建文件回存的 fileId（无表单字段，随凭据保存/重建） */
 const gdriveFileId = ref('')
+/** 后端探测到的 gist public 标志（true 时显示一次性警告） */
+const gistPublic = ref(false)
 
 const password = ref('')
 const busy = ref(false)
@@ -86,6 +88,7 @@ function applyCred(c: CloudCred): void {
     f.forcePathStyle = !!c.forcePathStyle
   } else if (c.backend === 'gist') {
     f.token = c.token; f.gistId = c.gistId
+    gistPublic.value = !!c.public
   } else if (c.backend === 'gdrive') {
     f.accessToken = c.accessToken; gdriveFileId.value = c.fileId ?? ''
   } else {
@@ -139,6 +142,8 @@ async function onSync(): Promise<void> {
     const backend = createCloudBackend(cred, (c) => {
       // GDrive 首推自动建文件：回存 fileId 到会话状态与持久凭据
       gdriveFileId.value = c.backend === 'gdrive' ? c.fileId ?? '' : ''
+      // Gist 后端探测到 public 变化时,刷新 UI 警示标志
+      if (c.backend === 'gist') gistPublic.value = !!c.public
       void p.saveCred(c).catch((e) => console.warn('[CloudCard] 凭据回存失败（fileId 未持久化）:', e))
     })
     const out = await syncWithCloud({
@@ -228,6 +233,7 @@ async function onConfirmAdopt(): Promise<void> {
       <input v-model.trim="f.token" type="password" placeholder="GitHub Token" autocomplete="new-password" />
       <input v-model.trim="f.gistId" placeholder="Gist ID" autocomplete="off" />
     </div>
+    <p v-if="gistPublic" class="warn" role="alert">当前 gist 为 public，备份内容会暴露在公开页，建议改为 secret gist</p>
     <div class="actions">
       <button class="save-cred" :disabled="busy" @click="onSaveCred">保存凭据</button>
       <input v-model="password" type="password" class="cloud-pw" placeholder="同步口令" autocomplete="new-password" :disabled="busy" />
@@ -255,4 +261,5 @@ h2 { font-size: 15px; margin: 0; }
 .hint { font-size: 12px; opacity: .65; margin: 0; }
 .ok { color: #2e7d32; font-size: 13px; }
 .err { color: #d9534f; font-size: 13px; }
+.warn { color: #b8860b; font-size: 13px; margin: 0; }
 </style>

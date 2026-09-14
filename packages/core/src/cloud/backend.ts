@@ -24,6 +24,8 @@ export interface GistCred {
   backend: 'gist'
   token: string
   gistId: string
+  /** 远端 gist 是否为 public；后端在 fetchGist 时探测并通过 onCredChange 回写，UI 据此给一次性提示。 */
+  public?: boolean
 }
 
 export interface S3Cred {
