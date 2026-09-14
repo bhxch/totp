@@ -55,4 +55,11 @@ describe('aesGcm', () => {
     const pt = new TextEncoder().encode('same')
     expect(await aesGcmEncrypt(key, pt, nonce)).toEqual(await aesGcmEncrypt(key, pt, nonce))
   })
+  it('密文 < 16B（缺 GCM tag）直接抛 "ciphertext too short"，不让底层 subtle 静默通过', async () => {
+    const key = randomBytes(32)
+    const nonce = randomBytes(12)
+    for (const len of [0, 1, 8, 15]) {
+      await expect(aesGcmDecrypt(key, new Uint8Array(len), nonce)).rejects.toThrow('ciphertext too short')
+    }
+  })
 })

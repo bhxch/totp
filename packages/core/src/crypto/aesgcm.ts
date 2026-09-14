@@ -49,6 +49,9 @@ export async function aesGcmEncrypt(keyBytes: Uint8Array, plaintext: Uint8Array,
 
 export async function aesGcmDecrypt(keyBytes: Uint8Array, data: Uint8Array, nonce: Uint8Array): Promise<Uint8Array> {
   if (nonce.length !== 12) throw new Error('nonce must be 12 bytes')
+  // AES-GCM 16B 认证标签：密文若不足 16B 即不可能含完整 tag，subtle 在底层可能返回不可预期结果；
+  // 显式抛错让上层统一捕获「bad password or corrupted」语义，不向调用方泄漏底层细节。
+  if (data.length < 16) throw new Error('ciphertext too short')
   const key = await importAesKey(keyBytes)
   return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: nonce as BufferSource }, key, data as BufferSource))
 }

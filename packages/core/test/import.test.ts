@@ -49,6 +49,54 @@ describe('extractGenericRows', () => {
     expect(nested.rows).toEqual([{ s: 'a' }])
     expect(extractGenericRows('{"s":"a"}\n{"s":"b"}').kind).toBe('jsonl')
   })
+
+  it('I18：metadata.tags: [] 短数组 vs entries 长数组，优先含 secret 字段的 entries', () => {
+    const text = JSON.stringify({
+      metadata: { tags: [] },
+      entries: [
+        { secret: 'JBSWY3DPEHPK3PXP', issuer: 'A' },
+        { secret: 'JBSWY3DPEHPK3PXP', issuer: 'B' },
+        { secret: 'JBSWY3DPEHPK3PXP', issuer: 'C' },
+      ],
+    })
+    const r = extractGenericRows(text)
+    expect(r.kind).toBe('jsonObjectArray')
+    expect(r.rows).toHaveLength(3)
+    expect(r.rows[0]).toMatchObject({ issuer: 'A' })
+  })
+
+  it('I18：所有数组均无 secret 字段时退而求其次取最长数组', () => {
+    const text = JSON.stringify({
+      metadata: { tags: ['t1', 't2'] },
+      notes: ['n1'],
+      items: [{ a: 1 }, { a: 2 }, { a: 3 }, { a: 4 }],
+    })
+    const r = extractGenericRows(text)
+    expect(r.rows).toHaveLength(4)
+  })
+
+  it('I18：显式 path 覆盖探测，直接按点路径取值', () => {
+    const text = JSON.stringify({
+      meta: { tags: ['t1', 't2', 't3'] },
+      data: { otps: [{ secret: 'JBSWY3DPEHPK3PXP', issuer: 'A' }] },
+    })
+    const r = extractGenericRows(text, 'data.otps')
+    expect(r.rows).toHaveLength(1)
+    expect(r.rows[0]).toMatchObject({ issuer: 'A' })
+  })
+
+  it('I19：单对象导出（{secret, issuer} 一条）→ rows=[root]，kind=jsonSingleObject', () => {
+    const r = extractGenericRows(JSON.stringify({ secret: 'JBSWY3DPEHPK3PXP', issuer: 'Solo' }))
+    expect(r.kind).toBe('jsonSingleObject')
+    expect(r.rows).toHaveLength(1)
+    expect(r.rows[0]).toMatchObject({ issuer: 'Solo' })
+  })
+
+  it('I19：单对象 + 嵌套空数组时退化为 jsonObjectArray（数组优先）', () => {
+    // 嵌套了空数组时按数组分支走（findFirstArray 找到 tags），rows 是嵌套数组
+    const r = extractGenericRows(JSON.stringify({ secret: 'JBSWY3DPEHPK3PXP', issuer: 'S', metadata: { tags: [] } }))
+    expect(r.kind).toBe('jsonObjectArray')
+  })
 })
 
 describe('mapRowToEntry/importGeneric', () => {
