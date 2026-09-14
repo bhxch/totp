@@ -41,7 +41,8 @@ describe('createVueStore', () => {
   it('registerStorageSync：非自写通知触发重读；自写窗口内跳过', async () => {
     const adapter = createMemoryStorage()
     let notify: ((p: { vault?: boolean; settings?: boolean }) => void) | null = null
-    const s = createVueStore(adapter, { registerSync: (cb) => { notify = cb } })
+    // 注入大窗口：抑制行为确定性成立（不依赖测试在 500ms 内跑完）
+    const s = createVueStore(adapter, { registerSync: (cb) => { notify = cb }, selfWriteSuppressMs: 60_000 })
     await s.initStore()
     s.registerStorageSync()
     // 对端写入
@@ -195,7 +196,8 @@ describe('createVueStore', () => {
   it('双端独立加密：本端 DEK 解不开远端密文→转锁定等远端口令，拒绝产生幽灵密文', async () => {
     const adapter = createMemoryStorage()
     let notify: ((p: { vault?: boolean; settings?: boolean }) => void) | null = null
-    const b = createVueStore(adapter, { registerSync: (cb) => { notify = cb } })
+    // 注入 0 抑制窗口：远端通知立即生效（消除对 500ms 真实窗口 + sleep 的时序依赖）
+    const b = createVueStore(adapter, { registerSync: (cb) => { notify = cb }, selfWriteSuppressMs: 0 })
     await b.initStore()
     await b.addEntryOp(newEntryFromUri('otpauth://totp/B:c?secret=JBSWY3DPEHPK3PXP', 1700000000000))
     await b.enableEncryption('pwB') // 设备 B 独立加密，持有 dekB
@@ -208,9 +210,10 @@ describe('createVueStore', () => {
     )
     await adapter.set(SECURITY_KEY, JSON.stringify(remote.security))
     await adapter.set('vault', JSON.stringify(remote.encrypted))
-    await new Promise((r) => setTimeout(r, 550)) // 越过 enableEncryption 留下的 500ms 自写抑制窗口（真实 pull 间隔远大于此）
     notify!({ vault: true })
-    await flush()
+    // 通知处理链含原生 webcrypto 异步解密（错误路径：解密失败→同步 lock），
+    // 单次 setTimeout flush 会与原生回调竞速——轮询等终态，消除最后的时序依赖
+    await vi.waitFor(() => expect(b.locked.value).toBe(true))
     // 终态与裁定一致：本端转锁定、dek 丢弃（vault 清空防残留）、security 缓存=远端
     expect(b.locked.value).toBe(true)
     expect(b.vault.entries).toHaveLength(0)

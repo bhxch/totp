@@ -14,8 +14,12 @@ export function createVueStore(
     /** 队列内写操作（commit/commitSettings/enable/disable/changePassphrase 等 op）成功后的统一回调：
      *  extension 场景用于触发浏览器同步推送调度，保证所有写路径无遗漏（desktop 不传则零行为） */
     onCommitted?: () => void
+    /** 自写抑制窗口（毫秒）：本端写盘后该时长内的 storage 通知视为自身回声不重读，默认 500。
+     *  测试注入 0（远端通知立即生效，消除真实时间依赖）或大值（确定性验证抑制行为） */
+    selfWriteSuppressMs?: number
   } = {},
 ) {
+  const suppressMs = opts.selfWriteSuppressMs ?? 500
   const vault = reactive<Vault>({ version: 1, entries: [], groups: [], updatedAt: 0 })
   const settings = reactive<AppSettings>({ ...DEFAULT_SETTINGS })
   let inited = false
@@ -160,7 +164,7 @@ export function createVueStore(
 
   function registerStorageSync(): void {
     opts.registerSync?.((payload) => {
-      if (payload.vault && Date.now() - lastSelfWrite.vault >= 500) {
+      if (payload.vault && Date.now() - lastSelfWrite.vault >= suppressMs) {
         adapter.get(VAULT_KEY)
           .then(async (raw) => {
             if (raw === null) return
@@ -194,7 +198,7 @@ export function createVueStore(
           })
           .catch(() => {})
       }
-      if (payload.settings && Date.now() - lastSelfWrite.settings >= 500) {
+      if (payload.settings && Date.now() - lastSelfWrite.settings >= suppressMs) {
         loadSettings(adapter).then((s) => Object.assign(settings, s)).catch(() => {})
       }
     })

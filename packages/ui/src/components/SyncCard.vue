@@ -64,6 +64,7 @@ const statusText = computed(() => {
 const stateClass = computed(() => (status.value ? `sync-${status.value.state}` : ''))
 
 onMounted(() => {
+  if (!props.platform) return // platform null：整卡不渲染，不建轮询
   void refreshStatus()
   pollTimer = setInterval(() => void refreshStatus(), 30_000)
 })
@@ -104,5 +105,4 @@ h2 { font-size: 15px; margin: 0; }
 .hint { font-size: 13px; opacity: .65; margin: 0; }
 .ok { color: #2e7d32; font-size: 13px; }
 .err { color: #d9534f; font-size: 13px; }
-.hint { opacity: .65; font-size: 13px; }
 </style>
