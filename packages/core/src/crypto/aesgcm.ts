@@ -7,6 +7,9 @@ export function randomBytes(n: number): Uint8Array {
 }
 
 export function bytesToBase64(b: Uint8Array): string {
+  // M3：空 bytes 短路 — btoa('') === '' 行为正确但循环 0 次是常量级无副作用；
+  // 此处显式短路仅为「让意图明显 + 避免无关 for 循环」的微小清理。
+  if (b.length === 0) return ''
   let s = ''
   for (const byte of b) s += String.fromCharCode(byte)
   return btoa(s)
