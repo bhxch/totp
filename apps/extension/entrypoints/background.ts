@@ -27,13 +27,12 @@ async function ensureOffscreenDocument(): Promise<void> {
 }
 
 export default defineBackground(() => {
-  // 右键菜单：onInstalled 创建（SW 每次冷启动重复 create 会因同 id 抛错，lastError 静默）
-  chrome.runtime.onInstalled.addListener(() => {
-    chrome.contextMenus.create(
-      { id: OTPAUTH_MENU_ID, title: '将选中的 otpauth 链接添加为条目', contexts: ['selection'] },
-      () => void chrome.runtime.lastError,
-    )
-  })
+  // C11：右键菜单在 SW 每次启动时注册，幂等：create 同 id 会抛错（lastError），吞掉即视为成功。
+  // 原 onInstalled 注册在浏览器 SW 已被本扩展事件唤醒的场景下不触发，导致菜单偶发缺失。
+  chrome.contextMenus.create(
+    { id: OTPAUTH_MENU_ID, title: '将选中的 otpauth 链接添加为条目', contexts: ['selection'] },
+    () => void chrome.runtime.lastError,
+  )
   // 点击：selectionText 双重校验（前缀 + parseOtpUri）后写入 pendingOtpauth 并尝试打开 popup
   chrome.contextMenus.onClicked.addListener((info) => {
     if (info.menuItemId !== OTPAUTH_MENU_ID) return
