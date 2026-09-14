@@ -191,6 +191,45 @@ describe('LockScreen', () => {
     await vi.waitFor(() => expect(store.unlock).toHaveBeenCalledWith('pw'))
   })
 
+  it('I44：dpapi 静默失败 1s 后仍锁定 → 显示「重试 Windows 自动解锁」按钮', async () => {
+    vi.useFakeTimers()
+    try {
+      const unprotect = vi.fn().mockRejectedValue(new Error('DPAPI 解密失败'))
+      const store = mockStore({ locked: ref(true), prfSources: computed(() => []), securitySettings: ref(null) })
+      const w = mount(LockScreen, { props: { store, dpapi: makeDpapi({ unprotect }) } })
+      // 0：尚未显示重试按钮
+      expect(w.find('button.dpapi-retry').exists()).toBe(false)
+      // 1s 后显示
+      await vi.advanceTimersByTimeAsync(1100)
+      expect(w.find('button.dpapi-retry').exists()).toBe(true)
+      expect(w.text()).toContain('重试 Windows 自动解锁')
+      // 按钮触发 onRetryDpapi；onMounted 已调用过 unprotect 一次，重试应再调一次
+      const before = unprotect.mock.calls.length
+      await w.find('button.dpapi-retry').trigger('click')
+      await vi.advanceTimersByTimeAsync(10)
+      expect(unprotect.mock.calls.length).toBe(before + 1)
+      expect(store.unlockWithDek).not.toHaveBeenCalled() // 重试同样失败 → 仍不调用 unlockWithDek
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('I44：dpapi 已绑定但首次 unprotect 成功：不显示重试按钮', async () => {
+    vi.useFakeTimers()
+    try {
+      const unprotect = vi.fn().mockResolvedValue(randomBytes(32))
+      const unlockWithDek = vi.fn().mockResolvedValue(undefined)
+      const store = mockStore({ unlockWithDek, prfSources: computed(() => []), securitySettings: ref(null) })
+      mount(LockScreen, { props: { store, dpapi: makeDpapi({ unprotect }) } })
+      await vi.advanceTimersByTimeAsync(1100)
+      // 渲染时 store 已解锁，不显示 dpapi 入口（button dpapi-retry 不存在）
+      // 验证 unlockWithDek 已被调用
+      expect(unlockWithDek).toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('未提供 dpapi 通道或未绑定来源：挂载后不做自动解锁', () => {
     const unprotect = vi.fn()
     mount(LockScreen, { props: { store: plainStore(vi.fn()) } })

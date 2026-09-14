@@ -44,9 +44,32 @@ onMounted(() => {
   ops.unprotect(src.wrappedDekD)
     .then((dek) => props.store.unlockWithDek(dek).then(() => emit('unlocked')))
     .catch(() => {
-      // 静默：DPAPI 解不开属预期场景（换机/换用户），不提示、不打断手动解锁
+      // I44：DPAPI 静默失败属预期（换机/换用户），不打断手动解锁路径；
+      // 但若用户停留在锁定页超 1s 未操作，暴露「重试」入口（部分环境首次解包有竞争/偶发失败）
+      setTimeout(() => {
+        if (props.store.locked.value) dpapiFailed.value = true
+      }, 1000)
     })
 })
+
+/** I44：DPAPI 静默失败且本端仍处于锁定态 → 显示「重试」按钮，避免误以为可解锁但无入口 */
+const dpapiFailed = ref(false)
+const dpapiRetrying = ref(false)
+async function onRetryDpapi(): Promise<void> {
+  const ops = props.dpapi
+  const src = ops?.source.value
+  if (!ops || !src) return
+  dpapiRetrying.value = true
+  try {
+    const dek = await ops.unprotect(src.wrappedDekD)
+    await props.store.unlockWithDek(dek)
+    emit('unlocked')
+  } catch {
+    // 仍失败：保留按钮可见以便再试；不报错打断手动解锁
+  } finally {
+    dpapiRetrying.value = false
+  }
+}
 
 /** 解锁：成功清空口令与错误并 emit unlocked（父级可凭 locked 变化自行切换视图）；失败展示错误消息 */
 async function onUnlock(): Promise<void> {
@@ -112,6 +135,16 @@ async function onPasskeyUnlock(): Promise<void> {
       @click="onPasskeyUnlock"
     >
       使用 Passkey 解锁
+    </button>
+    <!-- I44：DPAPI 已绑定但静默解锁失败 1s 后仍锁定 → 显示重试入口 -->
+    <button
+      v-if="dpapi?.source.value && dpapiFailed"
+      type="button"
+      class="dpapi-retry"
+      :disabled="dpapiRetrying || busy"
+      @click="onRetryDpapi"
+    >
+      重试 Windows 自动解锁
     </button>
     <div v-if="msg" class="err" role="alert">{{ msg }}</div>
   </section>
