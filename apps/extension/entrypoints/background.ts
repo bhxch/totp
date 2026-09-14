@@ -1,3 +1,4 @@
+import { parseOtpUri } from '@totp/core'
 import { pullSyncIfNewer, pushSync } from '../src/syncEngine'
 
 /** 清剪贴板 alarm 名（chrome.alarms 同名 create 即覆盖 = 重复复制重置计时） */
@@ -8,6 +9,10 @@ const OFFSCREEN_URL = 'offscreen.html'
 const DEFAULT_CLEAR_DELAY_MS = 30_000
 /** sync-push 合并窗口：连写（如导入批量 commit）只触发一次推送 */
 const SYNC_PUSH_MERGE_MS = 1_000
+/** 右键菜单 id：把选中的 otpauth 链接导入为条目 */
+const OTPAUTH_MENU_ID = 'otpauth-add'
+/** 右键菜单导入中转键：background 写入完整 URI，popup onMounted 读取即清除 */
+const PENDING_OTPAUTH_KEY = 'pendingOtpauth'
 
 /** 确保 offscreen document 存在：每扩展仅允许一个，重复 createDocument 会抛错，捕获即「已存在」 */
 async function ensureOffscreenDocument(): Promise<void> {
@@ -23,6 +28,45 @@ async function ensureOffscreenDocument(): Promise<void> {
 }
 
 export default defineBackground(() => {
+  // 右键菜单：onInstalled 创建（SW 每次冷启动重复 create 会因同 id 抛错，lastError 静默）
+  chrome.runtime.onInstalled.addListener(() => {
+    chrome.contextMenus.create(
+      { id: OTPAUTH_MENU_ID, title: '将选中的 otpauth 链接添加为条目', contexts: ['selection'] },
+      () => void chrome.runtime.lastError,
+    )
+  })
+  // 点击：selectionText 双重校验（前缀 + parseOtpUri）后写入 pendingOtpauth 并尝试打开 popup
+  chrome.contextMenus.onClicked.addListener((info) => {
+    if (info.menuItemId !== OTPAUTH_MENU_ID) return
+    const text = (info.selectionText ?? '').trim()
+    let valid = false
+    if (text.startsWith('otpauth://')) {
+      try {
+        parseOtpUri(text)
+        valid = true
+      } catch { /* 落入下方提示 */ }
+    }
+    if (!valid) {
+      void chrome.notifications.create({
+        type: 'basic',
+        iconUrl: '/icon/128.png',
+        title: 'TOTP 验证码工具',
+        message: '选中文本不是有效的 otpauth 链接',
+      })
+      return
+    }
+    void chrome.storage.local
+      .set({ [PENDING_OTPAUTH_KEY]: text })
+      .then(() => {
+        // openPopup 仅部分 Chromium 版本开放（需用户手势）；不可用时静默——用户点扩展图标即见预填
+        try {
+          const result = (chrome.action as unknown as { openPopup?: () => unknown }).openPopup?.()
+          if (result instanceof Promise) void result.catch(() => {})
+        } catch { /* API 不存在/调用失败：静默降级 */ }
+      })
+      .catch(() => {}) // 写入失败极罕见，不打扰
+  })
+
   // 页面端写路径成功后立即发 {type:'sync-push'}（popup 发完即可能销毁，页面端不做 debounce）：
   // SW 内 1s 合并窗口把连写合并为一次推送；SW 被杀时消息本身会唤醒 SW 重新计时，推送不丢
   let syncPushTimer: ReturnType<typeof setTimeout> | undefined

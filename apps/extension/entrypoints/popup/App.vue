@@ -25,6 +25,8 @@ onMounted(async () => {
   } finally {
     loaded.value = true
   }
+  // 协议回调（?uri=）/右键菜单（pendingOtpauth）导入预填，不阻塞后续标签页 URL 读取
+  void consumePendingOtpauth()
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
     if (tab?.url?.startsWith('http')) tabUrl.value = tab.url
@@ -59,7 +61,7 @@ const creating = ref(false)
 const confirmingDelete = ref<string | null>(null)
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
 
-// ---------- otpauth URI 粘贴导入 ----------
+// ---------- otpauth URI 导入预填（粘贴框 / 协议回调 / 右键菜单共用） ----------
 const otpauthUri = ref('')
 const importError = ref('')
 /** 导入预填对象（OtpEntry 形状，uuid/order/createdAt 为哑值）；与 editing 并存时导入预填优先 */
@@ -67,18 +69,44 @@ const prefill = ref<OtpEntry | null>(null)
 /** 每次导入自增，驱动 EntryForm 重挂载以刷新预填 */
 const formKey = ref(0)
 
-function importOtpauth() {
+/** URI → 表单预填；成功返回 null（并清除既有错误提示），失败返回中文错误消息（供粘贴框与后台入口共用） */
+function applyOtpauthPrefill(uri: string): string | null {
+  const r = parseUriToEntryData(uri.trim())
+  if ('error' in r) return r.error
   importError.value = ''
-  const r = parseUriToEntryData(otpauthUri.value.trim())
-  if ('error' in r) {
-    importError.value = r.error
-    return
-  }
   editing.value = null
   prefill.value = r.data
   creating.value = true
   formKey.value++
-  otpauthUri.value = ''
+  return null
+}
+
+function importOtpauth() {
+  const err = applyOtpauthPrefill(otpauthUri.value)
+  if (err) importError.value = err
+  else otpauthUri.value = ''
+}
+
+/**
+ * 后台导入入口：popup URL 带 ?uri=（Firefox ext+otpauth 协议回调）或 local `pendingOtpauth`
+ * （Chrome 右键菜单写入，读取即清除）→ 预填；非法 URI 报错提示
+ */
+async function consumePendingOtpauth(): Promise<void> {
+  let uri = ''
+  try {
+    uri = new URLSearchParams(window.location.search).get('uri')?.trim() ?? ''
+  } catch { /* 无 location 场景忽略 */ }
+  if (!uri) {
+    try {
+      const got = await chrome.storage.local.get('pendingOtpauth')
+      uri = typeof got['pendingOtpauth'] === 'string' ? got['pendingOtpauth'].trim() : ''
+      if (uri) await chrome.storage.local.remove('pendingOtpauth')
+    } catch { /* 扩展上下文不可用（如纯浏览器调试）忽略 */ }
+  }
+  if (!uri) return
+  // Firefox 注册的是 ext+otpauth scheme（裸 otpauth 被 schema 拒绝）：回调 URI 还原为 otpauth://
+  const err = applyOtpauthPrefill(uri.replace(/^ext\+otpauth:/i, 'otpauth://'))
+  if (err) importError.value = err
 }
 
 function startCreate() {
