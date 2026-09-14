@@ -47,7 +47,7 @@ const vaultJson = computed(() => JSON.stringify(props.store.vault))
 const importPlatform = computed<ImportPlatform | null>(() => {
   const p = props.platform
   if (!p?.readImportFile) return null
-  return { readImportFile: p.readImportFile, decryptDpapi: p.decryptDpapi, store: props.store }
+  return { readImportFile: p.readImportFile, readImportFileBytes: p.readImportFileBytes, decryptDpapi: p.decryptDpapi, store: props.store }
 })
 const { codes } = useOtpCodes(sorted)
 /** EntryForm 图标数据源：builtin 全集 + store 内 stored/url dataUrl 映射 */

@@ -34,11 +34,66 @@ describe('ImportCard', () => {
     })
     expect(store.vault.entries).toHaveLength(2) // 原有 GitHub + NewServ
   })
-  it('无法识别格式显示错误', async () => {
+  it('无法识别格式：picked 页手动指定；自动下一步报错；手选 sqlite 无字节能力提示不支持', async () => {
     const store = await readyStore()
     const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text: 'hello', name: 'x' }), store } } })
     await w.find('button.import-start').trigger('click')
-    await vi.waitFor(() => expect(w.text()).toContain('无法识别'))
+    await vi.waitFor(() => expect(w.text()).toContain('手动指定'))
+    await w.find('button.import-next').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('无法识别的文件格式'))
+    await w.find('select.format-select').setValue('sqlite')
+    await w.find('button.import-next').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('当前端不支持 SQLite 导入'))
+  })
+  it('2FAS 全链路：嗅探 twoFas→直接解析→确认→落库', async () => {
+    const store = await readyStore()
+    const text = JSON.stringify({
+      schemaVersion: 4,
+      services: [{ secret: 'JBSWY3DPEHPK3PXP', name: 'TwoFasSvc', otp: { account: 'me@x.com', issuer: 'TwoFasSvc', tokenType: 'TOTP' } }],
+    })
+    const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text, name: '2fas.json' }), store } } })
+    await w.find('button.import-start').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('twoFas'))
+    await w.find('button.import-next').trigger('click') // twoFas 无映射页，直接解析
+    await vi.waitFor(() => expect(w.text()).toContain('冲突'))
+    await w.find('button.import-commit').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('成功导入 1 条'))
+    expect(store.vault.entries.some((e) => e.issuer === 'TwoFasSvc' && e.label === 'me@x.com')).toBe(true)
+    expect(store.vault.entries).toHaveLength(2) // 原有 GitHub + TwoFasSvc
+  })
+  it('手动指定格式：andOtp 嗅探下手选 generic → 映射页→落库', async () => {
+    const store = await readyStore()
+    const text = JSON.stringify([{ type: 'totp', algorithm: 'SHA1', label: 'Svc - me', secret: 'JBSWY3DPEHPK3PXP' }])
+    const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text, name: 'a.json' }), store } } })
+    await w.find('button.import-start').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('andOtp'))
+    await w.find('select.format-select').setValue('generic') // 覆盖嗅探结果
+    await w.find('button.import-next').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('字段映射'))
+    const secretInput = w.find('input[data-field="secret"]')
+    expect((secretInput.element as HTMLInputElement).value).toBe('secret') // 预填生效
+    await w.find('button.import-next').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('冲突'))
+    await w.find('button.import-commit').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('成功导入 1 条'))
+    expect(store.vault.entries.some((e) => e.label === 'Svc - me')).toBe(true) // generic 映射不拆 " - "
+  })
+  it('手动指定 sqlite：字节入口头校验失败报错（wasm 链路由 typecheck+build 验收）', async () => {
+    const store = await readyStore()
+    const w = mount(ImportCard, {
+      props: {
+        platform: {
+          readImportFile: vi.fn().mockResolvedValue({ text: 'hello', name: 'x' }),
+          readImportFileBytes: vi.fn().mockResolvedValue({ bytes: new Uint8Array([1, 2, 3]), name: 'x.db' }),
+          store,
+        },
+      },
+    })
+    await w.find('button.import-start').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('手动指定')) // 自动字节复查头不匹配 → 静默回退
+    await w.find('select.format-select').setValue('sqlite')
+    await w.find('button.import-next').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('无法识别的 SQLite 数据库'))
   })
   it('generic JSON：映射页按常见键名预填 secret 路径→确认导入成功', async () => {
     const store = await readyStore()

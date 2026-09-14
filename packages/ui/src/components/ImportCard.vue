@@ -1,22 +1,31 @@
 <script setup lang="ts">
 import {
-  applyImport, extractGenericRows, findConflicts, importAegisEncrypted, importAegisPlaintext,
-  importGeneric, importUriBatch, importWinauth, matchSchemes, normalizeSchemes, removeScheme, sniffFormat, upsertScheme,
+  SQLITE_TABLE_PROBES, applyImport, extractGenericRows, findConflicts, importAegisEncrypted,
+  importAegisPlaintext, importAndOtp, importAuthy, importBattleNet, importBitwarden, importDuo,
+  importFreeOtp, importFreeOtpLegacy, importGeneric, importProton, importStratum,
+  importTotpAuthenticator, importTwoFas, importUriBatch, importWinauth, matchSchemes,
+  normalizeSchemes, removeScheme, sniffFormat, upsertScheme,
   type ConflictPolicy, type ImportFormat, type ImportResult, type ImportScheme, type RowMapping,
 } from '@totp/core'
 import { computed, ref } from 'vue'
+import { openSqlite } from '../sqliteLoader'
 import type { VueStore } from '../store'
 import type { ImportPlatform, ImportSchemesApi } from './importPlatform'
 
 const props = defineProps<{
-  /** 平台导入能力（readImportFile + 可选 decryptDpapi + store）；null 时整卡不渲染（popup 不受影响） */
+  /** 平台导入能力（readImportFile + 可选 readImportFileBytes/decryptDpapi + store）；null 时整卡不渲染（popup 不受影响） */
   platform: ImportPlatform | null
-  /** 映射方案存取能力（宿主直读写 storage 的 SCHEMES_KEY）；缺省时映射页方案区不渲染 */
+  /** 映射方案存取能力（宿主直读写 storage 的 SCHEMES_KEY）；null 时映射页方案区不渲染 */
   schemesApi?: ImportSchemesApi | null
 }>()
 
-// 流程状态机：idle → picked →（generic→mapping / aegis 加密与 winauth→password）→ confirm → report
+// 流程状态机：idle → picked →（generic→mapping / aegis 加密与 winauth/authy→password）→ confirm → report
 type Step = 'idle' | 'picked' | 'mapping' | 'password' | 'confirm' | 'report'
+
+// 可分派格式 = sniff 全集 + 非 sniff 判定的补充入口（authy/battleNet/duo 文本、msAuth/sqlite 字节）
+type ManualFormat = ImportFormat | 'authy' | 'battleNet' | 'duo' | 'msAuth' | 'sqlite'
+// 直接解析族（其余格式分别走：generic→映射页、aegis/winauth/authy→口令页、msAuth/sqlite→字节入口）
+type DirectFormat = Exclude<ManualFormat, 'generic' | 'aegis' | 'winauth' | 'authy' | 'msAuth' | 'sqlite'>
 
 const step = ref<Step>('idle')
 const busy = ref(false)
@@ -24,19 +33,58 @@ const msg = ref('')
 const msgKind = ref<'ok' | 'err' | 'hint'>('ok')
 const fileName = ref('')
 const fileText = ref('')
-const format = ref<ImportFormat | null>(null)
+const format = ref<ManualFormat | null>(null)
+const manual = ref<'auto' | ManualFormat>('auto')
+const fileBytes = ref<Uint8Array | null>(null)
 const password = ref('')
 const passwordHint = ref('')
 const policy = ref<ConflictPolicy>('skip')
 const result = ref<ImportResult | null>(null)
 const conflicts = ref<Set<number>>(new Set())
 
-const FORMAT_LABEL: Record<ImportFormat, string> = {
+const FORMAT_LABEL: Record<ManualFormat, string> = {
   aegis: 'Aegis 备份（加密或明文）',
   winauth: 'WinAuth 配置（XML）',
   uriBatch: 'otpauth URI 批量文本',
   generic: '通用 JSON / JSONL',
+  twoFas: '2FAS 导出（JSON）',
+  bitwarden: 'Bitwarden 导出（JSON）',
+  proton: 'Proton Authenticator 导出（JSON）',
+  stratum: 'Stratum 导出（JSON）',
+  freeOtp: 'FreeOTP+ 导出（JSON）',
+  freeOtpLegacy: '旧版 FreeOTP（tokens.xml）',
+  totpAuthenticator: 'TOTP Authenticator 导出',
+  andOtp: 'andOTP 明文导出（JSON）',
+  authy: 'Authy shared_prefs（XML）',
+  battleNet: 'Battle.net shared_prefs（XML）',
+  duo: 'Duo duokit accounts（JSON）',
+  msAuth: 'Microsoft Authenticator（SQLite）',
+  sqlite: 'SQLite 数据库（表名探测）',
 }
+
+/** picked 页手动指定格式下拉（嗅探失败/误判时自选；freeOtpPlus 与 freeOtp 同 parser 不单列） */
+const MANUAL_OPTIONS: Array<{ value: ManualFormat; label: string }> = [
+  { value: 'uriBatch', label: 'otpauth URI 批量文本' },
+  { value: 'aegis', label: 'Aegis 备份（JSON）' },
+  { value: 'winauth', label: 'WinAuth（XML）' },
+  { value: 'generic', label: '通用 JSON / JSONL（字段映射）' },
+  { value: 'twoFas', label: '2FAS（JSON）' },
+  { value: 'bitwarden', label: 'Bitwarden（JSON）' },
+  { value: 'proton', label: 'Proton Authenticator（JSON）' },
+  { value: 'stratum', label: 'Stratum（JSON）' },
+  { value: 'freeOtp', label: 'FreeOTP+（JSON）' },
+  { value: 'freeOtpLegacy', label: '旧版 FreeOTP（tokens.xml）' },
+  { value: 'totpAuthenticator', label: 'TOTP Authenticator（明文/外部分享）' },
+  { value: 'andOtp', label: 'andOTP 明文导出（JSON）' },
+  { value: 'authy', label: 'Authy shared_prefs（XML）' },
+  { value: 'battleNet', label: 'Battle.net shared_prefs（XML）' },
+  { value: 'duo', label: 'Duo duokit accounts（JSON）' },
+  { value: 'msAuth', label: 'Microsoft Authenticator（SQLite）' },
+  { value: 'sqlite', label: 'SQLite 数据库（表名探测）' },
+]
+
+/** 实际生效格式：手动选择覆盖嗅探结果（auto 时用嗅探值，可能为 null=未识别） */
+const effectiveFormat = computed<ManualFormat | null>(() => (manual.value === 'auto' ? format.value : manual.value))
 
 // generic 映射页：每目标字段一个点路径输入，secret 必填；rows 取自 extractGenericRows
 type MapFieldKey = 'secret' | 'issuer' | 'label' | 'type' | 'algorithm' | 'digits' | 'period' | 'counter' | 'note'
@@ -154,6 +202,8 @@ function reset(): void {
   fileName.value = ''
   fileText.value = ''
   format.value = null
+  manual.value = 'auto'
+  fileBytes.value = null
   password.value = ''
   passwordHint.value = ''
   policy.value = 'skip'
@@ -164,27 +214,48 @@ function reset(): void {
   paths.value = emptyPaths()
 }
 
-/** 第 1 步：选文件 + 格式嗅探；取消→提示，无法识别→错误（留在 idle） */
+/** SQLite 文件头（SQLiteDatabase.HEADER_STRING，16 字节） */
+const SQLITE_MAGIC = 'SQLite format 3\u0000'
+
+function isSqliteHeader(bytes: Uint8Array): boolean {
+  if (bytes.length < SQLITE_MAGIC.length) return false
+  for (let i = 0; i < SQLITE_MAGIC.length; i++) {
+    if (bytes[i] !== SQLITE_MAGIC.charCodeAt(i)) return false
+  }
+  return true
+}
+
+/**
+ * 第 1 步：选文件 + 格式嗅探；取消→提示；文本读取失败（二进制经 UTF-8 管道报错）或嗅探失败
+ * → 字节入口自动复查 SQLite（见 importFromSqlite auto）；仍未识别 → picked 页手动指定
+ */
 async function start(): Promise<void> {
   if (busy.value || !props.platform) return
   busy.value = true
   msg.value = ''
   try {
-    const picked = await props.platform.readImportFile()
+    let picked: { text: string; name: string } | null = null
+    let readErr: unknown = null
+    try {
+      picked = await props.platform.readImportFile()
+    } catch (e) {
+      readErr = e
+    }
     if (!picked) {
-      msg.value = '已取消'
-      msgKind.value = 'hint'
-      return
+      if (readErr === null) {
+        msg.value = '已取消'
+        msgKind.value = 'hint'
+        return
+      }
+      if (await importFromSqlite(true)) return // 字节入口已接手（picked/confirm+错误已展示）
+      throw readErr
     }
     const f = sniffFormat(picked.text)
-    if (!f) {
-      msg.value = '无法识别的文件格式'
-      msgKind.value = 'err'
-      return
-    }
+    if (f === null && (await importFromSqlite(true))) return
     fileText.value = picked.text
     fileName.value = picked.name
     format.value = f
+    manual.value = 'auto'
     step.value = 'picked'
   } catch (e) {
     fail(e)
@@ -221,10 +292,82 @@ async function parseAndConfirm(
   }
 }
 
-/** 第 2 步分派：generic→映射页；aegis 加密→口令页（明文直接解析）；winauth→口令页（口令可选）；uriBatch→直接解析 */
+/** 直接解析族分派表：sniff/手动格式 → parser（async parser 交 parseAndConfirm await） */
+const TEXT_PARSERS: Record<DirectFormat, () => ImportResult | Promise<ImportResult>> = {
+  uriBatch: () => importUriBatch(fileText.value),
+  twoFas: () => importTwoFas(fileText.value),
+  bitwarden: () => importBitwarden(fileText.value),
+  proton: () => importProton(fileText.value),
+  stratum: () => importStratum(fileText.value),
+  freeOtp: () => importFreeOtp(fileText.value),
+  freeOtpLegacy: () => importFreeOtpLegacy(fileText.value),
+  totpAuthenticator: () => importTotpAuthenticator(fileText.value),
+  andOtp: () => importAndOtp(fileText.value),
+  battleNet: () => importBattleNet(fileText.value),
+  duo: () => importDuo(fileText.value),
+}
+
+/**
+ * SQLite 字节入口：读 bytes → 文件头校验 → openSqlite → sqlite_master 已知表名探测
+ * → 对应 rowsToEntries（当前仅 msAuth accounts，无口令）。auto=true（文本嗅探失败后的自动复查）：
+ * 能力缺失/取消/头不匹配静默返回 false 由调用方回退原流程；auto=false（手动指定 msAuth/sqlite）：
+ * 失败以消息展示。返回 true 表示字节入口已接手流程（picked/confirm 页或已展示错误）。
+ */
+async function importFromSqlite(auto: boolean): Promise<boolean> {
+  const readBytes = props.platform?.readImportFileBytes
+  if (!readBytes) {
+    if (!auto) fail(new Error('当前端不支持 SQLite 导入'))
+    return false
+  }
+  busy.value = true
+  msg.value = ''
+  try {
+    const picked = await readBytes()
+    if (!picked) {
+      if (!auto) {
+        msg.value = '已取消'
+        msgKind.value = 'hint'
+      }
+      return false
+    }
+    if (!isSqliteHeader(picked.bytes)) {
+      if (!auto) fail(new Error('无法识别的 SQLite 数据库（文件头不是 SQLite format 3）'))
+      return false
+    }
+    fileBytes.value = picked.bytes
+    fileName.value = picked.name
+    format.value = 'sqlite'
+    manual.value = 'auto'
+    step.value = 'picked'
+    await parseAndConfirm(async () => {
+      const db = await openSqlite(picked.bytes)
+      try {
+        const names = db.query("SELECT name FROM sqlite_master WHERE type='table'").map((r) => String(r.name))
+        const probe = SQLITE_TABLE_PROBES.find((p) => names.includes(p.table))
+        if (!probe) throw new Error('无法识别的 SQLite 数据库')
+        return probe.toEntries(db.query(`SELECT * FROM "${probe.table}"`))
+      } finally {
+        db.close()
+      }
+    })
+    return true
+  } catch (e) {
+    fail(e) // openSqlite/wasm/查询错误：已进 picked(sqlite) 页展示，不让调用方覆写流程
+    return true
+  } finally {
+    busy.value = false
+  }
+}
+
+/**
+ * 第 2 步分派：generic→映射页；aegis 加密→口令页（明文直接解析）；winauth/authy→口令页；
+ * msAuth/sqlite→字节入口；其余按分派表直接解析；未识别→报错留 picked 页
+ */
 async function nextFromPicked(): Promise<void> {
   if (busy.value) return
-  if (format.value === 'generic') {
+  const f = effectiveFormat.value
+  if (f === null) return fail(new Error('无法识别的文件格式，请在下方手动指定格式'))
+  if (f === 'generic') {
     const ex = extractGenericRows(fileText.value)
     rows.value = ex.rows
     rowsKind.value = ex.kind
@@ -237,7 +380,7 @@ async function nextFromPicked(): Promise<void> {
     step.value = 'mapping'
     return
   }
-  if (format.value === 'aegis') {
+  if (f === 'aegis') {
     let encrypted = false
     try {
       encrypted = 'header' in (JSON.parse(fileText.value) as Record<string, unknown>)
@@ -252,12 +395,21 @@ async function nextFromPicked(): Promise<void> {
     await parseAndConfirm(() => importAegisPlaintext(fileText.value))
     return
   }
-  if (format.value === 'winauth') {
+  if (f === 'winauth') {
     passwordHint.value = 'WinAuth 文件可能受口令保护：受保护时必填，未加密可留空'
     step.value = 'password'
     return
   }
-  await parseAndConfirm(() => importUriBatch(fileText.value))
+  if (f === 'authy') {
+    passwordHint.value = 'Authy 令牌可能受口令保护：加密令牌必填，明文可留空'
+    step.value = 'password'
+    return
+  }
+  if (f === 'msAuth' || f === 'sqlite') {
+    await importFromSqlite(false)
+    return
+  }
+  await parseAndConfirm(TEXT_PARSERS[f])
 }
 
 /** 当前路径输入 → RowMapping（留空字段不带，走 core 默认值）；secret 未填返回 null */
@@ -285,12 +437,16 @@ function nextFromMapping(): void {
   void parseAndConfirm(() => importGeneric(text, mapping, rowsOverride), { emptyGoesBack: true })
 }
 
-/** 口令页下一步：aegis 加密必填口令；winauth 口令可选（缺失且需要时回到本页提示） */
+/** 口令页下一步：aegis 加密必填口令；winauth/authy 口令可选（缺失且需要时结构级报错回到本页提示） */
 async function nextFromPassword(): Promise<void> {
   if (busy.value) return
   if (format.value === 'aegis') {
     if (!password.value) return fail(new Error('请输入口令'))
     await parseAndConfirm(() => importAegisEncrypted(fileText.value, password.value))
+    return
+  }
+  if (format.value === 'authy') {
+    await parseAndConfirm(() => importAuthy(fileText.value, password.value || undefined))
     return
   }
   await parseAndConfirm(
@@ -348,9 +504,13 @@ function failureLabel(f: { index: number; message: string }): string {
     </template>
 
     <template v-else-if="step === 'picked'">
-      <p class="meta">文件：{{ fileName }} · 识别格式：{{ format }}</p>
-      <p class="hint">{{ format ? FORMAT_LABEL[format] : '' }}</p>
+      <p class="meta">文件：{{ fileName }} · 识别格式：{{ format ?? '未知' }}</p>
+      <p class="hint">{{ effectiveFormat ? FORMAT_LABEL[effectiveFormat] : '无法自动识别，请在下方手动指定格式' }}</p>
       <div class="actions">
+        <select v-model="manual" class="format-select" :disabled="busy" aria-label="手动指定格式">
+          <option value="auto">自动（{{ format ?? '未识别' }}）</option>
+          <option v-for="o in MANUAL_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
+        </select>
         <button class="import-next" :disabled="busy" @click="nextFromPicked">下一步</button>
         <button :disabled="busy" @click="reset">取消</button>
       </div>
@@ -437,6 +597,7 @@ h2 { font-size: 15px; margin: 0; }
 .hint { font-size: 12px; opacity: .65; margin: 0; }
 .req { margin-left: 4px; font-size: 11px; color: #d9534f; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.actions .format-select { min-width: 0; flex: 1; max-width: 320px; }
 .map-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .map-row label { width: 90px; flex: none; }
 .map-row input { flex: 1; }

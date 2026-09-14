@@ -31,6 +31,8 @@ export interface BackupPlatform {
   replaceAllOp?(v: Vault): Promise<void>
   /** [可选] 选择并读取导入文件（desktop：dialog open + OS 白名单读取；extension：动态 input file）；用户取消返回 null（ImportCard 用） */
   readImportFile?(): Promise<{ text: string; name: string } | null>
+  /** [可选] SQLite 字节入口：读最近一次导入文件原始字节（不经文本管道），无最近选择时补弹选择器；用户取消返回 null（ImportCard 用） */
+  readImportFileBytes?(): Promise<{ bytes: Uint8Array; name: string } | null>
   /** [可选] WinAuth DPAPI 层解密（base64 密文 → UTF-8 明文），仅桌面端提供（ImportCard 用） */
   decryptDpapi?(b64: string): Promise<string>
 }
