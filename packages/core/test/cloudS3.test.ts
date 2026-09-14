@@ -264,6 +264,26 @@ describe('S3 后端（默认 AWS endpoint，virtual-host style）', () => {
     await expect(ok.get(PATH)).rejects.toThrow('S3 网络请求失败：其他错误')
     await expect(ok.get(PATH)).rejects.not.toThrow('CORS')
   })
+
+  it('M18：网络失败错误附 host+pathname，不附 query（防 token 泄漏）', async () => {
+    // 通过 cloudFetch 直接测试错误信息形态，避免依赖后端具体 URL 拼接
+    const { cloudFetch } = await import('../src/cloud/backend')
+    const url = 'https://s3.example.com/mybucket/totp-backup.totpbackup?X-Amz-Signature=secret&X-Amz-Credential=AKID'
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed') }))
+    let caught: Error | null = null
+    try {
+      await cloudFetch('S3', url)
+    } catch (e) {
+      caught = e as Error
+    }
+    expect(caught).not.toBeNull()
+    expect(caught!.message).toContain('s3.example.com')
+    expect(caught!.message).toContain('/mybucket/totp-backup.totpbackup')
+    // 关键：query string（含签名/凭据）不得出现在错误信息中
+    expect(caught!.message).not.toContain('X-Amz-Signature')
+    expect(caught!.message).not.toContain('X-Amz-Credential')
+    expect(caught!.message).not.toContain('secret')
+  })
 })
 
 describe('S3 后端（自定义 endpoint 兼容 MinIO，path-style）', () => {
