@@ -90,6 +90,16 @@ describe('SecurityCard', () => {
     await vi.waitFor(() => expect(p.security!.changePassphrase).toHaveBeenCalledWith('n1'))
   })
 
+  it('C18：解锁方式区显示"口令 默认解锁方式，不可移除"明示文案', async () => {
+    // 注入 passkey ops 让「解锁方式」区渲染；不解锁 passkey 探测以聚焦口令行
+    const passkey = { sources: computed(() => []), prfSupported: vi.fn().mockResolvedValue(true), add: vi.fn(), remove: vi.fn() }
+    const p = makePlatform({ security: makeSecurity({ hasEncryption: computed(() => true), locked: ref(false), passkey }) })
+    const w = mount(SecurityCard, { props: { platform: p } })
+    expect(w.text()).toContain('解锁方式')
+    expect(w.text()).toContain('口令')
+    expect(w.text()).toContain('默认解锁方式，不可移除')
+  })
+
   it('关闭加密：先显示明文警示，确认后才调用 disableEncryption', async () => {
     const p = makePlatform({ security: unlockedSecurity() })
     const w = mount(SecurityCard, { props: { platform: p } })

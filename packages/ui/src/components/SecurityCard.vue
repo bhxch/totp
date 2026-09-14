@@ -165,7 +165,10 @@ async function onDelayChange(e: Event): Promise<void> {
           <template v-if="passkeyOps">
             <p v-if="prfCap === false" class="hint">当前浏览器不支持 Passkey 解锁（PRF）</p>
             <template v-else>
-              <span class="method">口令</span>
+              <div class="method-row">
+                <span class="method">口令</span>
+                <span class="method-hint">默认解锁方式，不可移除</span>
+              </div>
               <ul v-if="passkeySources.length" class="passkey-list">
                 <li v-for="c in passkeySources" :key="c.credentialId">
                   <code>Passkey {{ shortId(c.credentialId) }}</code>
@@ -224,6 +227,8 @@ async function onDelayChange(e: Event): Promise<void> {
 .card { border: 1px solid rgba(128,128,128,.4); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
 h2 { font-size: 15px; margin: 0; }
 .unlock-methods h3 { font-size: 13px; margin: 0; opacity: .8; }
+.method-row { display: flex; align-items: baseline; gap: 8px; }
+.method-hint { font-size: 12px; opacity: .65; }
 .method { font-size: 13px; }
 .passkey-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .passkey-list li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
