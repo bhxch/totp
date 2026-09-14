@@ -60,6 +60,32 @@ describe('VaultManager I49 搜 secret 开关', () => {
   })
 })
 
+describe('VaultManager I64 删除分组清理 groupIds', () => {
+  it('删除分组后 entries 的 groupIds 中该分组 id 被移除', async () => {
+    const s = createVueStore(createMemoryStorage())
+    await s.initStore()
+    await s.addGroupOp('工作')
+    await s.addGroupOp('生活')
+    const gidWork = s.vault.groups[0]!.id
+    const gidLife = s.vault.groups[1]!.id
+    await s.addEntryOp(newEntryFromUri('otpauth://totp/A:a?secret=JBSWY3DPEHPK3PXP', 1))
+    await s.addEntryOp(newEntryFromUri('otpauth://totp/B:b?secret=JBSWY3DPEHPK3PXP', 2))
+    await s.updateEntryOp(s.vault.entries[0]!.uuid, { groupIds: [gidWork, gidLife] })
+    await s.updateEntryOp(s.vault.entries[1]!.uuid, { groupIds: [gidWork] })
+
+    const w = mount(VaultManager, { props: { store: s } })
+    // 删除工作分组
+    const workRow = w.findAll('.group-list li').find((li) => li.text().includes('工作'))!
+    await workRow.findAll('button.icon')[1]!.trigger('click') // 🗑 按钮
+    await vi.waitFor(() => expect(s.vault.groups.find((g) => g.id === gidWork)).toBeUndefined())
+    // 验证级联：entry A 之前含 [工作, 生活]，删除后应只剩 [生活]
+    const entryA = s.vault.entries.find((e) => e.issuer === 'A')!
+    expect(entryA.groupIds).toEqual([gidLife])
+    const entryB = s.vault.entries.find((e) => e.issuer === 'B')!
+    expect(entryB.groupIds).toEqual([])
+  })
+})
+
 describe('VaultManager reveal / 右键菜单 / pinned（C16）', () => {
   /** 准备含 2 条条目的 store（a/b） */
   async function storeWithTwo(): Promise<ReturnType<typeof createVueStore>> {
