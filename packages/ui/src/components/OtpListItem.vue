@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import type { OtpEntry } from '@totp/core'
+import { computed } from 'vue'
 
-defineProps<{
+const props = defineProps<{
   entry: OtpEntry
   code: string
   remaining: number
@@ -12,6 +13,13 @@ defineProps<{
   icon?: { html?: string; src?: string }
 }>()
 const emit = defineEmits<{ copy: []; reveal: []; context: [event: MouseEvent] }>()
+
+/** I52：圆周按 SVG 半径精确计算，避免硬编码 100.53 在改 viewBox/半径时产生视觉偏差 */
+const RING_R = 16
+const CIRCUMFERENCE = 2 * Math.PI * RING_R
+
+/** I61：环形按剩余比例绘制；外层 CSS transition: stroke-dashoffset 1s linear 实现平滑过渡（每秒一次重算 progress） */
+const dashOffset = computed(() => CIRCUMFERENCE * (1 - props.progress))
 
 function grouped(code: string): string {
   return code.length === 5 || code.length === 7 || code.length === 8 ? code : code.replace(/(\d{3})(\d+)/, '$1 $2')
@@ -55,8 +63,8 @@ function onContextMenu(e: MouseEvent): void {
         <circle cx="18" cy="18" r="16" class="ring-bg" />
         <circle
           cx="18" cy="18" r="16" class="ring-fg"
-          :stroke-dasharray="100.53"
-          :stroke-dashoffset="100.53 * (1 - progress)"
+          :stroke-dasharray="CIRCUMFERENCE"
+          :stroke-dashoffset="dashOffset"
         />
         <text x="18" y="21.5" text-anchor="middle" class="ring-text">{{ remaining }}</text>
       </svg>
@@ -81,6 +89,6 @@ function onContextMenu(e: MouseEvent): void {
 .reveal:hover { opacity: 1; }
 .ring { width: 32px; height: 32px; transform: rotate(-90deg); }
 .ring-bg { fill: none; stroke: rgba(128,128,128,.3); stroke-width: 3; }
-.ring-fg { fill: none; stroke: #4a90d9; stroke-width: 3; stroke-linecap: round; }
+.ring-fg { fill: none; stroke: #4a90d9; stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset 1s linear; }
 .ring-text { transform: rotate(90deg); transform-origin: 18px 18px; font-size: 11px; fill: currentColor; }
 </style>

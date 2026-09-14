@@ -74,3 +74,24 @@ describe('OtpListItem 揭示与右键菜单（C16）', () => {
     expect(codeEl.attributes('title')).toBe('密钥非法：invalid base32')
   })
 })
+
+describe('OtpListItem ring 几何（I52 + I61）', () => {
+  it('stroke-dasharray = 2πr（r=16），stroke-dashoffset = circumference * (1 - progress) 平滑过渡', () => {
+    const w = mount(OtpListItem, { props: { entry, code: '123456', remaining: 12, progress: 0.4 } })
+    const expectedCircumference = 2 * Math.PI * 16
+    const fg = w.find('circle.ring-fg')
+    expect(fg.exists()).toBe(true)
+    expect(fg.attributes('r')).toBe('16')
+    expect(Number(fg.attributes('stroke-dasharray'))).toBeCloseTo(expectedCircumference, 6)
+    // progress=0.4 → offset = circumference * 0.6
+    expect(Number(fg.attributes('stroke-dashoffset'))).toBeCloseTo(expectedCircumference * 0.6, 6)
+  })
+
+  it('progress 边界：0 → 全空圆（offset=full），1 → 全满圆（offset=0）', () => {
+    const empty = mount(OtpListItem, { props: { entry, code: '123456', remaining: 0, progress: 0 } })
+    const full = mount(OtpListItem, { props: { entry, code: '123456', remaining: 30, progress: 1 } })
+    const expected = 2 * Math.PI * 16
+    expect(Number(empty.find('circle.ring-fg').attributes('stroke-dashoffset'))).toBeCloseTo(expected, 6)
+    expect(Number(full.find('circle.ring-fg').attributes('stroke-dashoffset'))).toBeCloseTo(0, 6)
+  })
+})

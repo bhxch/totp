@@ -33,4 +33,17 @@ describe('useOtpCodes', () => {
     await vi.waitFor(() => expect(codes2.value.get('a')).toBeDefined())
     expect(codes2.value.get('a')!.code).not.toBe('INVALID')
   })
+
+  it('I61：progress=0..1 区间且 progress = remaining / period（HOTP 也按 period 计算）', async () => {
+    // 使用 period=10 便于断言剩余/进度比例
+    const e10: OtpEntry = { ...entry, uuid: 'p', period: 10 }
+    const { codes } = useOtpCodes(ref([e10]))
+    await vi.waitFor(() => expect(codes.value.get('p')).toBeDefined())
+    const c = codes.value.get('p')!
+    expect(c.progress).toBeGreaterThanOrEqual(0)
+    expect(c.progress).toBeLessThanOrEqual(1)
+    expect(c.progress).toBeCloseTo(c.remaining / 10, 5)
+    // 边界：新周期第一秒 remaining==period → progress=1；最后一秒 remaining==1 → progress=0.1
+    expect(c.remaining).toBeLessThanOrEqual(10)
+  })
 })
