@@ -8,7 +8,8 @@ export type ConflictPolicy = 'skip' | 'replace' | 'merge'
 const conflictKey = (issuer: string, label: string): string => `${issuer.trim().toLowerCase()}\n${label.trim().toLowerCase()}`
 
 // 由解析结果构造完整条目：uuid/order/nowMs 由调用方传入（Task 5 经 store.commit 提供）
-export function newEntryFromParsed(p: ParsedEntry, uuid: string, order: number, nowMs: number): OtpEntry {
+// order 在 addEntry 路径下被 vault 自动按 maxOrder+1 重算，可传占位 0；保留参数仅为兼容 replace 等显式 order 场景
+export function newEntryFromParsed(p: ParsedEntry, uuid: string, nowMs: number, order: number = 0): OtpEntry {
   return {
     uuid,
     type: p.type,
@@ -64,7 +65,8 @@ export function applyImport(v: Vault, entries: ParsedEntry[], policy: ConflictPo
         return
       }
     }
-    out = addEntry(out, newEntryFromParsed(p, crypto.randomUUID(), 0, now))
+    // order 由 addEntry 内部按当前 maxOrder+1 计算；冲突策略下追加新条目用占位 0 即可
+    out = addEntry(out, newEntryFromParsed(p, crypto.randomUUID(), now))
   })
   return out
 }
