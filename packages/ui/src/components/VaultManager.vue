@@ -10,10 +10,12 @@ import ImportCard from './ImportCard.vue'
 import OtpListItem from './OtpListItem.vue'
 import SearchBar from './SearchBar.vue'
 import SecurityCard from './SecurityCard.vue'
+import SyncCard from './SyncCard.vue'
 import type { BackupPlatform } from './backupPlatform'
 import type { EntryFormData } from './entryForm'
 import type { ImportPlatform, ImportSchemesApi } from './importPlatform'
 import type { SecurityPlatform } from './securityPlatform'
+import type { SyncPlatform } from './syncPlatform'
 
 const props = withDefaults(defineProps<{
   store: VueStore
@@ -23,11 +25,13 @@ const props = withDefaults(defineProps<{
   platform?: BackupPlatform | null
   /** 安全平台实现（加密开关/换口令/剪贴板等通用设置）；null/缺省不渲染安全卡（popup 零影响） */
   securityPlatform?: SecurityPlatform | null
+  /** 浏览器同步平台实现（开关/状态条）；null/缺省不渲染同步卡（desktop/popup 零影响） */
+  syncPlatform?: SyncPlatform | null
   /** 图标存储（stored/url dataUrl 源）；缺省时列表仅渲染 builtin 图标，EntryForm 不显示图标选择区 */
   icons?: IconStore | null
   /** 导入映射方案存取（直读写 storage SCHEMES_KEY）；缺省时 ImportCard 方案区不渲染 */
   schemesApi?: ImportSchemesApi | null
-}>(), { enableCopy: false, platform: null, securityPlatform: null, icons: null, schemesApi: null })
+}>(), { enableCopy: false, platform: null, securityPlatform: null, syncPlatform: null, icons: null, schemesApi: null })
 
 const emit = defineEmits<{ copy: [code: string] }>()
 
@@ -140,6 +144,7 @@ async function onCopy(entry: OtpEntry) {
   </section>
 
   <SecurityCard :platform="securityPlatform" />
+  <SyncCard :platform="syncPlatform" />
   <BackupCard :platform="platform" :vault-json="vaultJson" />
   <ImportCard :platform="importPlatform" :schemes-api="schemesApi" />
 </template>

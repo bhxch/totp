@@ -41,7 +41,8 @@ describe('createVueStore', () => {
   it('registerStorageSync：非自写通知触发重读；自写窗口内跳过', async () => {
     const adapter = createMemoryStorage()
     let notify: ((p: { vault?: boolean; settings?: boolean }) => void) | null = null
-    const s = createVueStore(adapter, { registerSync: (cb) => { notify = cb } })
+    // 注入大窗口：抑制行为确定性成立（不依赖测试在 500ms 内跑完）
+    const s = createVueStore(adapter, { registerSync: (cb) => { notify = cb }, selfWriteSuppressMs: 60_000 })
     await s.initStore()
     s.registerStorageSync()
     // 对端写入
@@ -176,6 +177,53 @@ describe('createVueStore', () => {
     await flush()
     expect(b.locked.value).toBe(true)
     expect(b.vault.entries).toHaveLength(0)
+  })
+
+  it('opts.onCommitted：队列写成功后触发，失败不触发', async () => {
+    const adapter = createMemoryStorage()
+    const onCommitted = vi.fn()
+    const s = createVueStore(adapter, { onCommitted })
+    await s.initStore()
+    await s.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    expect(onCommitted).toHaveBeenCalledTimes(1)
+    await s.commitSettings()
+    expect(onCommitted).toHaveBeenCalledTimes(2)
+    s.lock()
+    await expect(s.addEntryOp(newEntryFromUri('otpauth://totp/B:c?secret=JBSWY3DPEHPK3PXP', 1700000000000))).rejects.toThrow('vault locked')
+    expect(onCommitted).toHaveBeenCalledTimes(2) // 失败的写不触发
+  })
+
+  it('双端独立加密：本端 DEK 解不开远端密文→转锁定等远端口令，拒绝产生幽灵密文', async () => {
+    const adapter = createMemoryStorage()
+    let notify: ((p: { vault?: boolean; settings?: boolean }) => void) | null = null
+    // 注入 0 抑制窗口：远端通知立即生效（消除对 500ms 真实窗口 + sleep 的时序依赖）
+    const b = createVueStore(adapter, { registerSync: (cb) => { notify = cb }, selfWriteSuppressMs: 0 })
+    await b.initStore()
+    await b.addEntryOp(newEntryFromUri('otpauth://totp/B:c?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await b.enableEncryption('pwB') // 设备 B 独立加密，持有 dekB
+    expect(b.locked.value).toBe(false)
+    b.registerStorageSync()
+    // 模拟 background pull 落盘远端（设备 A 独立加密 pwA、rev 更高者胜）后的状态
+    const remote = await setupVaultEncryption(
+      JSON.stringify({ version: 1, entries: [{ uuid: 'a' }], groups: [], updatedAt: 7 }),
+      'pwA',
+    )
+    await adapter.set(SECURITY_KEY, JSON.stringify(remote.security))
+    await adapter.set('vault', JSON.stringify(remote.encrypted))
+    notify!({ vault: true })
+    // 通知处理链含原生 webcrypto 异步解密（错误路径：解密失败→同步 lock），
+    // 单次 setTimeout flush 会与原生回调竞速——轮询等终态，消除最后的时序依赖
+    await vi.waitFor(() => expect(b.locked.value).toBe(true))
+    // 终态与裁定一致：本端转锁定、dek 丢弃（vault 清空防残留）、security 缓存=远端
+    expect(b.locked.value).toBe(true)
+    expect(b.vault.entries).toHaveLength(0)
+    expect(b.hasEncryption.value).toBe(true)
+    // 锁定拒绝写：不会以 dekB 加密 + 远端 security 落盘（幽灵密文防线）
+    await expect(b.addEntryOp(newEntryFromUri('otpauth://totp/D:e?secret=JBSWY3DPEHPK3PXP', 1700000000000))).rejects.toThrow('vault locked')
+    // 等待输入远端口令：unlock 恢复远端数据
+    await b.unlock('pwA')
+    expect(b.locked.value).toBe(false)
+    expect(b.vault.entries).toHaveLength(1)
   })
 
   it('通知丢失时明文写防御：远端已加密而本端陈旧→拒绝写入、转锁定、密文不被覆盖', async () => {

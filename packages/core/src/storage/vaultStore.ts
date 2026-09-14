@@ -27,6 +27,8 @@ export interface AppSettings {
   clipboardClearEnabled: boolean
   /** popup「已复制」反馈后的自动关闭延迟（毫秒） */
   popupCloseDelayMs: number
+  /** 浏览器同步（chrome.storage 分片同步）总开关：默认关闭，需用户显式开启 */
+  syncEnabled: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -34,6 +36,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   blurHideEnabled: false,
   clipboardClearEnabled: true,
   popupCloseDelayMs: 2000,
+  syncEnabled: false,
 }
 
 export async function loadSettings(adapter: StorageAdapter): Promise<AppSettings> {
@@ -46,6 +49,7 @@ export async function loadSettings(adapter: StorageAdapter): Promise<AppSettings
       blurHideEnabled: typeof parsed.blurHideEnabled === 'boolean' ? parsed.blurHideEnabled : DEFAULT_SETTINGS.blurHideEnabled,
       clipboardClearEnabled: typeof parsed.clipboardClearEnabled === 'boolean' ? parsed.clipboardClearEnabled : DEFAULT_SETTINGS.clipboardClearEnabled,
       popupCloseDelayMs: typeof parsed.popupCloseDelayMs === 'number' ? parsed.popupCloseDelayMs : DEFAULT_SETTINGS.popupCloseDelayMs,
+      syncEnabled: typeof parsed.syncEnabled === 'boolean' ? parsed.syncEnabled : DEFAULT_SETTINGS.syncEnabled,
     }
   } catch {
     return { ...DEFAULT_SETTINGS }

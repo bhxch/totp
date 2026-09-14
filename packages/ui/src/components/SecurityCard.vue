@@ -102,6 +102,7 @@ async function onDelayChange(e: Event): Promise<void> {
           <button class="enable-enc" :disabled="busy" @click="onEnable">启用加密</button>
         </div>
         <p class="hint">启用后本地数据以口令加密存储，每次打开需输入口令解锁。</p>
+        <p class="hint">启用后浏览器同步的数据也将是密文。</p>
       </template>
       <!-- 已启用且解锁：换口令 + 关闭加密 -->
       <template v-else-if="!isLocked">

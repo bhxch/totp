@@ -58,6 +58,13 @@ describe('SecurityCard', () => {
     await vi.waitFor(() => expect(p.security!.enableEncryption).toHaveBeenCalledWith('a'))
   })
 
+  it('未启用：提示浏览器同步数据在启用加密后也将是密文；已启用态不显示该说明', () => {
+    const disabled = mount(SecurityCard, { props: { platform: makePlatform() } })
+    expect(disabled.text()).toContain('启用后浏览器同步的数据也将是密文')
+    const enabled = mount(SecurityCard, { props: { platform: makePlatform({ security: unlockedSecurity() }) } })
+    expect(enabled.text()).not.toContain('浏览器同步的数据也将是密文')
+  })
+
   it('已启用解锁态：渲染换口令与关闭加密按钮；换口令一致后调用 changePassphrase', async () => {
     const p = makePlatform({ security: unlockedSecurity() })
     const w = mount(SecurityCard, { props: { platform: p } })
