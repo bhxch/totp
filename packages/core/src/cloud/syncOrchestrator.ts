@@ -14,8 +14,11 @@
  *
  * uploaded 两分支均做 put 后 get 回读 sha256 比对，防止假写成功。
  *
- * envelopeJson 含义按分支：uploaded 为本次上传的 envelope JSON；in-sync 为云端原始 envelope JSON 文本；
- * downloaded / conflict-resolved 为解密后的远端 vault JSON（调用方据此覆盖本地存储）。
+ * envelopeJson 仅在 uploaded / downloaded / conflict-resolved 分支出现：
+ * - uploaded 为本次上传的 envelope JSON（密文）；
+ * - downloaded / conflict-resolved 为解密后的远端 vault JSON（明文）。
+ * in-sync 分支返回中**不包含** envelopeJson——该字段语义因密文/明文而异，
+ * 避免调用方误把 envelope JSON 当作 vault JSON 使用。如需重新拉取 envelope，调用方自行 backend.get。
  */
 import { createBackupEnvelope, openBackupEnvelope } from '../backup/envelope'
 import type { CloudBackend } from './backend'
@@ -23,6 +26,8 @@ import type { CloudBackend } from './backend'
 export interface CloudSyncOutcome {
   action: 'uploaded' | 'downloaded' | 'conflict-resolved' | 'in-sync'
   conflictBackup?: string
+  /** uploaded 为 envelope JSON（密文）；downloaded / conflict-resolved 为远端 vault JSON（明文）；in-sync 不含 */
+  envelopeJson?: string
 }
 
 export interface SyncWithCloudOpts {
@@ -63,9 +68,7 @@ async function pushLocal(
   return { action: 'uploaded', hash, envelopeJson }
 }
 
-export async function syncWithCloud(
-  opts: SyncWithCloudOpts,
-): Promise<CloudSyncOutcome & { hash: string; envelopeJson: string }> {
+export async function syncWithCloud(opts: SyncWithCloudOpts): Promise<CloudSyncOutcome & { hash: string }> {
   const { backend, path, vaultJson, password, localHash: cloudRev, onConflictBackup } = opts
 
   const remote = (await backend.exists(path)) ? await backend.get(path) : null
@@ -76,7 +79,8 @@ export async function syncWithCloud(
   const remoteHash = await sha256Hex(remote)
   const vaultHash = await sha256Hex(new TextEncoder().encode(vaultJson))
   if (remoteHash === vaultHash) {
-    return { action: 'in-sync', hash: remoteHash, envelopeJson: new TextDecoder().decode(remote) }
+    // in-sync：不返回 envelopeJson——其语义为密文/明文混用，调用方需要时应自行 backend.get
+    return { action: 'in-sync', hash: remoteHash }
   }
   // 远端未变（与 cloudRev 一致）、本地已改：本地较新，推送
   if (cloudRev !== null && remoteHash === cloudRev) {

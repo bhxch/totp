@@ -71,7 +71,7 @@ describe('syncWithCloud', () => {
     expect(backend.putCount).toBe(1)
   })
 
-  it('远端字节与本地 vault 内容一致 → in-sync（不依赖 cloudRev），不写云端', async () => {
+  it('远端字节与本地 vault 内容一致 → in-sync（不依赖 cloudRev），不写云端，且不返回 envelopeJson', async () => {
     const bytes = ENC.encode(LOCAL_VAULT)
     const backend = mockBackend(bytes)
     const out = await syncWithCloud({
@@ -83,7 +83,8 @@ describe('syncWithCloud', () => {
     })
     expect(out.action).toBe('in-sync')
     expect(out.hash).toBe(await sha256Hex(bytes))
-    expect(out.envelopeJson).toBe(LOCAL_VAULT)
+    // in-sync 不再返回 envelopeJson：其语义为密文/明文混用，调用方需要时应自行 backend.get
+    expect(out.envelopeJson).toBeUndefined()
     expect(backend.putCount).toBe(0)
   })
 

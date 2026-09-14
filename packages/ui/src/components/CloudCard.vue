@@ -152,10 +152,11 @@ async function onSync(): Promise<void> {
       msg.value = '云端已是最新'
       msgKind.value = 'ok'
     } else {
-      parseVaultJson(out.envelopeJson) // 远端内容先过恢复校验，不合格不进入确认流程
+      // downloaded / conflict-resolved：envelopeJson 为远端 vault JSON（明文）
+      parseVaultJson(out.envelopeJson!) // 远端内容先过恢复校验，不合格不进入确认流程
       pendingAction.value = out.action
       conflictName.value = out.conflictBackup ?? ''
-      pending.value = out.envelopeJson
+      pending.value = out.envelopeJson!
     }
   } catch (e) {
     fail(e)
