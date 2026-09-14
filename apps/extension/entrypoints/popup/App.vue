@@ -179,7 +179,8 @@ async function copy(entry: OtpEntry) {
   // 「已复制」反馈：横幅提示后按 popupCloseDelayMs 延迟关闭（简单实现：不重置，到点关闭）
   copied.value = true
   if (closeTimer) clearTimeout(closeTimer)
-  closeTimer = setTimeout(() => window.close(), settings.popupCloseDelayMs ?? 2000)
+  // M23：loadSettings 走 DEFAULT_SETTINGS 合并兜底（见 vaultStore.loadSettings M4），popupCloseDelayMs 必为 number
+  closeTimer = setTimeout(() => window.close(), settings.popupCloseDelayMs)
 }
 </script>
 

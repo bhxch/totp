@@ -25,6 +25,7 @@ export default defineConfig({
     ...(browser === 'firefox'
       ? {
           // 稳定 ID：Firefox 临时加载与协议处理器注册需要固定扩展身份
+          // TODO 发布前改为自有 ID（example.local 占位）— Mozilla addons 提交要求稳定 ID 不能与他人冲突
           browser_specific_settings: { gecko: { id: 'totp-tools@example.local' } },
           protocol_handlers: [
             // WXT 将 entrypoints/popup/index.html 输出为根目录 popup.html，uriTemplate 必须指向实际产物路径

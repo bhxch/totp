@@ -89,10 +89,14 @@ export default defineBackground(() => {
     void chrome.storage.local
       .set({ [PENDING_OTPAUTH_KEY]: text })
       .then(() => {
-        // openPopup 仅部分 Chromium 版本开放（需用户手势）；不可用时静默——用户点扩展图标即见预填
+        // openPopup 仅部分 Chromium 版本开放（需用户手势）；不可用时静默——用户点扩展图标即见预填。
+        // M22：直接访问 chrome.action.openPopup（现代 chrome-types 已收录），删除原 `as unknown as {...}.openPopup?.()` 类型断言。
         try {
-          const result = (chrome.action as unknown as { openPopup?: () => unknown }).openPopup?.()
-          if (result instanceof Promise) void result.catch(() => {})
+          const fn = (chrome.action as { openPopup?: () => unknown }).openPopup
+          if (fn) {
+            const result = fn.call(chrome.action)
+            if (result instanceof Promise) void result.catch(() => {})
+          }
         } catch { /* API 不存在/调用失败：静默降级 */ }
       })
       .catch(() => {}) // 写入失败极罕见，不打扰
