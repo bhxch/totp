@@ -16,7 +16,9 @@ export interface ImportResult {
   failures: Array<{ index: number; message: string }>
 }
 
-export type ImportFormat = 'aegis' | 'winauth' | 'uriBatch' | 'generic'
+// twoFas/bitwarden/proton/stratum：JSON 对象特征可可靠判定的 App 格式；
+// ente 明文导出为 otpauth URI 行，由 uriBatch 覆盖，不设独立判定
+export type ImportFormat = 'aegis' | 'winauth' | 'uriBatch' | 'generic' | 'twoFas' | 'bitwarden' | 'proton' | 'stratum'
 
 // 通用 JSON/JSONL 映射：点路径取值 + 可选 transform
 export interface FieldMap {
