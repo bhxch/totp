@@ -50,4 +50,22 @@ describe('settingsStore', () => {
     await s.set(SETTINGS_KEY, JSON.stringify({ syncEnabled: 'yes' }))
     expect((await loadSettings(s)).syncEnabled).toBe(false)
   })
+  it('M4：旧 settings JSON 缺新字段 → load 走 DEFAULT_SETTINGS 兜底', async () => {
+    // 模拟「settings 新增 syncEnabled 字段前」落盘的旧 JSON：仅含历史已知键
+    const s = createMemoryStorage()
+    await s.set(SETTINGS_KEY, JSON.stringify({
+      urlFilterEnabled: false,
+      blurHideEnabled: true,
+      clipboardClearEnabled: false,
+      popupCloseDelayMs: 5000,
+    }))
+    // 缺 syncEnabled 字段 → 解析后 merged 走 DEFAULT_SETTINGS.syncEnabled=false
+    const loaded = await loadSettings(s)
+    expect(loaded.syncEnabled).toBe(DEFAULT_SETTINGS.syncEnabled)
+    // 其余已存字段保留
+    expect(loaded.urlFilterEnabled).toBe(false)
+    expect(loaded.blurHideEnabled).toBe(true)
+    expect(loaded.clipboardClearEnabled).toBe(false)
+    expect(loaded.popupCloseDelayMs).toBe(5000)
+  })
 })
