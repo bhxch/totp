@@ -32,6 +32,7 @@ describe('importIconPackZip', () => {
     const result = await importIconPackZip(zip, icons)
     expect(result.imported).toBe(2)
     expect(result.skipped).toBe(1)
+    expect(result.skippedLarge).toBe(1)
     expect(result.names).toEqual(['github', 'google'])
     // github 能 recommend 到 builtin，但 zip 导入一律 stored id，不自动映射 builtin
     expect(icons.resolve({ kind: 'stored', id: 'github' })).toBe(toDataUrl(PNG_BYTES))
@@ -40,27 +41,50 @@ describe('importIconPackZip', () => {
     expect(icons.icons['readme.txt']).toBeUndefined()
   })
 
-  it('同名（normalize 后）后者覆盖前者并计 skipped，names 去重', async () => {
+  it('I60+I63：同名（normalize 后）按字典序后者覆盖前者；overwritten 而非 skipped', async () => {
     const icons = createIconStore(createMemoryStorage())
     await icons.init()
     const later = PNG_BYTES.slice()
     const last = later.length - 1
     later[last] = later[last]! ^ 0xff // 与前者字节不同，验证覆盖生效
-    const zip = zipSync({ 'GitHub.png': PNG_BYTES, 'github.png': later })
+    // 文件名 normalize 后都是 'github'；用路径前缀 'a/' 'z/' 控制字典序
+    const zip = zipSync({ 'a/github.png': PNG_BYTES, 'z/github.png': later })
     const result = await importIconPackZip(zip, icons)
     expect(result.imported).toBe(1)
-    expect(result.skipped).toBe(1)
+    expect(result.overwritten).toBe(1)
+    expect(result.skipped).toBe(0)
     expect(result.names).toEqual(['github'])
     expect(icons.icons['github']).toBe(toDataUrl(later))
   })
 
-  it('导入数达 max 停止，后续 png 不再写入', async () => {
+  it('I60：字典序排序后处理——同名时按字典序后者覆盖前者', async () => {
+    const icons = createIconStore(createMemoryStorage())
+    await icons.init()
+    const earlier = PNG_BYTES.slice()
+    const later = PNG_BYTES.slice()
+    earlier[0] = 0x00
+    later[0] = 0xff
+    // a.png 在前，b.png 在后 → a 后于 b 字典序前，但 normalize 后都是 'a'/'b'
+    const zip = zipSync({ 'b.png': earlier, 'a.png': later })
+    const result = await importIconPackZip(zip, icons)
+    expect(result.imported).toBe(2)
+    expect(result.overwritten).toBe(0)
+    expect(icons.icons['a']).toBe(toDataUrl(later))
+    expect(icons.icons['b']).toBe(toDataUrl(earlier))
+  })
+
+  it('I63：超过 max 上限的条目计入 skipped（不写入 store），但 imported 仍按全部唯一 id 统计', async () => {
     const icons = createIconStore(createMemoryStorage())
     await icons.init()
     const zip = zipSync({ 'a.png': PNG_BYTES, 'b.png': PNG_BYTES, 'c.png': PNG_BYTES })
     const result = await importIconPackZip(zip, icons, { max: 2 })
-    expect(result.imported).toBe(2)
-    expect(result.names).toEqual(['a', 'b'])
+    // 唯一 id 有 3 个，但 max=2 → 第三个计入 skipped
+    expect(result.imported).toBe(3)
+    expect(result.skipped).toBe(1)
+    expect(result.names).toEqual(['a', 'b', 'c'])
+    // 实际只写入前两个
+    expect(icons.icons['a']).toBeDefined()
+    expect(icons.icons['b']).toBeDefined()
     expect(icons.icons['c']).toBeUndefined()
   })
 })
