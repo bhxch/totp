@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { backupFileName, createBackupEnvelope, openBackupEnvelope, OVERWRITE_NAME, type BackupEnvelopeV1 } from '@totp/core'
-import { LockScreen, VaultManager, type BackupMode, type BackupPlatform, type SecurityPlatform } from '@totp/ui'
+import { createClipboardClearer, LockScreen, VaultManager, type BackupMode, type BackupPlatform, type SecurityPlatform } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
 import {
   changePassphrase, commitSettings, disableEncryption, enableEncryption, hasEncryption, initStore, locked,
@@ -18,8 +18,12 @@ onMounted(async () => {
   }
 })
 
+/** 30s 清剪贴板：settings.clipboardClearEnabled 开启时复制后定时清空（重复复制重置计时；setup 作用域销毁自动 dispose） */
+const clearer = createClipboardClearer(() => settings.clipboardClearEnabled, () => navigator.clipboard.writeText(''))
+
 async function copyToClipboard(code: string) {
   await navigator.clipboard.writeText(code)
+  clearer.notifyCopied()
 }
 
 // ---------- 备份平台实现 ----------

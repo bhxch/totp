@@ -74,11 +74,13 @@ async function addGroup() {
   await props.store.addGroupOp(name)
   newGroupName.value = ''
 }
-function onCopy(entry: OtpEntry) {
+async function onCopy(entry: OtpEntry) {
   if (!props.enableCopy) return
   const c = codes.value.get(entry.uuid)?.code
   if (!c) return
   emit('copy', c)
+  // HOTP：复制的是旧 counter 的码（RFC 语义），复制完成后再递增
+  if (entry.type === 'hotp') await props.store.updateEntryOp(entry.uuid, { counter: (entry.counter ?? 0) + 1 })
 }
 </script>
 
