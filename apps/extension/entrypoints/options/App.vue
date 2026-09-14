@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { backupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, OVERWRITE_NAME, SCHEMES_KEY, type BackupEnvelopeV1, type ImportScheme } from '@totp/core'
-import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, LockScreen, VaultManager, type BackupMode, type BackupPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
+import { backupFileName, conflictBackupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, OVERWRITE_NAME, SCHEMES_KEY, type BackupEnvelopeV1, type CloudCred, type ImportScheme, type Vault } from '@totp/core'
+import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, LockScreen, VaultManager, type BackupMode, type BackupPlatform, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
 import { storageAdapter } from '../../src/store'
 import { markSyncOff, SYNC_STATUS_KEY } from '../../src/syncEngine'
@@ -219,6 +219,52 @@ const backupPlatform: BackupPlatform = {
     return { bytes: new Uint8Array(await file.arrayBuffer()), name: file.name }
   },
 }
+
+/**
+ * 云同步平台实现：凭据与 cloudRev 存 local 区（cloudCred/cloudRev 键，不进浏览器同步）；
+ * 冲突副本与备份同通道 Blob 下载 conflict-{ts}.totpbackup；采用云端数据经 replaceAllOp 整体替换。
+ */
+const CLOUD_CRED_KEY = 'cloudCred'
+const CLOUD_REV_KEY = 'cloudRev'
+
+const cloudPlatform: CloudPlatform = {
+  async loadCred() {
+    try {
+      const raw = await storageAdapter.get(CLOUD_CRED_KEY)
+      return raw ? (JSON.parse(raw) as CloudCred) : null
+    } catch {
+      return null
+    }
+  },
+  async saveCred(c) {
+    await storageAdapter.set(CLOUD_CRED_KEY, JSON.stringify(c))
+  },
+  readVaultJson: () => JSON.stringify(store.vault),
+  async persistDownloaded(json) {
+    await replaceAllOp(JSON.parse(json) as Vault)
+  },
+  async saveConflictBackup(bytes) {
+    const name = conflictBackupFileName(new Date())
+    const blob = new Blob([bytes as BlobPart], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = name
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    return name
+  },
+  async loadHash() {
+    try {
+      return await storageAdapter.get(CLOUD_REV_KEY)
+    } catch {
+      return null
+    }
+  },
+  async saveHash(hash) {
+    await storageAdapter.set(CLOUD_REV_KEY, hash)
+  },
+}
 </script>
 
 <template>
@@ -227,7 +273,7 @@ const backupPlatform: BackupPlatform = {
     <LockScreen v-if="locked" :store="store" />
     <template v-else>
       <div v-if="loadError" class="error">{{ loadError }}</div>
-      <VaultManager v-else :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :sync-platform="syncPlatform" :icons="icons" :schemes-api="schemesApi" enable-copy @copy="copyToClipboard" />
+      <VaultManager v-else :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :sync-platform="syncPlatform" :cloud-platform="cloudPlatform" :icons="icons" :schemes-api="schemesApi" enable-copy @copy="copyToClipboard" />
     </template>
   </main>
 </template>
