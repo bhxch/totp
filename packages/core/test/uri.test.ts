@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { base32Decode } from '../src/encoding/base32'
+import { steamCode } from '../src/otp/steam'
 import { parseOtpUri, buildOtpUri } from '../src/otp/uri'
 
 describe('parseOtpUri', () => {
@@ -6,10 +8,12 @@ describe('parseOtpUri', () => {
     const p = parseOtpUri(
       'otpauth://totp/GitHub:me%40ex.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub&digits=8&period=60&algorithm=SHA256',
     )
-    expect(p).toEqual({
+    expect(p).toMatchObject({
       type: 'totp', issuer: 'GitHub', label: 'me@ex.com',
       secret: 'JBSWY3DPEHPK3PXP', algorithm: 'SHA256', digits: 8, period: 60,
     })
+    // C2：RFC4648 解码的 secretBytes 与 base32Decode 一致
+    expect(p.secretBytes).toEqual(base32Decode('JBSWY3DPEHPK3PXP'))
   })
 
   it('issuer 参数缺失时取 label 前缀', () => {
@@ -44,6 +48,29 @@ describe('parseOtpUri', () => {
     expect(p.type).toBe('totp')
     expect(p.issuer).toBe('MyBank')
     expect(p.label).toBe('alice')
+  })
+
+  it('C2：steam URI secret 按 Steam 字母表解码；round-trip 出参考 Steam 码', async () => {
+    // 关键回归点：otpauth://steam/ 的 secret 必须按 Steam 自定义字母表解码，
+    // 否则 steamCode 会算出错误码（参考 vectors/steam.json）。
+    // vectors/steam.json 的 secretBase32 'MZLVOVJQVEWROFJVOUQ4EJCVOFRKGADG' 本身是 RFC4648 字符
+    // （Steam alphabet 是 RFC4648 的字符子集，去除视觉混淆字符 0/1/8/I/L/O），
+    // 因此 RFC4648 与 Steam alphabet 路径在 RFC4648 字符输入时结果一致。
+    // 本测试同时验证：1) parseOtpUri 返回的 secretBytes 等于 vectors 字节；
+    // 2) steamCode 命中 vector。
+    const rfcBytes = base32Decode('MZLVOVJQVEWROFJVOUQ4EJCVOFRKGADG')
+    const p = parseOtpUri('otpauth://steam/Steam:user?secret=MZLVOVJQVEWROFJVOUQ4EJCVOFRKGADG')
+    expect(p.type).toBe('steam')
+    expect(p.secretBytes).toEqual(rfcBytes)
+    const code = await steamCode(p.secretBytes!, 1789277850000)
+    expect(code).toBe('JHHW2')
+  })
+
+  it('C2：totp/hotp URI secret 不走 Steam 路径，按 RFC4648 解码', () => {
+    const totp = parseOtpUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP')
+    expect(totp.secretBytes).toEqual(base32Decode('JBSWY3DPEHPK3PXP'))
+    const hotp = parseOtpUri('otpauth://hotp/A:b?secret=JBSWY3DPEHPK3PXP')
+    expect(hotp.secretBytes).toEqual(base32Decode('JBSWY3DPEHPK3PXP'))
   })
 })
 

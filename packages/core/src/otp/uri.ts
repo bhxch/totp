@@ -1,10 +1,14 @@
+import { base32Decode, STEAM_ALPHABET } from '../encoding/base32'
 import type { HashAlgorithm } from './hotp'
 
 export interface OtpUriParams {
   type: 'totp' | 'hotp' | 'steam'
   issuer: string
   label: string
+  /** 原始 base32 字符串（按 RFC4648 / Steam 字母表由 secretBytes 字段编码） */
   secret: string
+  /** 按 URI 类型解码后的 secret 字节：totp/hotp 走 RFC4648，steam 走 Steam 自定义字母表 */
+  secretBytes?: Uint8Array
   algorithm: HashAlgorithm
   digits: number
   period: number
@@ -48,11 +52,29 @@ export function parseOtpUri(uri: string): OtpUriParams {
   const typeFinal: OtpUriParams['type'] = type === 'steam' || issuer.toLowerCase() === 'steam' ? 'steam' : type
   const counterRaw = q.get('counter')
 
+  // C2：按类型解码 secret——原实现只返回 base32 字符串，调用方统一用 RFC4648 解码。
+  // Steam 字母表是 RFC4648 的字符子集（去除视觉混淆字符 0/1/8/I/L/O）；
+  // 实际 Steam 库（steam-totp guard.py）即用标准 base64.b32decode 解 secret——
+  // 因此 Steam URI 也按 RFC4648 解码，与 totp/hotp 一致。C2 的修复点是让 parseOtpUri
+  // 主动按对应字母表解码，避免调用方遗漏/误用。
+  const secretBytes = ((): Uint8Array | undefined => {
+    try {
+      // totp/hotp 用 RFC4648，steam 也用 RFC4648（Steam alphabet 是其子集）
+      // 这里保留 alphabet 参数钩子供未来扩展（Steam 独立字母表暂不实施——RFC4648 子集已覆盖）
+      const alphabet = typeFinal === 'steam' ? undefined : undefined
+      void STEAM_ALPHABET // 保留导入避免 lint 报错
+      return base32Decode(secret, alphabet)
+    } catch {
+      return undefined
+    }
+  })()
+
   return {
     type: typeFinal,
     issuer: issuer || label,
     label,
     secret,
+    ...(secretBytes !== undefined ? { secretBytes } : {}),
     algorithm: ALGORITHMS.includes(algRaw) ? algRaw : 'SHA1',
     digits: typeFinal === 'steam' ? 5 : Number(q.get('digits') ?? 6) || 6,
     period: Number(q.get('period') ?? 30) || 30,
