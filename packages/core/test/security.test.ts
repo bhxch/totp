@@ -77,4 +77,28 @@ describe('securityStore', () => {
     expect(a.security.kdf.salt).not.toBe(b.security.kdf.salt)
     expect(a.encrypted.ciphertext).not.toBe(b.encrypted.ciphertext)
   })
+  it('M6：changeVaultPassphrase 去重 kekSources — 同 kind 重复条目仅保留首条', async () => {
+    const { security, dek } = await setupVaultEncryption(vaultJson, 'p')
+    const prfOutput = randomBytes(64)
+    // 手工构造：1 password + 1 prf + 1 prf(同 credentialId 重复) + 1 dpapi 重复
+    const baseWithPrf = await addPrfSource(security, dek, 'cred-1', prfOutput, bytesToBase64(randomBytes(32)))
+    const duplicated = {
+      ...baseWithPrf,
+      kekSources: [
+        ...(baseWithPrf.kekSources ?? []),
+        { kind: 'password' as const },
+        { kind: 'prf' as const, credentialId: 'cred-1', salt: 's', wrappedDekP: 'w' },
+        { kind: 'prf' as const, credentialId: 'cred-2', salt: 's', wrappedDekP: 'w' },
+        { kind: 'dpapi' as const, wrappedDekD: 'd' },
+        { kind: 'dpapi' as const, wrappedDekD: 'd2' },
+      ],
+    } as typeof baseWithPrf
+    const s2 = await changeVaultPassphrase(duplicated, dek, 'new')
+    // 期望：password×1, prf cred-1×1, prf cred-2×1, dpapi×1
+    const kinds = (s2.kekSources ?? []).map((k) => (k as { kind: string }).kind)
+    expect(kinds).toEqual(['password', 'prf', 'prf', 'dpapi'])
+    // 唯一性验证：prf credentialId 唯一、dpapi 唯一
+    const prfIds = (s2.kekSources ?? []).filter((k) => k.kind === 'prf').map((k) => (k as { credentialId: string }).credentialId)
+    expect(new Set(prfIds).size).toBe(prfIds.length)
+  })
 })

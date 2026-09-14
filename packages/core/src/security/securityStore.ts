@@ -145,9 +145,34 @@ export async function changeVaultPassphrase(
     wrapNonce: bytesToBase64(wrapNonce),
     wrappedDek: bytesToBase64(wrappedDek),
     // 多绑来源（prf/dpapi 的 wrappedDekP/D 与 DEK 绑定）不受换口令影响，原样保留；
-    // 走 kekSourcesOf 归一：旧数据缺字段/空数组/全非法 → [{kind:'password'}]，避免原条件展开在「旧密码无 kekSources」分支漏写 password 源导致换口令后多绑列表丢失
-    kekSources: kekSourcesOf(security),
+    // 走 kekSourcesOf 归一：旧数据缺字段/空数组/全非法 → [{kind:'password'}]，避免原条件展开在「旧密码无 kekSources」分支漏写 password 源导致换口令后多绑列表丢失。
+    // M6：去重 — 旧数据/手改/历史 bug 引入同 kind 重复条目时，换口令后只保留首条，避免后续 UI 列表渲染重复项
+    kekSources: removeDuplicateKekSources(kekSourcesOf(security)),
   }
+}
+
+/** kekSources 去重：password/dpapi 各保留首个；prf 按 credentialId 保留首个。语义：同 kind 多份等价（仅首条实际参与解锁），多余条目仅占空间且误导 UI */
+function removeDuplicateKekSources(sources: ReturnType<typeof kekSourcesOf>): ReturnType<typeof kekSourcesOf> {
+  const seenPassword = new Set<'password'>()
+  const seenDpapi = new Set<'dpapi'>()
+  const seenPrf = new Set<string>() // credentialId
+  const out: ReturnType<typeof kekSourcesOf> = []
+  for (const s of sources) {
+    if (s.kind === 'password') {
+      if (seenPassword.has('password')) continue
+      seenPassword.add('password')
+      out.push(s)
+    } else if (s.kind === 'dpapi') {
+      if (seenDpapi.has('dpapi')) continue
+      seenDpapi.add('dpapi')
+      out.push(s)
+    } else {
+      if (seenPrf.has(s.credentialId)) continue
+      seenPrf.add(s.credentialId)
+      out.push(s)
+    }
+  }
+  return out
 }
 
 /** 添加/替换 prf KEK 来源：KEK_prf = prfOutput 前 32B，wrappedDekP = base64(nonce(12B) ‖ AES-GCM(DEK))。
