@@ -19,4 +19,18 @@ describe('useOtpCodes', () => {
     expect(c.progress).toBeCloseTo(c.remaining / 30, 5)
     expect(nowMs.value).toBeGreaterThan(0)
   })
+
+  it('C19：secret 非法 → code=INVALID + 错误信息（不是占位 ------）', async () => {
+    const bad: OtpEntry = { ...entry, uuid: 'bad', secret: '!!!非法 base32!!!' }
+    const { codes } = useOtpCodes(ref([bad]))
+    await vi.waitFor(() => expect(codes.value.get('bad')).toBeDefined())
+    const c = codes.value.get('bad')!
+    expect(c.code).toBe('INVALID')
+    expect(c.code).not.toBe('------')
+    expect(c.error).toBeTruthy()
+    // 正常条目仍能计算
+    const { codes: codes2 } = useOtpCodes(ref([entry]))
+    await vi.waitFor(() => expect(codes2.value.get('a')).toBeDefined())
+    expect(codes2.value.get('a')!.code).not.toBe('INVALID')
+  })
 })

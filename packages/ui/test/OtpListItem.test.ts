@@ -63,4 +63,14 @@ describe('OtpListItem 揭示与右键菜单（C16）', () => {
     const w = mount(OtpListItem, { props: { entry, ...base } })
     expect(w.find('.pin').exists()).toBe(false)
   })
+
+  it('C19：code=INVALID 时渲染「密钥非法」红字 + tooltip 显示原因', () => {
+    const w = mount(OtpListItem, {
+      props: { entry, code: 'INVALID', remaining: 12, progress: 0.4, error: 'invalid base32' },
+    })
+    expect(w.text()).toContain('密钥非法')
+    const codeEl = w.find('.code.invalid')
+    expect(codeEl.exists()).toBe(true)
+    expect(codeEl.attributes('title')).toBe('密钥非法：invalid base32')
+  })
 })

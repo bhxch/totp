@@ -6,6 +6,8 @@ defineProps<{
   code: string
   remaining: number
   progress: number
+  /** [可选] secret 非法时的错误信息（鼠标悬停查看具体原因） */
+  error?: string
   /** 图标视图：html=builtin path 包裹片段（svg innerHTML，fill currentColor）；src=dataUrl；均缺省回退首字母 avatar */
   icon?: { html?: string; src?: string }
 }>()
@@ -44,7 +46,10 @@ function onContextMenu(e: MouseEvent): void {
       <div class="label">{{ entry.label }}</div>
     </div>
     <div class="right">
-      <span class="code">{{ grouped(code) }}</span>
+      <span
+        :class="['code', { invalid: code === 'INVALID' }]"
+        :title="code === 'INVALID' ? `密钥非法：${error ?? ''}` : undefined"
+      >{{ code === 'INVALID' ? '密钥非法' : grouped(code) }}</span>
       <button type="button" class="reveal" title="显示密钥" @click.stop="emit('reveal')">🔑</button>
       <svg viewBox="0 0 36 36" class="ring" aria-hidden="true">
         <circle cx="18" cy="18" r="16" class="ring-bg" />
@@ -71,6 +76,7 @@ function onContextMenu(e: MouseEvent): void {
 .label { font-size: 12px; opacity: 0.7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .right { display: flex; align-items: center; gap: 8px; }
 .code { font-family: ui-monospace, monospace; font-size: 18px; letter-spacing: 1px; }
+.code.invalid { color: #d9534f; font-size: 13px; cursor: help; }
 .reveal { border: none; background: none; cursor: pointer; padding: 4px; font-size: 14px; opacity: 0.5; }
 .reveal:hover { opacity: 1; }
 .ring { width: 32px; height: 32px; transform: rotate(-90deg); }
