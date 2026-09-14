@@ -157,10 +157,20 @@ const securityPlatform: SecurityPlatform = {
  */
 const syncPlatform: SyncPlatform = {
   get syncEnabled() { return settings.syncEnabled },
+  // 明文同步警示：SyncCard 据此在「开关开启且未启用加密」时提示（hasEncryption 为 ComputedRef，getter 保持响应式）
+  get hasEncryption() { return hasEncryption.value },
   async setSyncEnabled(v) {
     settings.syncEnabled = v
     await commitSettings()
-    if (!v) await markSyncOff().catch(() => {})
+    if (!v) {
+      await markSyncOff().catch(() => {})
+      return
+    }
+    // 开启同步：主动调度一次拉取（开启开关只写 local settings，不触发 background 的 onChanged('sync')；
+    // 缺这次拉取，新设备开启后若不写盘将永不应用远端较新数据）。SW 未就绪/上下文失效时忽略。
+    try {
+      void chrome.runtime.sendMessage({ type: 'sync-pull' }).catch(() => {})
+    } catch { /* 扩展上下文失效（重载中）：忽略 */ }
   },
   async readStatus() {
     try {

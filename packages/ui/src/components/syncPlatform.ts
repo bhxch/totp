@@ -8,6 +8,9 @@ export interface SyncStatus {
 export interface SyncPlatform {
   /** 当前开关（宿主用 getter 包 reactive settings，保持响应式） */
   readonly syncEnabled: boolean
+  /** [可选] 本端是否已启用落盘加密（宿主 getter 包 reactive 保持响应式）；
+   *  未提供时按未知处理（不显示明文同步警示） */
+  readonly hasEncryption?: boolean
   /** 开关变更：宿主负责持久化 settings（关闭时同时写 sync:status='off'） */
   setSyncEnabled(v: boolean): Promise<void>
   /** 读取最近一次同步状态；从未写入/读取失败 → null */

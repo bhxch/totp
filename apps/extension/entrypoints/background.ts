@@ -39,6 +39,8 @@ export default defineBackground(() => {
         void pushSync() // syncEngine 内复核 syncEnabled（双保险）并串行化
       }, SYNC_PUSH_MERGE_MS)
     }
+    // options 开启同步后主动调度一次拉取（开启开关只写 local settings，不触发 onChanged('sync')）
+    if (msg?.type === 'sync-pull') void pullSyncIfNewer()
   })
   chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name !== CLIPBOARD_CLEAR_ALARM) return
@@ -50,4 +52,7 @@ export default defineBackground(() => {
   chrome.storage.onChanged.addListener((_changes, area) => {
     if (area === 'sync') void pullSyncIfNewer()
   })
+  // SW 冷启动兜底：浏览器关闭期间他端推送已随账号云落库，重放时不会再触发 onChanged，
+  // 启动即尝试拉取一次（engine 内复核 syncEnabled，关闭同步时无操作）
+  void pullSyncIfNewer()
 })

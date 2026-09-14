@@ -11,6 +11,7 @@
  *   `sync:status`（{state,at} 供 UI 状态条，状态是每设备各自的）
  *
  * 编排语义（计划9 Task2 简报）：简单 LWW——rev 单调递增，远端 rev > 本端 appliedRev 才拉取应用；
+ * 推送前若远端 rev 较新则先拉取再推（防陈旧 local 全量推送覆盖他端）；
  * security 键同态同步（密文态经 sync:security 单键，新设备拉取后可直接解锁）。
  */
 import {
@@ -87,8 +88,31 @@ async function mergeRemoteSettingsKeepingLocalSyncEnabled(remoteRaw: string): Pr
   }
 }
 
+/** push 前拉取判定（纯函数便于编排层验证）：远端存在 meta 且 rev 大于本端已应用 rev → 有未应用的远端更新 */
+export function needsPullBeforePush(meta: SyncMeta | null, appliedRev: number): boolean {
+  return meta !== null && meta.rev > appliedRev
+}
+
+/** 读 sync:meta 与本端 appliedRev，判定是否仍有未应用的远端更新（pull 失败后复检用） */
+async function remoteHasNewer(): Promise<boolean> {
+  const meta = readMeta((await chrome.storage.sync.get(null))[META_KEY])
+  if (!meta) return false
+  const book = await chrome.storage.local.get([APPLIED_REV_KEY])
+  const applied = typeof book[APPLIED_REV_KEY] === 'number' ? book[APPLIED_REV_KEY] : 0
+  return needsPullBeforePush(meta, applied)
+}
+
 async function pushOnce(): Promise<void> {
   try {
+    // 推送前防线：远端 rev 比本端已应用的新（新设备刚开启同步、SW 冷启动后首次写盘等场景），
+    // 先走完整 pullOnce（含开关复核/锁定防线/分片校验）再重读本端 local 推送，
+    // 防止以陈旧 local 全量推送覆盖他端较新数据。这也是拉取的主兜底路径：
+    // 开启同步只写 local settings 不触发 onChanged('sync')，sync 区静止时此处是唯一触发面
+    if (await remoteHasNewer()) {
+      await pullOnce()
+      // pull 未成功应用（分片缺失/损坏，已置 error 状态）：放弃本次推送，宁缺勿以陈旧覆盖
+      if (await remoteHasNewer()) return
+    }
     const local = await chrome.storage.local.get([VAULT_KEY, SECURITY_KEY, SETTINGS_KEY])
     const vaultRaw = local[VAULT_KEY]
     if (typeof vaultRaw !== 'string') return // 尚无 vault（首次写入前）：无 payload 可推

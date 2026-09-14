@@ -63,6 +63,9 @@ const statusText = computed(() => {
 })
 const stateClass = computed(() => (status.value ? `sync-${status.value.state}` : ''))
 
+/** 明文同步警示：开关开启且宿主声明未启用加密时提示（hasEncryption 未提供按未知，不警示） */
+const plainSyncWarn = computed(() => props.platform?.syncEnabled === true && props.platform.hasEncryption === false)
+
 onMounted(() => {
   if (!props.platform) return // platform null：整卡不渲染，不建轮询
   void refreshStatus()
@@ -81,9 +84,13 @@ onUnmounted(() => {
         class="sync-toggle" type="checkbox" :checked="platform.syncEnabled"
         :disabled="busy || !platform.canSync" @change="onToggle"
       />
-      启用浏览器同步（Chrome/Edge，数据加密分片同步）
+      启用浏览器同步（Chrome/Edge）
     </label>
     <p v-if="!platform.canSync" class="hint">当前环境不支持浏览器同步</p>
+    <!-- 加密警示承载于状态条区域：label 不绑定「加密分片」承诺（未加密时以明文同步） -->
+    <p v-if="plainSyncWarn" class="warn" role="alert">
+      当前未启用本地加密，条目将以明文同步至浏览器账号云端——建议先在安全设置中启用加密
+    </p>
     <div class="status-row">
       <span v-if="statusText" :class="['status', stateClass]" role="status">{{ statusText }}</span>
       <button class="refresh" :disabled="busy" @click="refreshStatus">刷新状态</button>
@@ -101,6 +108,7 @@ h2 { font-size: 15px; margin: 0; }
 .status.sync-quota { color: #b8860b; }
 .status.sync-error { color: #d9534f; }
 .status.sync-off { opacity: .65; }
+.warn { color: #b8860b; font-size: 13px; margin: 0; }
 .refresh { font-size: 12px; }
 .hint { font-size: 13px; opacity: .65; margin: 0; }
 .ok { color: #2e7d32; font-size: 13px; }
