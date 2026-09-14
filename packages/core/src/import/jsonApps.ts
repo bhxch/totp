@@ -1,5 +1,9 @@
 import { base32Decode } from '../encoding/base32'
 import { parseOtpUri } from '../otp/uri'
+import {
+  asObject, collectEntries, normalizeAlgorithm, normalizeSecret, steamEntry,
+  toNonNegativeNumber, toPositiveNumber,
+} from './normalize'
 import type { ImportResult, ParsedEntry } from './types'
 
 // JSON 类 App 导出格式导入（2FAS / Bitwarden / Ente / Proton / Stratum）。
@@ -11,34 +15,7 @@ import type { ImportResult, ParsedEntry } from './types'
 // - importers/StratumImporter.java
 // 错误契约与 aegis.ts 一致：结构级错误（缺顶层数组等）throw；单条损坏进 failures 不阻断。
 
-// ---------- 共享辅助（与 generic.ts/aegis.ts 口径一致） ----------
-
-function normalizeSecret(raw: unknown): string {
-  return String(raw ?? '')
-    .replace(/\s+/g, '')
-    .toUpperCase()
-}
-
-function normalizeAlgorithm(raw: unknown): ParsedEntry['algorithm'] {
-  const s = String(raw ?? '').toUpperCase()
-  return s === 'SHA256' || s === 'SHA512' ? s : 'SHA1'
-}
-
-function toPositiveNumber(raw: unknown, fallback: number): number {
-  const n = Number(raw)
-  return Number.isFinite(n) && n > 0 ? n : fallback
-}
-
-function toNonNegativeNumber(raw: unknown, fallback: number): number {
-  const n = Number(raw)
-  return Number.isFinite(n) && n >= 0 ? n : fallback
-}
-
-function asObject(raw: unknown): Record<string, unknown> | null {
-  return raw !== null && typeof raw === 'object' && !Array.isArray(raw)
-    ? (raw as Record<string, unknown>)
-    : null
-}
+// ---------- 共享辅助（与 generic.ts/aegis.ts 口径一致 — 多数已迁出至 ./normalize） ----------
 
 function parseJson(text: string, label: string): Record<string, unknown> {
   let parsed: unknown
@@ -60,32 +37,9 @@ function isBase32(raw: string): boolean {
   }
 }
 
-function collectEntries(rows: unknown[], parse: (row: unknown, index: number) => ParsedEntry | { error: string }): ImportResult {
-  const entries: ParsedEntry[] = []
-  const failures: ImportResult['failures'] = []
-  rows.forEach((row, index) => {
-    const res = parse(row, index)
-    if ('error' in res) failures.push({ index, message: res.error })
-    else entries.push(res)
-  })
-  return { entries, failures }
-}
-
 /** steam://<base32 secret>（非特殊 scheme，URL 解析 host 不可靠，手动截取 authority） */
 function steamAuthority(uri: string): string {
   return uri.slice('steam://'.length).split('/')[0] ?? ''
-}
-
-function steamEntry(secret: string, issuer: string, label: string): ParsedEntry {
-  return {
-    type: 'steam',
-    issuer,
-    label,
-    secret: normalizeSecret(secret),
-    algorithm: 'SHA1',
-    digits: 5, // SteamInfo.DIGITS = 5
-    period: 30, // TotpInfo.DEFAULT_PERIOD
-  }
 }
 
 // ---------- 2FAS（importers/TwoFasImporter.java） ----------

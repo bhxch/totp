@@ -1,3 +1,4 @@
+import { normalizeAlgorithm, normalizeSecret, normalizeType, toPositiveNumber } from './normalize'
 import type { FieldMap, ImportResult, ParsedEntry, RowMapping } from './types'
 
 export type GenericRowsKind = 'jsonArray' | 'jsonObjectArray' | 'jsonl' | 'jsonSingleObject'
@@ -124,30 +125,7 @@ function getByPath(obj: unknown, path: string): unknown {
   return cur
 }
 
-/** secret 规整：trim + 去所有空白 + 大写 */
-function normalizeSecret(raw: string): string {
-  return raw.replace(/\s+/g, '').toUpperCase()
-}
-
-/** type 规整：含 steam（大小写不敏感）→ 'steam'，含 hotp → 'hotp'，其余 'totp' */
-function normalizeType(raw: string): ParsedEntry['type'] {
-  const s = raw.toLowerCase()
-  if (s.includes('steam')) return 'steam'
-  if (s.includes('hotp')) return 'hotp'
-  return 'totp'
-}
-
-/** 数值规整：Number 化非法或非正 → fallback */
-function toPositiveNumber(raw: unknown, fallback: number): number {
-  const n = Number(raw)
-  return Number.isFinite(n) && n > 0 ? n : fallback
-}
-
-/** algorithm 规整：大写映射三值枚举，非法 → 'SHA1' */
-function normalizeAlgorithm(raw: unknown): ParsedEntry['algorithm'] {
-  const s = String(raw ?? '').toUpperCase()
-  return s === 'SHA256' || s === 'SHA512' ? s : 'SHA1'
-}
+// normalizeSecret / normalizeType / toPositiveNumber / normalizeAlgorithm 已迁出至 ./normalize（M10 收敛）
 
 function mapString(fm: FieldMap | undefined, row: unknown, fallback: string): string {
   if (!fm) return fallback
