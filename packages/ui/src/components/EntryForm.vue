@@ -3,7 +3,7 @@ import { base32Decode, getBuiltinIcons, recommendBuiltinIcon, type BuiltinIcon, 
 import { computed, reactive, ref, watch } from 'vue'
 import { fileToScaledDataUrl, importIconPackZip } from '../iconImport'
 import type { IconStore } from '../iconStore'
-import type { EntryFormData } from './entryForm'
+import { type EntryFormData, validateRegex } from './entryForm'
 
 export type { EntryFormData }
 
@@ -175,6 +175,15 @@ function submit() {
     error.value = '计数器必须为非负整数'
     return
   }
+  // I51：regex 策略客户端预校验；非 regex 策略由浏览器插件侧自行判定
+  for (const r of form.matchRules) {
+    if (r.strategy !== 'regex') continue
+    const msg = validateRegex(r.pattern)
+    if (msg) {
+      error.value = `匹配规则正则非法：${msg}`
+      return
+    }
+  }
   emit('save', {
     type: form.type,
     issuer: form.issuer.trim(),
@@ -277,8 +286,21 @@ function submit() {
           <option value="startsWith">前缀</option>
           <option value="regex">正则</option>
         </select>
-        <input class="rule-pattern" v-model="r.pattern" placeholder="如 github.com 或 ^https://" />
+        <input
+          class="rule-pattern"
+          :class="{ invalid: r.strategy === 'regex' && r.pattern.trim() !== '' && validateRegex(r.pattern) !== null }"
+          v-model="r.pattern"
+          placeholder="如 github.com 或 ^https://"
+        />
         <button type="button" class="rm-rule" @click="form.matchRules.splice(i, 1)">✕</button>
+        <!-- I51：regex 策略且 pattern 非空但非法 → 行内错误提示 -->
+        <span
+          v-if="r.strategy === 'regex' && r.pattern.trim() !== '' && validateRegex(r.pattern) !== null"
+          class="rule-error"
+          role="alert"
+        >
+          {{ validateRegex(r.pattern) }}
+        </span>
       </div>
       <button type="button" class="add-rule" @click="form.matchRules.push({ strategy: 'baseDomain', pattern: '' })">＋ 添加匹配规则</button>
     </fieldset>
@@ -306,6 +328,8 @@ fieldset { border: 1px solid rgba(128,128,128,.3); border-radius: 6px; display: 
 .rule-row { display: flex; gap: 6px; }
 .rule-strategy { width: 110px; }
 .rule-pattern { flex: 1; }
+.rule-pattern.invalid { border-color: #d9534f; }
+.rule-error { font-size: 11px; color: #d9534f; flex-basis: 100%; }
 .icon-recommend { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px 8px; background: rgba(74, 144, 217, 0.12); border-radius: 6px; }
 .icon-preview { width: 20px; height: 20px; fill: currentColor; flex: none; }
 .icon-current-img { width: 20px; height: 20px; object-fit: contain; flex: none; }

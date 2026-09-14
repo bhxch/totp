@@ -3,7 +3,7 @@ import { mount, type VueWrapper } from '@vue/test-utils'
 import { zipSync } from 'fflate'
 import { createMemoryStorage, getBuiltinIcons, type OtpEntry } from '@totp/core'
 import EntryForm from '../src/components/EntryForm.vue'
-import type { EntryFormData } from '../src/components/entryForm'
+import { type EntryFormData, validateRegex } from '../src/components/entryForm'
 import { createIconStore } from '../src/iconStore'
 
 const entry: OtpEntry = {
@@ -98,6 +98,33 @@ describe('EntryForm', () => {
     await w.find('button.rm-rule').trigger('click')
     await w.find('form').trigger('submit')
     expect(w.emitted('save')!.at(-1)![0]).toMatchObject({ matchRules: [] })
+  })
+
+  it('I51：matchRules strategy=regex 非法 pattern 阻止 save + 行内错误 + class.invalid', async () => {
+    const w = mount(EntryForm, { props: { initial: entry, groups: [] } })
+    await w.find('button.add-rule').trigger('click')
+    await w.findAll('select.rule-strategy')[0]!.setValue('regex')
+    await w.find('input.rule-pattern').setValue('[unbalanced') // 非法正则
+    // 行内错误展示 + class.invalid
+    expect(w.find('.rule-pattern.invalid').exists()).toBe(true)
+    expect(w.find('.rule-error').exists()).toBe(true)
+    expect(w.text()).toMatch(/正则/)
+    // 提交应被阻止，不 emit save
+    await w.find('form').trigger('submit')
+    expect(w.emitted('save')).toBeUndefined()
+    expect(w.find('.error').text()).toMatch(/匹配规则正则非法/)
+    // 修正为合法正则后可提交
+    await w.find('input.rule-pattern').setValue('^https://github\\.com/.*')
+    await w.find('form').trigger('submit')
+    expect(w.emitted('save')![0]![0]).toMatchObject({ matchRules: [{ strategy: 'regex', pattern: '^https://github\\.com/.*' }] })
+  })
+
+  it('I51：validateRegex 纯函数空串合法；非法返回错误；合法返回 null', () => {
+    expect(validateRegex('')).toBeNull()
+    expect(validateRegex('   ')).toBeNull()
+    expect(validateRegex('^foo.*$')).toBeNull()
+    expect(validateRegex('[abc')).not.toBeNull()
+    expect(validateRegex('*star')).not.toBeNull()
   })
   it('secret 默认遮蔽（type=password），toggle 切换显示/隐藏', async () => {
     const w = mount(EntryForm, { props: { initial: null, groups: [] } })
