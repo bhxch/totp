@@ -178,7 +178,8 @@ async function onPackFile(e: Event) {
 
 function submit() {
   error.value = ''
-  if (form.type !== 'hotp') {
+  // secret 可空（HOTP 不需 secret；新建条目允许先填其他字段）
+  if (form.type !== 'hotp' && cleanSecret()) {
     try {
       base32Decode(cleanSecret())
     } catch {
