@@ -150,7 +150,8 @@ export function importFreeOtp(text: string): ImportResult {
 // Android SharedPreferences XML 为机器生成（属性恒 name="..."），正则提取即可，无需完整 XML 解析器
 // （与 winauth.ts 的 M1 决策一致）。
 
-function xmlUnescape(s: string): string {
+/** Android shared_prefs XML 实体反转义（导出供 sqlite.ts 的 Authy/BattleNet XML 入口复用） */
+export function xmlUnescape(s: string): string {
   return s.replace(/&(amp|lt|gt|quot|apos|#\d+|#x[0-9A-Fa-f]+);/g, (m, e: string) => {
     switch (e) {
       case 'amp':
@@ -171,7 +172,8 @@ function xmlUnescape(s: string): string {
   })
 }
 
-const XML_STRING_RE = /<string\s+name="([^"]*)"\s*>([\s\S]*?)<\/string>/g
+/** shared_prefs <string name="...">value</string> 提取（机器生成，属性恒 name="..."，见 M1 决策） */
+export const XML_STRING_RE = /<string\s+name="([^"]*)"\s*>([\s\S]*?)<\/string>/g
 
 /** 旧版 FreeOTP tokens.xml 导入（Android shared_prefs 备份） */
 export function importFreeOtpLegacy(text: string): ImportResult {
@@ -214,7 +216,8 @@ export function importFreeOtpLegacy(text: string): ImportResult {
 const TOTP_AUTH_DEFAULT_PASSWORD = 'TotpAuthenticator' // TotpAuthenticatorImporter.java PASSWORD
 const TOTP_AUTH_IV = new Uint8Array(16) // 源码硬编码 IV（16 字节全零）
 
-function hexToBytes(hex: string): Uint8Array | null {
+/** hex → 字节（大小写兼容，奇数长度/非法字符 → null；导出供 sqlite.ts 复用） */
+export function hexToBytes(hex: string): Uint8Array | null {
   if (hex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(hex)) return null
   const out = new Uint8Array(hex.length / 2)
   for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
