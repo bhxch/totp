@@ -28,7 +28,7 @@ describe('ImportCard', () => {
     await w.find('input[value="skip"]').setValue()
     await w.find('button.import-commit').trigger('click')
     await vi.waitFor(() => {
-      expect(w.text()).toContain('成功导入 1 条')
+      expect(w.text()).toContain('成功落库 1 条')
       expect(w.text()).toContain('跳过')
       expect(w.text()).toContain('badline')
     })
@@ -57,7 +57,7 @@ describe('ImportCard', () => {
     await w.find('button.import-next').trigger('click') // twoFas 无映射页，直接解析
     await vi.waitFor(() => expect(w.text()).toContain('冲突'))
     await w.find('button.import-commit').trigger('click')
-    await vi.waitFor(() => expect(w.text()).toContain('成功导入 1 条'))
+    await vi.waitFor(() => expect(w.text()).toContain('成功落库 1 条'))
     expect(store.vault.entries.some((e) => e.issuer === 'TwoFasSvc' && e.label === 'me@x.com')).toBe(true)
     expect(store.vault.entries).toHaveLength(2) // 原有 GitHub + TwoFasSvc
   })
@@ -75,7 +75,7 @@ describe('ImportCard', () => {
     await w.find('button.import-next').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('冲突'))
     await w.find('button.import-commit').trigger('click')
-    await vi.waitFor(() => expect(w.text()).toContain('成功导入 1 条'))
+    await vi.waitFor(() => expect(w.text()).toContain('成功落库 1 条'))
     expect(store.vault.entries.some((e) => e.label === 'Svc - me')).toBe(true) // generic 映射不拆 " - "
   })
   it('手动指定 sqlite：字节入口头校验失败报错（wasm 链路由 typecheck+build 验收）', async () => {
@@ -140,7 +140,7 @@ describe('ImportCard', () => {
     await w.find('button.import-next').trigger('click') // 口令随分派传入 → 解密成功进确认页
     await vi.waitFor(() => expect(w.text()).toContain('冲突'))
     await w.find('button.import-commit').trigger('click')
-    await vi.waitFor(() => expect(w.text()).toContain('成功导入 1 条'))
+    await vi.waitFor(() => expect(w.text()).toContain('成功落库 1 条'))
     expect(store.vault.entries.some((e) => e.issuer === 'TotpAuth')).toBe(true)
   })
   it('generic JSON：映射页按常见键名预填 secret 路径→确认导入成功', async () => {
@@ -157,7 +157,7 @@ describe('ImportCard', () => {
     await w.find('button.import-next').trigger('click') // 用映射解析 → 确认页
     await vi.waitFor(() => expect(w.text()).toContain('冲突'))
     await w.find('button.import-commit').trigger('click')
-    await vi.waitFor(() => expect(w.text()).toContain('成功导入 1 条'))
+    await vi.waitFor(() => expect(w.text()).toContain('成功落库 1 条'))
     expect(store.vault.entries).toHaveLength(2) // 原有 GitHub + Svc
   })
   it('方案保存：映射页命名保存当前映射→save 落盘且下拉出现该方案', async () => {
