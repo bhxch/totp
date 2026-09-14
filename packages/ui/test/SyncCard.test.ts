@@ -62,4 +62,20 @@ describe('SyncCard', () => {
     const unknown = mount(SyncCard, { props: { platform: mkPlatform(null, { syncEnabled: true }) } })
     expect(unknown.find('.warn').exists()).toBe(false)
   })
+
+  it('I55：始终显示「同步开关按设备独立」per-device 提示', () => {
+    const w = mount(SyncCard, { props: { platform: mkPlatform() } })
+    expect(w.text()).toContain('同步开关按设备独立')
+    expect(w.text()).toContain('他机不会改写本端')
+  })
+
+  it('I57：SyncStatus.pct 提供时显示「已用 X% / 100KB」；未提供时不显示', async () => {
+    const withPct = mkPlatform({ state: 'ok', at: Date.now(), pct: 87 } as { state: string; at: number; pct: number })
+    const w1 = mount(SyncCard, { props: { platform: withPct } })
+    await vi.waitFor(() => expect(w1.text()).toContain('已用 87%'))
+    expect(w1.text()).toContain('/ 100KB')
+    // 不带 pct
+    const w2 = mount(SyncCard, { props: { platform: mkPlatform({ state: 'ok', at: Date.now() }) } })
+    expect(w2.find('.usage').exists()).toBe(false)
+  })
 })

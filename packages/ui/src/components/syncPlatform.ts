@@ -4,6 +4,8 @@ import type { ComputedRef } from 'vue'
 export interface SyncStatus {
   state: string
   at: number
+  /** I57：同步区占用百分比 0..100（QUOTA_BYTES ≈ 100KB）；可选——未提供时不显示百分比 */
+  pct?: number
 }
 
 /** 浏览器同步平台能力；desktop/popup 不组装（null）→ SyncCard 整卡不渲染 */

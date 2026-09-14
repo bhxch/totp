@@ -66,6 +66,13 @@ const stateClass = computed(() => (status.value ? `sync-${status.value.state}` :
 /** 明文同步警示：开关开启且宿主声明未启用加密时提示（hasEncryption 为 ComputedRef<boolean>，未提供按未知，不警示） */
 const plainSyncWarn = computed(() => props.platform?.syncEnabled === true && props.platform.hasEncryption?.value === false)
 
+/** I57：占用百分比 = inUse / QUOTA_BYTES * 100；状态快照 pct 不存在 → null（不渲染） */
+const usageText = computed(() => {
+  const s = status.value
+  if (!s || typeof s.pct !== 'number') return ''
+  return `已用 ${Math.round(s.pct)}% / 100KB`
+})
+
 onMounted(() => {
   if (!props.platform) return // platform null：整卡不渲染，不建轮询
   void refreshStatus()
@@ -87,12 +94,15 @@ onUnmounted(() => {
       启用浏览器同步（Chrome/Edge）
     </label>
     <p v-if="!platform.canSync" class="hint">当前环境不支持浏览器同步</p>
+    <!-- I55：per-device 同步开关明示，避免用户误解为他机关闭会影响本端 -->
+    <p class="per-device-hint">同步开关按设备独立，他机不会改写本端</p>
     <!-- 加密警示承载于状态条区域：label 不绑定「加密分片」承诺（未加密时以明文同步） -->
     <p v-if="plainSyncWarn" class="warn" role="alert">
       当前未启用本地加密，条目将以明文同步至浏览器账号云端——建议先在安全设置中启用加密
     </p>
     <div class="status-row">
       <span v-if="statusText" :class="['status', stateClass]" role="status">{{ statusText }}</span>
+      <span v-if="usageText" class="usage" role="status">{{ usageText }}</span>
       <button class="refresh" :disabled="busy" @click="refreshStatus">刷新状态</button>
     </div>
     <div v-if="msg" :class="msgKind" role="alert">{{ msg }}</div>

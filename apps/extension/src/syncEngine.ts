@@ -34,10 +34,22 @@ export type SyncStatusState = 'ok' | 'quota' | 'error' | 'off'
 export interface SyncStatus {
   state: SyncStatusState
   at: number
+  /** I57：同步区占用百分比 0..100（QUOTA_BYTES ≈ 100KB）；可选——未提供时不显示百分比 */
+  pct?: number
 }
 
 async function setSyncStatus(state: SyncStatusState): Promise<void> {
-  const status: SyncStatus = { state, at: Date.now() }
+  // I57：push 完成后计算同步区占用百分比（inUse / QUOTA_BYTES * 100），写入 status 供 UI 显示
+  let pct: number | undefined
+  if (state === 'ok' || state === 'quota') {
+    try {
+      const inUse = await chrome.storage.sync.getBytesInUse(null)
+      pct = Math.round((inUse / chrome.storage.sync.QUOTA_BYTES) * 100)
+    } catch {
+      pct = undefined
+    }
+  }
+  const status: SyncStatus = { state, at: Date.now(), ...(pct !== undefined ? { pct } : {}) }
   await chrome.storage.local.set({ [STATUS_KEY]: status })
 }
 
