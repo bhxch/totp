@@ -68,12 +68,21 @@ const visible = computed(() => {
 
 async function onSave(data: EntryFormData) {
   if (editing.value) {
-    // type 变更时重算 digits（steam→其他保持 5 会显示错位数）；type 未变则不带，保留原值
-    const patch = { ...data } as EntryFormData & { digits?: number }
-    if (data.type !== editing.value.type) patch.digits = data.type === 'steam' ? 5 : 6
-    await props.store.updateEntryOp(editing.value.uuid, patch)
+    // 表单已显式提交完整字段；不覆盖（用户在表单内可选的 digits/algorithm/period/counter 全部生效）
+    await props.store.updateEntryOp(editing.value.uuid, data)
   } else {
-    await props.store.addEntryOp({ ...data, uuid: crypto.randomUUID(), algorithm: 'SHA1', digits: data.type === 'steam' ? 5 : 6, period: 30, order: 0, createdAt: Date.now() })
+    // 新建：表单未提供的字段用模型默认值；digits/algorithm/period 来自表单（type 切换时表单已自动重算）
+    const { algorithm = 'SHA1', digits = data.type === 'steam' ? 5 : 6, period = 30, counter } = data
+    await props.store.addEntryOp({
+      ...data,
+      uuid: crypto.randomUUID(),
+      algorithm,
+      digits,
+      period,
+      ...(data.type === 'hotp' && counter !== undefined ? { counter } : {}),
+      order: 0,
+      createdAt: Date.now(),
+    })
   }
   editing.value = null; creating.value = false
 }

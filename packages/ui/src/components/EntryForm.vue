@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { base32Decode, getBuiltinIcons, recommendBuiltinIcon, type BuiltinIcon, type Group, type OtpEntry } from '@totp/core'
+import { base32Decode, getBuiltinIcons, recommendBuiltinIcon, type BuiltinIcon, type Group, type HashAlgorithm, type OtpEntry } from '@totp/core'
 import { computed, reactive, ref, watch } from 'vue'
 import { fileToScaledDataUrl, importIconPackZip } from '../iconImport'
 import type { IconStore } from '../iconStore'
@@ -22,6 +22,10 @@ const form = reactive({
   issuer: props.initial?.issuer ?? '',
   label: props.initial?.label ?? '',
   secret: props.initial?.secret ?? '',
+  algorithm: (props.initial?.algorithm ?? 'SHA1') as HashAlgorithm,
+  digits: (props.initial?.digits ?? 6) as number,
+  period: (props.initial?.period ?? 30) as number,
+  counter: (props.initial?.counter ?? 0) as number,
   note: props.initial?.note ?? '',
   groupIds: [...(props.initial?.groupIds ?? [])],
   matchRules: (props.initial?.matchRules ?? []).map((r) => ({ ...r })),
@@ -154,16 +158,49 @@ function submit() {
       return
     }
   }
-  emit('save', { ...form, issuer: form.issuer.trim(), label: form.label.trim(), secret: cleanSecret(), matchRules: form.matchRules.filter((r) => r.pattern.trim()) })
+  const digits = form.digits
+  if (form.type === 'steam' && digits !== 5) {
+    error.value = 'Steam 类型的位数必须为 5'
+    return
+  }
+  if (form.type !== 'steam' && ![6, 7, 8].includes(digits)) {
+    error.value = '位数必须为 6/7/8'
+    return
+  }
+  if (!Number.isFinite(form.period) || form.period < 1) {
+    error.value = '周期必须为 ≥1 的数字'
+    return
+  }
+  if (form.type === 'hotp' && (!Number.isInteger(form.counter) || form.counter < 0)) {
+    error.value = '计数器必须为非负整数'
+    return
+  }
+  emit('save', {
+    type: form.type,
+    issuer: form.issuer.trim(),
+    label: form.label.trim(),
+    secret: cleanSecret(),
+    algorithm: form.algorithm,
+    digits: form.digits,
+    period: form.period,
+    note: form.note,
+    groupIds: form.groupIds,
+    matchRules: form.matchRules.filter((r) => r.pattern.trim()),
+    icon: form.icon,
+    // type 变更时同步默认 digits：steam=5，其他=6（避免显示错位数）
+    ...(form.type !== props.initial?.type ? { digits: form.type === 'steam' ? 5 : 6 } : {}),
+    // HOTP 才提交 counter；其他类型不带（避免污染 TOTP/steam 模型）
+    ...(form.type === 'hotp' ? { counter: form.counter } : {}),
+  })
 }
 </script>
 
 <template>
   <form class="entry-form" @submit.prevent="submit">
-    <select v-model="form.type" :disabled="form.type === 'hotp'">
+    <select v-model="form.type">
       <option value="totp">TOTP</option>
+      <option value="hotp">HOTP（计数器）</option>
       <option value="steam">Steam</option>
-      <option v-if="form.type === 'hotp'" value="hotp">HOTP（计数器）</option>
     </select>
     <input v-model="form.issuer" placeholder="服务名（如 GitHub）" />
     <div v-if="recommendVisible && recommended" class="icon-recommend">
@@ -175,6 +212,30 @@ function submit() {
     <div class="secret-row">
       <input v-model="form.secret" :type="showSecret ? 'text' : 'password'" placeholder="密钥 base32" required autocomplete="off" />
       <button type="button" class="secret-toggle" @click="showSecret = !showSecret">{{ showSecret ? '隐藏' : '显示' }}</button>
+    </div>
+    <div class="advanced-row">
+      <label class="field">
+        算法
+        <select v-model="form.algorithm" class="algorithm">
+          <option value="SHA1">SHA1</option>
+          <option value="SHA256">SHA256</option>
+          <option value="SHA512">SHA512</option>
+        </select>
+      </label>
+      <label class="field">
+        位数
+        <input v-model.number="form.digits" type="number" class="digits" min="5" max="8" />
+      </label>
+      <label v-if="form.type !== 'hotp'" class="field">
+        周期（秒）
+        <input v-model.number="form.period" type="number" class="period" min="1" />
+      </label>
+      <!-- steam 强制 5 位提示 -->
+      <p v-if="form.type === 'steam'" class="steam-hint">Steam 类型位数固定为 5</p>
+      <label v-if="form.type === 'hotp'" class="field">
+        计数器
+        <input v-model.number="form.counter" type="number" class="counter" min="0" />
+      </label>
     </div>
     <textarea v-model="form.note" placeholder="备注（可选）" rows="2" />
     <fieldset v-if="(groups ?? []).length > 0">
@@ -236,6 +297,10 @@ function submit() {
 .secret-row { display: flex; gap: 6px; }
 .secret-row input { flex: 1; }
 .secret-toggle { white-space: nowrap; }
+.advanced-row { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.advanced-row .field { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 80px; }
+.advanced-row .algorithm, .advanced-row .digits, .advanced-row .period, .advanced-row .counter { width: 100%; box-sizing: border-box; }
+.steam-hint { font-size: 11px; opacity: .65; margin: 0; width: 100%; }
 fieldset { border: 1px solid rgba(128,128,128,.3); border-radius: 6px; display: flex; gap: 10px; flex-wrap: wrap; }
 .group-check { font-size: 13px; display: flex; align-items: center; gap: 4px; }
 .rule-row { display: flex; gap: 6px; }

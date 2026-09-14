@@ -43,11 +43,48 @@ describe('EntryForm', () => {
     await w.find('form').trigger('submit')
     expect(w.emitted('save')![0]![0]).toMatchObject({ groupIds: ['g1'] })
   })
-  it('编辑已有 hotp 时类型下拉锁定且含 hotp 选项', async () => {
+  it('编辑既有条目：type 下拉始终含 totp/hotp/steam 三选项（C15 解除 type 锁定）', async () => {
     const w = mount(EntryForm, { props: { initial: { ...entry, type: 'hotp' }, groups: [] } })
     const select = w.find('select')
-    expect(select.attributes('disabled')).toBeDefined()
+    // 取消 :disabled：type 现在可自由切换（type 变更时 digits 会自动重算）
+    expect(select.attributes('disabled')).toBeUndefined()
+    expect(select.html()).toContain('totp')
     expect(select.html()).toContain('hotp')
+    expect(select.html()).toContain('steam')
+  })
+  it('表单编辑既有 hotp：算法/位数/计数器编辑控件可见且 save 携带', async () => {
+    const hotpEntry = { ...entry, type: 'hotp' as const, counter: 3, digits: 6, algorithm: 'SHA256' as const }
+    const w = mount(EntryForm, { props: { initial: hotpEntry, groups: [] } })
+    expect(w.find('select.algorithm').exists()).toBe(true)
+    expect(w.find('input.digits').exists()).toBe(true)
+    // hotp 类型显示计数器；不显示周期
+    expect(w.find('input.counter').exists()).toBe(true)
+    expect(w.find('input.period').exists()).toBe(false)
+    await w.find('form').trigger('submit')
+    const payload = w.emitted('save')![0]![0]
+    expect(payload).toMatchObject({ algorithm: 'SHA256', digits: 6, counter: 3, type: 'hotp' })
+  })
+  it('表单 totp：周期输入可见且默认 30；save 携带 period 与 algorithm，不带 counter', async () => {
+    const w = mount(EntryForm, { props: { initial: entry, groups: [] } })
+    expect(w.find('input.period').exists()).toBe(true)
+    expect(w.find('input.counter').exists()).toBe(false) // 非 hotp 不显示 counter
+    await w.find('form').trigger('submit')
+    const payload = w.emitted('save')![0]![0]
+    expect(payload).toMatchObject({ algorithm: 'SHA1', digits: 6, period: 30 })
+    expect(payload.counter).toBeUndefined()
+  })
+  it('steam 类型：digits 改 6 提交时报错；counter 编辑器不显示', async () => {
+    const w = mount(EntryForm, { props: { initial: null, groups: [] } })
+    await w.find('select').setValue('steam')
+    await w.find('input[placeholder="密钥 base32"]').setValue('JBSWY3DPEHPK3PXP')
+    // steam 显示周期与位数；不显示 counter
+    expect(w.find('input.period').exists()).toBe(true)
+    expect(w.find('input.counter').exists()).toBe(false)
+    expect(w.text()).toContain('Steam 类型位数固定为 5')
+    await w.find('input.digits').setValue(6)
+    await w.find('form').trigger('submit')
+    expect(w.emitted('save')).toBeUndefined()
+    expect(w.text()).toContain('Steam')
   })
   it('添加/编辑/删除 matchRule 并随 save 提交', async () => {
     const w = mount(EntryForm, { props: { initial: entry, groups: [] } })
