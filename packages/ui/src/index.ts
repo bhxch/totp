@@ -1,5 +1,6 @@
 export * from './composables/useOtpCodes'
 export * from './store'
+export * from './iconStore'
 export * from './clipboardClearer'
 export { default as OtpListItem } from './components/OtpListItem.vue'
 export { default as SearchBar } from './components/SearchBar.vue'
