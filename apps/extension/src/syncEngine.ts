@@ -5,7 +5,7 @@
  * - 数据源：chrome.storage.local 的 vault/security/settings 三个 JSON 字符串键（与页面 store 同源）
  * - 同步区：chrome.storage.sync——分片 `sync:v1:<part>/<total>`（对象）+ `sync:meta`（对象）
  *   + `sync:settings` / `sync:security`（直读 local 的 JSON 字符串整体一份）。
- *   选 sync 区的依据：core 分片 7000B < sync.QUOTA_BYTES_PER_ITEM(8192)；配额检测对应
+ *   选 sync 区的依据：core 分片 5500B（base64 + JSON 包装后约 7.4KB）< sync.QUOTA_BYTES_PER_ITEM(8192)；配额检测对应
  *   sync.QUOTA_BYTES(102400)（local 区有 unlimitedStorage，无配额语义）；借 Chrome 账号跨设备同步
  * - 设备本地记账（local 区，防跨设备互踩）：`sync:appliedRev`（本端已应用的远端 rev）、
  *   `sync:status`（{state,at} 供 UI 状态条，状态是每设备各自的）

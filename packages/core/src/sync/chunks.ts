@@ -15,7 +15,11 @@ export interface SyncMeta {
   total: number
 }
 
-const DEFAULT_MAX_DATA_BYTES = 7000
+/**
+ * 默认每片原始数据字节数。约束：单片存储值 = base64(data)（×4/3 ≈ 7336 字符）
+ * + JSON 包装（约 70 字符）≈ 7.4KB，须低于 chrome.storage.sync.QUOTA_BYTES_PER_ITEM（8192）并留余量。
+ */
+export const DEFAULT_MAX_DATA_BYTES = 5500
 
 /** 标准 base64 字母表，padding 仅允许末尾至多 2 个 '='（拒绝空白与任意非法字符） */
 const BASE64_RE = /^[A-Za-z0-9+/]*={0,2}$/
