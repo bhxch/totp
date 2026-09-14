@@ -17,6 +17,13 @@ export interface SyncMeta {
 
 const DEFAULT_MAX_DATA_BYTES = 7000
 
+/** 标准 base64 字母表，padding 仅允许末尾至多 2 个 '='（拒绝空白与任意非法字符） */
+const BASE64_RE = /^[A-Za-z0-9+/]*={0,2}$/
+
+function isStandardBase64(s: string): boolean {
+  return BASE64_RE.test(s) && s.length % 4 === 0
+}
+
 export function chunkKey(part: number, total: number): string {
   return `sync:v1:${part}/${total}`
 }
@@ -39,8 +46,8 @@ export function splitIntoChunks(payload: string, rev: number, updatedAt: number,
 }
 
 /**
- * 校验 part 覆盖 0..total-1、rev/updatedAt/total 全等、data 全为 string，
- * 按 part 序解码各片 base64 拼接字节后解码 UTF-8；任何不一致/缺失 → null。
+ * 校验 part 覆盖 0..total-1、rev/updatedAt/total 全等、data 全为合法标准 base64，
+ * 按 part 序解码各片 base64 拼接字节后解码 UTF-8；任何不一致/缺失/可疑 → null。
  */
 export function mergeChunks(chunks: SyncChunk[]): string | null {
   if (!Array.isArray(chunks) || chunks.length === 0) return null
@@ -51,6 +58,8 @@ export function mergeChunks(chunks: SyncChunk[]): string | null {
   const byPart = new Map<number, string>()
   for (const c of chunks) {
     if (typeof c.data !== 'string') return null
+    // 前置校验：data 含空白时 atob(forgiving-base64) 会静默剥离产生截断 payload，故拒绝之
+    if (!isStandardBase64(c.data)) return null
     if (c.rev !== rev || c.updatedAt !== updatedAt || c.total !== total) return null
     if (!Number.isInteger(c.part) || c.part < 0 || c.part >= total) return null
     if (byPart.has(c.part)) return null
@@ -58,22 +67,22 @@ export function mergeChunks(chunks: SyncChunk[]): string | null {
   }
   if (byPart.size !== total) return null
   // 每片 base64 独立含 padding，须逐片解码后拼字节，不可拼 base64 字符串
-  let byteLength = 0
-  const parts: Uint8Array[] = []
-  for (let part = 0; part < total; part++) {
-    const data = byPart.get(part)
-    if (data === undefined) return null
-    const bytes = base64ToBytes(data)
-    parts.push(bytes)
-    byteLength += bytes.length
-  }
-  const combined = new Uint8Array(byteLength)
-  let offset = 0
-  for (const bytes of parts) {
-    combined.set(bytes, offset)
-    offset += bytes.length
-  }
   try {
+    let byteLength = 0
+    const parts: Uint8Array[] = []
+    for (let part = 0; part < total; part++) {
+      const data = byPart.get(part)
+      if (data === undefined) return null
+      const bytes = base64ToBytes(data)
+      parts.push(bytes)
+      byteLength += bytes.length
+    }
+    const combined = new Uint8Array(byteLength)
+    let offset = 0
+    for (const bytes of parts) {
+      combined.set(bytes, offset)
+      offset += bytes.length
+    }
     return new TextDecoder('utf-8', { fatal: true }).decode(combined)
   } catch {
     return null
@@ -92,10 +101,10 @@ export function chunksToMeta(chunks: SyncChunk[]): SyncMeta {
  */
 export function staleChunkKeys(existing: SyncChunk[], fresh: SyncChunk[]): string[] {
   const freshKeys = new Set(fresh.map((c) => chunkKey(c.part, c.total)))
-  const stale: string[] = []
+  const stale = new Set<string>()
   for (const c of existing) {
     const key = chunkKey(c.part, c.total)
-    if (!freshKeys.has(key)) stale.push(key)
+    if (!freshKeys.has(key)) stale.add(key)
   }
-  return stale
+  return [...stale]
 }

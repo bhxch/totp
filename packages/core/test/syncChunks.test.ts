@@ -115,6 +115,24 @@ describe('mergeChunks', () => {
     expect(mergeChunks(bad)).toBeNull()
   })
 
+  it('data 非法 base64 → null', () => {
+    const chunks = splitIntoChunks('hello', 1, 1)
+    const [c] = chunks
+    // 非字母表字符
+    expect(mergeChunks([{ ...c!, data: 'aGVsbG8!' }])).toBeNull()
+    // padding 位置非法（中间 '='）
+    expect(mergeChunks([{ ...c!, data: 'aG=sbG8' }])).toBeNull()
+    // 长度非 4 倍数（截断）
+    expect(mergeChunks([{ ...c!, data: 'aGVsbG' }])).toBeNull()
+  })
+
+  it('data 含空白（atob 会静默剥离产生截断 payload）→ null', () => {
+    const chunks = splitIntoChunks('hello', 1, 1)
+    const [c] = chunks
+    expect(mergeChunks([{ ...c!, data: ` ${c!.data}` }])).toBeNull()
+    expect(mergeChunks([{ ...c!, data: c!.data.replace('aGV', 'aGV\n') }])).toBeNull()
+  })
+
   it('空数组 → null', () => {
     expect(mergeChunks([])).toBeNull()
   })
