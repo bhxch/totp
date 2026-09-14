@@ -91,7 +91,9 @@ interface OtpEntry {
 |---|---|---|
 | 条目/设置 | `chrome.storage.local`（WXT 统一 API） | 应用数据目录 `vault.json`（Tauri fs） |
 | 浏览器同步 | `chrome.storage.sync`（加密分片，见第 6 节） | 不适用 |
-| 图标二进制 | IndexedDB | `icons/` 子目录文件 |
+| 图标 | `icons` JSON 键（id→dataUrl） | `icons` JSON 键（id→dataUrl） |
+
+> 勘误（2026-09-14）：图标存储原写「IndexedDB / `icons/` 子目录文件」，实际为双端统一复用既有 StorageAdapter 的 `icons` JSON 键（`Record<id, dataUrl>`，与 vault 同源，见第 8 节）——计划 7 裁定；插件端因此申请 `unlimitedStorage`。
 
 设计要点：
 
@@ -156,6 +158,8 @@ KEK 来源三种，可多绑：
 
 插件端「记住解锁」选项：non-extractable CryptoKey 存 IndexedDB（浏览器 profile 级保护，设置中标注风险等级）。
 
+> 勘误（2026-09-14）：该项登记为 backlog——计划 11 未实现 CryptoKey IndexedDB 持久化；passkey PRF / DPAPI 自动解锁（上文来源 2、3）已覆盖「免重复输入」的替代场景。
+
 云备份恢复时用口令模式解开，再在新设备绑定 passkey/DPAPI。
 
 ## 8. 图标系统
@@ -165,7 +169,7 @@ KEK 来源三种，可多绑：
 1. **内置图标**：Simple Icons 精选集（CC0，SVG 单色）+ issuer 关键词/别名映射表（如 `github` / `github.com` / `GitHub Inc.` → GitHub）
 2. **图标包**：导入 aegis-icons 社区包（zip，文件名即 issuer 名）及同构包，自动建关键词映射
 3. **用户上传**：任意图片自动缩放至 128×128 转存
-4. **HTTP URL 引用**：保存链接，首次使用拉取并缓存（IndexedDB / icons 目录），失败回退直链
+4. **HTTP URL 引用**：保存链接，首次使用拉取并缓存（`icons` 键 dataUrl，见第 4 节勘误），失败回退直链
 
 **自动推荐**：手动录入输入 issuer 时实时按关键词/别名匹配内置与包内图标，气泡一键选用；导入条目时批量套用。
 
@@ -204,7 +208,9 @@ Aegis 明文 JSON（互操作）、加密备份 envelope、明文/加密 WinAuth
 
 WXT 构建，一次实现三店兼容（Chrome/Edge MV3 service worker；Firefox 差异化构建）。
 
-### popup（约 360×640）
+### popup（360 宽，最小高 480 起步）
+
+> 勘误（2026-09-14）：原写「约 360×640」，实际为 `width: 360px; min-height: 480px`，高度随内容增长。
 
 - 顶部搜索框（关键字过滤）
 - 当前页匹配过滤开关：默认开，按五种匹配策略（基础域名/主机/精确/前缀/正则，Bitwarden 同款）过滤有效条目，无匹配自动回退显示全部
@@ -217,12 +223,16 @@ WXT 构建，一次实现三店兼容（Chrome/Edge MV3 service worker；Firefox
 
 ### otpauth:// 链接
 
-- Firefox：manifest `protocol_handlers` 原生注册
-- Chrome/Edge：**平台不支持扩展注册自定义协议**，替代路径——右键菜单「将选中 URI 添加为条目」+ 粘贴入口兜底
+- Firefox：manifest `protocol_handlers` 注册 `ext+otpauth`（popup 端还原为 `otpauth://` 预填录入）
+- Chrome/Edge：**平台不支持扩展注册自定义协议**，替代路径——右键菜单「将选中 URI 添加为条目」+ popup 粘贴入口兜底
+
+> 勘误（2026-09-14）：Firefox manifest schema 对 `protocol_handlers` 的 scheme 仅允许白名单协议或 `ext+`/`web+` 前缀，裸 `otpauth` 会被硬校验拒绝导致扩展无法安装，故实际以 `ext+otpauth` 注册（依据 `apps/extension/wxt.config.ts` 与计划 12 Task 2 产物核对）——真实 `otpauth://` 链接无法被扩展接管，属平台限制。
 
 ### 权限
 
-`storage`、`clipboardWrite`、`activeTab`（popup 打开时读当前页 URL）；右键菜单按需 `contextMenus`。不申请 `<all_urls>` 全站权限。
+`storage`、`unlimitedStorage`（图标 dataUrl 存 `chrome.storage.local`，豁免 10MB 配额）、`clipboardWrite`、`activeTab`（popup 打开时读当前页 URL）、`contextMenus`（右键菜单 otpauth-add 注册，Chromium 下无此权限 API 不可用）、`notifications`（右键菜单选中文本非 otpauth 时提示）、`alarms` + `offscreen`（复制后 30s 清剪贴板：popup 即将关闭，由 background 经 alarms 定时、offscreen document 执行清空）；Firefox 构建另含 `browser_specific_settings.gecko.id`（固定扩展身份，协议处理器注册所需）。不申请 `<all_urls>` 全站权限。
+
+> 勘误（2026-09-14）：原清单仅列 storage/clipboardWrite/activeTab 且写「右键菜单按需 contextMenus」，与实际 manifest 不符，已按 `apps/extension/wxt.config.ts` 实际申请集更正。补遗（2026-09-14，计划 12 Task 2）：落地后补申请 `contextMenus`——`chrome.contextMenus` API 的前置权限，缺失时菜单静默不显示。
 
 ## 11. Tauri 桌面形态
 
@@ -233,7 +243,7 @@ WXT 构建，一次实现三店兼容（Chrome/Edge MV3 service worker；Firefox
 
 ## 12. 安全
 
-- secret 在列表中默认遮蔽，点击显示；复制后可选 30 秒自动清空剪贴板（默认开）
+- secret 在列表中默认遮蔽，点击显示；复制后 30 秒自动清空剪贴板——默认开启，可在设置中关闭（已实现；Chrome/Edge 经后台 alarms+offscreen 承载，popup 关闭后仍生效，Firefox 端暂不生效并在设置中注明）
 - 严格 CSP；无遥测；浏览器 sync 与云后端只见密文；口令不落盘
 - 依赖最小化：`hash-wasm`（Argon2id）、`jsQR`、`fflate`（zip/图标包）、`sql.js`（懒加载）；TOTP/URI 解析/匹配引擎/云后端全部自写，密码原语用 WebCrypto
 
@@ -251,7 +261,9 @@ WXT 构建，一次实现三店兼容（Chrome/Edge MV3 service worker；Firefox
 
 ## 15. 分期路线
 
-- **M1 MVP**：core（OTP/Steam/URI/匹配/加密）+ ui 基础 + 插件（popup/options/搜索/URL 过滤/复制）+ 桌面（主窗口/托盘/快捷键/失焦隐藏）+ Aegis/WinAuth/通用 JSON 导入 + 本地备份
-- **M2**：19 格式全量导入 + 映射方案保存 + 图标系统完整（内置集/图标包/推荐）+ 浏览器同步加密分片
-- **M3**：云同步五后端 + 同步检查/冲突处理 + passkey PRF/DPAPI 解锁 + aegis-icons 包导入
-- **Backlog**：整库口令更换流水、HOTP UI 增强、摄像头实时扫码、屏幕选区扫码、自动填充到网页表单
+- **M1 MVP（已完成，P1–P5）**：core（OTP/Steam/URI/匹配/加密）+ ui 基础 + 插件（popup/options/搜索/URL 过滤/复制）+ 桌面（主窗口/托盘/快捷键/失焦隐藏）+ Aegis/WinAuth/通用 JSON 导入 + 本地备份
+- **M2（已完成，P7–P9）**：19 格式全量导入（个别格式限制见 Backlog）+ 映射方案保存 + 图标系统完整（内置集/图标包/推荐）+ 浏览器同步加密分片
+- **M3（已完成，P7、P10–P12）**：云同步五后端 + 同步检查/冲突处理 + passkey PRF/DPAPI 解锁 + aegis-icons 包导入；P12 补齐 §10 otpauth 链接接入（Firefox `ext+otpauth` / Chrome 右键+粘贴入口）
+- **Backlog**：整库口令更换流水、HOTP UI 增强、GA 旧版 SQLite 导入、Steam Steamguard 导入、andOTP 加密备份、映射方案随备份导出、导入条目批量套用图标、双端独立加密禁用提示、云同步本地内容 hash 免上传优化、「记住解锁」CryptoKey IndexedDB 持久化（插件端，见第 7 节勘误）、摄像头实时扫码、屏幕选区扫码、自动填充到网页表单（维持裁剪）
+
+> 勘误（2026-09-14）：计划 1–12 已交付，M1–M3 标注完成；原 Backlog 中摄像头/屏幕选区扫码顺延、自动填充维持裁剪，新增 GA 旧版 SQLite、Steam Steamguard、andOTP 加密备份、映射方案随备份导出、导入条目批量套用图标、双端独立加密禁用提示、云同步本地内容 hash 免上传优化。
