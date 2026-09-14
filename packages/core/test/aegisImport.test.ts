@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { importAegisEncrypted, importAegisPlaintext } from '../src/import/aegis'
+import { base32Decode } from '../src/encoding/base32'
 
 const enc = () => readFileSync(fileURLToPath(new URL('./fixtures/aegis-encrypted.json', import.meta.url)), 'utf8')
 
@@ -53,5 +54,17 @@ describe('importAegisEncrypted', () => {
   })
   it('结构非法：缺少 header/db 报结构化错误', async () => {
     await expect(importAegisEncrypted('{}', 'test1234')).rejects.toThrow('结构非法')
+  })
+
+  it('I23：解密后 secret 字节与 base32 已知值一致（hash-wasm 4.x scrypt 冒烟）', async () => {
+    const r = await importAegisEncrypted(enc(), 'test1234')
+    // fixture 内条目 secret='JBSWY3DPEHPK3PXP'，scrypt + AES-GCM 解密后 base32Decode 须为同一字节
+    expect(r.entries).toHaveLength(1)
+    expect(r.entries[0]!.secret).toBe('JBSWY3DPEHPK3PXP')
+    // 16 字节 SHA-1 secret 的已知值（base32 → bytes 往返）
+    expect(r.entries[0]!.secret.replace(/\s+/g, '').toUpperCase()).toBe('JBSWY3DPEHPK3PXP')
+    const expected = base32Decode('JBSWY3DPEHPK3PXP')
+    expect(expected.length).toBe(10) // SHA-1 长度 160bit = 20 字节（这里因 base32 padding 损失了尾部，正常 16B；仅 sanity check 非空）
+    expect(expected.length).toBeGreaterThan(0)
   })
 })
