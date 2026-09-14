@@ -6,6 +6,8 @@ const CLIPBOARD_CLEAR_ALARM = 'clipboard-clear'
 const OFFSCREEN_URL = 'offscreen.html'
 /** 调度消息未带 delayMs 时的兜底延迟 */
 const DEFAULT_CLEAR_DELAY_MS = 30_000
+/** sync-push 合并窗口：连写（如导入批量 commit）只触发一次推送 */
+const SYNC_PUSH_MERGE_MS = 1_000
 
 /** 确保 offscreen document 存在：每扩展仅允许一个，重复 createDocument 会抛错，捕获即「已存在」 */
 async function ensureOffscreenDocument(): Promise<void> {
@@ -21,15 +23,21 @@ async function ensureOffscreenDocument(): Promise<void> {
 }
 
 export default defineBackground(() => {
-  // popup/options 复制后发 {type:'schedule-clipboard-clear', delayMs}——popup 即将关闭，30s 清空须由后台承载
+  // 页面端写路径成功后立即发 {type:'sync-push'}（popup 发完即可能销毁，页面端不做 debounce）：
+  // SW 内 1s 合并窗口把连写合并为一次推送；SW 被杀时消息本身会唤醒 SW 重新计时，推送不丢
+  let syncPushTimer: ReturnType<typeof setTimeout> | undefined
   chrome.runtime.onMessage.addListener((msg) => {
+    // popup/options 复制后发 {type:'schedule-clipboard-clear', delayMs}——popup 即将关闭，30s 清空须由后台承载
     if (msg?.type === 'schedule-clipboard-clear') {
       // when 绝对时间触发；delayMs 为 30s 满足 Chrome 120+ 的 alarms 最小间隔 30s
       void chrome.alarms.create(CLIPBOARD_CLEAR_ALARM, { when: Date.now() + (typeof msg.delayMs === 'number' ? msg.delayMs : DEFAULT_CLEAR_DELAY_MS) })
     }
-    // 页面端 store 薄封装在 commit/commitSettings 后调度（页面端已 debounce 1s + syncEnabled 短路，此处双保险复核）
     if (msg?.type === 'sync-push') {
-      void pushSync()
+      if (syncPushTimer !== undefined) clearTimeout(syncPushTimer)
+      syncPushTimer = setTimeout(() => {
+        syncPushTimer = undefined
+        void pushSync() // syncEngine 内复核 syncEnabled（双保险）并串行化
+      }, SYNC_PUSH_MERGE_MS)
     }
   })
   chrome.alarms.onAlarm.addListener((alarm) => {

@@ -178,6 +178,51 @@ describe('createVueStore', () => {
     expect(b.vault.entries).toHaveLength(0)
   })
 
+  it('opts.onCommitted：队列写成功后触发，失败不触发', async () => {
+    const adapter = createMemoryStorage()
+    const onCommitted = vi.fn()
+    const s = createVueStore(adapter, { onCommitted })
+    await s.initStore()
+    await s.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    expect(onCommitted).toHaveBeenCalledTimes(1)
+    await s.commitSettings()
+    expect(onCommitted).toHaveBeenCalledTimes(2)
+    s.lock()
+    await expect(s.addEntryOp(newEntryFromUri('otpauth://totp/B:c?secret=JBSWY3DPEHPK3PXP', 1700000000000))).rejects.toThrow('vault locked')
+    expect(onCommitted).toHaveBeenCalledTimes(2) // 失败的写不触发
+  })
+
+  it('双端独立加密：本端 DEK 解不开远端密文→转锁定等远端口令，拒绝产生幽灵密文', async () => {
+    const adapter = createMemoryStorage()
+    let notify: ((p: { vault?: boolean; settings?: boolean }) => void) | null = null
+    const b = createVueStore(adapter, { registerSync: (cb) => { notify = cb } })
+    await b.initStore()
+    await b.addEntryOp(newEntryFromUri('otpauth://totp/B:c?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await b.enableEncryption('pwB') // 设备 B 独立加密，持有 dekB
+    expect(b.locked.value).toBe(false)
+    b.registerStorageSync()
+    // 模拟 background pull 落盘远端（设备 A 独立加密 pwA、rev 更高者胜）后的状态
+    const remote = await setupVaultEncryption(
+      JSON.stringify({ version: 1, entries: [{ uuid: 'a' }], groups: [], updatedAt: 7 }),
+      'pwA',
+    )
+    await adapter.set(SECURITY_KEY, JSON.stringify(remote.security))
+    await adapter.set('vault', JSON.stringify(remote.encrypted))
+    await new Promise((r) => setTimeout(r, 550)) // 越过 enableEncryption 留下的 500ms 自写抑制窗口（真实 pull 间隔远大于此）
+    notify!({ vault: true })
+    await flush()
+    // 终态与裁定一致：本端转锁定、dek 丢弃（vault 清空防残留）、security 缓存=远端
+    expect(b.locked.value).toBe(true)
+    expect(b.vault.entries).toHaveLength(0)
+    expect(b.hasEncryption.value).toBe(true)
+    // 锁定拒绝写：不会以 dekB 加密 + 远端 security 落盘（幽灵密文防线）
+    await expect(b.addEntryOp(newEntryFromUri('otpauth://totp/D:e?secret=JBSWY3DPEHPK3PXP', 1700000000000))).rejects.toThrow('vault locked')
+    // 等待输入远端口令：unlock 恢复远端数据
+    await b.unlock('pwA')
+    expect(b.locked.value).toBe(false)
+    expect(b.vault.entries).toHaveLength(1)
+  })
+
   it('通知丢失时明文写防御：远端已加密而本端陈旧→拒绝写入、转锁定、密文不被覆盖', async () => {
     const adapter = createMemoryStorage()
     const a = createVueStore(adapter)

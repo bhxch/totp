@@ -73,6 +73,18 @@ function readChunks(area: Record<string, unknown>): SyncChunk[] {
   return chunks
 }
 
+/** 远端 settings 整体采用，但 syncEnabled 位保留本端值（缺失/损坏时保留语义等价于 false） */
+async function mergeRemoteSettingsKeepingLocalSyncEnabled(remoteRaw: string): Promise<string> {
+  try {
+    const localRaw = (await chrome.storage.local.get([SETTINGS_KEY]))[SETTINGS_KEY]
+    const remote = JSON.parse(remoteRaw) as Record<string, unknown>
+    const localEnabled = typeof localRaw === 'string' && (JSON.parse(localRaw) as Record<string, unknown>).syncEnabled === true
+    return JSON.stringify({ ...remote, syncEnabled: localEnabled })
+  } catch {
+    return remoteRaw // 本端 settings 损坏等异常：退化为整体采用远端
+  }
+}
+
 async function pushOnce(): Promise<void> {
   try {
     const local = await chrome.storage.local.get([VAULT_KEY, SECURITY_KEY, SETTINGS_KEY])
@@ -146,7 +158,11 @@ async function pullOnce(): Promise<void> {
       batch[VAULT_KEY] = payload
       removes.push(SECURITY_KEY)
     }
-    if (typeof syncAll[SETTINGS_SYNC_KEY] === 'string') batch[SETTINGS_KEY] = syncAll[SETTINGS_SYNC_KEY]
+    if (typeof syncAll[SETTINGS_SYNC_KEY] === 'string') {
+      // 保留本端 syncEnabled 位：同步开关是每设备显式意志，远端 settings 整体采用但开关位不跟随
+      // （否则 B 关闭同步后 A 的推送会把 B 重新拉开）
+      batch[SETTINGS_KEY] = await mergeRemoteSettingsKeepingLocalSyncEnabled(syncAll[SETTINGS_SYNC_KEY])
+    }
     batch[APPLIED_REV_KEY] = meta.rev
     await chrome.storage.local.set(batch)
     if (removes.length > 0) await chrome.storage.local.remove(removes)

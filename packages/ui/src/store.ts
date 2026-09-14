@@ -9,7 +9,12 @@ import { computed, reactive, ref, toRaw } from 'vue'
 
 export function createVueStore(
   adapter: StorageAdapter,
-  opts: { registerSync?: (cb: (payload: { vault?: boolean; settings?: boolean }) => void) => void } = {},
+  opts: {
+    registerSync?: (cb: (payload: { vault?: boolean; settings?: boolean }) => void) => void
+    /** 队列内写操作（commit/commitSettings/enable/disable/changePassphrase 等 op）成功后的统一回调：
+     *  extension 场景用于触发浏览器同步推送调度，保证所有写路径无遗漏（desktop 不传则零行为） */
+    onCommitted?: () => void
+  } = {},
 ) {
   const vault = reactive<Vault>({ version: 1, entries: [], groups: [], updatedAt: 0 })
   const settings = reactive<AppSettings>({ ...DEFAULT_SETTINGS })
@@ -72,9 +77,14 @@ export function createVueStore(
     inited = true
   }
 
-  /** 串行入队原语：任务依次执行，单任务失败不传染后续任务（与原 commit 队列语义一致） */
+  /** 串行入队原语：任务依次执行，单任务失败不传染后续任务（与原 commit 队列语义一致）。
+   *  任务 resolve（成功）后触发 opts.onCommitted——覆盖全部经队列的写路径（含 enable/disable 加密等 op） */
   function enqueue<T>(task: () => Promise<T>): Promise<T> {
-    const p = queue.then(task)
+    const p = queue.then(async () => {
+      const result = await task()
+      opts.onCommitted?.()
+      return result
+    })
     queue = p.then(() => {}, () => {})
     return p
   }
@@ -142,6 +152,8 @@ export function createVueStore(
       } catch (e) {
         console.error('[store] saveSettings failed:', e)
       }
+      // 与 enqueue 的 onCommitted 语义对齐：commitSettings 未走 enqueue，需单独触发
+      opts.onCommitted?.()
     })
     return queue
   }
@@ -163,8 +175,19 @@ export function createVueStore(
                 security.value = await readSecurity().catch(() => null)
                 return
               }
+              // 双端独立加密防线（浏览器同步）：本端 DEK 解不开远端密文 → 远端 rev 高者胜，
+              // 采用远端状态：丢弃本端 DEK、转锁定、security 缓存刷新为盘上（远端）值，等待输入远端口令。
+              // 不拦截则本端后续写 op 会以本端 DEK 加密 + 远端 security 落盘 → 无人可解的幽灵密文
+              let remoteJson: string
+              try {
+                remoteJson = await decryptVaultWithDek(dek, parsed)
+              } catch {
+                lock()
+                security.value = await readSecurity().catch(() => null)
+                return
+              }
               // 持有 DEK 才解密填充（changePassphrase 只重包裹、DEK 不变，旧 DEK 仍可解）
-              replaceVault(JSON.parse(await decryptVaultWithDek(dek, parsed)) as Vault)
+              replaceVault(JSON.parse(remoteJson) as Vault)
               return
             }
             replaceVault(parsed as Vault)
