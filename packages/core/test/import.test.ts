@@ -40,6 +40,11 @@ describe('importUriBatch', () => {
     expect(r.entries[0]).toMatchObject({ type: 'totp', issuer: 'GitHub', label: 'me@x.com', secret: SECRET })
     expect(r.entries[1]).toMatchObject({ type: 'hotp', counter: 1 })
   })
+
+  it('I41：steam URI 导入强制 digits=5（即便原始 URI 写 digits=6 也覆盖）', () => {
+    const r = importUriBatch(`otpauth://steam/Steam:u?secret=JBSWY3DPEHPK3PXP&digits=6`)
+    expect(r.entries[0]).toMatchObject({ type: 'steam', digits: 5 })
+  })
 })
 
 describe('extractGenericRows', () => {
