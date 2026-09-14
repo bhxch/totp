@@ -2,12 +2,17 @@
 import { backupFileName, conflictBackupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, OVERWRITE_NAME, randomBytes, SCHEMES_KEY, type BackupEnvelopeV1, type CloudCred, type ImportScheme, type Vault } from '@totp/core'
 import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, createPrfCredential, LockScreen, prfSupported, VaultManager, type BackupMode, type BackupPlatform, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
-import { storageAdapter } from '../../src/store'
+import { createExtensionStore, storageAdapter } from '../../src/store'
 import { markSyncOff, SYNC_STATUS_KEY } from '../../src/syncEngine'
-import {
-  addPrfSourceOp, changePassphrase, commitSettings, disableEncryption, enableEncryption, hasEncryption, initStore, locked,
-  registerStorageSync, removePrfSourceOp, replaceAllOp, prfSources, settings, store,
-} from '../../src/store'
+
+// spec §7 末尾：options 窗口独立解锁——windowId='options' 与 popup 隔离，各持各的 DEK
+const store = createExtensionStore('options')
+const {
+  vault, initStore, registerStorageSync,
+  locked, hasEncryption, unlock, lock, enableEncryption, disableEncryption, changePassphrase,
+  prfSources, addPrfSourceOp, removePrfSourceOp, replaceAllOp, settings,
+} = store
+const commitSettings = store.commitSettings
 
 const icons = createIconStore(storageAdapter)
 

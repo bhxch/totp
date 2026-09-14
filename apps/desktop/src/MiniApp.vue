@@ -11,7 +11,9 @@ const icons = ref<IconStore | null>(null)
 async function load() {
   try {
     const adapter = await createTauriFs()
-    const s = createVueStore(adapter)
+    // spec §7 末尾：mini 窗口独立保持锁定（即使主窗口已解锁）——windowId='mini' 与 'main' 隔离 DEK，
+    // locked=true 初值使其无法解锁；store.commit 拒绝 locked 态写，spec 要求 mini 与 App 交互一致但读不到密文
+    const s = createVueStore(adapter, { windowId: 'mini' })
     await s.initStore()
     store.value = s
     const iconStore = createIconStore(adapter)
@@ -39,10 +41,16 @@ const clearer = createClipboardClearer(
   () => writeText(''),
 )
 
-async function copy(entry: { uuid: string }) {
+async function copy(entry: { uuid: string; type?: string; counter?: number }) {
   const code = codes.value.get(entry.uuid)?.code
   if (!code) return
   await writeText(code)
+  // C14：HOTP 复制的是旧 counter 的码（RFC 语义），复制完成后再递增；TOTP 不动 counter。
+  // mini 锁定时模板不渲染条目（见 template #v-if="store && store.locked" 分支），故此处 store 必已解锁；
+  // updateEntryOp 在 locked 态会抛错，捕获避免在某些边界场景把窗口隐藏打断
+  if (entry.type === 'hotp') {
+    try { await store.value?.updateEntryOp(entry.uuid, { counter: (entry.counter ?? 0) + 1 }) } catch { /* mini 降级不打扰 */ }
+  }
   clearer.notifyCopied()
   setTimeout(() => void getCurrentWindow().hide(), 500)
 }

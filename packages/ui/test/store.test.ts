@@ -327,6 +327,85 @@ describe('createVueStore', () => {
     const raw = JSON.parse((await adapter.get('vault'))!)
     expect(raw.enc).toBe(true) // 自愈：写 op 走加密分支转回密文
   })
+
+  it('跨窗口：同进程两个 windowId 各自独立持有 DEK；A unlock/lock 不污染 B', async () => {
+    const adapter = createMemoryStorage()
+    // 自写抑制关：通知立即生效
+    const a = createVueStore(adapter, { windowId: 'popup', selfWriteSuppressMs: 0 })
+    let notify: ((p: { vault?: boolean; settings?: boolean }) => void) | null = null
+    const b = createVueStore(adapter, {
+      windowId: 'options', selfWriteSuppressMs: 0,
+      registerSync: (cb) => { notify = cb },
+    })
+    await Promise.all([a.initStore(), b.initStore()])
+    b.registerStorageSync()
+    await a.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await a.enableEncryption('pw')
+    notify!({ vault: true }) // 模拟 background 把远端变更推过来
+    await flush()
+    // B 收密文通知→locked=true（缺 DEK）
+    expect(a.locked.value).toBe(false)
+    expect(b.locked.value).toBe(true)
+    // B 单独解锁持有自身 DEK（与 A 隔离）
+    await b.unlock('pw')
+    expect(b.locked.value).toBe(false)
+    const dekA = a.getCurrentDek()
+    const dekB = b.getCurrentDek()
+    expect(dekA).toBeInstanceOf(Uint8Array)
+    expect(dekB).toBeInstanceOf(Uint8Array)
+    expect(dekA).not.toBe(dekB) // 隔离：两个独立 DEK 实例
+    // A 锁定不污染 B（仅清空自身 DEK）
+    a.lock()
+    expect(a.locked.value).toBe(true)
+    expect(b.locked.value).toBe(false)
+    expect(a.getCurrentDek()).toBeNull()
+    expect(b.getCurrentDek()).not.toBeNull()
+  })
+
+  it('跨窗口：storage.onChanged 按 windowId 隔离 locked/dek（B 不持有 DEK 时收密文通知→本窗口锁定）', async () => {
+    const adapter = createMemoryStorage()
+    let notify: ((p: { vault?: boolean; settings?: boolean }) => void) | null = null
+    const a = createVueStore(adapter, { windowId: 'popup', selfWriteSuppressMs: 0 })
+    const b = createVueStore(adapter, {
+      windowId: 'options', selfWriteSuppressMs: 0,
+      registerSync: (cb) => { notify = cb },
+    })
+    await Promise.all([a.initStore(), b.initStore()])
+    b.registerStorageSync()
+    // A 启用加密（明文时代 B 是 unlocked）→ B 收密文通知→本窗口 locked=true（缺 DEK）
+    await a.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await a.enableEncryption('pw')
+    notify!({ vault: true })
+    await flush()
+    expect(b.locked.value).toBe(true)
+    expect(b.getCurrentDek()).toBeNull()
+    // A 再添加条目：B 通知应被锁定态拒收（防本端锁定态下污染内存）
+    await a.addEntryOp(newEntryFromUri('otpauth://totp/C:d?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    notify!({ vault: true })
+    await flush()
+    // B 仍锁定、未拿到 DEK
+    expect(b.locked.value).toBe(true)
+    expect(b.getCurrentDek()).toBeNull()
+  })
+
+  it('桌面 mini：与 main 窗口 DEK 隔离；主窗口解锁时 mini 仍保持锁定', async () => {
+    const adapter = createMemoryStorage()
+    const main = createVueStore(adapter, { windowId: 'main' })
+    await main.initStore()
+    await main.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await main.enableEncryption('pw')
+    expect(main.locked.value).toBe(false)
+    expect(main.getCurrentDek()).not.toBeNull()
+    // mini 窗口独立 store：盘上有密文 vault 但 mini 无 DEK → 锁定（spec §7 末尾 mini 保持锁定）
+    const mini = createVueStore(adapter, { windowId: 'mini' })
+    await mini.initStore()
+    expect(mini.locked.value).toBe(true)
+    expect(mini.getCurrentDek()).toBeNull()
+    // main 锁定不污染 mini（mini 已是 true，仍 true）
+    main.lock()
+    expect(main.locked.value).toBe(true)
+    expect(mini.locked.value).toBe(true)
+  })
 })
 
 describe('passkey PRF（plan11 Task2）', () => {

@@ -232,7 +232,8 @@ onMounted(async () => {
   try {
     const adapter = await createTauriFs()
     fsAdapter = adapter
-    const s = createVueStore(adapter)
+    // spec §7 末尾：主窗口独立解锁——windowId='main' 与 mini 隔离 DEK
+    const s = createVueStore(adapter, { windowId: 'main' })
     await s.initStore()
     store.value = s
     const iconStore = createIconStore(adapter)
