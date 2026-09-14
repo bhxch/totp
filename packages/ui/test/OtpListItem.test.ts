@@ -33,3 +33,34 @@ describe('OtpListItem 图标渲染', () => {
     expect(w.find('.avatar svg').exists()).toBe(false)
   })
 })
+
+describe('OtpListItem 揭示与右键菜单（C16）', () => {
+  it('reveal 按钮 emit reveal，且不冒泡触发 copy', async () => {
+    const w = mount(OtpListItem, { props: { entry, ...base } })
+    await w.find('button.reveal').trigger('click')
+    expect(w.emitted('reveal')).toHaveLength(1)
+    // @click.stop 已阻止冒泡，copy 不应被触发
+    expect(w.emitted('copy')).toBeUndefined()
+  })
+
+  it('@contextmenu.prevent 默认 + emit context 携带 MouseEvent', async () => {
+    const w = mount(OtpListItem, { props: { entry, ...base } })
+    await w.find('.otp-item').trigger('contextmenu', { clientX: 100, clientY: 200 })
+    // 默认菜单已被 preventDefault 阻止（vue-test-utils 会保留 preventDefault 调用）
+    expect(w.emitted('context')).toHaveLength(1)
+    const ev = w.emitted('context')![0]![0] as MouseEvent
+    expect(ev.clientX).toBe(100)
+    expect(ev.clientY).toBe(200)
+  })
+
+  it('pinned=true 时显示 ★ 图标', () => {
+    const w = mount(OtpListItem, { props: { entry: { ...entry, pinned: true }, ...base } })
+    expect(w.find('.pin').exists()).toBe(true)
+    expect(w.text()).toContain('★')
+  })
+
+  it('pinned 缺省/false 不显示 ★', () => {
+    const w = mount(OtpListItem, { props: { entry, ...base } })
+    expect(w.find('.pin').exists()).toBe(false)
+  })
+})

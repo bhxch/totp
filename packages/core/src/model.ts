@@ -20,6 +20,8 @@ export interface OtpEntry {
   groupIds: string[]
   order: number
   createdAt: number
+  /** 是否置顶：列表渲染时优先；缺省 false（向后兼容旧 vault） */
+  pinned?: boolean
 }
 
 export interface Group {

@@ -1,32 +1,51 @@
 <script setup lang="ts">
+import type { OtpEntry } from '@totp/core'
+
 defineProps<{
-  entry: import('@totp/core').OtpEntry
+  entry: OtpEntry
   code: string
   remaining: number
   progress: number
   /** 图标视图：html=builtin path 包裹片段（svg innerHTML，fill currentColor）；src=dataUrl；均缺省回退首字母 avatar */
   icon?: { html?: string; src?: string }
 }>()
-const emit = defineEmits<{ copy: [] }>()
+const emit = defineEmits<{ copy: []; reveal: []; context: [event: MouseEvent] }>()
 
 function grouped(code: string): string {
   return code.length === 5 || code.length === 7 || code.length === 8 ? code : code.replace(/(\d{3})(\d+)/, '$1 $2')
 }
+
+/** 右键菜单：阻止默认浏览器菜单，上抛 event 给父组件在 (x,y) 渲染自定义菜单 */
+function onContextMenu(e: MouseEvent): void {
+  e.preventDefault()
+  emit('context', e)
+}
 </script>
 
 <template>
-  <div class="otp-item" role="button" tabindex="0" @click="emit('copy')" @keydown.enter="emit('copy')">
+  <div
+    class="otp-item"
+    role="button"
+    tabindex="0"
+    @click="emit('copy')"
+    @keydown.enter="emit('copy')"
+    @contextmenu="onContextMenu"
+  >
     <span class="avatar">
       <svg v-if="icon?.html" viewBox="0 0 24 24" class="icon-svg" aria-hidden="true" v-html="icon.html" />
       <img v-else-if="icon?.src" :src="icon.src" class="icon-img" alt="" />
       <template v-else>{{ entry.issuer.slice(0, 1).toUpperCase() || '?' }}</template>
     </span>
     <div class="meta">
-      <div class="issuer">{{ entry.issuer }}</div>
+      <div class="issuer">
+        <span v-if="entry.pinned" class="pin" title="已置顶">★</span>
+        {{ entry.issuer }}
+      </div>
       <div class="label">{{ entry.label }}</div>
     </div>
     <div class="right">
       <span class="code">{{ grouped(code) }}</span>
+      <button type="button" class="reveal" title="显示密钥" @click.stop="emit('reveal')">🔑</button>
       <svg viewBox="0 0 36 36" class="ring" aria-hidden="true">
         <circle cx="18" cy="18" r="16" class="ring-bg" />
         <circle
@@ -47,10 +66,13 @@ function grouped(code: string): string {
 .icon-svg { width: 22px; height: 22px; fill: currentColor; }
 .icon-img { width: 100%; height: 100%; object-fit: cover; }
 .meta { flex: 1; min-width: 0; }
-.issuer { font-weight: 600; }
+.issuer { font-weight: 600; display: flex; align-items: center; gap: 4px; }
+.pin { color: #f5a623; font-size: 14px; }
 .label { font-size: 12px; opacity: 0.7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .right { display: flex; align-items: center; gap: 8px; }
 .code { font-family: ui-monospace, monospace; font-size: 18px; letter-spacing: 1px; }
+.reveal { border: none; background: none; cursor: pointer; padding: 4px; font-size: 14px; opacity: 0.5; }
+.reveal:hover { opacity: 1; }
 .ring { width: 32px; height: 32px; transform: rotate(-90deg); }
 .ring-bg { fill: none; stroke: rgba(128,128,128,.3); stroke-width: 3; }
 .ring-fg { fill: none; stroke: #4a90d9; stroke-width: 3; stroke-linecap: round; }

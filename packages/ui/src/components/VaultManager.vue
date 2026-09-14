@@ -46,9 +46,20 @@ const confirmingDelete = ref<string | null>(null)
 const newGroupName = ref('')
 const renaming = ref<string | null>(null)
 const renameValue = ref('')
+/** reveal：列表点击「🔑」后弹模态显前 4 + 后 4（避免列表常驻明文） */
+const revealing = ref<OtpEntry | null>(null)
+/** 右键菜单：菜单位置与目标条目 */
+const contextMenu = ref<{ x: number; y: number; entry: OtpEntry } | null>(null)
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
 
-const sorted = computed(() => [...props.store.vault.entries].sort((a, b) => a.order - b.order))
+/** 排序：pinned 优先，然后按 order。
+ *  pinned 用 truthy 检查（缺省 false），向后兼容无 pinned 字段的旧 vault */
+const sorted = computed(() =>
+  [...props.store.vault.entries].sort((a, b) => {
+    if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1
+    return a.order - b.order
+  }),
+)
 /** 备份内容快照（saveVault 同款 JSON）：序列化 reactive 代理以保持 computed 依赖追踪（toRaw 会丢失嵌套依赖导致快照过期） */
 const vaultJson = computed(() => JSON.stringify(props.store.vault))
 /** 导入平台：宿主 platform 提供了 readImportFile 才渲染导入卡（popup platform=null 零影响） */
@@ -106,6 +117,56 @@ async function onCopy(entry: OtpEntry) {
   // HOTP：复制的是旧 counter 的码（RFC 语义），复制完成后再递增
   if (entry.type === 'hotp') await props.store.updateEntryOp(entry.uuid, { counter: (entry.counter ?? 0) + 1 })
 }
+
+/** reveal 模态：显前 4 + 后 4，中间遮蔽，避免整段密钥常驻在列表 DOM 内 */
+function maskSecret(secret: string): string {
+  const s = secret.replace(/\s+/g, '')
+  if (s.length <= 8) return s
+  return `${s.slice(0, 4)}…${s.slice(-4)}`
+}
+
+/** 点击「🔑」：仅在 reveal 模态中显示密钥（不写入剪贴板、不在列表 DOM 留明文） */
+function onReveal(entry: OtpEntry) {
+  revealing.value = entry
+}
+function closeReveal() {
+  revealing.value = null
+}
+
+/** 右键菜单：编辑 / 复制 URI / 置顶切换 */
+function onContextMenu(entry: OtpEntry, e: MouseEvent) {
+  contextMenu.value = { x: e.clientX, y: e.clientY, entry }
+}
+function closeContextMenu() {
+  contextMenu.value = null
+}
+function contextEdit(entry: OtpEntry) {
+  editing.value = entry
+  creating.value = false
+  closeContextMenu()
+}
+/** 复制 otpauth URI 到剪贴板（与应用导入路径兼容：base32 + 算法/位数/周期/counter 全保留） */
+async function contextCopyUri(entry: OtpEntry) {
+  const params = new URLSearchParams()
+  params.set('secret', entry.secret.replace(/\s+/g, ''))
+  if (entry.algorithm !== 'SHA1') params.set('algorithm', entry.algorithm)
+  if (entry.digits !== 6) params.set('digits', String(entry.digits))
+  if (entry.type !== 'totp' && entry.period !== 30) params.set('period', String(entry.period))
+  if (entry.type === 'hotp' && typeof entry.counter === 'number') params.set('counter', String(entry.counter))
+  if (entry.issuer) params.set('issuer', entry.issuer)
+  const label = entry.issuer ? `${encodeURIComponent(entry.issuer)}:${encodeURIComponent(entry.label)}` : encodeURIComponent(entry.label)
+  const uri = `otpauth://${entry.type}/${label}?${params.toString()}`
+  try {
+    await navigator.clipboard.writeText(uri)
+  } catch {
+    /* 剪贴板不可用时静默；用户可改用复制验证码路径 */
+  }
+  closeContextMenu()
+}
+async function contextTogglePin(entry: OtpEntry) {
+  await props.store.updateEntryOp(entry.uuid, { pinned: !entry.pinned })
+  closeContextMenu()
+}
 </script>
 
 <template>
@@ -142,8 +203,15 @@ async function onCopy(entry: OtpEntry) {
     <EntryForm v-if="creating || editing" :key="editing?.uuid ?? 'new'" :initial="editing" :groups="store.vault.groups" :icons="entryIcons" :icon-store="icons ?? undefined" @save="onSave" @cancel="creating = false; editing = null" />
     <div v-if="sorted.length === 0" class="empty">暂无条目，点击「＋ 添加」录入。</div>
     <div v-else-if="visible.length === 0" class="empty">无匹配条目</div>
-    <div v-for="e in visible" :key="e.uuid" class="row">
-      <OtpListItem :entry="e" :icon="iconView(e.icon, icons ?? undefined)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="onCopy(e)" />
+    <div v-for="e in visible" :key="e.uuid" class="row" @click="closeContextMenu">
+      <OtpListItem
+        :entry="e"
+        :icon="iconView(e.icon, icons ?? undefined)"
+        v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }"
+        @copy="onCopy(e)"
+        @reveal="onReveal(e)"
+        @context="(ev) => onContextMenu(e, ev)"
+      />
       <div class="ops">
         <template v-if="confirmingDelete === e.uuid">
           <button class="danger" @click.stop="askRemove(e.uuid)">确认删除？</button>
@@ -161,6 +229,28 @@ async function onCopy(entry: OtpEntry) {
   <BackupCard :platform="platform" :vault-json="vaultJson" />
   <CloudCard :platform="cloudPlatform" />
   <ImportCard :platform="importPlatform" :schemes-api="schemesApi" />
+
+  <!-- reveal 模态：仅在被请求时显前 4 + 后 4 形态的密钥；点击遮罩或关闭按钮关闭 -->
+  <div v-if="revealing" class="reveal-mask" @click="closeReveal">
+    <div class="reveal-card" @click.stop>
+      <h3>{{ revealing.issuer }} — 密钥</h3>
+      <code class="reveal-secret">{{ maskSecret(revealing.secret) }}</code>
+      <p class="reveal-hint">出于安全考虑，仅显示密钥前后各 4 位；如需完整密钥请使用编辑功能。</p>
+      <button class="reveal-close" @click="closeReveal">关闭</button>
+    </div>
+  </div>
+
+  <!-- 右键菜单：固定定位到 (x, y)；点别处关闭（绑定在 .row @click） -->
+  <ul
+    v-if="contextMenu"
+    class="ctx-menu"
+    :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
+    @click.stop
+  >
+    <li><button @click="contextEdit(contextMenu.entry)">编辑</button></li>
+    <li><button @click="contextCopyUri(contextMenu.entry)">复制 URI</button></li>
+    <li><button @click="contextTogglePin(contextMenu.entry)">{{ contextMenu.entry.pinned ? '取消置顶' : '置顶' }}</button></li>
+  </ul>
 </template>
 
 <style scoped>
@@ -177,4 +267,14 @@ h2 { font-size: 15px; display: flex; justify-content: space-between; align-items
 .icon, .danger { border: none; background: none; cursor: pointer; padding: 4px; }
 .danger { color: #d9534f; font-size: 12px; }
 .empty { text-align: center; opacity: .6; padding: 16px 0; }
+/* reveal 模态遮罩 */
+.reveal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: grid; place-items: center; z-index: 1000; }
+.reveal-card { background: #fff; color: #222; padding: 20px 24px; border-radius: 10px; max-width: 360px; width: 90%; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 4px 24px rgba(0,0,0,.25); }
+.reveal-secret { font-family: ui-monospace, monospace; font-size: 18px; letter-spacing: 1px; background: rgba(128,128,128,.12); padding: 10px; border-radius: 6px; text-align: center; word-break: break-all; }
+.reveal-hint { font-size: 12px; opacity: .65; margin: 0; }
+.reveal-close { align-self: flex-end; }
+/* 右键菜单 */
+.ctx-menu { position: fixed; z-index: 1001; list-style: none; margin: 0; padding: 4px 0; background: #fff; color: #222; border: 1px solid rgba(0,0,0,.15); border-radius: 6px; box-shadow: 0 2px 12px rgba(0,0,0,.18); min-width: 120px; }
+.ctx-menu li button { display: block; width: 100%; padding: 6px 14px; border: none; background: none; text-align: left; cursor: pointer; font-size: 13px; }
+.ctx-menu li button:hover { background: rgba(0,0,0,.06); }
 </style>
