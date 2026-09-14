@@ -42,21 +42,22 @@ describe('importTwoFas', () => {
     expect(r.entries[3]).toMatchObject({ type: 'totp', issuer: '默认 issuer', label: 'defaults', digits: 6, period: 30 })
   })
 
-  it('坏条目不阻断：缺 secret / 缺 otp / 未知 tokenType 进 failures', () => {
+  it('坏条目不阻断：缺 secret / secret 非法 base32 / 缺 otp / 未知 tokenType 进 failures', () => {
     const text = JSON.stringify({
       schemaVersion: 4,
       services: [
         { otp: { account: 'x' } },
         { secret: SECRET },
         { secret: SECRET, otp: { account: 'y', tokenType: 'WHATEVER' } },
+        { secret: 'totp123', otp: { account: 'z' } },
         twoFasService({ account: 'ok' }, { name: 'Ok' }),
       ],
     })
     const r = importTwoFas(text)
     expect(r.entries).toHaveLength(1)
     expect(r.entries[0]).toMatchObject({ issuer: 'Ok' })
-    expect(r.failures).toHaveLength(3)
-    expect(r.failures.map((f) => f.index)).toEqual([0, 1, 2])
+    expect(r.failures).toHaveLength(4)
+    expect(r.failures.map((f) => f.index)).toEqual([0, 1, 2, 3])
   })
 
   it('结构级错误：缺 services 数组 / servicesEncrypted 加密导出 / schemaVersion 过新', () => {
@@ -105,9 +106,15 @@ describe('importBitwarden', () => {
     expect(r.failures.map((f) => f.index)).toEqual([0, 1, 2])
   })
 
-  it('结构级错误：缺 items 数组 / 非法 JSON', () => {
+  it('结构级错误：缺 items 数组 / 非法 JSON / 密码保护导出（encrypted:true）', () => {
     expect(() => importBitwarden('{"folders": []}')).toThrow(/items/)
     expect(() => importBitwarden('not json')).toThrow(/Bitwarden/)
+    // 真实密码保护导出形态：顶层无 items
+    expect(() =>
+      importBitwarden(
+        JSON.stringify({ encrypted: true, encKeyValidation_DO_NOT_EDIT: 'v', data: { items: [] } }),
+      ),
+    ).toThrow(/已加密/)
   })
 })
 
@@ -209,8 +216,12 @@ describe('importStratum', () => {
 describe('sniffFormat app 格式扩展', () => {
   it('2FAS/Bitwarden/Proton/Stratum 特征键判定', () => {
     expect(sniffFormat(JSON.stringify({ schemaVersion: 4, services: [{ secret: SECRET, otp: {} }] }))).toBe('twoFas')
-    expect(sniffFormat(JSON.stringify({ encrypted: true, items: ['cipher'] }))).toBe('bitwarden')
+    // 明文导出：items + login.totp
     expect(sniffFormat(JSON.stringify({ items: [{ login: { totp: SECRET } }] }))).toBe('bitwarden')
+    // 密码保护导出真实形态：顶层无 items，encrypted 键判定
+    expect(
+      sniffFormat(JSON.stringify({ encrypted: true, encKeyValidation_DO_NOT_EDIT: 'v', data: { items: [] } })),
+    ).toBe('bitwarden')
     expect(sniffFormat(JSON.stringify({ entries: [{ content: { uri: 'otpauth://totp/a?secret=X' } }] }))).toBe('proton')
     expect(sniffFormat(JSON.stringify({ Authenticators: [] }))).toBe('stratum')
   })

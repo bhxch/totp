@@ -118,6 +118,9 @@ export function importTwoFas(text: string): ImportResult {
     if (typeof service.secret !== 'string' || service.secret.trim() === '') {
       return { error: `条目 ${index} 缺少 secret` }
     }
+    // GoogleAuthInfo.parseSecret 为 Base32 解码，失败即单条失败
+    const secret = normalizeSecret(service.secret)
+    if (!isBase32(secret)) return { error: `条目 ${index} secret 非法 base32` }
 
     // issuer：name 非空优先，否则 otp.issuer（convertEntry 口径）
     const issuer =
@@ -132,7 +135,7 @@ export function importTwoFas(text: string): ImportResult {
         type: 'totp',
         issuer,
         label,
-        secret: normalizeSecret(service.secret),
+        secret,
         algorithm,
         digits: toPositiveNumber(otp.digits, 6),
         period: toPositiveNumber(otp.period, 30),
@@ -143,7 +146,7 @@ export function importTwoFas(text: string): ImportResult {
         type: 'hotp',
         issuer,
         label,
-        secret: normalizeSecret(service.secret),
+        secret,
         algorithm,
         digits: toPositiveNumber(otp.digits, 6),
         counter: toNonNegativeNumber(otp.counter, 0),
@@ -151,7 +154,7 @@ export function importTwoFas(text: string): ImportResult {
       }
     }
     if (tokenType === 'STEAM') {
-      return steamEntry(service.secret, issuer, label)
+      return steamEntry(secret, issuer, label)
     }
     return { error: `条目 ${index} 未知 tokenType: ${tokenType}` }
   })
@@ -163,11 +166,16 @@ export function importTwoFas(text: string): ImportResult {
 // - steam://（scheme === 'steam'）→ authority 为 Base32 secret，issuer/label 固定 'Steam'/'Steam account'
 // - 空串跳过；login.totp 缺键时 Aegis 整体抛错，本实现按单条失败处理（贴合本仓库错误契约）
 // 本工具扩展（简报要求）：totp 为裸 base32 secret（解码成功即接受）→ 默认 totp/6/30/SHA1，
-// name→issuer、login.username→label、notes→note；加密导出（encrypted:true）无明文 totp → 逐条失败。
+// name→issuer、login.username→label、notes→note。
+// 密码保护导出（Bitwarden 官方形态 {encrypted:true, encKeyValidation_DO_NOT_EDIT, data:{items}}）
+// 无明文 totp → 结构级报错提示改用明文导出（sniffBitwarden 已按 encrypted 键归 bitwarden）。
 
 /** Bitwarden JSON 导出导入；totp 支持 otpauth URI / steam:// / 裸 base32 secret */
 export function importBitwarden(text: string): ImportResult {
   const obj = parseJson(text, 'Bitwarden')
+  if (obj.encrypted === true) {
+    throw new Error('该 Bitwarden 导出已加密，请使用明文（JSON）导出后重试')
+  }
   if (!Array.isArray(obj.items)) throw new Error('Bitwarden 文件结构非法：缺少 items 数组')
 
   return collectEntries(obj.items, (raw, index) => {

@@ -11,8 +11,8 @@ export * from './uriBatch'
  *   → generic(JSON array/JSONL/单对象兜底) → winauth(XML 正则) → uriBatch → null
  * - JSON 对象含 db / header 键 → 'aegis'
  * - 对象含 services 数组且存在条目带顶层 secret 字符串 → 'twoFas'（TwoFasImporter.java schema）
- * - 对象含 items 数组且（含 encrypted 键，或存在条目带 login.totp 字符串）→ 'bitwarden'
- *   （BitwardenImporter.java；encrypted:true 为加密导出，同样归 bitwarden 以给出明确失败信息）
+ * - 对象含 items 数组且存在条目带 login.totp 字符串，或含 encrypted 键
+ *   （密码保护导出 {encrypted:true, data:{items}} 顶层无 items）→ 'bitwarden'
  * - 对象含 entries 数组且存在条目带 content 对象 → 'proton'（ProtonAuthenticatorImporter.java）
  * - 对象含 Authenticators 数组 → 'stratum'（StratumImporter.java 大写键 schema）
  * - JSON 数组 / JSONL / 其余单 JSON 对象 → 'generic'
@@ -89,11 +89,13 @@ function sniffTwoFas(obj: Record<string, unknown>): boolean {
   )
 }
 
-// items 数组（Bitwarden 明文/加密导出）：含 encrypted 键，或存在条目带 login.totp 字符串
+// Bitwarden 导出：明文为 items 数组（存在条目带 login.totp 字符串）；
+// 密码保护导出为 {encrypted:true, encKeyValidation_DO_NOT_EDIT, data:{items:[...]}}，
+// 顶层无 items，故 encrypted 键单独判 bitwarden（导入时给出明确加密错误）
 function sniffBitwarden(obj: Record<string, unknown>): boolean {
+  if ('encrypted' in obj) return true
   const { items } = obj
   if (!Array.isArray(items)) return false
-  if ('encrypted' in obj) return true
   return items.some((it) => {
     if (it === null || typeof it !== 'object') return false
     const login = (it as Record<string, unknown>).login
