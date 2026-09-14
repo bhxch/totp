@@ -26,6 +26,10 @@ const prfCap = ref<'unknown' | boolean>('unknown')
 const passkeyOps = computed(() => props.platform?.security?.passkey ?? null)
 const passkeySources = computed(() => passkeyOps.value?.sources.value ?? [])
 
+/** DPAPI(Windows) 自动解锁能力（仅 desktop 宿主提供；source 非 null=已绑定） */
+const dpapiOps = computed(() => props.platform?.dpapi ?? null)
+const dpapiSource = computed(() => dpapiOps.value?.source.value ?? null)
+
 onMounted(() => {
   const pk = passkeyOps.value
   if (!pk) return
@@ -110,6 +114,23 @@ async function onRemovePasskey(credentialId: string): Promise<void> {
   await run(() => pk.remove(credentialId), 'Passkey 已移除')
 }
 
+/** 启用 DPAPI 自动解锁：取当前 DEK → DPAPI 包裹 → 绑定来源落盘 */
+async function onEnableDpapi(): Promise<void> {
+  const ops = dpapiOps.value
+  if (!ops) return
+  await run(async () => {
+    const dek = ops.getCurrentDek()
+    if (!dek) throw new Error('当前无可用 DEK（需先解锁）')
+    await ops.add(await ops.protect(dek))
+  }, 'Windows 自动解锁已启用')
+}
+
+async function onRemoveDpapi(): Promise<void> {
+  const ops = dpapiOps.value
+  if (!ops) return
+  await run(() => ops.remove(), 'Windows 自动解锁已移除')
+}
+
 async function onClipboardChange(e: Event): Promise<void> {
   await props.platform?.setClipboardClear((e.target as HTMLInputElement).checked)
 }
@@ -138,20 +159,31 @@ async function onDelayChange(e: Event): Promise<void> {
       </template>
       <!-- 已启用且解锁：解锁方式 + 换口令 + 关闭加密 -->
       <template v-else-if="!isLocked">
-        <!-- 解锁方式（宿主提供 passkey ops 才渲染；prf 不支持时仅提示） -->
-        <div v-if="passkeyOps" class="unlock-methods">
+        <!-- 解锁方式（prf：宿主提供 passkey ops 才渲染，不支持时仅提示；dpapi：仅 desktop 宿主提供时渲染） -->
+        <div v-if="passkeyOps || dpapiOps" class="unlock-methods">
           <h3>解锁方式</h3>
-          <p v-if="prfCap === false" class="hint">当前浏览器不支持 Passkey 解锁（PRF）</p>
-          <template v-else>
-            <span class="method">口令</span>
-            <ul v-if="passkeySources.length" class="passkey-list">
-              <li v-for="c in passkeySources" :key="c.credentialId">
-                <code>Passkey {{ shortId(c.credentialId) }}</code>
-                <button class="remove-passkey" :disabled="busy" @click="onRemovePasskey(c.credentialId)">移除</button>
-              </li>
-            </ul>
-            <div class="actions">
-              <button class="add-passkey" :disabled="busy || prfCap !== true" @click="onAddPasskey">添加 Passkey 解锁</button>
+          <template v-if="passkeyOps">
+            <p v-if="prfCap === false" class="hint">当前浏览器不支持 Passkey 解锁（PRF）</p>
+            <template v-else>
+              <span class="method">口令</span>
+              <ul v-if="passkeySources.length" class="passkey-list">
+                <li v-for="c in passkeySources" :key="c.credentialId">
+                  <code>Passkey {{ shortId(c.credentialId) }}</code>
+                  <button class="remove-passkey" :disabled="busy" @click="onRemovePasskey(c.credentialId)">移除</button>
+                </li>
+              </ul>
+              <div class="actions">
+                <button class="add-passkey" :disabled="busy || prfCap !== true" @click="onAddPasskey">添加 Passkey 解锁</button>
+              </div>
+            </template>
+          </template>
+          <template v-if="dpapiOps">
+            <div v-if="dpapiSource" class="dpapi-row">
+              <span class="method">Windows 自动解锁（DPAPI）</span>
+              <button class="remove-dpapi" :disabled="busy" @click="onRemoveDpapi">移除</button>
+            </div>
+            <div v-else class="actions">
+              <button class="enable-dpapi" :disabled="busy" @click="onEnableDpapi">启用 Windows 自动解锁</button>
             </div>
           </template>
         </div>
@@ -196,6 +228,7 @@ h2 { font-size: 15px; margin: 0; }
 .passkey-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .passkey-list li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .passkey-list code { font-size: 12px; opacity: .75; }
+.dpapi-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .pw-row { display: flex; gap: 8px; }
 .pw-row input { flex: 1; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }

@@ -2,7 +2,7 @@ import {
   DEFAULT_SETTINGS, SECURITY_KEY, VAULT_KEY, addEntry, addGroup, addPrfSource, bytesToBase64, changeVaultPassphrase,
   createVault, decryptVaultWithDek, encryptVaultWithDek, isEncryptedVault, kekSourcesOf, loadSettings, loadVault,
   removeEntry, removeGroup, removeKekSource, renameGroup, reorderEntries, saveSettings, saveVault,
-  setupVaultEncryption, unlockVaultEncryption, updateEntry,
+  setupVaultEncryption, unlockVaultEncryption, updateEntry, withDpapiSource,
   type AppSettings, type KekSource, type OtpEntry, type SecuritySettings, type StorageAdapter, type Vault,
 } from '@totp/core'
 import { computed, reactive, ref, toRaw } from 'vue'
@@ -310,6 +310,36 @@ export function createVueStore(
     })
   }
 
+  /** 绑定 DPAPI 解锁来源（已解锁态）：wrappedDekD 为宿主 DPAPI 包装的 DEK（base64；T1 裁定直接包裹 DEK 本体） */
+  function addDpapiSourceOp(wrappedDekD: string): Promise<void> {
+    return enqueue(async () => {
+      if (locked.value) throw new Error('vault locked')
+      if (!security.value || !dek) throw new Error('encryption not enabled')
+      const next = withDpapiSource(security.value, wrappedDekD)
+      security.value = next
+      // security 键写入复用 vault 自写窗口抑制（onChanged 无 security 通道，与 changePassphrase 一致）
+      lastSelfWrite.vault = Date.now()
+      await adapter.set(SECURITY_KEY, JSON.stringify(next))
+    })
+  }
+
+  /** 移除 DPAPI 解锁来源（core 守卫：移除后无任何来源时抛「至少保留一种解锁方式」） */
+  function removeDpapiSourceOp(): Promise<void> {
+    return enqueue(async () => {
+      if (locked.value) throw new Error('vault locked')
+      if (!security.value) throw new Error('encryption not enabled')
+      const next = removeKekSource(security.value, 'dpapi')
+      security.value = next
+      lastSelfWrite.vault = Date.now()
+      await adapter.set(SECURITY_KEY, JSON.stringify(next))
+    })
+  }
+
+  /** 当前解锁态持有的 DEK（DPAPI 启用包装用；锁定/未启用返回 null） */
+  function getCurrentDek(): Uint8Array | null {
+    return dek
+  }
+
   /** 锁定：丢弃 DEK、清空内存 vault（防内存残留读取） */
   function lock(): void {
     dek = null
@@ -326,6 +356,14 @@ export function createVueStore(
       .map((src) => ({ credentialId: src.credentialId, salt: src.salt }))
   })
 
+  /** 已绑定的 DPAPI 解锁来源视图（至多一个；锁定态仍可见——LockScreen 静默解锁判定用） */
+  const dpapiSource = computed(() => {
+    const s = security.value
+    if (!s) return null
+    const src = kekSourcesOf(s).find((x): x is Extract<KekSource, { kind: 'dpapi' }> => x.kind === 'dpapi')
+    return src ? { wrappedDekD: src.wrappedDekD } : null
+  })
+
   return {
     vault, settings, initStore, registerStorageSync, commit, commitSettings,
     locked, hasEncryption, unlock, lock, enableEncryption, disableEncryption, changePassphrase,
@@ -333,7 +371,11 @@ export function createVueStore(
     securitySettings: security,
     /** 已绑定 prf 来源（credentialId+salt） */
     prfSources,
-    unlockWithDek, addPrfSourceOp, removePrfSourceOp,
+    /** 已绑定 dpapi 来源（wrappedDekD） */
+    dpapiSource,
+    /** 当前解锁态持有的 DEK（DPAPI 启用包装用；锁定/未启用为 null） */
+    getCurrentDek,
+    unlockWithDek, addPrfSourceOp, removePrfSourceOp, addDpapiSourceOp, removeDpapiSourceOp,
     addEntryOp: (entry: OtpEntry) => commit((v) => addEntry(v, entry)),
     updateEntryOp: (uuid: string, patch: Partial<Omit<OtpEntry, 'uuid'>>) => commit((v) => updateEntry(v, uuid, patch)),
     removeEntryOp: (uuid: string) => commit((v) => removeEntry(v, uuid)),

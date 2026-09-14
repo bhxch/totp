@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { computed, ref } from 'vue'
 import SecurityCard from '../src/components/SecurityCard.vue'
-import type { SecurityOps, SecurityPlatform } from '../src/components/securityPlatform'
+import type { DpapiUnlockOps, SecurityOps, SecurityPlatform } from '../src/components/securityPlatform'
 
 function makeSecurity(over: Partial<SecurityOps> = {}): SecurityOps {
   return {
@@ -27,6 +27,19 @@ function makePlatform(over: Partial<SecurityPlatform> = {}): SecurityPlatform {
 /** 已启用且解锁的 security */
 function unlockedSecurity(over: Partial<SecurityOps> = {}): SecurityOps {
   return makeSecurity({ hasEncryption: computed(() => true), ...over })
+}
+
+/** DPAPI(Windows) 解锁能力 mock（默认未绑定来源） */
+function makeDpapi(over: Partial<DpapiUnlockOps> = {}): DpapiUnlockOps {
+  return {
+    source: computed(() => null),
+    getCurrentDek: vi.fn(() => new Uint8Array(32).fill(7)),
+    protect: vi.fn().mockResolvedValue('WRAPPED-DEK'),
+    unprotect: vi.fn().mockResolvedValue(new Uint8Array(32)),
+    add: vi.fn().mockResolvedValue(undefined),
+    remove: vi.fn().mockResolvedValue(undefined),
+    ...over,
+  }
 }
 
 describe('SecurityCard', () => {
@@ -116,5 +129,61 @@ describe('SecurityCard', () => {
     expect((input.element as HTMLInputElement).value).toBe('2000')
     await input.setValue(3500)
     expect(setPopupCloseDelay).toHaveBeenCalledWith(3500)
+  })
+
+  it('platform 无 dpapi 能力：不渲染 DPAPI 行与启用按钮', () => {
+    const w = mount(SecurityCard, { props: { platform: makePlatform({ security: unlockedSecurity() }) } })
+    expect(w.find('button.enable-dpapi').exists()).toBe(false)
+    expect(w.find('.dpapi-row').exists()).toBe(false)
+  })
+
+  it('dpapi 未绑定：显示启用按钮；点击走 getCurrentDek→protect→add 并提示成功', async () => {
+    const dek = new Uint8Array(32).fill(7)
+    const dpapi = makeDpapi({ getCurrentDek: vi.fn(() => dek) })
+    const w = mount(SecurityCard, {
+      props: { platform: makePlatform({ security: unlockedSecurity(), dpapi }) },
+    })
+    expect(w.text()).toContain('解锁方式')
+    const btn = w.find('button.enable-dpapi')
+    expect(btn.exists()).toBe(true)
+    expect(w.find('.dpapi-row').exists()).toBe(false)
+    await btn.trigger('click')
+    await vi.waitFor(() => expect(dpapi.add).toHaveBeenCalledWith('WRAPPED-DEK'))
+    expect(dpapi.protect).toHaveBeenCalledWith(dek)
+    expect(w.text()).toContain('Windows 自动解锁已启用')
+  })
+
+  it('dpapi 已绑定：显示 DPAPI 行与移除按钮，点击调用 remove', async () => {
+    const dpapi = makeDpapi({ source: computed(() => ({ wrappedDekD: 'WRAPPED-DEK' })) })
+    const w = mount(SecurityCard, {
+      props: { platform: makePlatform({ security: unlockedSecurity(), dpapi }) },
+    })
+    expect(w.find('button.enable-dpapi').exists()).toBe(false)
+    expect(w.find('.dpapi-row').exists()).toBe(true)
+    expect(w.text()).toContain('Windows 自动解锁（DPAPI）')
+    await w.find('button.remove-dpapi').trigger('click')
+    await vi.waitFor(() => expect(dpapi.remove).toHaveBeenCalled())
+    expect(w.text()).toContain('Windows 自动解锁已移除')
+  })
+
+  it('dpapi 启用时无可用 DEK（锁定态残留）：提示错误且不调用 protect', async () => {
+    const dpapi = makeDpapi({ getCurrentDek: vi.fn(() => null) })
+    const w = mount(SecurityCard, {
+      props: { platform: makePlatform({ security: unlockedSecurity(), dpapi }) },
+    })
+    await w.find('button.enable-dpapi').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('需先解锁'))
+    expect(dpapi.protect).not.toHaveBeenCalled()
+    expect(dpapi.add).not.toHaveBeenCalled()
+  })
+
+  it('dpapi protect 失败：展示错误消息且不调用 add', async () => {
+    const dpapi = makeDpapi({ protect: vi.fn().mockRejectedValue(new Error('仅 Windows 支持')) })
+    const w = mount(SecurityCard, {
+      props: { platform: makePlatform({ security: unlockedSecurity(), dpapi }) },
+    })
+    await w.find('button.enable-dpapi').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('仅 Windows 支持'))
+    expect(dpapi.add).not.toHaveBeenCalled()
   })
 })

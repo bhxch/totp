@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { base64ToBytes, unlockWithPrf } from '@totp/core'
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import type { DpapiUnlockOps } from './securityPlatform'
 import { getPrfOutput } from '../prf'
 import type { VueStore } from '../store'
 
 const props = defineProps<{
   /** 已启用加密的 store；锁定态由父级 v-if 控制（store.locked 为 true 时渲染本组件） */
   store: VueStore
+  /** [可选] DPAPI(Windows) 解锁通道（desktop 提供）；已绑定来源时挂载后静默尝试自动解锁 */
+  dpapi?: DpapiUnlockOps | null
 }>()
 
 const emit = defineEmits<{ (e: 'unlocked'): void }>()
@@ -16,6 +19,20 @@ const busy = ref(false)
 const msg = ref('')
 /** 已绑定 passkey 解锁来源（kekSources 含 prf 条目时显示按钮） */
 const hasPrf = computed(() => props.store.prfSources.value.length > 0)
+
+/** DPAPI 静默自动解锁：unprotect(wrappedDekD)→unlockWithDek。
+ *  失败（跨机器/跨用户/数据损坏）静默吞掉——保留口令/passkey 手动解锁路径 */
+onMounted(async () => {
+  const ops = props.dpapi
+  const src = ops?.source.value
+  if (!ops || !src) return
+  try {
+    await props.store.unlockWithDek(await ops.unprotect(src.wrappedDekD))
+    emit('unlocked')
+  } catch {
+    // 静默：DPAPI 解不开属预期场景（换机/换用户），不提示、不打断手动解锁
+  }
+})
 
 /** 解锁：成功清空口令与错误并 emit unlocked（父级可凭 locked 变化自行切换视图）；失败展示错误消息 */
 async function onUnlock(): Promise<void> {

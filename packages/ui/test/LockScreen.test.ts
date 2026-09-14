@@ -4,6 +4,7 @@ import { computed, ref } from 'vue'
 import { addPrfSource, base64ToBytes, bytesToBase64, randomBytes, setupVaultEncryption, type SecuritySettings } from '@totp/core'
 import LockScreen from '../src/components/LockScreen.vue'
 import type { VueStore } from '../src/store'
+import type { DpapiUnlockOps } from '../src/components/securityPlatform'
 
 function mockStore(over: Partial<VueStore>): VueStore {
   return { unlock: vi.fn(), unlockWithDek: vi.fn().mockResolvedValue(undefined), ...over } as unknown as VueStore
@@ -36,6 +37,19 @@ function mockWebAuthnGet(first: Uint8Array[]): void {
         prf: { enabled: true, results: { first: first[0] ? (first[0].buffer.slice(first[0].byteOffset, first[0].byteOffset + first[0].byteLength) as ArrayBuffer) : undefined } },
       }),
     })),
+  }
+}
+
+/** DPAPI(Windows) 解锁通道 mock（默认已绑定来源、unprotect 解出指定 DEK） */
+function makeDpapi(over: Partial<DpapiUnlockOps> = {}): DpapiUnlockOps {
+  return {
+    source: computed(() => ({ wrappedDekD: 'WRAPPED-DEK' })),
+    getCurrentDek: vi.fn(() => null),
+    protect: vi.fn(),
+    unprotect: vi.fn().mockResolvedValue(randomBytes(32)),
+    add: vi.fn(),
+    remove: vi.fn(),
+    ...over,
   }
 }
 
@@ -118,5 +132,41 @@ describe('LockScreen', () => {
     await w.find('button.passkey').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('vault corrupted'))
     expect(w.emitted('unlocked')).toBeUndefined()
+  })
+
+  it('dpapi 已绑定：挂载后静默 unprotect→unlockWithDek→emit unlocked（无需交互）', async () => {
+    const dek = randomBytes(32)
+    const unprotect = vi.fn().mockResolvedValue(dek)
+    const unlockWithDek = vi.fn().mockResolvedValue(undefined)
+    const store = mockStore({ unlockWithDek, prfSources: computed(() => []), securitySettings: ref(null) })
+    const w = mount(LockScreen, { props: { store, dpapi: makeDpapi({ unprotect }) } })
+    await vi.waitFor(() => expect(unlockWithDek).toHaveBeenCalledWith(dek))
+    expect(unprotect).toHaveBeenCalledWith('WRAPPED-DEK')
+    expect(store.unlock).not.toHaveBeenCalled()
+    expect(w.emitted('unlocked')).toHaveLength(1)
+  })
+
+  it('dpapi unprotect 失败（跨机器/跨用户）：静默保留口令解锁路径，不 emit unlocked', async () => {
+    const unprotect = vi.fn().mockRejectedValue(new Error('DPAPI 解密失败'))
+    const store = mockStore({ prfSources: computed(() => []), securitySettings: ref(null) })
+    const w = mount(LockScreen, { props: { store, dpapi: makeDpapi({ unprotect }) } })
+    await vi.waitFor(() => expect(unprotect).toHaveBeenCalled())
+    await new Promise((r) => setTimeout(r, 0))
+    expect(store.unlockWithDek).not.toHaveBeenCalled()
+    expect(w.emitted('unlocked')).toBeUndefined()
+    expect(w.text()).not.toContain('DPAPI 解密失败') // 静默：不展示错误
+    // 口令手动路径仍可用
+    await w.find('input[type="password"]').setValue('pw')
+    await w.find('form').trigger('submit')
+    await vi.waitFor(() => expect(store.unlock).toHaveBeenCalledWith('pw'))
+  })
+
+  it('未提供 dpapi 通道或未绑定来源：挂载后不做自动解锁', () => {
+    const unprotect = vi.fn()
+    mount(LockScreen, { props: { store: plainStore(vi.fn()) } })
+    mount(LockScreen, {
+      props: { store: plainStore(vi.fn()), dpapi: makeDpapi({ source: computed(() => null), unprotect }) },
+    })
+    expect(unprotect).not.toHaveBeenCalled()
   })
 })

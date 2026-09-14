@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
-  bytesToBase64, createMemoryStorage, createVault, kekSourcesOf, newEntryFromUri, randomBytes, SECURITY_KEY,
-  setupVaultEncryption, unlockWithPrf,
+  bytesToBase64, createMemoryStorage, createVault, decryptVaultWithDek, kekSourcesOf, newEntryFromUri, randomBytes,
+  SECURITY_KEY, setupVaultEncryption, unlockWithPrf,
   type SecuritySettings, type Vault,
 } from '@totp/core'
 import { createVueStore } from '../src/store'
@@ -397,5 +397,57 @@ describe('passkey PRF（plan11 Task2）', () => {
     await s.addPrfSourceOp('cred-1', randomBytes(64), randomBytes(32))
     const srcs = kekSourcesOf(await diskSecurity(adapter)).filter((x) => x.kind === 'prf')
     expect(srcs).toHaveLength(1)
+  })
+})
+
+describe('DPAPI 解锁来源（plan11 Task3）', () => {
+  async function setupEncrypted(): Promise<{ adapter: ReturnType<typeof createMemoryStorage>; s: ReturnType<typeof createVueStore> }> {
+    const adapter = createMemoryStorage()
+    const s = createVueStore(adapter)
+    await s.initStore()
+    await s.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await s.enableEncryption('pw')
+    return { adapter, s }
+  }
+
+  const diskSecurity = async (adapter: ReturnType<typeof createMemoryStorage>): Promise<SecuritySettings> =>
+    JSON.parse((await adapter.get(SECURITY_KEY))!) as SecuritySettings
+
+  it('addDpapiSourceOp：kekSources 写盘（password+dpapi），dpapiSource 视图反映绑定', async () => {
+    const { adapter, s } = await setupEncrypted()
+    expect(s.dpapiSource.value).toBeNull()
+    await s.addDpapiSourceOp('WRAPPED-DEK')
+    const srcs = kekSourcesOf(await diskSecurity(adapter))
+    expect(srcs).toHaveLength(2)
+    expect(srcs[1]).toEqual({ kind: 'dpapi', wrappedDekD: 'WRAPPED-DEK' })
+    expect(s.dpapiSource.value).toEqual({ wrappedDekD: 'WRAPPED-DEK' })
+  })
+
+  it('getCurrentDek：解锁态返回内部 DEK（可解盘上密文），锁定后为 null', async () => {
+    const { adapter, s } = await setupEncrypted()
+    const dek = s.getCurrentDek()
+    expect(dek).toBeInstanceOf(Uint8Array)
+    expect(dek!.length).toBe(32)
+    const enc = JSON.parse((await adapter.get('vault'))!)
+    await expect(decryptVaultWithDek(dek!, enc)).resolves.toContain('JBSWY3DPEHPK3PXP')
+    s.lock()
+    expect(s.getCurrentDek()).toBeNull()
+  })
+
+  it('锁定态 dpapiSource 视图仍可见（LockScreen 渲染判定）；写 op 拒绝', async () => {
+    const { adapter, s } = await setupEncrypted()
+    await s.addDpapiSourceOp('WRAPPED-DEK')
+    s.lock()
+    expect(s.dpapiSource.value).toEqual({ wrappedDekD: 'WRAPPED-DEK' })
+    await expect(s.addDpapiSourceOp('W2')).rejects.toThrow('vault locked')
+    await expect(s.removeDpapiSourceOp()).rejects.toThrow('vault locked')
+  })
+
+  it('removeDpapiSourceOp：盘上 kekSources 回落 password，视图清空', async () => {
+    const { adapter, s } = await setupEncrypted()
+    await s.addDpapiSourceOp('WRAPPED-DEK')
+    await s.removeDpapiSourceOp()
+    expect(kekSourcesOf(await diskSecurity(adapter))).toEqual([{ kind: 'password' }])
+    expect(s.dpapiSource.value).toBeNull()
   })
 })

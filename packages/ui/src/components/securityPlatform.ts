@@ -12,6 +12,23 @@ export interface PasskeyUnlockOps {
   remove(credentialId: string): Promise<void>
 }
 
+/** DPAPI(Windows) 自动解锁（仅 desktop 宿主提供；extension 无此能力 → 相关 UI 隐藏）。
+ *  wrappedDekD 语义（计划 11 T1 裁定）：CryptProtectData 直接包裹 DEK 本体，base64 进出 */
+export interface DpapiUnlockOps {
+  /** 当前已绑定的 DPAPI 来源（null=未启用；LockScreen 静默解锁与 SecurityCard 渲染判定用） */
+  source: ComputedRef<{ wrappedDekD: string } | null>
+  /** 当前解锁态持有的 DEK（启用包装用；锁定/未启用返回 null） */
+  getCurrentDek(): Uint8Array | null
+  /** DPAPI 包裹：DEK 字节 → base64(wrappedDekD)（desktop 经 Rust dpapi_protect） */
+  protect(dek: Uint8Array): Promise<string>
+  /** DPAPI 解包：base64(wrappedDekD) → DEK 字节（desktop 经 Rust dpapi_unprotect；跨机器/跨用户失败由调用方静默处理） */
+  unprotect(wrapped: string): Promise<Uint8Array>
+  /** 绑定来源（store addDpapiSourceOp：withDpapiSource + security 落盘） */
+  add(wrappedDekD: string): Promise<void>
+  /** 移除来源（core 守卫：移除后无任何解锁方式时抛错） */
+  remove(): Promise<void>
+}
+
 /** 加密状态与操作（宿主从 store 闭包绑定；desktop/options 各自组装） */
 export interface SecurityOps {
   /** 是否处于锁定态（真值时卡片只提示，解锁入口由主 LockScreen 承担） */
@@ -24,7 +41,7 @@ export interface SecurityOps {
   disableEncryption(): Promise<void>
   /** 更换口令（仅重包裹 DEK，数据无需重加密） */
   changePassphrase(newPassword: string): Promise<void>
-  /** [可选] Passkey(PRF) 解锁管理；未提供时 SecurityCard 隐藏「解锁方式」区 */
+  /** [可选] Passkey(PRF) 解锁管理；未提供时 SecurityCard 隐藏 prf 相关渲染 */
   passkey?: PasskeyUnlockOps
 }
 
@@ -36,6 +53,8 @@ export interface SecurityOps {
 export interface SecurityPlatform {
   /** 加密状态与操作；popup 等不暴露安全管理的端传 null */
   security: SecurityOps | null
+  /** [可选] DPAPI(Windows) 自动解锁；仅 desktop 提供，未提供时 SecurityCard/LockScreen 隐藏该能力（extension 无） */
+  dpapi?: DpapiUnlockOps
   /** 复制后 30s 自动清空剪贴板开关（当前值） */
   clipboardClearEnabled: ComputedRef<boolean>
   /** 切换剪贴板清空开关（宿主写 settings + 持久化） */
