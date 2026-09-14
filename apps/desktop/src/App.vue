@@ -2,12 +2,13 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { open, save } from '@tauri-apps/plugin-dialog'
-import { backupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, SCHEMES_KEY, type CloudCred, type ImportScheme, type StorageAdapter, type Vault } from '@totp/core'
-import { LockScreen, VaultManager, createClipboardClearer, createIconStore, createVueStore, type BackupMode, type BackupPlatform, type CloudPlatform, type IconStore, type ImportSchemesApi, type SecurityPlatform, type VueStore } from '@totp/ui'
+import { backupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, randomBytes, SCHEMES_KEY, type CloudCred, type ImportScheme, type StorageAdapter, type Vault } from '@totp/core'
+import { createPrfCredential, createClipboardClearer, createIconStore, LockScreen, createVueStore, prfSupported, VaultManager, type BackupMode, type BackupPlatform, type CloudPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref } from 'vue'
 import { createBackupToDir, listBackups, readBackupByName, readBackupFileOs, saveConflictBackupToDir, writeBackupFileOs } from './backupService'
 import { decryptDpapiOs, readImportFileBytesOs, readImportFileOs } from './importService'
 import { createTauriFs } from './tauriFs'
+import { dpapiProtectOs, dpapiUnprotectOs } from './tauriSecurity'
 
 const store = ref<VueStore | null>(null)
 const icons = ref<IconStore | null>(null)
@@ -165,7 +166,27 @@ const cloudPlatform: CloudPlatform = {
   },
 }
 
-/** 安全平台：security 闭包绑 store；剪贴板开关走 settings+commitSettings；desktop 无 popup，不提供 popupCloseDelayMs */
+/** DPAPI(Windows) 自动解锁通道：Rust dpapi_protect/unprotect + store dpapi 源 op。
+ *  SecurityCard（启用/移除）与 LockScreen（挂载静默解锁）共用同一对象 */
+const dpapiOps: DpapiUnlockOps = {
+  source: computed(() => store.value?.dpapiSource.value ?? null),
+  getCurrentDek: () => store.value?.getCurrentDek() ?? null,
+  protect: (dek) => dpapiProtectOs(dek),
+  unprotect: (wrapped) => dpapiUnprotectOs(wrapped),
+  async add(wrappedDekD) {
+    const s = store.value
+    if (!s) throw new Error('数据尚未就绪')
+    await s.addDpapiSourceOp(wrappedDekD)
+  },
+  async remove() {
+    const s = store.value
+    if (!s) throw new Error('数据尚未就绪')
+    await s.removeDpapiSourceOp()
+  },
+}
+
+/** 安全平台：security 闭包绑 store；剪贴板开关走 settings+commitSettings；desktop 无 popup，不提供 popupCloseDelayMs；
+ *  passkey(PRF)：WebAuthn 交互（创建/求值）经 ui prf.ts，绑定落盘走 store 的 prf 源 op */
 const securityPlatform = computed<SecurityPlatform | null>(() => {
   const s = store.value
   if (!s) return null
@@ -176,7 +197,23 @@ const securityPlatform = computed<SecurityPlatform | null>(() => {
       enableEncryption: (pw) => s.enableEncryption(pw),
       disableEncryption: () => s.disableEncryption(),
       changePassphrase: (pw) => s.changePassphrase(pw),
+      passkey: {
+        sources: computed(() => s.prfSources.value.map((p) => ({ credentialId: p.credentialId }))),
+        prfSupported: () => prfSupported(),
+        async add() {
+          // 绑定盐：注册期 create 与权威 get 均以该盐求值，解锁期用同一盐复现（同认证器+同盐→同输出）
+          const salt = randomBytes(32)
+          const created = await createPrfCredential('TOTP 验证码工具', salt, {
+            excludeCredentialIds: s.prfSources.value.map((p) => p.credentialId),
+          })
+          if (!created) return false
+          await s.addPrfSourceOp(created.credentialId, created.prfOutput, salt)
+          return true
+        },
+        remove: (credentialId) => s.removePrfSourceOp(credentialId),
+      },
     },
+    dpapi: dpapiOps,
     clipboardClearEnabled: computed(() => s.settings.clipboardClearEnabled),
     async setClipboardClear(v) {
       s.settings.clipboardClearEnabled = v
@@ -237,7 +274,7 @@ async function onBlurHideChange(e: Event) {
       </div>
     </header>
     <div v-if="loadError && !store" class="error">{{ loadError }}</div>
-    <LockScreen v-else-if="store && store.locked" :store="store" />
+    <LockScreen v-else-if="store && store.locked" :store="store" :dpapi="dpapiOps" />
     <VaultManager v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :cloud-platform="cloudPlatform" :icons="icons ?? undefined" :schemes-api="schemesApi" enable-copy @copy="copyToClipboard" />
   </main>
 </template>

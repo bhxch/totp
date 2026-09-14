@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
-  changeVaultPassphrase, decryptVaultWithDek, encryptVaultWithDek, isEncryptedVault,
+  addPrfSource, changeVaultPassphrase, decryptVaultWithDek, encryptVaultWithDek, isEncryptedVault,
   setupVaultEncryption, unlockVaultEncryption, SECURITY_KEY,
 } from '../src/security/securityStore'
+import { unlockWithPrf } from '../src/security/multiKek'
+import { bytesToBase64, randomBytes } from '../src/crypto/aesgcm'
 
 const vaultJson = JSON.stringify({ version: 1, entries: [{ uuid: 'a' }], groups: [], updatedAt: 1 })
 
@@ -29,6 +31,20 @@ describe('securityStore', () => {
     const dek2 = await unlockVaultEncryption(s2, '新')
     expect(dek2).toEqual(dek) // 同一 DEK：数据无需重加密
     await expect(unlockVaultEncryption(s2, '旧')).rejects.toThrow('口令错误或数据已损坏')
+  })
+  it('changePassphrase 保留 kekSources：prf 绑定不丢，unlockWithPrf 仍可解锁同一 DEK', async () => {
+    const { security, dek } = await setupVaultEncryption(vaultJson, '口令')
+    const prfOutput = randomBytes(64)
+    const withPrf = await addPrfSource(security, dek, 'cred-1', prfOutput, bytesToBase64(randomBytes(32)))
+    expect(withPrf.kekSources).toHaveLength(2) // password + prf
+
+    // 换口令：wrappedDek 重包裹，但 kekSources（prf 包裹）必须原样保留
+    const s2 = await changeVaultPassphrase(withPrf, dek, '新口令')
+    expect(s2.kekSources).toEqual(withPrf.kekSources)
+    // 新口令路径正常
+    expect(await unlockVaultEncryption(s2, '新口令')).toEqual(dek)
+    // prf 路径不受换口令影响（wrappedDekP 与 DEK 绑定，不与口令 KEK 绑定）
+    expect(await unlockWithPrf(s2, prfOutput)).toEqual(dek)
   })
   it('kdf 超钳制参数拒绝', async () => {
     const { security } = await setupVaultEncryption(vaultJson, 'p')

@@ -198,6 +198,91 @@ fn decrypt_dpapi(_b64: String) -> Result<String, String> {
     Err("仅 Windows 支持 DPAPI 解密".into())
 }
 
+// 桌面 DPAPI 自动解锁（计划 11 T3）：CryptProtectData/CryptUnprotectData 包裹/解出 vault DEK 本体
+// （T1 裁定 wrappedDekD=base64(DPAPI(DEK))），CRYPTPROTECT_UI_FORBIDDEN 禁 UI，base64 进出。
+// 与 decrypt_dpapi（WinAuth 导入，明文须 UTF-8）分开：DEK 是任意字节，走独立命令避免语义混淆。
+// 最小 base64 编码：与上方 base64_decode 同理念，标准字母表 + padding，不引第三方依赖。
+fn base64_encode(data: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(TABLE[(n >> 18) as usize & 63] as char);
+        out.push(TABLE[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 { TABLE[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 2 { TABLE[n as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn dpapi_protect(data_b64: String) -> Result<String, String> {
+    use windows::Win32::Foundation::{HLOCAL, LocalFree};
+    use windows::Win32::Security::Cryptography::{
+        CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB, CryptProtectData,
+    };
+
+    let mut plain = base64_decode(&data_b64).ok_or("invalid base64")?;
+    if plain.is_empty() {
+        return Err("empty data".into());
+    }
+    unsafe {
+        let in_blob = CRYPT_INTEGER_BLOB {
+            cbData: plain.len() as u32,
+            pbData: plain.as_mut_ptr(),
+        };
+        let mut out_blob = CRYPT_INTEGER_BLOB::default();
+        CryptProtectData(&in_blob, None, None, None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut out_blob)
+            .map_err(|e| format!("DPAPI 加密失败: {e}"))?;
+        let cipher = std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize).to_vec();
+        let _ = LocalFree(Some(HLOCAL(out_blob.pbData.cast())));
+        Ok(base64_encode(&cipher))
+    }
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn dpapi_protect(_data_b64: String) -> Result<String, String> {
+    Err("仅 Windows 支持 DPAPI".into())
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn dpapi_unprotect(wrapped_b64: String) -> Result<String, String> {
+    use windows::Win32::Foundation::{HLOCAL, LocalFree};
+    use windows::Win32::Security::Cryptography::{
+        CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB, CryptUnprotectData,
+    };
+
+    let mut cipher = base64_decode(&wrapped_b64).ok_or("invalid base64")?;
+    if cipher.is_empty() {
+        return Err("empty data".into());
+    }
+    unsafe {
+        let in_blob = CRYPT_INTEGER_BLOB {
+            cbData: cipher.len() as u32,
+            pbData: cipher.as_mut_ptr(),
+        };
+        let mut out_blob = CRYPT_INTEGER_BLOB::default();
+        CryptUnprotectData(&in_blob, None, None, None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut out_blob)
+            .map_err(|e| format!("DPAPI 解密失败: {e}"))?;
+        // 明文为任意 DEK 字节（非文本），原样 base64 回传前端转 Uint8Array
+        let plain = std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize).to_vec();
+        let _ = LocalFree(Some(HLOCAL(out_blob.pbData.cast())));
+        Ok(base64_encode(&plain))
+    }
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn dpapi_unprotect(_wrapped_b64: String) -> Result<String, String> {
+    Err("仅 Windows 支持 DPAPI".into())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
@@ -267,7 +352,9 @@ pub fn run() {
             read_import_file_os,
             read_import_file_bytes_os,
             remove_backup_file,
-            decrypt_dpapi
+            decrypt_dpapi,
+            dpapi_protect,
+            dpapi_unprotect
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

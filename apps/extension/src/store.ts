@@ -17,6 +17,7 @@ export const store = createVueStore(storageAdapter, {
 export const {
   vault, settings, initStore, registerStorageSync,
   locked, hasEncryption, unlock, lock, enableEncryption, disableEncryption, changePassphrase,
+  prfSources, addPrfSourceOp, removePrfSourceOp,
 } = store
 const { commit: storeCommit, commitSettings: storeCommitSettings } = store
 

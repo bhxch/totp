@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { backupFileName, conflictBackupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, OVERWRITE_NAME, SCHEMES_KEY, type BackupEnvelopeV1, type CloudCred, type ImportScheme, type Vault } from '@totp/core'
-import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, LockScreen, VaultManager, type BackupMode, type BackupPlatform, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
+import { backupFileName, conflictBackupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, OVERWRITE_NAME, randomBytes, SCHEMES_KEY, type BackupEnvelopeV1, type CloudCred, type ImportScheme, type Vault } from '@totp/core'
+import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, createPrfCredential, LockScreen, prfSupported, VaultManager, type BackupMode, type BackupPlatform, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
 import { storageAdapter } from '../../src/store'
 import { markSyncOff, SYNC_STATUS_KEY } from '../../src/syncEngine'
 import {
-  changePassphrase, commitSettings, disableEncryption, enableEncryption, hasEncryption, initStore, locked,
-  registerStorageSync, replaceAllOp, settings, store,
+  addPrfSourceOp, changePassphrase, commitSettings, disableEncryption, enableEncryption, hasEncryption, initStore, locked,
+  registerStorageSync, removePrfSourceOp, replaceAllOp, prfSources, settings, store,
 } from '../../src/store'
 
 const icons = createIconStore(storageAdapter)
@@ -129,7 +129,8 @@ const pickBackupFile = (): Promise<File | null> => pickFile('.totpbackup')
 // 最后一次导入选择的 File（模块级缓存）：SQLite 字节入口复用，避免同一文件二次弹窗
 let lastImportFile: File | null = null
 
-/** 安全平台：security 闭包绑 store；剪贴板/弹窗延迟走 settings+commitSettings（extension 有 popup，提供 popupCloseDelayMs） */
+/** 安全平台：security 闭包绑 store；剪贴板/弹窗延迟走 settings+commitSettings（extension 有 popup，提供 popupCloseDelayMs）；
+ *  passkey(PRF)：WebAuthn 交互（创建/求值）经 ui prf.ts，绑定落盘走 store 的 prf 源 op */
 const securityPlatform: SecurityPlatform = {
   security: {
     locked,
@@ -137,6 +138,21 @@ const securityPlatform: SecurityPlatform = {
     enableEncryption: (pw) => enableEncryption(pw),
     disableEncryption: () => disableEncryption(),
     changePassphrase: (pw) => changePassphrase(pw),
+    passkey: {
+      sources: computed(() => prfSources.value.map((p) => ({ credentialId: p.credentialId }))),
+      prfSupported: () => prfSupported(),
+      async add() {
+        // 绑定盐：注册期 create 与权威 get 均以该盐求值，解锁期用同一盐复现（同认证器+同盐→同输出）
+        const salt = randomBytes(32)
+        const created = await createPrfCredential('TOTP 验证码工具', salt, {
+          excludeCredentialIds: prfSources.value.map((p) => p.credentialId),
+        })
+        if (!created) return false
+        await addPrfSourceOp(created.credentialId, created.prfOutput, salt)
+        return true
+      },
+      remove: (credentialId) => removePrfSourceOp(credentialId),
+    },
   },
   clipboardClearEnabled: computed(() => settings.clipboardClearEnabled),
   async setClipboardClear(v) {

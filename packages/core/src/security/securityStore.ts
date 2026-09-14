@@ -1,4 +1,11 @@
 import { aesGcmDecrypt, aesGcmEncrypt, base64ToBytes, bytesToBase64, deriveKek, randomBytes } from '../crypto/aesgcm'
+import { kekSourcesOf } from './multiKek'
+
+// KEK 来源（计划11 多绑）：同一 DEK 可被多把 KEK 分别包裹；wrappedDek 字段保留为口令包裹
+export type KekSource =
+  | { kind: 'password' }
+  | { kind: 'prf'; credentialId: string; salt: string; wrappedDekP: string }
+  | { kind: 'dpapi'; wrappedDekD: string }
 
 // 契约：wrapNonce/dataNonce 各自独立随机，禁止同 KEK/DEK 下复用 nonce（GCM 语义）
 export interface SecuritySettings {
@@ -7,6 +14,7 @@ export interface SecuritySettings {
   kdf: { alg: 'argon2id'; m: number; t: number; p: number; salt: string }
   wrapNonce: string
   wrappedDek: string
+  kekSources?: KekSource[]
 }
 
 export interface EncryptedVault { v: 1; enc: true; dataNonce: string; ciphertext: string }
@@ -133,5 +141,31 @@ export async function changeVaultPassphrase(
     kdf: { alg: 'argon2id', m: security.kdf.m, t: security.kdf.t, p: security.kdf.p, salt: bytesToBase64(salt) },
     wrapNonce: bytesToBase64(wrapNonce),
     wrappedDek: bytesToBase64(wrappedDek),
+    // 多绑来源（prf/dpapi 的 wrappedDekP/D 与 DEK 绑定）不受换口令影响，原样保留
+    ...(security.kekSources ? { kekSources: security.kekSources } : {}),
+  }
+}
+
+/** 添加/替换 prf KEK 来源：KEK_prf = prfOutput 前 32B，wrappedDekP = base64(nonce(12B) ‖ AES-GCM(DEK))。
+ *  同 credentialId 已存在时替换（先移除再添加），其余来源原样保留；salt 为 base64（解锁时 PRF eval 用） */
+export async function addPrfSource(
+  settings: SecuritySettings,
+  dek: Uint8Array,
+  credentialId: string,
+  prfOutput: Uint8Array,
+  salt: string,
+): Promise<SecuritySettings> {
+  if (dek.length !== 32) throw new Error('invalid dek')
+  if (!isSecuritySettings(settings)) throw new Error('invalid security settings')
+  if (prfOutput.length < 32) throw new Error('invalid prf output')
+  const nonce = randomBytes(12)
+  const ct = await aesGcmEncrypt(prfOutput.subarray(0, 32), dek, nonce)
+  const blob = new Uint8Array(12 + ct.length)
+  blob.set(nonce, 0)
+  blob.set(ct, 12)
+  const others = kekSourcesOf(settings).filter((src) => !(src.kind === 'prf' && src.credentialId === credentialId))
+  return {
+    ...settings,
+    kekSources: [...others, { kind: 'prf', credentialId, salt, wrappedDekP: bytesToBase64(blob) }],
   }
 }

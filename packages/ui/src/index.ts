@@ -1,5 +1,6 @@
 export * from './composables/useOtpCodes'
 export * from './store'
+export * from './prf'
 export * from './iconStore'
 export * from './iconImport'
 export * from './clipboardClearer'
@@ -18,5 +19,5 @@ export { CLOUD_BACKUP_PATH, createCloudBackend } from './components/cloudPlatfor
 export type { CloudPlatform } from './components/cloudPlatform'
 export type { EntryFormData } from './components/entryForm'
 export type { ImportPlatform } from './components/importPlatform'
-export type { SecurityOps, SecurityPlatform } from './components/securityPlatform'
+export type { DpapiUnlockOps, PasskeyUnlockOps, SecurityOps, SecurityPlatform } from './components/securityPlatform'
 export type { SyncPlatform, SyncStatus } from './components/syncPlatform'
