@@ -93,6 +93,17 @@ export function msAuthRowsToEntries(rows: Array<Record<string, unknown>>): Impor
   return { entries, failures }
 }
 
+/**
+ * SQLite 已知表名探测清单（Task 5 ImportCard 字节入口）：sqlite_master 表名 → 行转换。
+ * 源码核实（Task 3）：Aegis SQLite 类导入仅 MicrosoftAuthImporter（SELECT * FROM accounts）
+ * 为真 SQLite；Duo（duokit accounts.json）/Authy/Battle.net（shared_prefs XML）均为文本格式，
+ * 走各自文本入口（importDuo/importAuthy/importBattleNet），不在此列。
+ */
+export const SQLITE_TABLE_PROBES: ReadonlyArray<{
+  table: string
+  toEntries: (rows: Array<Record<string, unknown>>) => ImportResult
+}> = [{ table: 'accounts', toEntries: msAuthRowsToEntries }]
+
 // ---------- Duo（DuoImporter.java：files/duokit/accounts.json，非 SQLite） ----------
 // 源码口径：条目 {name, otpGenerator:{otpSecret(base32), counter?}}；
 // counter 存在 → HotpInfo(secret, counter)，否则 TotpInfo(secret)（SHA1/6/30）；
@@ -301,8 +312,9 @@ const AUTHY_AUTHY_KEY = 'com.authy.storage.tokens.authy.key'
 /**
  * Authy 导入（shared_prefs XML 文本；AuthyImporter.read(InputStream)：取首个 .key 条目的值）。
  * 未找到 .key 键 → 空结果（源码 JSONArray 保持空）；值非合法 JSON → 结构级报错。
+ * password：EncryptedState（任一条目无 decryptedSecret 且无 secretSeed）时必填，缺省 → 结构级报错。
  */
-export async function importAuthy(text: string): Promise<ImportResult> {
+export async function importAuthy(text: string, password?: string): Promise<ImportResult> {
   const rows: Array<Record<string, unknown>> = []
   for (const m of text.matchAll(XML_STRING_RE)) {
     const name = m[1] ?? ''
@@ -318,7 +330,7 @@ export async function importAuthy(text: string): Promise<ImportResult> {
       break
     }
   }
-  return authyRowsToEntries(rows)
+  return authyRowsToEntries(rows, password)
 }
 
 // ---------- Battle.net（BattleNetImporter.java：SharedPreferences XML + XOR 掩码，非 SQLite） ----------
