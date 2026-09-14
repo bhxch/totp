@@ -48,4 +48,18 @@ describe('verifyTotp', () => {
     expect(await verifyTotp(secret, oldCode, { nowMs, window: 0 })).toBe(false)
     expect(await verifyTotp(secret, oldCode, { nowMs, window: 10 })).toBe(true)
   })
+
+  it('I30：t0 自定义：counter = floor((T - T0) / X)，等价偏移后再验证', async () => {
+    const secret = base32Decode('JBSWY3DPEHPK3PXP')
+    const nowMs = 1_700_000_000_000
+    const t0 = 60 // 偏移 60 秒
+    const code = await totp(secret, nowMs, { t0 })
+    // 同 t0 验证通过
+    expect(await verifyTotp(secret, code, { nowMs, t0 })).toBe(true)
+    // 不传 t0（默认 0）时 counter 不同
+    expect(await verifyTotp(secret, code, { nowMs })).toBe(false)
+    // 另一个 t0 也应通过
+    const code2 = await totp(secret, nowMs, { t0: 120 })
+    expect(await verifyTotp(secret, code2, { nowMs, t0: 120 })).toBe(true)
+  })
 })
