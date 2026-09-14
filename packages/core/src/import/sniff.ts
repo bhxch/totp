@@ -40,7 +40,8 @@ export function sniffFormat(text: string): ImportFormat | null {
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         const obj = parsed as Record<string, unknown>
         if ('db' in obj || 'header' in obj) return 'aegis'
-        if (sniffTwoFas(obj)) return 'twoFas'
+        const twoFas = sniffTwoFas(obj)
+        if (twoFas === 'ok' || twoFas === 'empty') return 'twoFas' // 'empty' 由 importTwoFas 给出明确「无条目」错误
         if (sniffBitwarden(obj)) return 'bitwarden'
         if (sniffProton(obj)) return 'proton'
         if (Array.isArray(obj.Authenticators)) return 'stratum'
@@ -95,15 +96,20 @@ export function sniffFormat(text: string): ImportFormat | null {
   return null
 }
 
-// services 数组（2FAS）且存在条目带顶层 secret 字符串（空数组不判，留给 generic）
-function sniffTwoFas(obj: Record<string, unknown>): boolean {
+// services 数组（2FAS）探测结果：
+// - 'ok'：存在条目带顶层 secret 字符串（典型 2FAS 明文导出）
+// - 'empty'：存在 services 数组但无任何条目符合 schema（空数组 / 条目无 secret），
+//   返回 'empty' 让 sniffFormat 显式走 twoFas 解析，importTwoFas 给出「无条目」错误
+// - false：没有 services 数组
+type TwoFasSniff = 'ok' | 'empty' | false
+function sniffTwoFas(obj: Record<string, unknown>): TwoFasSniff {
   const { services } = obj
-  return (
-    Array.isArray(services) &&
-    services.some(
-      (s) => s !== null && typeof s === 'object' && typeof (s as Record<string, unknown>).secret === 'string',
-    )
+  if (!Array.isArray(services)) return false
+  if (services.length === 0) return 'empty'
+  const hasSecretEntry = services.some(
+    (s) => s !== null && typeof s === 'object' && typeof (s as Record<string, unknown>).secret === 'string',
   )
+  return hasSecretEntry ? 'ok' : 'empty'
 }
 
 // Bitwarden 导出：明文为 items 数组（存在条目带 login.totp 字符串）；

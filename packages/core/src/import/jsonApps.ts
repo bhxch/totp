@@ -109,6 +109,7 @@ export function importTwoFas(text: string): ImportResult {
     throw new Error('2FAS 加密导出不支持：请使用不加密导出（无 servicesEncrypted 字段）')
   }
   if (!Array.isArray(obj.services)) throw new Error('2FAS 文件结构非法：缺少 services 数组')
+  if (obj.services.length === 0) throw new Error('2FAS 导出无条目：services 数组为空')
 
   return collectEntries(obj.services, (raw, index) => {
     const service = asObject(raw)

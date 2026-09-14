@@ -60,12 +60,14 @@ describe('importTwoFas', () => {
     expect(r.failures.map((f) => f.index)).toEqual([0, 1, 2, 3])
   })
 
-  it('结构级错误：缺 services 数组 / servicesEncrypted 加密导出 / schemaVersion 过新', () => {
+  it('结构级错误：缺 services 数组 / servicesEncrypted 加密导出 / schemaVersion 过新 / 空 services 显式提示', () => {
     expect(() => importTwoFas('{"schemaVersion": 4}')).toThrow(/services/)
     expect(() =>
       importTwoFas(JSON.stringify({ schemaVersion: 4, servicesEncrypted: 'aaa:bbb:ccc', services: [] })),
     ).toThrow(/加密/)
     expect(() => importTwoFas('{"schemaVersion": 5, "services": []}')).toThrow(/schemaVersion/)
+    // I27：空 services 数组不再静默落 generic，明确报「无条目」
+    expect(() => importTwoFas('{"schemaVersion": 4, "services": []}')).toThrow(/无条目/)
   })
 })
 
@@ -241,7 +243,7 @@ describe('sniffFormat app 格式扩展', () => {
     expect(sniffFormat('{"a": 1}')).toBe('generic')
     expect(sniffFormat('{"db": {"entries": []}}')).toBe('aegis')
     expect(sniffFormat(`otpauth://totp/a?secret=${SECRET}`)).toBe('uriBatch')
-    // 误判防护：services 存在但条目无 secret → 不判 twoFas
-    expect(sniffFormat(JSON.stringify({ services: [{ name: 'x' }] }))).toBe('generic')
+    // I27：services 存在但条目无 secret → 仍按 twoFas 走（importTwoFas 抛「无条目」错误），不再静默落 generic
+    expect(sniffFormat(JSON.stringify({ services: [{ name: 'x' }] }))).toBe('twoFas')
   })
 })
