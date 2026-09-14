@@ -72,7 +72,7 @@ export async function prfSupported(): Promise<boolean> {
   }
 }
 
-export interface CreatedPrfCredential {
+export interface BoundPrfCredential {
   /** base64url(rawId)，存入 security.kekSources 的 prf 条目 */
   credentialId: string
   /** results.first 前 32B（绑定盐的权威求值输出），绑定 KEK_prf */
@@ -107,7 +107,7 @@ export async function createPrfCredential(
   rpName: string,
   salt: Uint8Array,
   opts: CreatePrfOptions = {},
-): Promise<CreatedPrfCredential | null> {
+): Promise<BoundPrfCredential | null> {
   try {
     const cred = (await navigator.credentials.create({
       publicKey: {
