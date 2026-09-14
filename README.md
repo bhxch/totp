@@ -117,7 +117,7 @@ pnpm --filter @totp/desktop tauri build  # 构建，产物为 exe + NSIS 安装�
 - **Aegis**（JSON vault）：明文与口令加密均支持；加密 vault 需输入 Aegis 导出时设置的口令（scrypt + AES-GCM，算法对齐 Aegis 官方实现）
 - **WinAuth**（XML 配置文件）：明文、口令保护（条目级/整包，PBKDF2 + Blowfish，对齐官方算法）均支持；使用 Windows DPAPI 加密（用户/机器层）的文件**仅桌面版可导入**（依赖系统凭据解密），插件端遇到会逐条提示「请用桌面版导入」；YubiKey 加密暂不支持
 - **2FAS**（JSON 导出）：明文支持（TOTP/HOTP/Steam）；加密导出（servicesEncrypted）不支持，会提示改用不加密导出
-- **Bitwarden**（JSON 导出）：明文支持，`login.totp` 接受 otpauth URI / `steam://` / 裸 base32 secret 三种形态；密码保护导出（encrypted）不支持，会提示改用明文导出
+- **Bitwarden**（JSON 导出）：明文支持，`login.totp` 接受 otpauth URI / `steam://` / 裸 base32 secret 三种形态（裸 base32 secret 也支持，与 Aegis `BitwardenImporter` 差异，本工具扩展）；密码保护导出（encrypted）不支持，会提示改用明文导出
 - **Ente Auth**：明文导出即 otpauth URI 行文本，与「URI 文本」同一入口；加密导出不支持，请在应用内改用明文导出
 - **Proton Authenticator**（JSON 导出）：明文支持（条目 uri 为 otpauth:// 或 steam://）；加密导出不支持，会提示改用明文导出
 - **Stratum / Authenticator Pro**（JSON 导出）：明文支持（大写键 schema，HOTP/TOTP/Steam）；二进制加密导出不支持
