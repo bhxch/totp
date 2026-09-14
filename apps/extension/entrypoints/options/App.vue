@@ -178,8 +178,8 @@ const securityPlatform: SecurityPlatform = {
  */
 const syncPlatform: SyncPlatform = {
   get syncEnabled() { return settings.syncEnabled },
-  // 明文同步警示：SyncCard 据此在「开关开启且未启用加密」时提示（hasEncryption 为 ComputedRef，getter 保持响应式）
-  get hasEncryption() { return hasEncryption.value },
+  // 明文同步警示：SyncCard 据此在「开关开启且未启用加密」时提示（hasEncryption 直接暴露 ComputedRef<boolean>）
+  hasEncryption,
   async setSyncEnabled(v) {
     settings.syncEnabled = v
     await commitSettings()

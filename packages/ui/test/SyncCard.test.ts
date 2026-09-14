@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { ref } from 'vue'
 import SyncCard from '../src/components/SyncCard.vue'
 
 function mkPlatform(status: { state: string; at: number } | null = null, over: Record<string, unknown> = {}) {
@@ -41,7 +42,7 @@ describe('SyncCard', () => {
   })
 
   it('开关开启且未启用加密：状态条区域显示明文同步警示；label 不承诺加密分片', async () => {
-    const platform = mkPlatform(null, { syncEnabled: true, hasEncryption: false })
+    const platform = mkPlatform(null, { syncEnabled: true, hasEncryption: ref(false) })
     const w = mount(SyncCard, { props: { platform } })
     expect(w.find('.warn').exists()).toBe(true)
     expect(w.text()).toContain('当前未启用本地加密，条目将以明文同步至浏览器账号云端')
@@ -50,13 +51,13 @@ describe('SyncCard', () => {
   })
 
   it('开关开启且已启用加密：不显示明文同步警示', () => {
-    const platform = mkPlatform(null, { syncEnabled: true, hasEncryption: true })
+    const platform = mkPlatform(null, { syncEnabled: true, hasEncryption: ref(true) })
     const w = mount(SyncCard, { props: { platform } })
     expect(w.find('.warn').exists()).toBe(false)
   })
 
   it('开关关闭（即使未加密）或 hasEncryption 未提供：不显示明文同步警示', () => {
-    const off = mount(SyncCard, { props: { platform: mkPlatform(null, { syncEnabled: false, hasEncryption: false }) } })
+    const off = mount(SyncCard, { props: { platform: mkPlatform(null, { syncEnabled: false, hasEncryption: ref(false) }) } })
     expect(off.find('.warn').exists()).toBe(false)
     const unknown = mount(SyncCard, { props: { platform: mkPlatform(null, { syncEnabled: true }) } })
     expect(unknown.find('.warn').exists()).toBe(false)

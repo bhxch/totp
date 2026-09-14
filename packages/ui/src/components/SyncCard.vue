@@ -63,8 +63,8 @@ const statusText = computed(() => {
 })
 const stateClass = computed(() => (status.value ? `sync-${status.value.state}` : ''))
 
-/** 明文同步警示：开关开启且宿主声明未启用加密时提示（hasEncryption 未提供按未知，不警示） */
-const plainSyncWarn = computed(() => props.platform?.syncEnabled === true && props.platform.hasEncryption === false)
+/** 明文同步警示：开关开启且宿主声明未启用加密时提示（hasEncryption 为 ComputedRef<boolean>，未提供按未知，不警示） */
+const plainSyncWarn = computed(() => props.platform?.syncEnabled === true && props.platform.hasEncryption?.value === false)
 
 onMounted(() => {
   if (!props.platform) return // platform null：整卡不渲染，不建轮询
