@@ -230,9 +230,9 @@ WXT 构建，一次实现三店兼容（Chrome/Edge MV3 service worker；Firefox
 
 ### 权限
 
-`storage`、`unlimitedStorage`（图标 dataUrl 存 `chrome.storage.local`，豁免 10MB 配额）、`clipboardWrite`、`activeTab`（popup 打开时读当前页 URL）、`notifications`（右键菜单选中文本非 otpauth 时提示）、`alarms` + `offscreen`（复制后 30s 清剪贴板：popup 即将关闭，由 background 经 alarms 定时、offscreen document 执行清空）；Firefox 构建另含 `browser_specific_settings.gecko.id`（固定扩展身份，协议处理器注册所需）。不申请 `<all_urls>` 全站权限。
+`storage`、`unlimitedStorage`（图标 dataUrl 存 `chrome.storage.local`，豁免 10MB 配额）、`clipboardWrite`、`activeTab`（popup 打开时读当前页 URL）、`contextMenus`（右键菜单 otpauth-add 注册，Chromium 下无此权限 API 不可用）、`notifications`（右键菜单选中文本非 otpauth 时提示）、`alarms` + `offscreen`（复制后 30s 清剪贴板：popup 即将关闭，由 background 经 alarms 定时、offscreen document 执行清空）；Firefox 构建另含 `browser_specific_settings.gecko.id`（固定扩展身份，协议处理器注册所需）。不申请 `<all_urls>` 全站权限。
 
-> 勘误（2026-09-14）：原清单仅列 storage/clipboardWrite/activeTab 且写「右键菜单按需 contextMenus」，与实际 manifest 不符，已按 `apps/extension/wxt.config.ts` 实际申请集更正。
+> 勘误（2026-09-14）：原清单仅列 storage/clipboardWrite/activeTab 且写「右键菜单按需 contextMenus」，与实际 manifest 不符，已按 `apps/extension/wxt.config.ts` 实际申请集更正。补遗（2026-09-15，计划 12 Task 2）：落地后补申请 `contextMenus`——`chrome.contextMenus` API 的前置权限，缺失时菜单静默不显示。
 
 ## 11. Tauri 桌面形态
 
