@@ -27,11 +27,14 @@ async function prfFixture(): Promise<{ security: SecuritySettings; dek: Uint8Arr
   return { security: await addPrfSource(security, dek, 'Y3JlZC0x', prfOutput, salt), dek, prfOutput, salt }
 }
 
-function mockWebAuthnGet(evalResults: ArrayBuffer[]): void {
+function mockWebAuthnGet(first: Uint8Array[]): void {
   ;(navigator as unknown as { credentials: unknown }).credentials = {
     get: vi.fn(async () => ({
       rawId: new ArrayBuffer(0),
-      getClientExtensionResults: () => ({ prf: { evalResults } }),
+      // W3C WebAuthn L3 真实形状：{ prf: { enabled, results: { first } } }
+      getClientExtensionResults: () => ({
+        prf: { enabled: true, results: { first: first[0] ? (first[0].buffer.slice(first[0].byteOffset, first[0].byteOffset + first[0].byteLength) as ArrayBuffer) : undefined } },
+      }),
     })),
   }
 }
@@ -74,7 +77,7 @@ describe('LockScreen', () => {
       securitySettings: ref(security),
       unlockWithDek,
     })
-    mockWebAuthnGet([prfOutput.buffer.slice(prfOutput.byteOffset, prfOutput.byteOffset + prfOutput.byteLength) as ArrayBuffer])
+    mockWebAuthnGet([prfOutput])
     const w = mount(LockScreen, { props: { store } })
     expect(w.find('button.passkey').exists()).toBe(true)
     await w.find('button.passkey').trigger('click')
@@ -95,7 +98,7 @@ describe('LockScreen', () => {
       prfSources: computed(() => [{ credentialId: 'Y3JlZC0x', salt }]),
       securitySettings: ref(security),
     })
-    mockWebAuthnGet([]) // evalResults 空 → getPrfOutput null
+    mockWebAuthnGet([]) // results.first 缺失 → getPrfOutput null
     const w = mount(LockScreen, { props: { store } })
     await w.find('button.passkey').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('passkey 解锁失败'))
@@ -110,7 +113,7 @@ describe('LockScreen', () => {
       securitySettings: ref(security),
       unlockWithDek: vi.fn().mockRejectedValue(new Error('vault corrupted')),
     })
-    mockWebAuthnGet([prfOutput.buffer.slice(prfOutput.byteOffset, prfOutput.byteOffset + prfOutput.byteLength) as ArrayBuffer])
+    mockWebAuthnGet([prfOutput])
     const w = mount(LockScreen, { props: { store } })
     await w.find('button.passkey').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('vault corrupted'))

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { backupFileName, conflictBackupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, OVERWRITE_NAME, SCHEMES_KEY, type BackupEnvelopeV1, type CloudCred, type ImportScheme, type Vault } from '@totp/core'
+import { backupFileName, conflictBackupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, OVERWRITE_NAME, randomBytes, SCHEMES_KEY, type BackupEnvelopeV1, type CloudCred, type ImportScheme, type Vault } from '@totp/core'
 import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, createPrfCredential, LockScreen, prfSupported, VaultManager, type BackupMode, type BackupPlatform, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
 import { storageAdapter } from '../../src/store'
@@ -142,9 +142,13 @@ const securityPlatform: SecurityPlatform = {
       sources: computed(() => prfSources.value.map((p) => ({ credentialId: p.credentialId }))),
       prfSupported: () => prfSupported(),
       async add() {
-        const created = await createPrfCredential('TOTP 验证码工具')
+        // 绑定盐：注册期 create 与权威 get 均以该盐求值，解锁期用同一盐复现（同认证器+同盐→同输出）
+        const salt = randomBytes(32)
+        const created = await createPrfCredential('TOTP 验证码工具', salt, {
+          excludeCredentialIds: prfSources.value.map((p) => p.credentialId),
+        })
         if (!created) return false
-        await addPrfSourceOp(created.credentialId, created.prfOutput)
+        await addPrfSourceOp(created.credentialId, created.prfOutput, salt)
         return true
       },
       remove: (credentialId) => removePrfSourceOp(credentialId),

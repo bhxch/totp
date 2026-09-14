@@ -2,7 +2,7 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { open, save } from '@tauri-apps/plugin-dialog'
-import { backupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, SCHEMES_KEY, type CloudCred, type ImportScheme, type StorageAdapter, type Vault } from '@totp/core'
+import { backupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, randomBytes, SCHEMES_KEY, type CloudCred, type ImportScheme, type StorageAdapter, type Vault } from '@totp/core'
 import { createPrfCredential, createClipboardClearer, createIconStore, LockScreen, createVueStore, prfSupported, VaultManager, type BackupMode, type BackupPlatform, type CloudPlatform, type IconStore, type ImportSchemesApi, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref } from 'vue'
 import { createBackupToDir, listBackups, readBackupByName, readBackupFileOs, saveConflictBackupToDir, writeBackupFileOs } from './backupService'
@@ -181,9 +181,13 @@ const securityPlatform = computed<SecurityPlatform | null>(() => {
         sources: computed(() => s.prfSources.value.map((p) => ({ credentialId: p.credentialId }))),
         prfSupported: () => prfSupported(),
         async add() {
-          const created = await createPrfCredential('TOTP 验证码工具')
+          // 绑定盐：注册期 create 与权威 get 均以该盐求值，解锁期用同一盐复现（同认证器+同盐→同输出）
+          const salt = randomBytes(32)
+          const created = await createPrfCredential('TOTP 验证码工具', salt, {
+            excludeCredentialIds: s.prfSources.value.map((p) => p.credentialId),
+          })
           if (!created) return false
-          await s.addPrfSourceOp(created.credentialId, created.prfOutput)
+          await s.addPrfSourceOp(created.credentialId, created.prfOutput, salt)
           return true
         },
         remove: (credentialId) => s.removePrfSourceOp(credentialId),

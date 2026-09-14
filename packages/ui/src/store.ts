@@ -1,7 +1,7 @@
 import {
   DEFAULT_SETTINGS, SECURITY_KEY, VAULT_KEY, addEntry, addGroup, addPrfSource, bytesToBase64, changeVaultPassphrase,
   createVault, decryptVaultWithDek, encryptVaultWithDek, isEncryptedVault, kekSourcesOf, loadSettings, loadVault,
-  randomBytes, removeEntry, removeGroup, removeKekSource, renameGroup, reorderEntries, saveSettings, saveVault,
+  removeEntry, removeGroup, removeKekSource, renameGroup, reorderEntries, saveSettings, saveVault,
   setupVaultEncryption, unlockVaultEncryption, updateEntry,
   type AppSettings, type KekSource, type OtpEntry, type SecuritySettings, type StorageAdapter, type Vault,
 } from '@totp/core'
@@ -283,12 +283,14 @@ export function createVueStore(
     await applyDekAndUnlock(key)
   }
 
-  /** 绑定 passkey 解锁（已解锁态）：core addPrfSource 重包裹 DEK → security 经队列写盘。
-   *  同 credentialId 为替换语义（core 内先移除再添加） */
-  function addPrfSourceOp(credentialId: string, prfOutput: Uint8Array): Promise<void> {
+  /** 绑定 passkey 解锁（已解锁态）：salt 由调用方生成并在创建凭据时用于 PRF 求值，
+   *  prfOutput 为该盐的权威求值输出——同盐可复现，构成绑定语义。
+   *  core addPrfSource 重包裹 DEK（同 credentialId 替换语义）→ security 经队列写盘 */
+  function addPrfSourceOp(credentialId: string, prfOutput: Uint8Array, salt: Uint8Array): Promise<void> {
     return enqueue(async () => {
-      if (locked.value || !security.value || !dek) throw new Error('encryption not enabled')
-      const next = await addPrfSource(security.value, dek, credentialId, prfOutput, bytesToBase64(randomBytes(32)))
+      if (locked.value) throw new Error('vault locked')
+      if (!security.value || !dek) throw new Error('encryption not enabled')
+      const next = await addPrfSource(security.value, dek, credentialId, prfOutput, bytesToBase64(salt))
       security.value = next
       // security 键写入复用 vault 自写窗口抑制（onChanged 无 security 通道，与 changePassphrase 一致）
       lastSelfWrite.vault = Date.now()
@@ -299,7 +301,8 @@ export function createVueStore(
   /** 移除指定 passkey 解锁来源（core 守卫：移除后无任何来源时抛「至少保留一种解锁方式」） */
   function removePrfSourceOp(credentialId: string): Promise<void> {
     return enqueue(async () => {
-      if (locked.value || !security.value) throw new Error('encryption not enabled')
+      if (locked.value) throw new Error('vault locked')
+      if (!security.value) throw new Error('encryption not enabled')
       const next = removeKekSource(security.value, 'prf', { credentialId })
       security.value = next
       lastSelfWrite.vault = Date.now()
