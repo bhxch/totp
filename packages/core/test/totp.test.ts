@@ -62,4 +62,23 @@ describe('verifyTotp', () => {
     const code2 = await totp(secret, nowMs, { t0: 120 })
     expect(await verifyTotp(secret, code2, { nowMs, t0: 120 })).toBe(true)
   })
+
+  it('I37：超大 nowMs 导致 counter 超出安全整数时 verifyTotp 直接 false（不静默截断）', async () => {
+    const secret = base32Decode('JBSWY3DPEHPK3PXP')
+    // period 极小（模拟任意小 period）配合超大 nowMs → current 超出 Number.MAX_SAFE_INTEGER
+    const start = Date.now()
+    const out = await verifyTotp(secret, '123456', {
+      nowMs: 1e30,
+      period: 1e-10,
+    })
+    expect(out).toBe(false)
+    expect(Date.now() - start).toBeLessThan(500)
+  }, { timeout: 2000 })
+
+  it('I37：t0 大于 nowMs/1000 时 current<0 → false', async () => {
+    const secret = base32Decode('JBSWY3DPEHPK3PXP')
+    const nowMs = 100_000 // 100 秒
+    // t0 比 nowMs/1000 大很多，差值为负，current<0 → false
+    expect(await verifyTotp(secret, '123456', { nowMs, t0: 1000 })).toBe(false)
+  })
 })
