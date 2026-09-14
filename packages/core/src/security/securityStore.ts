@@ -1,5 +1,11 @@
 import { aesGcmDecrypt, aesGcmEncrypt, base64ToBytes, bytesToBase64, deriveKek, randomBytes } from '../crypto/aesgcm'
 
+// KEK 来源（计划11 多绑）：同一 DEK 可被多把 KEK 分别包裹；wrappedDek 字段保留为口令包裹
+export type KekSource =
+  | { kind: 'password' }
+  | { kind: 'prf'; credentialId: string; salt: string; wrappedDekP: string }
+  | { kind: 'dpapi'; wrappedDekD: string }
+
 // 契约：wrapNonce/dataNonce 各自独立随机，禁止同 KEK/DEK 下复用 nonce（GCM 语义）
 export interface SecuritySettings {
   v: 1
@@ -7,6 +13,7 @@ export interface SecuritySettings {
   kdf: { alg: 'argon2id'; m: number; t: number; p: number; salt: string }
   wrapNonce: string
   wrappedDek: string
+  kekSources?: KekSource[]
 }
 
 export interface EncryptedVault { v: 1; enc: true; dataNonce: string; ciphertext: string }
