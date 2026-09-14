@@ -76,6 +76,36 @@ pnpm --filter @totp/desktop tauri build  # 构建，产物为 exe + NSIS 安装�
 - 加密态换设备：新设备同步到的是密文，需输入**同一口令**解锁后才能查看/使用；口令不存储在同步通道中，丢失则无法解锁
 - 浏览器支持：以 Chrome/Edge 为主验证；Firefox 的 storage.sync 配额与行为不同，未全面验证
 
+## 云同步（Cloud）
+
+通过自备的网盘/对象存储在多设备间同步数据。入口在管理页（桌面主窗口 / 插件 options 页）的「云同步」卡；popup 不含云同步。云端固定一个对象，内容为加密备份 envelope（`totp-backup.totpbackup`）。
+
+### 支持后端（五选一）
+
+| 后端 | 凭据（均为手动粘贴，自备） |
+| --- | --- |
+| WebDAV | 服务器地址 + 用户名 + 应用密码（坚果云等） |
+| S3 兼容 | Region + Bucket + AccessKeyId + SecretAccessKey；Endpoint 可选（如 MinIO `http://localhost:9000`），填了走 path-style；Key 前缀可选 |
+| Google Drive | OAuth Access Token（文件 id 首次推送自动创建并回存凭据） |
+| OneDrive | Microsoft Graph Access Token（写入云盘根目录下同名文件） |
+| GitHub Gist | GitHub Token + Gist ID |
+
+- S3 上传为纯 fetch 实现的 AWS Signature V4 签名（无 SDK 依赖），兼容 MinIO 等自托管服务
+- 凭据仅存本地（桌面：`%APPDATA%/com.totp.desktop/` 下本地 JSON；插件：`chrome.storage.local`，不进浏览器同步区），随代码一起落地的只有你手动粘贴的内容；token 过期需自行重新获取粘贴
+- 自建 WebDAV/S3（MinIO）服务需允许跨域（CORS），否则插件端请求会被浏览器拦截
+
+### 加密与口令
+
+- 云端对象与「备份」同一加密形态（envelope v1：Argon2id 派生 KEK → AES-256-GCM 包裹 DEK → 加密 vault），服务器上永远只有密文
+- 同步口令即备份加密口令，卡内每次输入、不保存不上传；口令丢失则云端备份无法解开（无后门、无找回手段）
+
+### 同步语义
+
+- 每次同步先回读云端对象：内容 SHA-256 与本地记录的上次基线（cloudRev）一致则提示「云端已是最新」，不重复写入；不一致再按口令解密远端
+- 冲突（云端与本地基线不同）：以云端为准覆盖本地（LWW，远端胜），覆盖前先把本地数据保存为冲突副本——桌面写入备份目录 `conflict-日期-时间.totpbackup`（不参与滚动删除，可从「备份」卡列表恢复）；插件端保存为下载文件
+- 远端内容用当前口令解不开（口令不一致/结构损坏）时直接报错，不做任何写入，本地数据不受影响
+- 采用云端数据前有明确提示与两步确认；确认后云端数据整体替换当前 vault
+
 ## 导入
 
 导入入口在管理页（桌面主窗口 / 插件 options 页）的「导入」卡；popup 不含导入功能。选择文件后自动嗅探格式，按向导完成解析 → 冲突确认 → 报告；识别失败或误判时可在格式下拉中手动指定。各格式字段口径对齐 Aegis 官方导入器实现（beemdevelopment/Aegis）。
