@@ -18,7 +18,6 @@ describe('base32Encode', () => {
 
 describe('base32Decode', () => {
   it.each([
-    ['', 0],
     ['MY======', 1],
     ['MZXW6YTBOI======', 6],
     ['MZXW6YTBOI', 6], // padding 可省略
@@ -32,6 +31,13 @@ describe('base32Decode', () => {
 
   it('非法字符抛错', () => {
     expect(() => base32Decode('ABC1')).toThrow('invalid base32') // 1 不在 RFC4648 表
+  })
+
+  it('I40：空串与 1 字符输入抛 invalid base32 input', () => {
+    expect(() => base32Decode('')).toThrow('invalid base32 input')
+    expect(() => base32Decode('A')).toThrow('invalid base32 input')
+    // 仅空白/分隔符清洗后为空也抛错
+    expect(() => base32Decode('= = =')).toThrow('invalid base32 input')
   })
 })
 

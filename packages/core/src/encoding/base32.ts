@@ -22,6 +22,8 @@ export function base32Decode(input: string, alphabet: string = RFC4648_ALPHABET)
   const map = new Map<string, number>()
   for (let i = 0; i < alphabet.length; i++) map.set(alphabet[i]!, i)
   const cleaned = input.toUpperCase().replace(/[=\s-]/g, '')
+  // 拒绝空串/1 字符：单字符不足以编码一个完整字节（5bit 不足 8bit），历史实现会返回空数组造成误判
+  if (cleaned.length < 2) throw new Error('invalid base32 input')
   const out: number[] = []
   let bits = 0
   let value = 0
