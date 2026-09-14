@@ -375,7 +375,9 @@ export function createVueStore(
     return dekByWin.get(windowId) ?? null
   }
 
-  /** 锁定：本窗口丢弃 DEK、清空内存 vault（防内存残留读取） */
+  /** 锁定：本窗口丢弃 DEK、清空内存 vault（防内存残留读取）
+   *  注意：security.value 不在此清空 — 锁定态下 LockScreen 仍需枚举 kekSources 渲染
+   *  解锁按钮（passkey/DPAPI 静默解锁），security 本身不包含敏感运行时数据。 */
   function lock(): void {
     dekByWin.set(windowId, null)
     lockedByWin.set(windowId, true)
@@ -400,6 +402,10 @@ export function createVueStore(
     return src ? { wrappedDekD: src.wrappedDekD } : null
   })
 
+  // M5：boolean 视图（命名澄清"是否绑定 DPAPI 来源"）— 取代旧 computed.value === null 的易误读比较。
+  // 旧 dpapiSource 仍保留以兼容 SecurityCard/App.vue，调用方迁移后可下线。
+  const hasDpapiSource = computed(() => dpapiSource.value !== null)
+
   return {
     vault, settings, initStore, registerStorageSync, commit, commitSettings,
     locked, hasEncryption, unlock, lock, enableEncryption, disableEncryption, changePassphrase,
@@ -409,6 +415,8 @@ export function createVueStore(
     prfSources,
     /** 已绑定 dpapi 来源（wrappedDekD） */
     dpapiSource,
+    /** 是否已绑定 DPAPI 来源（boolean 视图，M5 提供以替代 dpapiSource.value !== null 比较） */
+    hasDpapiSource,
     /** 当前解锁态持有的 DEK（DPAPI 启用包装用；锁定/未启用为 null） */
     getCurrentDek,
     unlockWithDek, addPrfSourceOp, removePrfSourceOp, addDpapiSourceOp, removeDpapiSourceOp,
