@@ -2,17 +2,38 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { open, save } from '@tauri-apps/plugin-dialog'
-import { backupFileName, createBackupEnvelope, openBackupEnvelope } from '@totp/core'
-import { LockScreen, VaultManager, createClipboardClearer, createIconStore, createVueStore, type BackupMode, type BackupPlatform, type IconStore, type SecurityPlatform, type VueStore } from '@totp/ui'
+import { backupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, SCHEMES_KEY, type ImportScheme, type StorageAdapter } from '@totp/core'
+import { LockScreen, VaultManager, createClipboardClearer, createIconStore, createVueStore, type BackupMode, type BackupPlatform, type IconStore, type ImportSchemesApi, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref } from 'vue'
 import { createBackupToDir, listBackups, readBackupByName, readBackupFileOs, writeBackupFileOs } from './backupService'
-import { decryptDpapiOs, readImportFileOs } from './importService'
+import { decryptDpapiOs, readImportFileBytesOs, readImportFileOs } from './importService'
 import { createTauriFs } from './tauriFs'
 
 const store = ref<VueStore | null>(null)
 const icons = ref<IconStore | null>(null)
 const loadError = ref('')
 let unlistenFocus: (() => void) | null = null
+
+// ---------- 导入映射方案存取 ----------
+// adapter 在 onMounted 就绪后赋值；schemesApi 闭包实时读取（VaultManager 仅在 store 就绪后渲染，不会读到 null）
+let fsAdapter: StorageAdapter | null = null
+
+/** 直读写 adapter 的 SCHEMES_KEY（本地 AppData JSON）；load 容错：坏 JSON → 空表 */
+const schemesApi: ImportSchemesApi = {
+  async load(): Promise<ImportScheme[]> {
+    if (!fsAdapter) return []
+    try {
+      const raw = await fsAdapter.get(SCHEMES_KEY)
+      return raw ? normalizeSchemes(JSON.parse(raw)) : []
+    } catch {
+      return []
+    }
+  },
+  async save(list: ImportScheme[]): Promise<void> {
+    if (!fsAdapter) throw new Error('数据尚未就绪')
+    await fsAdapter.set(SCHEMES_KEY, JSON.stringify(list))
+  },
+}
 
 // ---------- 备份平台实现 ----------
 // 模式与保留份数属本地偏好（非同步内容）：存桌面 localStorage，key backupMode/backupKeepN
@@ -39,14 +60,20 @@ function persistBackupMode(m: BackupMode): void {
 
 const backupMode = ref<BackupMode>(loadBackupMode())
 
+// 最后一次导入选择的路径（模块级缓存）：SQLite 字节入口复用，避免同一文件二次弹窗
+let lastImportPath: string | null = null
+
 /** envelope 文本 → 解密出明文 vault JSON（口令错误/文件损坏由 openBackupEnvelope 抛错，卡片统一展示） */
 async function openBackupText(text: string, password: string): Promise<string> {
   return openBackupEnvelope(JSON.parse(text), password)
 }
 
 const BACKUP_FILE_FILTERS = [{ name: 'TOTP 备份', extensions: ['totpbackup'] }]
-// 与 Rust 端 read_import_file_os 扩展名白名单一致（.json/.wauth/.xml/.txt/.aegis）
-const IMPORT_FILE_FILTERS = [{ name: '导入文件', extensions: ['json', 'wauth', 'txt', 'aegis', 'xml'] }]
+// 与 Rust 端 read_import_file_os 扩展名白名单一致（.json/.wauth/.xml/.txt/.aegis）+ SQLite .db/.sqlitedb/.sqlite
+// （.db 经文本读取报 UTF-8 错时由 ImportCard 转字节入口复查，见 read_import_file_bytes_os）
+const IMPORT_FILE_FILTERS = [
+  { name: '导入文件', extensions: ['json', 'wauth', 'txt', 'aegis', 'xml', 'db', 'sqlitedb', 'sqlite'] },
+]
 
 const backupPlatform: BackupPlatform = {
   get mode() { return backupMode.value },
@@ -80,7 +107,14 @@ const backupPlatform: BackupPlatform = {
   async readImportFile() {
     const path = await open({ multiple: false, directory: false, filters: IMPORT_FILE_FILTERS })
     if (typeof path !== 'string') return null
+    lastImportPath = path
     return { text: await readImportFileOs(path), name: path.split(/[\\/]/).pop() ?? path }
+  },
+  // SQLite 字节入口：复用最近一次选择的路径（避免二次弹窗）；无最近选择时补弹对话框
+  async readImportFileBytes() {
+    const path = lastImportPath ?? (await open({ multiple: false, directory: false, filters: IMPORT_FILE_FILTERS }))
+    if (typeof path !== 'string') return null
+    return { bytes: await readImportFileBytesOs(path), name: path.split(/[\\/]/).pop() ?? path }
   },
   decryptDpapi: (b64) => decryptDpapiOs(b64),
 }
@@ -114,6 +148,7 @@ onMounted(async () => {
   unlistenFocus = un
   try {
     const adapter = await createTauriFs()
+    fsAdapter = adapter
     const s = createVueStore(adapter)
     await s.initStore()
     store.value = s
@@ -157,7 +192,7 @@ async function onBlurHideChange(e: Event) {
     </header>
     <div v-if="loadError && !store" class="error">{{ loadError }}</div>
     <LockScreen v-else-if="store && store.locked" :store="store" />
-    <VaultManager v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :icons="icons ?? undefined" enable-copy @copy="copyToClipboard" />
+    <VaultManager v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :icons="icons ?? undefined" :schemes-api="schemesApi" enable-copy @copy="copyToClipboard" />
   </main>
 </template>
 

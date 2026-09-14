@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { backupFileName, createBackupEnvelope, openBackupEnvelope, OVERWRITE_NAME, type BackupEnvelopeV1 } from '@totp/core'
-import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, LockScreen, VaultManager, type BackupMode, type BackupPlatform, type SecurityPlatform } from '@totp/ui'
+import { backupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, OVERWRITE_NAME, SCHEMES_KEY, type BackupEnvelopeV1, type ImportScheme } from '@totp/core'
+import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, LockScreen, VaultManager, type BackupMode, type BackupPlatform, type ImportSchemesApi, type SecurityPlatform } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
 import { storageAdapter } from '../../src/store'
 import {
@@ -9,6 +9,24 @@ import {
 } from '../../src/store'
 
 const icons = createIconStore(storageAdapter)
+
+/**
+ * 导入映射方案存取：直读写 storageAdapter 的 SCHEMES_KEY（跨端随 storage 同步）。
+ * load 容错：坏 JSON/读失败 → 空表（core normalizeSchemes 兜底解析）。
+ */
+const schemesApi: ImportSchemesApi = {
+  async load(): Promise<ImportScheme[]> {
+    try {
+      const raw = await storageAdapter.get(SCHEMES_KEY)
+      return raw ? normalizeSchemes(JSON.parse(raw)) : []
+    } catch {
+      return []
+    }
+  },
+  async save(list: ImportScheme[]): Promise<void> {
+    await storageAdapter.set(SCHEMES_KEY, JSON.stringify(list))
+  },
+}
 
 const loadError = ref('')
 
@@ -107,6 +125,9 @@ function pickFile(accept: string): Promise<File | null> {
 
 const pickBackupFile = (): Promise<File | null> => pickFile('.totpbackup')
 
+// 最后一次导入选择的 File（模块级缓存）：SQLite 字节入口复用，避免同一文件二次弹窗
+let lastImportFile: File | null = null
+
 /** 安全平台：security 闭包绑 store；剪贴板/弹窗延迟走 settings+commitSettings（extension 有 popup，提供 popupCloseDelayMs） */
 const securityPlatform: SecurityPlatform = {
   security: {
@@ -148,9 +169,18 @@ const backupPlatform: BackupPlatform = {
   replaceAllOp: (v) => replaceAllOp(v),
   // 导入：浏览器 input file 读取文本；无 DPAPI 能力，WinAuth DPAPI 条目由 core 逐条 failure「请用桌面版」
   async readImportFile() {
-    const file = await pickFile('.json,.jsonl,.wauth,.txt,.aegis,.xml')
+    const file = await pickFile('.json,.jsonl,.wauth,.txt,.aegis,.xml,.db,.sqlitedb,.sqlite')
     if (!file) return null
+    lastImportFile = file
     return { text: await file.text(), name: file.name }
+  },
+  // SQLite 字节入口：文本管道会损坏二进制，复用最近一次选择的文件（File.arrayBuffer 原生读字节）；
+  // 无最近选择时补弹选择器
+  async readImportFileBytes() {
+    const file = lastImportFile ?? (await pickFile('.db,.sqlitedb,.sqlite,.json,.jsonl,.txt,.xml,.wauth,.aegis'))
+    if (!file) return null
+    lastImportFile = file
+    return { bytes: new Uint8Array(await file.arrayBuffer()), name: file.name }
   },
 }
 </script>
@@ -161,7 +191,7 @@ const backupPlatform: BackupPlatform = {
     <LockScreen v-if="locked" :store="store" />
     <template v-else>
       <div v-if="loadError" class="error">{{ loadError }}</div>
-      <VaultManager v-else :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :icons="icons" enable-copy @copy="copyToClipboard" />
+      <VaultManager v-else :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :icons="icons" :schemes-api="schemesApi" enable-copy @copy="copyToClipboard" />
     </template>
   </main>
 </template>

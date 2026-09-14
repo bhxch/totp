@@ -12,7 +12,7 @@ import SearchBar from './SearchBar.vue'
 import SecurityCard from './SecurityCard.vue'
 import type { BackupPlatform } from './backupPlatform'
 import type { EntryFormData } from './entryForm'
-import type { ImportPlatform } from './importPlatform'
+import type { ImportPlatform, ImportSchemesApi } from './importPlatform'
 import type { SecurityPlatform } from './securityPlatform'
 
 const props = withDefaults(defineProps<{
@@ -25,7 +25,9 @@ const props = withDefaults(defineProps<{
   securityPlatform?: SecurityPlatform | null
   /** 图标存储（stored/url dataUrl 源）；缺省时列表仅渲染 builtin 图标，EntryForm 不显示图标选择区 */
   icons?: IconStore | null
-}>(), { enableCopy: false, platform: null, securityPlatform: null, icons: null })
+  /** 导入映射方案存取（直读写 storage SCHEMES_KEY）；缺省时 ImportCard 方案区不渲染 */
+  schemesApi?: ImportSchemesApi | null
+}>(), { enableCopy: false, platform: null, securityPlatform: null, icons: null, schemesApi: null })
 
 const emit = defineEmits<{ copy: [code: string] }>()
 
@@ -45,7 +47,7 @@ const vaultJson = computed(() => JSON.stringify(props.store.vault))
 const importPlatform = computed<ImportPlatform | null>(() => {
   const p = props.platform
   if (!p?.readImportFile) return null
-  return { readImportFile: p.readImportFile, decryptDpapi: p.decryptDpapi, store: props.store }
+  return { readImportFile: p.readImportFile, readImportFileBytes: p.readImportFileBytes, decryptDpapi: p.decryptDpapi, store: props.store }
 })
 const { codes } = useOtpCodes(sorted)
 /** EntryForm 图标数据源：builtin 全集 + store 内 stored/url dataUrl 映射 */
@@ -139,7 +141,7 @@ async function onCopy(entry: OtpEntry) {
 
   <SecurityCard :platform="securityPlatform" />
   <BackupCard :platform="platform" :vault-json="vaultJson" />
-  <ImportCard :platform="importPlatform" />
+  <ImportCard :platform="importPlatform" :schemes-api="schemesApi" />
 </template>
 
 <style scoped>
