@@ -40,6 +40,16 @@ export function awsUriEncode(str: string, encodeSlash = true): string {
   return out
 }
 
+/** SigV4 规范构造 canonical query string：键值各自 AWS uri-encode 后按编码键名排序，'key=value' 串联。
+ *  未提供/空对象 → 空串；value 缺失按空串处理。用于 s3.ts 中查询串参数签名（如 versionId 等未来可选）。 */
+export function buildCanonicalQueryString(params?: Record<string, string>): string {
+  if (!params) return ''
+  return Object.keys(params)
+    .sort()
+    .map((k) => `${awsUriEncode(k)}=${awsUriEncode(params[k] ?? '')}`)
+    .join('&')
+}
+
 /**
  * SigV4 第 1 步：canonical request。
  * 头名小写化、按头名排序；同名头多值保持出现顺序以逗号合并（官方 get-header-key-duplicate 向量规则）。
@@ -98,10 +108,10 @@ export interface S3BackendOptions {
 /**
  * S3 后端（SigV4 头签名，signed payload）。
  * 默认 AWS virtual-host style：https://{bucket}.s3.{region}.amazonaws.com/{key}；
- * 自定义 endpoint（MinIO 等）走 path-style：{endpoint}/{bucket}/{key}。
+ * 自定义 endpoint（MinIO 等）或 cred.forcePathStyle 强制 path-style：{endpoint|host}/{bucket}/{key}。
  */
 export function createS3Backend(cred: S3Cred, opts: S3BackendOptions = {}): CloudBackend {
-  const pathStyle = !!cred.endpoint
+  const pathStyle = !!cred.endpoint || !!cred.forcePathStyle
   const endpoint = (cred.endpoint ?? `https://${cred.bucket}.s3.${cred.region}.amazonaws.com`).replace(/\/+$/, '')
   const prefix = cred.prefix?.replace(/^\/+|\/+$/g, '')
   const keyOf = (path: string) => {
@@ -114,15 +124,18 @@ export function createS3Backend(cred: S3Cred, opts: S3BackendOptions = {}): Clou
   const signedHeadersOf = async (method: string, url: string, body: Uint8Array | undefined) => {
     const amzDate = toAmzDate((opts.now ?? (() => new Date()))())
     const payloadHash = await sha256Hex(body ?? '')
+    // STS 临时凭据：x-amz-security-token 必须参与签名（SigV4 规范）。仅当 cred.sessionToken 有值时附加。
+    const baseHeaders: Array<[string, string]> = [
+      ['host', new URL(url).host],
+      ['x-amz-content-sha256', payloadHash],
+      ['x-amz-date', amzDate],
+    ]
+    if (cred.sessionToken) baseHeaders.push(['x-amz-security-token', cred.sessionToken])
     const canonicalRequest = sigV4CanonicalRequest(
       method,
       new URL(url).pathname,
-      '',
-      [
-        ['host', new URL(url).host],
-        ['x-amz-content-sha256', payloadHash],
-        ['x-amz-date', amzDate],
-      ],
+      buildCanonicalQueryString(), // 当前无 query string，留接口位
+      baseHeaders,
       payloadHash,
     )
     const dateStamp = amzDate.slice(0, 8)
@@ -130,11 +143,14 @@ export function createS3Backend(cred: S3Cred, opts: S3BackendOptions = {}): Clou
     const stringToSign = await sigV4StringToSign(amzDate, scope, canonicalRequest)
     const signingKey = await sigV4SigningKey(cred.secretAccessKey, dateStamp, cred.region, 's3')
     const signature = await sigV4Signature(signingKey, stringToSign)
-    return {
-      Authorization: `AWS4-HMAC-SHA256 Credential=${cred.accessKeyId}/${scope}, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=${signature}`,
+    const signedHeaderNames = baseHeaders.map(([n]) => n.toLowerCase()).sort().join(';')
+    const out: Record<string, string> = {
+      Authorization: `AWS4-HMAC-SHA256 Credential=${cred.accessKeyId}/${scope}, SignedHeaders=${signedHeaderNames}, Signature=${signature}`,
       'x-amz-content-sha256': payloadHash,
       'x-amz-date': amzDate,
     }
+    if (cred.sessionToken) out['x-amz-security-token'] = cred.sessionToken
+    return out
   }
 
   return {

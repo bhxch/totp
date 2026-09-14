@@ -2,6 +2,7 @@ import { createHash, createHmac } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   awsUriEncode,
+  buildCanonicalQueryString,
   createS3Backend,
   sigV4CanonicalRequest,
   sigV4Signature,
@@ -142,6 +143,16 @@ describe('SigV4 核心步骤（AWS aws-sig-v4-test-suite 官方向量锚定）',
   it('awsUriEncode：保留 unreserved 字符与路径斜杠，其余 UTF-8 百分号大写编码', () => {
     expect(awsUriEncode('a b/c+d~e-f_g.h', false)).toBe('a%20b/c%2Bd~e-f_g.h')
     expect(awsUriEncode('a/b', true)).toBe('a%2Fb')
+  })
+  it('buildCanonicalQueryString：键值各自 AWS uri-encode，按编码键名升序连接；空对象/缺省 → 空串', () => {
+    expect(buildCanonicalQueryString()).toBe('')
+    expect(buildCanonicalQueryString({})).toBe('')
+    // 单参数：encoding + raw value
+    expect(buildCanonicalQueryString({ 'versionId': 'v1' })).toBe('versionId=v1')
+    // 排序：编码后 b 在 a 前（百分号 < 字母），实测按编码键名升序
+    expect(buildCanonicalQueryString({ 'a': '1', 'b': '2' })).toBe('a=1&b=2')
+    // 值也需编码：空格、空值都参与
+    expect(buildCanonicalQueryString({ 'a': 'a b', 'c': '' })).toBe('a=a%20b&c=')
   })
 })
 
@@ -286,3 +297,76 @@ describe('S3 后端（自定义 endpoint 兼容 MinIO，path-style）', () => {
     expect(fetchMock.mock.calls[0]![0]).toBe(`http://localhost:9000/mybucket/backups/sub/${PATH}`)
   })
 })
+
+describe('S3 后端（AWS 老 bucket forcePathStyle；STS sessionToken）', () => {
+  const CRED = {
+    backend: 's3' as const,
+    region: 'us-east-1',
+    bucket: 'mybucket',
+    accessKeyId: AKID,
+    secretAccessKey: SECRET,
+  }
+  const URL_OF = (p: string) => `https://mybucket.s3.us-east-1.amazonaws.com/${p}`
+  const OPTS = { now: () => new Date('2015-08-30T12:36:00Z') }
+
+  it('forcePathStyle=true：URL 改为 path-style 且签名 host 为 bucket.s3.region.amazonaws.com', async () => {
+    const fetchMock = vi.fn(async (_u: RequestInfo | URL, _i?: RequestInit) => new Response(null, { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createS3Backend({ ...CRED, forcePathStyle: true }, OPTS)
+    const body = new TextEncoder().encode('x')
+    await backend.put(PATH, body)
+    const [url, init] = fetchMock.mock.calls[0]!
+    // AWS 默认 endpoint：https://{bucket}.s3.{region}.amazonaws.com  + 路径前缀 /{bucket}/
+    const expectedUrl = `https://mybucket.s3.us-east-1.amazonaws.com/mybucket/${PATH}`
+    expect(url).toBe(expectedUrl)
+    expect((init!.headers as Record<string, string>).Authorization).toBe(expectedS3Authorization('PUT', expectedUrl, body, CRED))
+  })
+
+  it('sessionToken：x-amz-security-token 加入 canonical/signed headers 与 Authorization', async () => {
+    const fetchMock = vi.fn(async (_u: RequestInfo | URL, _i?: RequestInit) => new Response(null, { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const sessionToken = 'FQoGZXIvYXdzEPL//////////wEaDExampleToken'
+    const backend = createS3Backend({ ...CRED, sessionToken }, OPTS)
+    const body = new TextEncoder().encode('hello')
+    await backend.put(PATH, body)
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(url).toBe(URL_OF(PATH))
+    const headers = init!.headers as Record<string, string>
+    expect(headers['x-amz-security-token']).toBe(sessionToken)
+    // 独立复算含 token 的 Authorization
+    expect(headers.Authorization).toBe(expectedS3AuthorizationWithToken('PUT', URL_OF(PATH), body, CRED, sessionToken))
+  })
+})
+
+/** SigV4 独立复算 helper（带 x-amz-security-token） */
+function expectedS3AuthorizationWithToken(
+  method: string,
+  url: string,
+  body: Uint8Array | undefined,
+  cred: { accessKeyId: string; secretAccessKey: string; region: string },
+  sessionToken: string,
+): string {
+  const payloadHash = createHash('sha256').update(body ?? new Uint8Array()).digest('hex')
+  const u = new URL(url)
+  const amzDate = '20150830T123600Z'
+  const canonical = [
+    method,
+    u.pathname,
+    '',
+    `host:${u.host}`,
+    `x-amz-content-sha256:${payloadHash}`,
+    `x-amz-date:${amzDate}`,
+    `x-amz-security-token:${sessionToken}`,
+    '',
+    'host;x-amz-content-sha256;x-amz-date;x-amz-security-token',
+    payloadHash,
+  ].join('\n')
+  const scope = `20150830/${cred.region}/s3/aws4_request`
+  const sts = `AWS4-HMAC-SHA256\n${amzDate}\n${scope}\n${createHash('sha256').update(canonical).digest('hex')}`
+  let key = createHmac('sha256', `AWS4${cred.secretAccessKey}`).update('20150830').digest()
+  key = createHmac('sha256', key).update(cred.region).digest()
+  key = createHmac('sha256', key).update('s3').digest()
+  key = createHmac('sha256', key).update('aws4_request').digest()
+  const signature = createHmac('sha256', key).update(sts).digest('hex')
+  return `AWS4-HMAC-SHA256 Credential=${cred.accessKeyId}/${scope}, SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token, Signature=${signature}`
+}

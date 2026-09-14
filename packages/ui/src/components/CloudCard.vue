@@ -15,7 +15,8 @@ const backendSel = ref<CloudCred['backend']>('webdav')
 /** 动态凭据字段（按 backendSel 取用；gdrive/onedrive 共用 accessToken 字段） */
 const f = reactive({
   serverUrl: '', username: '', password: '',
-  region: '', bucket: '', accessKeyId: '', secretAccessKey: '', endpoint: '', prefix: '',
+  region: '', bucket: '', accessKeyId: '', secretAccessKey: '', endpoint: '', prefix: '', sessionToken: '',
+  forcePathStyle: false,
   token: '', gistId: '',
   accessToken: '',
 })
@@ -56,7 +57,10 @@ function buildCred(): CloudCred {
       req(f.region, f.bucket, f.accessKeyId, f.secretAccessKey)
       return {
         backend: 's3', region: f.region, bucket: f.bucket, accessKeyId: f.accessKeyId, secretAccessKey: f.secretAccessKey,
-        ...(f.endpoint ? { endpoint: f.endpoint } : {}), ...(f.prefix ? { prefix: f.prefix } : {}),
+        ...(f.endpoint ? { endpoint: f.endpoint } : {}),
+        ...(f.prefix ? { prefix: f.prefix } : {}),
+        ...(f.sessionToken ? { sessionToken: f.sessionToken } : {}),
+        ...(f.forcePathStyle ? { forcePathStyle: true } : {}),
       }
     case 'gist':
       req(f.token, f.gistId)
@@ -78,6 +82,8 @@ function applyCred(c: CloudCred): void {
   } else if (c.backend === 's3') {
     f.region = c.region; f.bucket = c.bucket; f.accessKeyId = c.accessKeyId; f.secretAccessKey = c.secretAccessKey
     f.endpoint = c.endpoint ?? ''; f.prefix = c.prefix ?? ''
+    f.sessionToken = c.sessionToken ?? ''
+    f.forcePathStyle = !!c.forcePathStyle
   } else if (c.backend === 'gist') {
     f.token = c.token; f.gistId = c.gistId
   } else if (c.backend === 'gdrive') {
@@ -207,8 +213,10 @@ async function onConfirmAdopt(): Promise<void> {
       <input v-model.trim="f.bucket" placeholder="Bucket" autocomplete="off" />
       <input v-model.trim="f.accessKeyId" placeholder="AccessKeyId" autocomplete="off" />
       <input v-model="f.secretAccessKey" type="password" placeholder="SecretAccessKey" autocomplete="new-password" />
+      <input v-model="f.sessionToken" type="password" placeholder="STS SessionToken（可选）" autocomplete="new-password" />
       <input v-model.trim="f.endpoint" placeholder="Endpoint（可选，如 http://localhost:9000）" autocomplete="off" />
       <input v-model.trim="f.prefix" placeholder="Key 前缀（可选）" autocomplete="off" />
+      <label class="opt"><input type="checkbox" v-model="f.forcePathStyle" :disabled="busy" /> 强制 path-style（兼容老 bucket / 自建 S3）</label>
     </div>
     <div v-else-if="backendSel === 'gdrive'" class="fields">
       <input v-model.trim="f.accessToken" type="password" placeholder="Access Token（Google OAuth）" autocomplete="new-password" />

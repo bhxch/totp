@@ -36,6 +36,10 @@ export interface S3Cred {
   endpoint?: string
   /** 对象 key 前缀（默认根）。 */
   prefix?: string
+  /** STS 临时凭据场景：x-amz-security-token，需与 AKID/SAK 同源签发。 */
+  sessionToken?: string
+  /** 老 bucket（2020-03 之前创建，区域未迁移 virtual-host）强制 path-style；与 endpoint 任一为真即生效。 */
+  forcePathStyle?: boolean
 }
 
 export interface GDriveCred {
