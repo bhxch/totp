@@ -35,7 +35,6 @@ const fileName = ref('')
 const fileText = ref('')
 const format = ref<ManualFormat | null>(null)
 const manual = ref<'auto' | ManualFormat>('auto')
-const fileBytes = ref<Uint8Array | null>(null)
 const password = ref('')
 const passwordHint = ref('')
 const policy = ref<ConflictPolicy>('skip')
@@ -203,7 +202,6 @@ function reset(): void {
   fileText.value = ''
   format.value = null
   manual.value = 'auto'
-  fileBytes.value = null
   password.value = ''
   passwordHint.value = ''
   policy.value = 'skip'
@@ -334,7 +332,6 @@ async function importFromSqlite(auto: boolean): Promise<boolean> {
       if (!auto) fail(new Error('无法识别的 SQLite 数据库（文件头不是 SQLite format 3）'))
       return false
     }
-    fileBytes.value = picked.bytes
     fileName.value = picked.name
     format.value = 'sqlite'
     manual.value = 'auto'
