@@ -98,6 +98,8 @@ pnpm --filter @totp/desktop tauri build  # 构建，产物为 exe + NSIS 安装�
 **暂不支持**
 
 - **Authenticator Plus**：备份为口令加密 ZIP，无法解密；请在原应用中导出为 otpauth URI 明文文本，再用「URI 文本」入口导入
+- **Google Authenticator 旧版 SQLite 数据库**（≤5000100 版本）：需 root 提取应用私有目录数据库，暂不支持
+- **Steam Android 客户端**：Steamguard-*.json 暂不支持；Steam 令牌可经 WinAuth 导入
 
 ### 冲突策略
 

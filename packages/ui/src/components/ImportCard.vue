@@ -19,12 +19,12 @@ const props = defineProps<{
   schemesApi?: ImportSchemesApi | null
 }>()
 
-// 流程状态机：idle → picked →（generic→mapping / aegis 加密与 winauth/authy→password）→ confirm → report
+// 流程状态机：idle → picked →（generic→mapping / aegis 加密与 winauth/authy→password、totpAuthenticator 分享文件→password）→ confirm → report
 type Step = 'idle' | 'picked' | 'mapping' | 'password' | 'confirm' | 'report'
 
 // 可分派格式 = sniff 全集 + 非 sniff 判定的补充入口（authy/battleNet/duo 文本、msAuth/sqlite 字节）
 type ManualFormat = ImportFormat | 'authy' | 'battleNet' | 'duo' | 'msAuth' | 'sqlite'
-// 直接解析族（其余格式分别走：generic→映射页、aegis/winauth/authy→口令页、msAuth/sqlite→字节入口）
+// 直接解析族（其余格式分别走：generic→映射页、aegis/winauth/authy→口令页、totpAuthenticator 分享文件→条件口令页、msAuth/sqlite→字节入口）
 type DirectFormat = Exclude<ManualFormat, 'generic' | 'aegis' | 'winauth' | 'authy' | 'msAuth' | 'sqlite'>
 
 const step = ref<Step>('idle')
@@ -358,6 +358,7 @@ async function importFromSqlite(auto: boolean): Promise<boolean> {
 
 /**
  * 第 2 步分派：generic→映射页；aegis 加密→口令页（明文直接解析）；winauth/authy→口令页；
+ * totpAuthenticator 分享文件（非 '[' 开头的 Base64 密文）→口令页（明文数组走分派表直接解析）；
  * msAuth/sqlite→字节入口；其余按分派表直接解析；未识别→报错留 picked 页
  */
 async function nextFromPicked(): Promise<void> {
@@ -406,6 +407,13 @@ async function nextFromPicked(): Promise<void> {
     await importFromSqlite(false)
     return
   }
+  // totpAuthenticator 条件口令页入口：外部分享文件为 Base64 密文（非明文数组）→ 口令页；
+  // 明文 '[' 开头保持下方分派表直接解析
+  if (f === 'totpAuthenticator' && !fileText.value.trim().startsWith('[')) {
+    passwordHint.value = '输入该分享文件的口令，默认 TotpAuthenticator'
+    step.value = 'password'
+    return
+  }
   await parseAndConfirm(TEXT_PARSERS[f])
 }
 
@@ -436,7 +444,8 @@ function nextFromMapping(): void {
 
 /**
  * 口令页下一步（按生效格式分派——手动指定覆盖嗅探，勿用 format.value）：
- * aegis 加密必填口令；authy/winauth 口令可选（缺失且需要时结构级报错回到本页提示）
+ * aegis 加密必填口令；authy/winauth 口令可选（缺失且需要时结构级报错回到本页提示）；
+ * totpAuthenticator 口令可选（空口令走默认口令 TotpAuthenticator）；其余格式不经口令页，显式报错
  */
 async function nextFromPassword(): Promise<void> {
   if (busy.value) return
@@ -450,10 +459,18 @@ async function nextFromPassword(): Promise<void> {
     await parseAndConfirm(() => importAuthy(fileText.value, password.value || undefined))
     return
   }
-  await parseAndConfirm(
-    () => importWinauth(fileText.value, { password: password.value || undefined, decryptDpapi: props.platform?.decryptDpapi }),
-    { retryPasswordOnNeed: !password.value },
-  )
+  if (f === 'totpAuthenticator') {
+    await parseAndConfirm(() => importTotpAuthenticator(fileText.value, password.value || undefined))
+    return
+  }
+  if (f === 'winauth') {
+    await parseAndConfirm(
+      () => importWinauth(fileText.value, { password: password.value || undefined, decryptDpapi: props.platform?.decryptDpapi }),
+      { retryPasswordOnNeed: !password.value },
+    )
+    return
+  }
+  fail(new Error('当前格式不使用口令页，请取消后重新选择'))
 }
 
 /** 终步：冲突数按 commit 时的最新 vault 重算，applyImport 按策略落库后进报告页 */

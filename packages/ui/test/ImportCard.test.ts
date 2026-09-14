@@ -120,6 +120,29 @@ describe('ImportCard', () => {
     await w.find('button.import-next').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('WinAuth 文件结构非法')) // importWinauth 特有结构级错误
   })
+  it('手动指定 totpAuthenticator：非 "[" 开头（Base64 分享文件）进口令页，口令随 importTotpAuthenticator 生效', async () => {
+    const store = await readyStore()
+    // 构造真实外部分享文件：Base64(AES-CBC(SHA-256(口令), IV=0, {条目数组JSON串:''}))，与 core buildBin 同构
+    const entries = [{ base: 32, key: 'JBSWY3DPEHPK3PXP', issuer: 'TotpAuth', name: 'me@x.com' }]
+    const outer = JSON.stringify({ [JSON.stringify(entries)]: '' })
+    const keyBytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('Testtest1')))
+    const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-CBC', false, ['encrypt'])
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-CBC', iv: new Uint8Array(16) }, key, new TextEncoder().encode(outer)))
+    let bin = ''
+    for (const b of ct) bin += String.fromCharCode(b)
+    const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text: btoa(bin), name: 'share.txt' }), store } } })
+    await w.find('button.import-start').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('手动指定')) // base64 密文嗅探不强判
+    await w.find('select.format-select').setValue('totpAuthenticator')
+    await w.find('button.import-next').trigger('click') // 非 '[' 开头 → 口令页（不走直接解析）
+    await vi.waitFor(() => expect(w.text()).toContain('输入该分享文件的口令'))
+    await w.find('input.import-password').setValue('Testtest1')
+    await w.find('button.import-next').trigger('click') // 口令随分派传入 → 解密成功进确认页
+    await vi.waitFor(() => expect(w.text()).toContain('冲突'))
+    await w.find('button.import-commit').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('成功导入 1 条'))
+    expect(store.vault.entries.some((e) => e.issuer === 'TotpAuth')).toBe(true)
+  })
   it('generic JSON：映射页按常见键名预填 secret 路径→确认导入成功', async () => {
     const store = await readyStore()
     const text = JSON.stringify([{ name: 'Svc', userName: 'a@b.c', key: 'JBSWY3DPEHPK3PXP' }])
