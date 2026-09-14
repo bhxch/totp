@@ -2,7 +2,7 @@
 import { base64ToBytes, unlockWithPrf } from '@totp/core'
 import { computed, onMounted, ref } from 'vue'
 import type { DpapiUnlockOps } from './securityPlatform'
-import { getPrfOutput } from '../prf'
+import { getPrfOutput, prfSupported } from '../prf'
 import type { VueStore } from '../store'
 
 const props = withDefaults(
@@ -23,21 +23,29 @@ const emit = defineEmits<{ (e: 'unlocked'): void }>()
 const password = ref('')
 const busy = ref(false)
 const msg = ref('')
+/** PRF 能力探测（基于 UA + getClientCapabilities）；unknown=探测中；false=浏览器不支持，passkey 入口即便已绑定也应禁用 */
+const prfCap = ref<'unknown' | boolean>('unknown')
 /** Passkey 按钮显隐：已绑定 prf 来源（kekSources 含条目）且入口未被禁用 */
 const showPasskey = computed(() => props.allowPasskey !== false && props.store.prfSources.value.length > 0)
+/** Passkey 入口是否启用：探测完成且能力可用（C17 按浏览器能力显隐） */
+const passkeySupported = computed(() => prfCap.value === true)
 
-/** DPAPI 静默自动解锁：unprotect(wrappedDekD)→unlockWithDek。
- *  失败（跨机器/跨用户/数据损坏）静默吞掉——保留口令/passkey 手动解锁路径 */
-onMounted(async () => {
+onMounted(() => {
+  // 1) PRF 能力探测：仅在入口可见时执行；探测完前按钮 disabled 防用户点击
+  if (showPasskey.value) {
+    prfSupported()
+      .then((ok) => { prfCap.value = ok })
+      .catch(() => { prfCap.value = false })
+  }
+  // 2) DPAPI 静默自动解锁
   const ops = props.dpapi
   const src = ops?.source.value
   if (!ops || !src) return
-  try {
-    await props.store.unlockWithDek(await ops.unprotect(src.wrappedDekD))
-    emit('unlocked')
-  } catch {
-    // 静默：DPAPI 解不开属预期场景（换机/换用户），不提示、不打断手动解锁
-  }
+  ops.unprotect(src.wrappedDekD)
+    .then((dek) => props.store.unlockWithDek(dek).then(() => emit('unlocked')))
+    .catch(() => {
+      // 静默：DPAPI 解不开属预期场景（换机/换用户），不提示、不打断手动解锁
+    })
 })
 
 /** 解锁：成功清空口令与错误并 emit unlocked（父级可凭 locked 变化自行切换视图）；失败展示错误消息 */
@@ -95,7 +103,14 @@ async function onPasskeyUnlock(): Promise<void> {
       />
       <button type="submit" :disabled="busy">解锁</button>
     </form>
-    <button v-if="showPasskey" type="button" class="passkey" :disabled="busy" @click="onPasskeyUnlock">
+    <button
+      v-if="showPasskey"
+      type="button"
+      class="passkey"
+      :disabled="busy || !passkeySupported"
+      :title="passkeySupported ? undefined : '当前浏览器不支持 Passkey 解锁'"
+      @click="onPasskeyUnlock"
+    >
       使用 Passkey 解锁
     </button>
     <div v-if="msg" class="err" role="alert">{{ msg }}</div>

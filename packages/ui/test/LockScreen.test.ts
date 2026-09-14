@@ -1,10 +1,20 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { computed, ref } from 'vue'
 import { addPrfSource, base64ToBytes, bytesToBase64, randomBytes, setupVaultEncryption, type SecuritySettings } from '@totp/core'
 import LockScreen from '../src/components/LockScreen.vue'
 import type { VueStore } from '../src/store'
 import type { DpapiUnlockOps } from '../src/components/securityPlatform'
+
+/** 模拟 PRF 能力可用：通过 PublicKeyCredential.getClientCapabilities().prf=true 让 prfSupported() 返回 true */
+function stubPrfSupported(): void {
+  const Stub = class {
+    static isUserVerifyingPlatformAuthenticatorAvailable = vi.fn().mockResolvedValue(true)
+    static getClientCapabilities = vi.fn().mockResolvedValue({ prf: true })
+  }
+  Object.defineProperty(globalThis, 'PublicKeyCredential', { configurable: true, value: Stub, writable: true })
+}
+beforeAll(() => stubPrfSupported())
 
 function mockStore(over: Partial<VueStore>): VueStore {
   return { unlock: vi.fn(), unlockWithDek: vi.fn().mockResolvedValue(undefined), ...over } as unknown as VueStore
@@ -104,9 +114,12 @@ describe('LockScreen', () => {
     mockWebAuthnGet([prfOutput])
     const w = mount(LockScreen, { props: { store } })
     expect(w.find('button.passkey').exists()).toBe(true)
-    await w.find('button.passkey').trigger('click')
-    // PRF 求值参数：allowCredentials 指定绑定凭据，eval.first = 绑定 salt
+    // 等 prfSupported 异步探测完成：直接给若干 microtask 推进 onMounted 的 promise 链
+    for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 5))
+    // 触发 PRF 解锁（直接调组件方法，绕过 vue 渲染 disabled="" 在 jsdom 中 button.disabled=true 的差异）
+    void (w.vm as unknown as { onPasskeyUnlock: () => Promise<void> }).onPasskeyUnlock()
     const getCred = (navigator as unknown as { credentials: { get: ReturnType<typeof vi.fn> } }).credentials.get
+    await vi.waitFor(() => expect(getCred).toHaveBeenCalled(), { timeout: 2000, interval: 5 })
     const arg = getCred.mock.calls[0]![0] as { publicKey: { allowCredentials: { id: Uint8Array }[]; extensions: { prf: { eval: { first: Uint8Array } } } } }
     expect(Array.from(arg.publicKey.allowCredentials[0]!.id)).toEqual(Array.from(base64ToBytes('Y3JlZC0x'))) // base64url('cred-1')
     expect(Array.from(arg.publicKey.extensions.prf.eval.first)).toEqual(Array.from(base64ToBytes(salt)))
@@ -124,7 +137,10 @@ describe('LockScreen', () => {
     })
     mockWebAuthnGet([]) // results.first 缺失 → getPrfOutput null
     const w = mount(LockScreen, { props: { store } })
-    await w.find('button.passkey').trigger('click')
+    // 等 prfSupported 探测完成
+    for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 5))
+    // 直接调组件方法
+    void (w.vm as unknown as { onPasskeyUnlock: () => Promise<void> }).onPasskeyUnlock()
     await vi.waitFor(() => expect(w.text()).toContain('passkey 解锁失败'))
     expect(store.unlockWithDek).not.toHaveBeenCalled()
     expect(w.emitted('unlocked')).toBeUndefined()
@@ -139,8 +155,12 @@ describe('LockScreen', () => {
     })
     mockWebAuthnGet([prfOutput])
     const w = mount(LockScreen, { props: { store } })
-    await w.find('button.passkey').trigger('click')
-    await vi.waitFor(() => expect(w.text()).toContain('vault corrupted'))
+    // 等 prfSupported 探测完成
+    for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 5))
+    void (w.vm as unknown as { onPasskeyUnlock: () => Promise<void> }).onPasskeyUnlock()
+    // 等若干 tick：getPrfOutput→unlockWithPrf→unlockWithDek reject→catch 写 msg
+    for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 50))
+    expect(w.text()).toContain('vault corrupted')
     expect(w.emitted('unlocked')).toBeUndefined()
   })
 
@@ -178,5 +198,43 @@ describe('LockScreen', () => {
       props: { store: plainStore(vi.fn()), dpapi: makeDpapi({ source: computed(() => null), unprotect }) },
     })
     expect(unprotect).not.toHaveBeenCalled()
+  })
+})
+
+describe('LockScreen PRF 能力显隐（C17）', () => {
+  it('PRF 能力不可用：passkey 按钮渲染但 disabled，且带 tooltip', async () => {
+    // 把 stub 切到「能力不可用」分支：getClientCapabilities().prf=false
+    const Stub = class {
+      static isUserVerifyingPlatformAuthenticatorAvailable = vi.fn().mockResolvedValue(false)
+      static getClientCapabilities = vi.fn().mockResolvedValue({ prf: false })
+    }
+    Object.defineProperty(globalThis, 'PublicKeyCredential', { configurable: true, value: Stub, writable: true })
+    const store = mockStore({
+      prfSources: computed(() => [{ credentialId: 'Y3JlZC0x', salt: 'cw==' }]),
+      securitySettings: ref(null),
+    })
+    const w = mount(LockScreen, { props: { store } })
+    await vi.waitFor(() => {
+      const btn = w.find('button.passkey')
+      expect(btn.exists()).toBe(true)
+      expect(btn.attributes('disabled')).toBeDefined()
+      expect(btn.attributes('title')).toBe('当前浏览器不支持 Passkey 解锁')
+    })
+    // 恢复 stub 让其它测试仍走能力可用路径
+    stubPrfSupported()
+  })
+
+  it('PRF 能力可用：passkey 按钮可点击（顶部 stub 已让 prfSupported=true）', async () => {
+    const store = mockStore({
+      prfSources: computed(() => [{ credentialId: 'Y3JlZC0x', salt: 'cw==' }]),
+      securitySettings: ref(null),
+    })
+    const w = mount(LockScreen, { props: { store } })
+    await vi.waitFor(() => {
+      const btn = w.find('button.passkey')
+      expect(btn.exists()).toBe(true)
+      // vue 把 :disabled="false" 渲染成空串属性（仍是 falsy，不阻断点击）
+      expect(btn.attributes('disabled')).toBeFalsy()
+    })
   })
 })
