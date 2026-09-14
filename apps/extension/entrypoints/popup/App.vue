@@ -104,7 +104,7 @@ async function copy(entry: OtpEntry) {
 </script>
 
 <template>
-  <LockScreen v-if="locked" :store="store" />
+  <LockScreen v-if="locked" :store="store" :allow-passkey="false" />
   <main v-else>
     <header>
       <h1>TOTP 验证码</h1>

@@ -83,6 +83,16 @@ describe('LockScreen', () => {
     expect(w.find('button.passkey').exists()).toBe(false)
   })
 
+  it('allowPasskey=false：有 prf 绑定也不渲染 passkey 按钮（popup 夺焦销毁窗口，入口门控），口令输入保留', () => {
+    const store = mockStore({
+      prfSources: computed(() => [{ credentialId: 'Y3JlZC0x', salt: 'cw==' }]),
+      securitySettings: ref(null),
+    })
+    const w = mount(LockScreen, { props: { store, allowPasskey: false } })
+    expect(w.find('button.passkey').exists()).toBe(false)
+    expect(w.find('input[type="password"]').exists()).toBe(true)
+  })
+
   it('有 prf 绑定：渲染 passkey 按钮；点击走 getPrfOutput→unlockWithPrf→unlockWithDek→emit unlocked', async () => {
     const { security, dek, prfOutput, salt } = await prfFixture()
     const unlockWithDek = vi.fn().mockResolvedValue(undefined)

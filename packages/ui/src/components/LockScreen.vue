@@ -5,20 +5,26 @@ import type { DpapiUnlockOps } from './securityPlatform'
 import { getPrfOutput } from '../prf'
 import type { VueStore } from '../store'
 
-const props = defineProps<{
-  /** 已启用加密的 store；锁定态由父级 v-if 控制（store.locked 为 true 时渲染本组件） */
-  store: VueStore
-  /** [可选] DPAPI(Windows) 解锁通道（desktop 提供）；已绑定来源时挂载后静默尝试自动解锁 */
-  dpapi?: DpapiUnlockOps | null
-}>()
+const props = withDefaults(
+  defineProps<{
+    /** 已启用加密的 store；锁定态由父级 v-if 控制（store.locked 为 true 时渲染本组件） */
+    store: VueStore
+    /** [可选] DPAPI(Windows) 解锁通道（desktop 提供）；已绑定来源时挂载后静默尝试自动解锁 */
+    dpapi?: DpapiUnlockOps | null
+    /** [可选] 是否提供 Passkey 解锁按钮（默认 true）。popup 认证器弹窗夺焦即销毁窗口、WebAuthn get() 中断，该入口恒失败，popup 传 false 隐藏 */
+    allowPasskey?: boolean
+  }>(),
+  // 显式默认 true：Boolean prop 缺省会被 vue 运行时 boolean-cast 成 false，必须声明 default
+  { allowPasskey: true },
+)
 
 const emit = defineEmits<{ (e: 'unlocked'): void }>()
 
 const password = ref('')
 const busy = ref(false)
 const msg = ref('')
-/** 已绑定 passkey 解锁来源（kekSources 含 prf 条目时显示按钮） */
-const hasPrf = computed(() => props.store.prfSources.value.length > 0)
+/** Passkey 按钮显隐：已绑定 prf 来源（kekSources 含条目）且入口未被禁用 */
+const showPasskey = computed(() => props.allowPasskey !== false && props.store.prfSources.value.length > 0)
 
 /** DPAPI 静默自动解锁：unprotect(wrappedDekD)→unlockWithDek。
  *  失败（跨机器/跨用户/数据损坏）静默吞掉——保留口令/passkey 手动解锁路径 */
@@ -89,7 +95,7 @@ async function onPasskeyUnlock(): Promise<void> {
       />
       <button type="submit" :disabled="busy">解锁</button>
     </form>
-    <button v-if="hasPrf" type="button" class="passkey" :disabled="busy" @click="onPasskeyUnlock">
+    <button v-if="showPasskey" type="button" class="passkey" :disabled="busy" @click="onPasskeyUnlock">
       使用 Passkey 解锁
     </button>
     <div v-if="msg" class="err" role="alert">{{ msg }}</div>
