@@ -1,5 +1,9 @@
 import { scrypt } from 'hash-wasm'
 import { aesGcmDecrypt, base64ToBytes } from '../crypto/aesgcm'
+import { hexToBytes } from '../encoding/hex'
+import {
+  normalizeAlgorithm, normalizeSecret, normalizeType, toPositiveNumber,
+} from './normalize'
 import type { ImportResult, ParsedEntry } from './types'
 
 // Aegis vault 导入（明文 + 加密），布局对齐 Aegis 官方源码（beemdevelopment/Aegis master）：
@@ -20,13 +24,6 @@ import type { ImportResult, ParsedEntry } from './types'
 const TAG_LEN = 16
 const NONCE_LEN = 12
 
-function hexToBytes(hex: string): Uint8Array | null {
-  if (hex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(hex)) return null
-  const out = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
-  return out
-}
-
 function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
   const out = new Uint8Array(a.length + b.length)
   out.set(a)
@@ -34,30 +31,7 @@ function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
   return out
 }
 
-// type/algorithm/数值规整与 generic.ts 口径一致（steam 强制 digits=5）
-function normalizeType(raw: unknown): ParsedEntry['type'] {
-  const s = String(raw ?? '').toLowerCase()
-  if (s.includes('steam')) return 'steam'
-  if (s.includes('hotp')) return 'hotp'
-  return 'totp'
-}
-
-function normalizeAlgorithm(raw: unknown): ParsedEntry['algorithm'] {
-  const s = String(raw ?? '').toUpperCase()
-  return s === 'SHA256' || s === 'SHA512' ? s : 'SHA1'
-}
-
-function toPositiveNumber(raw: unknown, fallback: number): number {
-  const n = Number(raw)
-  return Number.isFinite(n) && n > 0 ? n : fallback
-}
-
-function normalizeSecret(raw: unknown): string {
-  return String(raw ?? '')
-    .replace(/\s+/g, '')
-    .toUpperCase()
-}
-
+// type/algorithm/数值规整 helpers 已迁出至 ./normalize（M10 收敛）
 /** Aegis entry → ParsedEntry；secret 缺失视为单条损坏（进 failures） */
 function parseEntry(raw: unknown, index: number): ParsedEntry | { error: string } {
   if (raw === null || typeof raw !== 'object') return { error: `条目 ${index} 非对象` }

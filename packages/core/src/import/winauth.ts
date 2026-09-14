@@ -29,6 +29,9 @@ import { base32Encode } from '../encoding/base32'
 import { bytesToBase64 } from '../crypto/aesgcm'
 import type { ImportResult, ParsedEntry } from './types'
 
+// 局部 hexToBytes：抛 '非法 hex'，让 failureMessage 走 MSG_PASSWORD 归类
+// （统一版本返回 null 后调用方自行处理；winauth 的 catch 路径依赖错误文本识别归类，保留抛错）
+
 // ---------- 错误分类（对应简报的逐条 failure 口径） ----------
 
 /** 解密失败分类：password→「需要口令或口令错误」；dpapi→「请用桌面版」；yubi→「暂不支持」 */

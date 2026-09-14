@@ -1,5 +1,10 @@
 import { base32Decode, base32Encode } from '../encoding/base32'
 import { base64ToBytes } from '../crypto/aesgcm'
+import { hexToBytes } from '../encoding/hex'
+import {
+  asObject, collectEntries, normalizeAlgorithm, normalizeSecret, steamEntry,
+  toNonNegativeNumber, toPositiveNumber,
+} from './normalize'
 import type { ImportResult, ParsedEntry } from './types'
 
 // 其余 JSON/XML/Binary 类 App 导出格式导入（FreeOTP+ / 旧版 FreeOTP / TOTP Authenticator / andOTP）。
@@ -10,64 +15,13 @@ import type { ImportResult, ParsedEntry } from './types'
 // - importers/AndOtpImporter.java（明文 = 顶层 JSON 数组）
 // 错误契约与 jsonApps.ts 一致：结构级错误 throw；单条损坏进 failures 不阻断。
 
-// ---------- 共享辅助（与 jsonApps.ts 口径一致） ----------
-
-function normalizeSecret(raw: unknown): string {
-  return String(raw ?? '')
-    .replace(/\s+/g, '')
-    .toUpperCase()
-}
-
-function normalizeAlgorithm(raw: unknown): ParsedEntry['algorithm'] {
-  const s = String(raw ?? '').toUpperCase()
-  return s === 'SHA256' || s === 'SHA512' ? s : 'SHA1'
-}
-
-function toPositiveNumber(raw: unknown, fallback: number): number {
-  const n = Number(raw)
-  return Number.isFinite(n) && n > 0 ? n : fallback
-}
-
-function toNonNegativeNumber(raw: unknown, fallback: number): number {
-  const n = Number(raw)
-  return Number.isFinite(n) && n >= 0 ? n : fallback
-}
-
-function asObject(raw: unknown): Record<string, unknown> | null {
-  return raw !== null && typeof raw === 'object' && !Array.isArray(raw)
-    ? (raw as Record<string, unknown>)
-    : null
-}
+// ---------- 共享辅助（多数已迁出至 ./normalize） ----------
 
 function isBase32(raw: string): boolean {
   try {
     return base32Decode(raw).length > 0
   } catch {
     return false
-  }
-}
-
-function collectEntries(rows: unknown[], parse: (row: unknown, index: number) => ParsedEntry | { error: string }): ImportResult {
-  const entries: ParsedEntry[] = []
-  const failures: ImportResult['failures'] = []
-  rows.forEach((row, index) => {
-    const res = parse(row, index)
-    if ('error' in res) failures.push({ index, message: res.error })
-    else entries.push(res)
-  })
-  return { entries, failures }
-}
-
-/** steam:// 之外的 Steam 条目统一口径（对齐 jsonApps.ts steamEntry：SteamInfo.DIGITS=5、DEFAULT_PERIOD=30） */
-function steamEntry(secret: string, issuer: string, label: string): ParsedEntry {
-  return {
-    type: 'steam',
-    issuer,
-    label,
-    secret,
-    algorithm: 'SHA1',
-    digits: 5,
-    period: 30,
   }
 }
 
@@ -216,13 +170,8 @@ export function importFreeOtpLegacy(text: string): ImportResult {
 const TOTP_AUTH_DEFAULT_PASSWORD = 'TotpAuthenticator' // TotpAuthenticatorImporter.java PASSWORD
 const TOTP_AUTH_IV = new Uint8Array(16) // 源码硬编码 IV（16 字节全零）
 
-/** hex → 字节（大小写兼容，奇数长度/非法字符 → null；导出供 sqlite.ts 复用） */
-export function hexToBytes(hex: string): Uint8Array | null {
-  if (hex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(hex)) return null
-  const out = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
-  return out
-}
+/** hex → 字节（大小写兼容，奇数长度/非法字符 → null；导出供 sqlite.ts 复用 — 即 encoding/hex 的 re-export） */
+export { hexToBytes }
 
 /** {base, key} → secret 字节；非法返回 null（错误信息按 Aegis：不支持的 base / 解码失败单条失败） */
 function totpAuthSecretBytes(entry: Record<string, unknown>): { bytes?: Uint8Array; error?: string } {
