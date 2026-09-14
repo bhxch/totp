@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { entryMatchesUrl, type OtpEntry } from '@totp/core'
-import { CLIPBOARD_CLEAR_DELAY_MS, EntryForm, LockScreen, OtpListItem, SearchBar, useOtpCodes, type EntryFormData } from '@totp/ui'
+import { entryMatchesUrl, getBuiltinIcons, type OtpEntry } from '@totp/core'
+import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, OtpListItem, SearchBar, useOtpCodes, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
+import { storageAdapter } from '../../src/store'
 import {
   addEntryOp, commitSettings, initStore, locked, registerStorageSync, removeEntryOp, settings, store, updateEntryOp, vault,
 } from '../../src/store'
+
+const icons = createIconStore(storageAdapter)
 
 const loaded = ref(false)
 const error = ref('')
@@ -16,6 +19,7 @@ onMounted(async () => {
   try {
     await initStore()
     registerStorageSync()
+    await icons.init()
   } catch (e) {
     error.value = '本地数据读取失败：' + (e instanceof Error ? e.message : String(e))
   } finally {
@@ -32,6 +36,8 @@ onMounted(async () => {
 
 const sorted = computed(() => [...vault.entries].sort((a, b) => a.order - b.order))
 const { codes } = useOtpCodes(sorted)
+/** EntryForm 图标数据源：builtin 全集 + store 内 stored/url dataUrl 映射 */
+const entryIcons = computed(() => ({ builtin: getBuiltinIcons(), stored: icons.icons }))
 
 const matched = computed(() => (tabUrl.value ? sorted.value.filter((e) => entryMatchesUrl(e, tabUrl.value!)) : []))
 const visible = computed(() => {
@@ -116,12 +122,12 @@ async function copy(entry: OtpEntry) {
       <span v-else-if="filterOn" class="hint">匹配 {{ matched.length }} 条</span>
     </div>
 
-    <EntryForm v-if="creating || editing" :key="editing?.uuid ?? 'new'" :initial="editing" :groups="vault.groups" @save="onSave" @cancel="editing = null; creating = false" />
+    <EntryForm v-if="creating || editing" :key="editing?.uuid ?? 'new'" :initial="editing" :groups="vault.groups" :icons="entryIcons" :icon-store="icons" @save="onSave" @cancel="editing = null; creating = false" />
 
     <div v-if="loaded && sorted.length === 0" class="empty">暂无条目，点击右上角「＋ 添加」录入。</div>
     <div v-else-if="loaded && visible.length === 0" class="empty">无匹配结果</div>
     <div v-for="e in visible" :key="e.uuid" class="item-wrap">
-      <OtpListItem :entry="e" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" />
+      <OtpListItem :entry="e" :icon="iconView(e.icon, icons)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" />
       <div class="ops">
         <template v-if="confirmingDelete === e.uuid">
           <button class="danger" @click.stop="askRemove(e.uuid)">确认删除？</button>

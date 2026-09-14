@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import type { OtpEntry } from '@totp/core'
+import { getBuiltinIcons, type OtpEntry } from '@totp/core'
 import { computed, ref } from 'vue'
 import { useOtpCodes } from '../composables/useOtpCodes'
+import { iconView, type IconStore } from '../iconStore'
 import type { VueStore } from '../store'
 import BackupCard from './BackupCard.vue'
 import EntryForm from './EntryForm.vue'
@@ -22,7 +23,9 @@ const props = withDefaults(defineProps<{
   platform?: BackupPlatform | null
   /** 安全平台实现（加密开关/换口令/剪贴板等通用设置）；null/缺省不渲染安全卡（popup 零影响） */
   securityPlatform?: SecurityPlatform | null
-}>(), { enableCopy: false, platform: null, securityPlatform: null })
+  /** 图标存储（stored/url dataUrl 源）；缺省时列表仅渲染 builtin 图标，EntryForm 不显示图标选择区 */
+  icons?: IconStore | null
+}>(), { enableCopy: false, platform: null, securityPlatform: null, icons: null })
 
 const emit = defineEmits<{ copy: [code: string] }>()
 
@@ -45,6 +48,8 @@ const importPlatform = computed<ImportPlatform | null>(() => {
   return { readImportFile: p.readImportFile, decryptDpapi: p.decryptDpapi, store: props.store }
 })
 const { codes } = useOtpCodes(sorted)
+/** EntryForm 图标数据源：builtin 全集 + store 内 stored/url dataUrl 映射 */
+const entryIcons = computed(() => ({ builtin: getBuiltinIcons(), stored: props.icons?.icons ?? {} }))
 const visible = computed(() => {
   const q = query.value.trim().toLowerCase()
   if (!q) return sorted.value
@@ -115,11 +120,11 @@ async function onCopy(entry: OtpEntry) {
       <button @click="creating = true; editing = null">＋ 添加</button>
     </h2>
     <SearchBar v-model="query" />
-    <EntryForm v-if="creating || editing" :key="editing?.uuid ?? 'new'" :initial="editing" :groups="store.vault.groups" @save="onSave" @cancel="creating = false; editing = null" />
+    <EntryForm v-if="creating || editing" :key="editing?.uuid ?? 'new'" :initial="editing" :groups="store.vault.groups" :icons="entryIcons" :icon-store="icons ?? undefined" @save="onSave" @cancel="creating = false; editing = null" />
     <div v-if="sorted.length === 0" class="empty">暂无条目，点击「＋ 添加」录入。</div>
     <div v-else-if="visible.length === 0" class="empty">无匹配条目</div>
     <div v-for="e in visible" :key="e.uuid" class="row">
-      <OtpListItem :entry="e" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="onCopy(e)" />
+      <OtpListItem :entry="e" :icon="iconView(e.icon, icons ?? undefined)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="onCopy(e)" />
       <div class="ops">
         <template v-if="confirmingDelete === e.uuid">
           <button class="danger" @click.stop="askRemove(e.uuid)">确认删除？</button>

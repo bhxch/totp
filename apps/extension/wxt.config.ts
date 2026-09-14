@@ -12,7 +12,8 @@ export default defineConfig({
       48: '/icon/48.png',
       128: '/icon/128.png',
     },
-    // offscreen：popup 关闭后由 background 经 offscreen document 清剪贴板；alarms：30s 定时触发
-    permissions: ['storage', 'clipboardWrite', 'activeTab', 'alarms', 'offscreen'],
+    // offscreen：popup 关闭后由 background 经 offscreen document 清剪贴板；alarms：30s 定时触发；
+    // unlimitedStorage：图标包导入的 dataUrl 存 chrome.storage.local，不受 10MB 配额限制
+    permissions: ['storage', 'unlimitedStorage', 'clipboardWrite', 'activeTab', 'alarms', 'offscreen'],
   },
 })
