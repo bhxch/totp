@@ -45,6 +45,22 @@ describe('createIconStore', () => {
     expect(b.icons['github']).toBeUndefined()
   })
 
+  it('putMany 批量合并写入且只落盘一次；新 store init 往返恢复', async () => {
+    const adapter = createMemoryStorage()
+    const set = vi.spyOn(adapter, 'set')
+    const s = createIconStore(adapter)
+    await s.init()
+    set.mockClear()
+    await s.putMany({ a: DATA_URL, b: DATA_URL })
+    expect(set).toHaveBeenCalledTimes(1)
+    expect(s.icons['a']).toBe(DATA_URL)
+    expect(s.icons['b']).toBe(DATA_URL)
+    expect(JSON.parse((await adapter.get('icons'))!)).toEqual({ a: DATA_URL, b: DATA_URL })
+    const b = createIconStore(adapter)
+    await b.init()
+    expect(b.icons).toEqual({ a: DATA_URL, b: DATA_URL })
+  })
+
   it('resolve：builtin→undefined；stored 命中→icons[id]；url 命中→icons[url:id]；undefined→undefined', async () => {
     const s = createIconStore(createMemoryStorage())
     await s.init()
@@ -81,6 +97,14 @@ describe('createIconStore', () => {
     await expect(s.fetchAndCache({ kind: 'url', id: 'y', url: 'https://x/y.png' })).resolves.toBeNull()
     expect(s.icons['url:x']).toBeUndefined()
     expect(s.icons['url:y']).toBeUndefined()
+  })
+
+  it('fetchAndCache 超 200KB 上限返回 null 不写入', async () => {
+    const s = createIconStore(createMemoryStorage())
+    await s.init()
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, blob: async () => new Blob([new ArrayBuffer(200 * 1024 + 1)]) })))
+    await expect(s.fetchAndCache({ kind: 'url', id: 'big', url: 'https://x/big.png' })).resolves.toBeNull()
+    expect(s.icons['url:big']).toBeUndefined()
   })
 
   it('fetchAndCache 失败不影响既有缓存', async () => {

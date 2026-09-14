@@ -14,14 +14,18 @@ export interface IconStore {
   /** 读 'icons' 键填充内存映射；幂等 */
   init(): Promise<void>
   put(id: string, dataUrl: string): Promise<void>
+  /** 批量合并写入：内存一次 Object.assign 后单次落盘（避免逐条 put 的 O(n²) 全量序列化） */
+  putMany(entries: Record<string, string>): Promise<void>
   remove(id: string): Promise<void>
   /** undefined→undefined；builtin→undefined（组件直接用 path 渲染）；stored→icons[id]；url→icons['url:'+id] */
   resolve(ref: IconRef | undefined): string | undefined
-  /** fetch(url)→blob→FileReader dataURL→put('url:'+id)→返回 dataURL；任何失败（网络/CORS/非 2xx）→null */
+  /** fetch(url)→blob（>200KB 判失败）→FileReader dataURL→put('url:'+id)→返回 dataURL；任何失败（网络/CORS/非 2xx/超限）→null */
   fetchAndCache(ref: { kind: 'url'; id: string; url: string }): Promise<string | null>
 }
 
 const ICONS_KEY = 'icons'
+/** URL 拉取缓存的单文件上限：超过直接判失败（防大文件撑爆存储） */
+const MAX_FETCH_BYTES = 200 * 1024
 
 function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -57,6 +61,11 @@ export function createIconStore(adapter: StorageAdapter): IconStore {
     await persist()
   }
 
+  async function putMany(entries: Record<string, string>): Promise<void> {
+    Object.assign(icons, entries)
+    await persist()
+  }
+
   async function remove(id: string): Promise<void> {
     delete icons[id]
     await persist()
@@ -72,7 +81,9 @@ export function createIconStore(adapter: StorageAdapter): IconStore {
     try {
       const res = await fetch(ref.url)
       if (!res.ok) return null
-      const dataUrl = await blobToDataUrl(await res.blob())
+      const blob = await res.blob()
+      if (blob.size > MAX_FETCH_BYTES) return null
+      const dataUrl = await blobToDataUrl(blob)
       await put(`url:${ref.id}`, dataUrl)
       return dataUrl
     } catch {
@@ -80,7 +91,7 @@ export function createIconStore(adapter: StorageAdapter): IconStore {
     }
   }
 
-  return { icons, init, put, remove, resolve, fetchAndCache }
+  return { icons, init, put, putMany, remove, resolve, fetchAndCache }
 }
 
 /**

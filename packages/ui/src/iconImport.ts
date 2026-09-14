@@ -22,11 +22,11 @@ function bytesToDataUrl(bytes: Uint8Array): string {
  * aegis-icons 风格 zip 导入：任意层级下 *.png（大小写不敏感），
  * 文件名（去扩展名）normalizeIssuer 后作 stored id——控制器裁定：不自动映射 builtin，
  * 用户包可管理可删除。跳过：非 png 直接忽略；超 maxBytes 计 skipped；
- * 同名（normalize 后）后者覆盖前者并计 skipped；导入数达 max 停止。
+ * 同名（normalize 后）后者覆盖前者并计 skipped；导入数达 max 停止。收集后 iconStore.putMany 一次落盘。
  */
 export async function importIconPackZip(
   zipBytes: Uint8Array,
-  icons: IconStore,
+  icons: Pick<IconStore, 'putMany'>,
   opts?: { max?: number; maxBytes?: number },
 ): Promise<IconPackResult> {
   const max = opts?.max ?? DEFAULT_MAX
@@ -34,6 +34,7 @@ export async function importIconPackZip(
   const files = unzipSync(zipBytes)
   let imported = 0
   let skipped = 0
+  const pending: Record<string, string> = {}
   const seen = new Set<string>()
   for (const [path, bytes] of Object.entries(files)) {
     if (!path.toLowerCase().endsWith('.png')) continue
@@ -46,13 +47,14 @@ export async function importIconPackZip(
     const id = normalizeIssuer(base)
     const dataUrl = bytesToDataUrl(bytes)
     const overwrite = seen.has(id)
-    await icons.put(id, dataUrl)
+    pending[id] = dataUrl
     if (overwrite) skipped++
     else {
       imported++
       seen.add(id)
     }
   }
+  if (Object.keys(pending).length > 0) await icons.putMany(pending) // 一次落盘，避免逐条 put 的 O(n²) 写放大
   return { imported, skipped, names: [...seen] }
 }
 

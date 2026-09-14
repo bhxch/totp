@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
+import { zipSync } from 'fflate'
 import { createMemoryStorage, getBuiltinIcons, type OtpEntry } from '@totp/core'
 import EntryForm from '../src/components/EntryForm.vue'
 import type { EntryFormData } from '../src/components/entryForm'
@@ -8,6 +9,18 @@ import { createIconStore } from '../src/iconStore'
 const entry: OtpEntry = {
   uuid: 'u1', type: 'totp', issuer: 'GitHub', label: 'me@ex.com', secret: 'JBSWY3DPEHPK3PXP',
   algorithm: 'SHA1', digits: 6, period: 30, groupIds: [], order: 0, createdAt: 0,
+}
+
+// jsdom 25 的 Blob 未实现 arrayBuffer()，用 FileReader polyfill（仅测试环境生效）
+if (typeof Blob.prototype.arrayBuffer !== 'function') {
+  Blob.prototype.arrayBuffer = function (this: Blob): Promise<ArrayBuffer> {
+    return new Promise<ArrayBuffer>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as ArrayBuffer)
+      reader.onerror = () => reject(reader.error ?? new Error('FileReader failed'))
+      reader.readAsArrayBuffer(this)
+    })
+  }
 }
 
 describe('EntryForm', () => {
@@ -140,5 +153,38 @@ describe('EntryForm 图标推荐与选择', () => {
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+
+  it('导入图标包（zip）：busy 态期间按钮禁用，完成批量入库并提示已导入/跳过数；非法 zip 显示错误', async () => {
+    const store = createIconStore(createMemoryStorage())
+    const w = mount(EntryForm, { props: { initial: null, groups: [], icons: { builtin: getBuiltinIcons(), stored: store.icons }, iconStore: store } })
+    await w.find('details.icon-picker summary').trigger('click')
+    expect(w.find('button.import-pack').exists()).toBe(true)
+    const setFiles = (el: HTMLInputElement, file: File) => {
+      Object.defineProperty(el, 'files', { value: [file], configurable: true })
+    }
+    // 合法 zip：任意字节当 png 内容即可（导入不校验图片内容）；实例上覆写 arrayBuffer 加闸门观察 busy 态
+    const zip = zipSync({ 'a/github.png': new Uint8Array([1]), 'b/google.png': new Uint8Array([2]) })
+    const file = new File([zip], 'pack.zip')
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    ;(file as File & { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer = async () => {
+      await gate
+      return zip.buffer.slice(zip.byteOffset, zip.byteOffset + zip.byteLength) as ArrayBuffer
+    }
+    const packInputEl = () => w.find('input.pack-file').element as HTMLInputElement
+    setFiles(packInputEl(), file)
+    await w.find('input.pack-file').trigger('change')
+    expect(w.find('button.import-pack').attributes('disabled')).toBeDefined()
+    release()
+    await vi.waitFor(() => expect(w.find('.pack-message').text()).toBe('已导入 2 个图标（跳过 0 个）'))
+    expect(w.find('button.import-pack').attributes('disabled')).toBeUndefined()
+    expect(store.icons['github']).toMatch(/^data:image\/png;base64,/)
+    expect(store.icons['google']).toMatch(/^data:image\/png;base64,/)
+    // 非法 zip：unzipSync 抛错 → 图标区错误提示，成功提示清空
+    setFiles(packInputEl(), new File([new Uint8Array([1, 2, 3])], 'bad.zip'))
+    await w.find('input.pack-file').trigger('change')
+    await vi.waitFor(() => expect(w.find('.icon-picker .error').exists()).toBe(true))
+    expect(w.find('.pack-message').exists()).toBe(false)
   })
 })

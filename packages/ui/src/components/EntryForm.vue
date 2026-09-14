@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { base32Decode, getBuiltinIcons, recommendBuiltinIcon, type BuiltinIcon, type Group, type OtpEntry } from '@totp/core'
 import { computed, reactive, ref, watch } from 'vue'
-import { fileToScaledDataUrl } from '../iconImport'
+import { fileToScaledDataUrl, importIconPackZip } from '../iconImport'
 import type { IconStore } from '../iconStore'
 import type { EntryFormData } from './entryForm'
 
@@ -119,6 +119,30 @@ function clearIcon() {
   iconTouched.value = true
 }
 
+// ---------- 图标包（zip）导入 ----------
+const packInput = ref<HTMLInputElement | null>(null)
+const packBusy = ref(false)
+const packMessage = ref('')
+
+async function onPackFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file || !props.iconStore) return
+  packBusy.value = true
+  iconError.value = ''
+  packMessage.value = ''
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    const result = await importIconPackZip(bytes, props.iconStore)
+    packMessage.value = `已导入 ${result.imported} 个图标（跳过 ${result.skipped} 个）`
+  } catch (err) {
+    iconError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    packBusy.value = false
+    input.value = '' // 允许重复选择同一文件
+  }
+}
+
 function submit() {
   error.value = ''
   if (form.type !== 'hotp') {
@@ -169,12 +193,15 @@ function submit() {
       <div class="icon-actions">
         <button v-if="iconStore" type="button" class="upload-icon" @click="fileInput?.click()">上传</button>
         <input ref="fileInput" type="file" accept="image/*" class="icon-file" @change="onIconFile" />
+        <button v-if="iconStore" type="button" class="import-pack" :disabled="packBusy" @click="packInput?.click()">导入图标包（zip）</button>
+        <input ref="packInput" type="file" accept=".zip" class="pack-file" @change="onPackFile" />
         <template v-if="iconStore">
           <input v-model="iconUrlInput" type="url" class="icon-url" placeholder="图标图片 URL" />
           <button type="button" class="fetch-icon" @click="onFetchIcon">拉取</button>
         </template>
         <button v-if="form.icon" type="button" class="clear-icon" @click="clearIcon">清除</button>
       </div>
+      <div v-if="packMessage" class="pack-message">{{ packMessage }}</div>
       <div v-if="iconError" class="error">{{ iconError }}</div>
     </details>
     <!-- matchRules 编辑区 -->
@@ -221,7 +248,8 @@ fieldset { border: 1px solid rgba(128,128,128,.3); border-radius: 6px; display: 
 .icon-picker .icon-none { opacity: 0.6; font-size: 12px; }
 .icon-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .icon-actions .icon-url { flex: 1; min-width: 120px; }
-.icon-file { display: none; }
+.icon-file, .pack-file { display: none; }
+.pack-message { color: #5cb85c; font-size: 12px; }
 .error { color: #d9534f; font-size: 12px; }
 .row { display: flex; gap: 8px; }
 </style>
