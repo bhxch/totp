@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { reactive, ref } from 'vue'
 import BackupCard from '../src/components/BackupCard.vue'
 
 const platform = {
@@ -48,5 +49,32 @@ describe('BackupCard', () => {
     await vi.waitFor(() => expect(w.text()).toContain('备份内容不是有效的 vault 数据'))
     expect(restorePlatform.replaceAllOp).not.toHaveBeenCalled()
     expect(w.find('.confirm-row').exists()).toBe(false)
+  })
+
+  it('I70：keep→overwrite→keep 切换时保留本地 keepN，不丢失用户配置', async () => {
+    // 用 reactive 包装让模板访问自动解包 ref（vue-test-utils mount 默认不深 reactive）
+    const mode = reactive<{ type: 'keep'; n: number } | { type: 'overwrite' }>({ type: 'keep', n: 7 })
+    const platform = {
+      createBackup: vi.fn().mockResolvedValue('created'),
+      mode,
+      setMode: vi.fn(async (m: { type: 'keep'; n: number } | { type: 'overwrite' }) => {
+        Object.assign(mode, m)
+      }),
+    }
+    const w = mount(BackupCard, { props: { platform, vaultJson: '{}' } })
+    // 初始 keep n=7：keep-n input 可见
+    expect(w.find('input.keep-n').exists()).toBe(true)
+    // 切到 overwrite
+    const overwriteRadio = w.findAll('input[type="radio"]')[1]!
+    await overwriteRadio.setValue(true)
+    await vi.waitFor(() => expect(mode.type).toBe('overwrite'))
+    expect(w.find('input.keep-n').exists()).toBe(false)
+    // 切回 keep：应使用本地 keepN（即用户配置的 7），不会变成默认 3
+    const keepRadio = w.findAll('input[type="radio"]')[0]!
+    await keepRadio.setValue(true)
+    await vi.waitFor(() => {
+      expect(mode.type).toBe('keep')
+      expect(mode.n).toBe(7) // 关键：保留用户配置的 7
+    })
   })
 })

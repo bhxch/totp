@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Vault } from '@totp/core'
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import type { BackupMode, BackupPlatform } from './backupPlatform'
 import { parseVaultJson } from './parseVaultJson'
 
@@ -75,6 +75,16 @@ async function setMode(m: BackupMode): Promise<void> {
   await props.platform?.setMode(m)
 }
 
+/** I70：本地 keepN 副本——keep 模式时与平台同步；切到 overwrite 后保留前值，再切回 keep 时恢复。
+ *  避免 keep→overwrite→keep 时丢失用户已配的 N */
+const keepN = ref<number>(
+  props.platform?.mode.type === 'keep' ? props.platform.mode.n : 3,
+)
+/** 监听平台模式：keep 时把最新 n 同步进本地；overwrite 不动 */
+watch(() => props.platform?.mode, (m) => {
+  if (m?.type === 'keep') keepN.value = m.n
+})
+
 async function onNChange(e: Event): Promise<void> {
   const n = Math.max(1, Math.floor(Number((e.target as HTMLInputElement).value) || 1))
   await setMode({ type: 'keep', n })
@@ -140,7 +150,7 @@ async function confirmRestore(): Promise<void> {
       <label>
         <input
           type="radio" name="backup-mode" value="keep" :checked="platform.mode.type === 'keep'"
-          @change="setMode({ type: 'keep', n: platform!.mode.type === 'keep' ? platform!.mode.n : 3 })"
+          @change="setMode({ type: 'keep', n: keepN })"
         />
         保留最近
         <input
