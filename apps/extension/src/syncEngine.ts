@@ -116,6 +116,17 @@ async function pushOnce(): Promise<void> {
     const local = await chrome.storage.local.get([VAULT_KEY, SECURITY_KEY, SETTINGS_KEY])
     const vaultRaw = local[VAULT_KEY]
     if (typeof vaultRaw !== 'string') return // 尚无 vault（首次写入前）：无 payload 可推
+    // 密文 vault 缺 SECURITY_KEY：拒绝推送，避免密文 vault 落入 sync 区后无人可解
+    if (typeof local[SECURITY_KEY] !== 'string') {
+      try {
+        const parsed = JSON.parse(vaultRaw) as unknown
+        if (isEncryptedVault(parsed)) {
+          await setSyncStatus('error')
+          return
+        }
+      } catch { /* 非 JSON 即明文路径：放行 */
+      }
+    }
     const syncAll = await chrome.storage.sync.get(null)
     const prevMeta = readMeta(syncAll[META_KEY])
     const rev = (prevMeta?.rev ?? 0) + 1
