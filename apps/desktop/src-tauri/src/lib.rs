@@ -1,13 +1,65 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{
-    AppHandle, Manager, WindowEvent,
+    AppHandle, Manager, Runtime, WindowEvent,
     menu::{Menu, MenuItem},
     tray::{TrayIconBuilder, TrayIconEvent},
 };
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 // mini 最近一次因失焦而隐藏的时刻，用于缓解「托盘点击收起」与「失焦自动隐藏」的竞态
 static LAST_FOCUS_HIDE: Mutex<Option<Instant>> = Mutex::new(None);
+
+// 桌面应用 settings.json：存于 app_data_dir（与前端 createTauriFs 的 baseDir 对齐）。
+// 当前唯一可配项为 shortcutToggleMini（toggle mini 的全局快捷键），默认 alt+shift+t；
+// 解析失败/字段缺失一律回落到默认值，保证老版本 settings.json 不破坏启动。
+fn settings_path<R: Runtime>(app: &AppHandle<R>) -> Option<std::path::PathBuf> {
+    app.path().app_data_dir().ok().map(|d| d.join("settings.json"))
+}
+
+fn read_shortcut_from_settings<R: Runtime>(app: &AppHandle<R>) -> String {
+    const DEFAULT: &str = "alt+shift+t";
+    let Some(p) = settings_path(app) else { return DEFAULT.into() };
+    let Ok(text) = std::fs::read_to_string(&p) else { return DEFAULT.into() };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { return DEFAULT.into() };
+    v.get("shortcutToggleMini")
+        .and_then(|x| x.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| DEFAULT.into())
+}
+
+fn write_shortcut_to_settings<R: Runtime>(app: &AppHandle<R>, shortcut: &str) -> Result<(), String> {
+    let p = settings_path(app).ok_or_else(|| "settings path unavailable".to_string())?;
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    // 合并既有键：避免读到 settings.json 后只写快捷键覆盖其他字段
+    let mut obj: serde_json::Map<String, serde_json::Value> = std::fs::read_to_string(&p)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+    obj.insert("shortcutToggleMini".into(), serde_json::Value::String(shortcut.into()));
+    std::fs::write(&p, serde_json::to_string_pretty(&obj).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+
+/** 取消注册当前所有快捷键，按新 spec 重新注册并持久化到 settings.json */
+#[tauri::command]
+fn set_global_shortcut(app: AppHandle, shortcut: String) -> Result<(), String> {
+    if shortcut.trim().is_empty() {
+        return Err("empty shortcut".into());
+    }
+    let gs = app.global_shortcut();
+    gs.unregister_all().map_err(|e| e.to_string())?;
+    gs.on_shortcut(shortcut.as_str(), |app, _shortcut, event| {
+        if event.state == ShortcutState::Pressed {
+            toggle_mini(app);
+        }
+    })
+    .map_err(|e| e.to_string())?;
+    write_shortcut_to_settings(&app, &shortcut)
+}
 
 fn toggle_mini(app: &AppHandle) {
     if let Some(mini) = app.get_webview_window("mini") {
@@ -300,6 +352,19 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            // C7：按 settings 覆写默认快捷键——unregister_all + on_shortcut 重新注册一次。
+            // Builder.with_shortcuts 在 setup 之前执行已注册默认 alt+shift+t，故仅在配置差异时重注册
+            let configured = read_shortcut_from_settings(&app.handle());
+            if configured != "alt+shift+t" {
+                let gs = app.global_shortcut();
+                if gs.unregister_all().is_ok() {
+                    let _ = gs.on_shortcut(configured.as_str(), |a, _s, e| {
+                        if e.state == ShortcutState::Pressed {
+                            toggle_mini(a);
+                        }
+                    });
+                }
+            }
             let show_main_item =
                 MenuItem::with_id(app, "show-main", "显示主窗口", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
@@ -354,7 +419,8 @@ pub fn run() {
             remove_backup_file,
             decrypt_dpapi,
             dpapi_protect,
-            dpapi_unprotect
+            dpapi_unprotect,
+            set_global_shortcut
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
