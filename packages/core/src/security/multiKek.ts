@@ -61,7 +61,8 @@ export function removeKekSource(
 }
 
 // wrappedDekP 编码：base64(nonce(12B) ‖ AES-GCM 密文)，nonce 独立随机（GCM 语义同 securityStore 契约）
-// KEK_prf = prfOutput 前 32B；逐个尝试匹配的 prf 来源，全部失败/无来源 → Error('passkey 解锁失败')
+// KEK_prf = prfOutput 前 32B（WebCrypto AES-GCM 密钥要求严格 16/32B，调用方可能传 64B）。
+// 逐个尝试匹配的 prf 来源，全部失败/无来源 → Error('passkey 解锁失败）。
 export async function unlockWithPrf(
   s: SecuritySettings,
   prfOutput: Uint8Array,
@@ -72,10 +73,12 @@ export async function unlockWithPrf(
     (src): src is PrfSource =>
       src.kind === 'prf' && (match?.credentialId === undefined || src.credentialId === match.credentialId),
   )
+  // 提取前 32B 作为 KEK_prf 一次性（避免循环内重复 subarray）
+  const kek = prfOutput.subarray(0, 32)
   for (const src of sources) {
     try {
       const blob = base64ToBytes(src.wrappedDekP)
-      const dek = await aesGcmDecrypt(prfOutput.subarray(0, 32), blob.subarray(12), blob.subarray(0, 12))
+      const dek = await aesGcmDecrypt(kek, blob.subarray(12), blob.subarray(0, 12))
       // C1：明示拒绝长度非 32B 的解密结果——wrappedDekP 可被构造产生可控 32B 假明文，
       // 静默返回会让 addPrfSourceOp 后续把伪 DEK 当真 DEK 用，引发幽灵加密
       if (dek.length !== 32) throw new Error('invalid DEK length from PRF unwrap')
