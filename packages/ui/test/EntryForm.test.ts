@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, type VueWrapper } from '@vue/test-utils'
 import { createMemoryStorage, getBuiltinIcons, type OtpEntry } from '@totp/core'
 import EntryForm from '../src/components/EntryForm.vue'
+import type { EntryFormData } from '../src/components/entryForm'
 import { createIconStore } from '../src/iconStore'
 
 const entry: OtpEntry = {
@@ -67,7 +68,7 @@ describe('EntryForm', () => {
 
 describe('EntryForm 图标推荐与选择', () => {
   const icons = () => ({ builtin: getBuiltinIcons(), stored: {} as Readonly<Record<string, string>> })
-  const issuerInput = (w: ReturnType<typeof mount>) => w.find('input[placeholder="服务名（如 GitHub）"]')
+  const issuerInput = (w: VueWrapper) => w.find('input[placeholder="服务名（如 GitHub）"]')
 
   it('issuer 输入 github 防抖后出现推荐气泡，点「使用」后 save 携带 builtin icon', async () => {
     const w = mount(EntryForm, { props: { initial: null, groups: [], icons: icons() } })
@@ -85,8 +86,7 @@ describe('EntryForm 图标推荐与选择', () => {
   it('issuer 无匹配时不显示推荐气泡', async () => {
     const w = mount(EntryForm, { props: { initial: null, groups: [], icons: icons() } })
     await issuerInput(w).setValue('zzz-不存在的服务')
-    await new Promise((r) => setTimeout(r, 400))
-    await vi.waitFor(() => expect(issuerInput(w).element.value).toBe('zzz-不存在的服务'))
+    await new Promise((r) => setTimeout(r, 400)) // 越过 300ms 防抖
     expect(w.text()).not.toContain('检测到图标')
   })
 
@@ -105,7 +105,7 @@ describe('EntryForm 图标推荐与选择', () => {
     expect(picker.find('svg.icon-preview').exists()).toBe(true)
     await w.find('button.clear-icon').trigger('click')
     await w.find('form').trigger('submit')
-    expect(w.emitted('save')![0]![0].icon).toBeUndefined()
+    expect((w.emitted('save')![0]![0] as EntryFormData).icon).toBeUndefined()
   })
 
   it('URL 拉取成功后预览并随 save 携带 {kind:url}；清除按钮收起已设图标', async () => {
@@ -136,7 +136,7 @@ describe('EntryForm 图标推荐与选择', () => {
       await w.find('button.fetch-icon').trigger('click')
       await vi.waitFor(() => expect(w.text()).toContain('图标拉取失败'))
       await w.find('form').trigger('submit')
-      expect(w.emitted('save')![0]![0].icon).toBeUndefined()
+      expect((w.emitted('save')![0]![0] as EntryFormData).icon).toBeUndefined()
     } finally {
       vi.unstubAllGlobals()
     }
