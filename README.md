@@ -67,14 +67,37 @@ pnpm --filter @totp/desktop tauri build  # 构建，产物为 exe + NSIS 安装�
 
 ## 导入
 
-导入入口在管理页（桌面主窗口 / 插件 options 页）的「导入」卡；popup 不含导入功能。选择文件后自动嗅探格式，按向导完成解析 → 冲突确认 → 报告。
+导入入口在管理页（桌面主窗口 / 插件 options 页）的「导入」卡；popup 不含导入功能。选择文件后自动嗅探格式，按向导完成解析 → 冲突确认 → 报告；识别失败或误判时可在格式下拉中手动指定。各格式字段口径对齐 Aegis 官方导入器实现（beemdevelopment/Aegis）。
 
 ### 支持格式
 
+**文本格式（桌面与插件均可导入）**
+
 - **Aegis**（JSON vault）：明文与口令加密均支持；加密 vault 需输入 Aegis 导出时设置的口令（scrypt + AES-GCM，算法对齐 Aegis 官方实现）
 - **WinAuth**（XML 配置文件）：明文、口令保护（条目级/整包，PBKDF2 + Blowfish，对齐官方算法）均支持；使用 Windows DPAPI 加密（用户/机器层）的文件**仅桌面版可导入**（依赖系统凭据解密），插件端遇到会逐条提示「请用桌面版导入」；YubiKey 加密暂不支持
-- **otpauth URI 文本**：每行一条 `otpauth://totp/...|hotp/...|steam/...` URI
-- **通用 JSON / JSON array / JSONL**：逐字段配置点路径映射（如 `otp.params.secret`）将行对象映射为条目，secret 字段必填；单个 JSON 对象会自动探测其嵌套的行数组。secret 自动去空白并大写，非法 algorithm/digits/period 回落默认值（SHA1/6/30），Steam 条目固定 5 位
+- **2FAS**（JSON 导出）：明文支持（TOTP/HOTP/Steam）；加密导出（servicesEncrypted）不支持，会提示改用不加密导出
+- **Bitwarden**（JSON 导出）：明文支持，`login.totp` 接受 otpauth URI / `steam://` / 裸 base32 secret 三种形态；密码保护导出（encrypted）不支持，会提示改用明文导出
+- **Ente Auth**：明文导出即 otpauth URI 行文本，与「URI 文本」同一入口；加密导出不支持，请在应用内改用明文导出
+- **Proton Authenticator**（JSON 导出）：明文支持（条目 uri 为 otpauth:// 或 steam://）；加密导出不支持，会提示改用明文导出
+- **Stratum / Authenticator Pro**（JSON 导出）：明文支持（大写键 schema，HOTP/TOTP/Steam）；二进制加密导出不支持
+- **FreeOTP+**（JSON 导出）与**旧版 FreeOTP**（shared_prefs tokens.xml）：均支持；secret 按字节数组还原，HOTP counter 沿用存储值（对齐 Aegis 口径）
+- **TOTP Authenticator**：明文 JSON 数组与外部分享文件（Base64 密文）均支持；分享文件默认口令 `TotpAuthenticator`，改过口令的在口令页输入
+- **andOTP**（JSON 导出）：明文支持；加密备份（二进制）暂不支持，请用明文导出
+- **Authy**（shared_prefs XML）：明文与口令加密条目均支持；含加密条目时需输入 Authy 备份口令（PBKDF2 + AES-CBC）
+- **Battle.net**（shared_prefs XML）：XOR 掩码还原，单文件单条目（8 位 TOTP）
+- **Duo**（files/duokit/accounts.json）：JSON 数组，含 counter 的条目按 HOTP 导入
+- **Microsoft Authenticator**（SQLite db）：`accounts` 表，普通条目 6 位、Microsoft 型 8 位 TOTP
+- **Google Authenticator / otpauth URI 文本**：每行一条 `otpauth://totp/...|hotp/...|steam/...` URI（多数应用的 URI/迁移文本导出均走此入口）
+- **通用 JSON / JSON array / JSONL**：逐字段配置点路径映射（如 `otp.params.secret`）将行对象映射为条目，secret 字段必填；单个 JSON 对象会自动探测其嵌套的行数组。secret 自动去空白并大写，非法 algorithm/digits/period 回落默认值（SHA1/6/30），Steam 条目固定 5 位。映射方案可命名保存、复用与删除：再次导入同结构文件时按列名匹配自动推荐，也可手动套用
+
+**SQLite 数据库（桌面与插件均可导入，需联网）**
+
+- 来源设备数据库文件（应用私有目录的 db，经系统备份/adb 等方式取出）：先按 SQLite 文件头校验，再在 sqlite_master 中按已知表名探测并解析（当前识别 Microsoft Authenticator 的 `accounts` 表）
+- 解析经 sql.js 完成，其 wasm 二进制固定从 jsdelivr CDN 加载，**首次使用需联网**；离线时明确报错，SQLite 类导入不可用
+
+**暂不支持**
+
+- **Authenticator Plus**：备份为口令加密 ZIP，无法解密；请在原应用中导出为 otpauth URI 明文文本，再用「URI 文本」入口导入
 
 ### 冲突策略
 
