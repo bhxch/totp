@@ -112,6 +112,23 @@ fn read_import_file_os(path: String) -> Result<String, String> {
     std::fs::read_to_string(p).map_err(|e| e.to_string())
 }
 
+// 导入文件字节读取（SQLite 等二进制格式，ImportCard 字节入口）：与 read_import_file_os 同构，
+// 白名单在其基础上加 .db/.sqlitedb/.sqlite；返回原始字节（invoke JSON 数组），不经 UTF-8 文本管道
+#[tauri::command]
+fn read_import_file_bytes_os(path: String) -> Result<Vec<u8>, String> {
+    const IMPORT_BYTE_EXTENSIONS: [&str; 8] =
+        [".json", ".wauth", ".xml", ".txt", ".aegis", ".db", ".sqlitedb", ".sqlite"];
+    let lower = path.to_lowercase();
+    if !IMPORT_BYTE_EXTENSIONS.iter().any(|ext| lower.ends_with(ext)) {
+        return Err("invalid import file extension".into());
+    }
+    let p = std::path::Path::new(&path);
+    if !p.is_file() {
+        return Err("not a file".into());
+    }
+    std::fs::read(p).map_err(|e| e.to_string())
+}
+
 // WinAuth DPAPI 层解密（ CryptUnprotectData，无附加熵，CRYPTPROTECT_UI_FORBIDDEN）。
 // 输入/输出约定与 core importWinauth 的 decryptDpapi 回调对齐：输入 base64(密文)，
 // 输出 UTF-8 明文——WinAuth 的 DPAPI 明文恒为下一层 payload 的 hex ASCII
@@ -248,6 +265,7 @@ pub fn run() {
             write_text_file_os,
             read_text_file_os,
             read_import_file_os,
+            read_import_file_bytes_os,
             remove_backup_file,
             decrypt_dpapi
         ])

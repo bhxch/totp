@@ -5,6 +5,12 @@ export async function readImportFileOs(path: string): Promise<string> {
   return invoke<string>('read_import_file_os', { path })
 }
 
+// 导入文件字节读取（SQLite 等二进制格式，ImportCard 字节入口）：不经文本管道，二进制无损。
+// Rust 端白名单在文本命令基础上加 .db/.sqlitedb/.sqlite（见 lib.rs read_import_file_bytes_os）
+export async function readImportFileBytesOs(path: string): Promise<Uint8Array> {
+  return Uint8Array.from(await invoke<number[]>('read_import_file_bytes_os', { path }))
+}
+
 // WinAuth DPAPI 层解密：输入 base64(密文) → 输出 UTF-8 明文（WinAuth 明文恒为 hex ASCII）。
 // 仅桌面端可用（CryptUnprotectData）；插件端不提供此能力，core importWinauth 自动逐条 failure。
 // Task 5 接线：platform.decryptDpapi = (b64) => decryptDpapiOs(b64)

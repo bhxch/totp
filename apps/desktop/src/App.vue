@@ -6,7 +6,7 @@ import { backupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSche
 import { LockScreen, VaultManager, createClipboardClearer, createIconStore, createVueStore, type BackupMode, type BackupPlatform, type IconStore, type ImportSchemesApi, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref } from 'vue'
 import { createBackupToDir, listBackups, readBackupByName, readBackupFileOs, writeBackupFileOs } from './backupService'
-import { decryptDpapiOs, readImportFileOs } from './importService'
+import { decryptDpapiOs, readImportFileBytesOs, readImportFileOs } from './importService'
 import { createTauriFs } from './tauriFs'
 
 const store = ref<VueStore | null>(null)
@@ -60,14 +60,20 @@ function persistBackupMode(m: BackupMode): void {
 
 const backupMode = ref<BackupMode>(loadBackupMode())
 
+// 最后一次导入选择的路径（模块级缓存）：SQLite 字节入口复用，避免同一文件二次弹窗
+let lastImportPath: string | null = null
+
 /** envelope 文本 → 解密出明文 vault JSON（口令错误/文件损坏由 openBackupEnvelope 抛错，卡片统一展示） */
 async function openBackupText(text: string, password: string): Promise<string> {
   return openBackupEnvelope(JSON.parse(text), password)
 }
 
 const BACKUP_FILE_FILTERS = [{ name: 'TOTP 备份', extensions: ['totpbackup'] }]
-// 与 Rust 端 read_import_file_os 扩展名白名单一致（.json/.wauth/.xml/.txt/.aegis）
-const IMPORT_FILE_FILTERS = [{ name: '导入文件', extensions: ['json', 'wauth', 'txt', 'aegis', 'xml'] }]
+// 与 Rust 端 read_import_file_os 扩展名白名单一致（.json/.wauth/.xml/.txt/.aegis）+ SQLite .db/.sqlitedb/.sqlite
+// （.db 经文本读取报 UTF-8 错时由 ImportCard 转字节入口复查，见 read_import_file_bytes_os）
+const IMPORT_FILE_FILTERS = [
+  { name: '导入文件', extensions: ['json', 'wauth', 'txt', 'aegis', 'xml', 'db', 'sqlitedb', 'sqlite'] },
+]
 
 const backupPlatform: BackupPlatform = {
   get mode() { return backupMode.value },
@@ -101,7 +107,14 @@ const backupPlatform: BackupPlatform = {
   async readImportFile() {
     const path = await open({ multiple: false, directory: false, filters: IMPORT_FILE_FILTERS })
     if (typeof path !== 'string') return null
+    lastImportPath = path
     return { text: await readImportFileOs(path), name: path.split(/[\\/]/).pop() ?? path }
+  },
+  // SQLite 字节入口：复用最近一次选择的路径（避免二次弹窗）；无最近选择时补弹对话框
+  async readImportFileBytes() {
+    const path = lastImportPath ?? (await open({ multiple: false, directory: false, filters: IMPORT_FILE_FILTERS }))
+    if (typeof path !== 'string') return null
+    return { bytes: await readImportFileBytesOs(path), name: path.split(/[\\/]/).pop() ?? path }
   },
   decryptDpapi: (b64) => decryptDpapiOs(b64),
 }
