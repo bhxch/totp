@@ -231,14 +231,19 @@ export function importBitwarden(text: string): ImportResult {
 export function importEnte(text: string): ImportResult {
   const trimmed = text.trim()
   if (trimmed.startsWith('{')) {
+    let parsed: unknown
     try {
-      const obj = asObject(JSON.parse(trimmed))
-      if (obj && 'encryptedData' in obj && 'kdfParams' in obj) {
+      parsed = JSON.parse(trimmed)
+    } catch {
+      // 非完整 JSON：若文本含 Ente 加密导出特征字段（kdfParams 或 encryptedData）→ 视为截断的加密导出
+      if (/\bkdfParams\b|\bencryptedData\b/.test(trimmed)) {
         throw new Error('Ente 加密导出不支持：请在 Ente Auth 中使用明文导出（otpauth URI 行文本）')
       }
-    } catch (e) {
-      if (e instanceof Error && e.message.includes('Ente')) throw e
-      // 非完整 JSON → 按行解析，坏行进 failures
+      // 否则落入 URI 行解析兜底
+    }
+    const obj = parsed !== undefined ? asObject(parsed) : null
+    if (obj && 'encryptedData' in obj && 'kdfParams' in obj) {
+      throw new Error('Ente 加密导出不支持：请在 Ente Auth 中使用明文导出（otpauth URI 行文本）')
     }
   }
 
