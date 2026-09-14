@@ -82,7 +82,7 @@ const currentIcon = computed<{ html?: string; src?: string } | undefined>(() => 
     const path = (props.icons?.builtin ?? getBuiltinIcons())[ref.id]?.path
     return path ? { html: builtinHtml(path) } : undefined
   }
-  const key = ref.kind === 'url' ? `url:${ref.id}` : ref.id
+  const key = ref.kind === 'url' ? `urlcache:${ref.id}` : ref.id
   const src = props.icons?.stored[key]
   return src ? { src } : undefined
 })
@@ -110,12 +110,19 @@ async function onFetchIcon() {
   if (!url) return
   iconError.value = ''
   const ref = { kind: 'url' as const, id: iconId, url }
-  const cached = await props.iconStore.fetchAndCache(ref)
-  if (cached) {
+  const result = await props.iconStore.fetchAndCache(ref)
+  if (result.ok) {
     form.icon = ref
     iconTouched.value = true
   } else {
-    iconError.value = '图标拉取失败（检查 URL/网络，或站点不允许跨域）'
+    // I59：根据失败原因展示对应文案
+    const tip: Record<string, string> = {
+      cors: '图标拉取失败（站点不允许跨域 CORS 或网络不通）',
+      notfound: '图标拉取失败（资源不存在，HTTP 错误）',
+      toolarge: '图标拉取失败（文件超过 200KB 上限）',
+      other: '图标拉取失败',
+    }
+    iconError.value = `${tip[result.kind] ?? tip.other}（${result.message}）`
   }
 }
 

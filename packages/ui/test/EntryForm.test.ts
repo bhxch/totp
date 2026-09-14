@@ -196,8 +196,8 @@ describe('EntryForm 图标推荐与选择', () => {
       await vi.waitFor(() => expect(w.find('img.icon-current-img').attributes('src')).toMatch(/^data:image\/png;base64,/))
       await w.find('form').trigger('submit')
       expect(w.emitted('save')![0]![0]).toMatchObject({ icon: { kind: 'url', url: 'https://example.com/a.png' } })
-      // store 内以 url:<id> 缓存
-      expect(Object.keys(store.icons).some((k) => k.startsWith('url:'))).toBe(true)
+      // store 内以 urlcache:<id> 缓存（I58：独立命名空间）
+      expect(Object.keys(store.icons).some((k) => k.startsWith('urlcache:'))).toBe(true)
     } finally {
       vi.unstubAllGlobals()
     }
@@ -277,7 +277,7 @@ describe('EntryForm 预填哑值 uuid（URI 导入）边界', () => {
       await vi.waitFor(() => expect(w.find('img.icon-current-img').attributes('src')).toMatch(/^data:image\/png;base64,/))
       const keys = Object.keys(store.icons)
       expect(keys).toHaveLength(1)
-      expect(keys[0]).toMatch(/^url:.+/) // url: 后必须跟非空 id，否则连续预填共享空串键互相覆盖
+      expect(keys[0]).toMatch(/^urlcache:.+/) // urlcache: 后必须跟非空 id，否则连续预填共享空串键互相覆盖
     } finally {
       vi.unstubAllGlobals()
     }

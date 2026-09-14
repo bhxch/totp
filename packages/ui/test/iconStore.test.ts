@@ -61,11 +61,11 @@ describe('createIconStore', () => {
     expect(b.icons).toEqual({ a: DATA_URL, b: DATA_URL })
   })
 
-  it('resolve：builtin→undefined；stored 命中→icons[id]；url 命中→icons[url:id]；undefined→undefined', async () => {
+  it('resolve：builtin→undefined；stored 命中→icons[id]；url 命中→icons[urlcache:id]；undefined→undefined', async () => {
     const s = createIconStore(createMemoryStorage())
     await s.init()
     await s.put('github', DATA_URL)
-    await s.put('url:logo', DATA_URL)
+    await s.put('urlcache:logo', DATA_URL)
     expect(s.resolve({ kind: 'builtin', id: 'github' })).toBeUndefined()
     expect(s.resolve({ kind: 'stored', id: 'github' })).toBe(DATA_URL)
     expect(s.resolve({ kind: 'stored', id: 'missing' })).toBeUndefined()
@@ -74,46 +74,75 @@ describe('createIconStore', () => {
     expect(s.resolve(undefined)).toBeUndefined()
   })
 
-  it('fetchAndCache：fetch→blob→dataURL 写入 url:id 缓存并返回', async () => {
+  it('fetchAndCache：fetch→blob→dataURL 写入 urlcache:id 缓存并返回 ok=true', async () => {
     const s = createIconStore(createMemoryStorage())
     await s.init()
     // 最小 mock response：Node undici Response 不识别 jsdom Blob（会被字符串化），
     // 生产代码仅消费 ok/blob()，直接以 jsdom Blob 伪造即可
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, blob: async () => new Blob(['hello'], { type: 'text/plain' }) })))
-    const dataUrl = await s.fetchAndCache({ kind: 'url', id: 'logo', url: 'https://x/logo.png' })
-    expect(dataUrl).toBe('data:text/plain;base64,aGVsbG8=')
-    expect(s.icons['url:logo']).toBe('data:text/plain;base64,aGVsbG8=')
+    const result = await s.fetchAndCache({ kind: 'url', id: 'logo', url: 'https://x/logo.png' })
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.dataUrl).toBe('data:text/plain;base64,aGVsbG8=')
+    // I58：URL 缓存键以 urlcache: 前缀，与图标 id 物理隔离
+    expect(s.icons['urlcache:logo']).toBe('data:text/plain;base64,aGVsbG8=')
     expect(s.resolve({ kind: 'url', id: 'logo', url: 'https://x/logo.png' })).toBe(
       'data:text/plain;base64,aGVsbG8=',
     )
   })
 
-  it('fetchAndCache：网络失败/CORS 抛错→返回 null 不抛', async () => {
+  it('I59：fetchAndCache 网络/CORS 抛错 → 失败细分 kind=cors', async () => {
     const s = createIconStore(createMemoryStorage())
     await s.init()
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
-    await expect(s.fetchAndCache({ kind: 'url', id: 'x', url: 'https://x/x.png' })).resolves.toBeNull()
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 404 })))
-    await expect(s.fetchAndCache({ kind: 'url', id: 'y', url: 'https://x/y.png' })).resolves.toBeNull()
-    expect(s.icons['url:x']).toBeUndefined()
-    expect(s.icons['url:y']).toBeUndefined()
+    const result = await s.fetchAndCache({ kind: 'url', id: 'x', url: 'https://x/x.png' })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.kind).toBe('cors')
+      expect(result.message).toContain('Failed to fetch')
+    }
   })
 
-  it('fetchAndCache 超 200KB 上限返回 null 不写入', async () => {
+  it('I59：HTTP 非 2xx → 失败细分 kind=notfound', async () => {
+    const s = createIconStore(createMemoryStorage())
+    await s.init()
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 404 })))
+    const result = await s.fetchAndCache({ kind: 'url', id: 'y', url: 'https://x/y.png' })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.kind).toBe('notfound')
+      expect(result.message).toContain('404')
+    }
+    expect(s.icons['urlcache:y']).toBeUndefined()
+  })
+
+  it('I59：超 200KB 上限 → 失败细分 kind=toolarge', async () => {
     const s = createIconStore(createMemoryStorage())
     await s.init()
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, blob: async () => new Blob([new ArrayBuffer(200 * 1024 + 1)]) })))
-    await expect(s.fetchAndCache({ kind: 'url', id: 'big', url: 'https://x/big.png' })).resolves.toBeNull()
-    expect(s.icons['url:big']).toBeUndefined()
+    const result = await s.fetchAndCache({ kind: 'url', id: 'big', url: 'https://x/big.png' })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.kind).toBe('toolarge')
+    expect(s.icons['urlcache:big']).toBeUndefined()
   })
 
-  it('fetchAndCache 失败不影响既有缓存', async () => {
-    const adapter: StorageAdapter = createMemoryStorage()
-    const s = createIconStore(adapter)
+  it('I58：remove(id) 只删图标 id，不触碰 urlcache: 命名空间', async () => {
+    const s = createIconStore(createMemoryStorage())
     await s.init()
-    await s.put('url:keep', DATA_URL)
-    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('CORS') }))
-    await expect(s.fetchAndCache({ kind: 'url', id: 'keep', url: 'https://x/k.png' })).resolves.toBeNull()
-    expect(s.icons['url:keep']).toBe(DATA_URL)
+    await s.put('github', DATA_URL)
+    await s.put('urlcache:github', DATA_URL) // 故意同名键（理论不会发生，但应保持隔离）
+    await s.remove('github')
+    expect(s.icons['github']).toBeUndefined()
+    expect(s.icons['urlcache:github']).toBe(DATA_URL)
+  })
+
+  it('I69：iconView URL 引用但缓存丢失 → 返回 { missing: true }', async () => {
+    const { iconView } = await import('../src/iconStore')
+    const ref: { kind: 'url'; id: 'lost'; url: 'https://x/x.png' } = { kind: 'url', id: 'lost', url: 'https://x/x.png' }
+    const empty = createIconStore(createMemoryStorage())
+    await empty.init()
+    const v = iconView(ref, empty)
+    expect(v).toBeDefined()
+    expect(v?.missing).toBe(true)
+    expect(v?.src).toBeUndefined()
   })
 })
