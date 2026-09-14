@@ -28,7 +28,8 @@ const form = reactive({
   icon: props.initial?.icon as EntryFormData['icon'],
 })
 const error = ref('')
-const isNew = !props.initial
+// isNew：预填对象（URI 导入）uuid 为哑值空串，须按新建处理（按钮「添加」而非「保存」）
+const isNew = !props.initial || !props.initial.uuid
 /** secret 遮蔽：默认 password，点右侧按钮明文查看 */
 const showSecret = ref(false)
 
@@ -64,8 +65,8 @@ function useRecommended() {
 const iconError = ref('')
 const iconUrlInput = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
-/** stored id：编辑沿用条目 uuid（重复上传即覆盖），新建先取随机 uuid（与最终 uuid 无关，仅作存储键） */
-const iconId = props.initial?.uuid ?? crypto.randomUUID()
+/** stored id：编辑沿用条目 uuid（重复上传即覆盖）；新建/预填（哑值空串 uuid）各取随机 uuid 作存储键，避免连续预填互相覆盖 */
+const iconId = props.initial?.uuid || crypto.randomUUID()
 
 function builtinHtml(path: string): string {
   return `<path d="${path}"></path>`

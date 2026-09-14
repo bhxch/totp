@@ -188,3 +188,34 @@ describe('EntryForm 图标推荐与选择', () => {
     expect(w.find('.pack-message').exists()).toBe(false)
   })
 })
+
+describe('EntryForm 预填哑值 uuid（URI 导入）边界', () => {
+  it('uuid 为空串的预填对象按新建处理：提交按钮显示「添加」', () => {
+    const w = mount(EntryForm, { props: { initial: { ...entry, uuid: '' }, groups: [] } })
+    expect(w.find('button[type="submit"]').text()).toBe('添加')
+  })
+
+  it('uuid 非空的编辑对象提交按钮显示「保存」', () => {
+    const w = mount(EntryForm, { props: { initial: entry, groups: [] } })
+    expect(w.find('button[type="submit"]').text()).toBe('保存')
+  })
+
+  it('预填对象拉取图标不以空串为存储键（?? 对 falsy 空串不兜底的回归）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, blob: async () => new Blob(['png-bytes'], { type: 'image/png' }) })))
+    try {
+      const store = createIconStore(createMemoryStorage())
+      const w = mount(EntryForm, {
+        props: { initial: { ...entry, uuid: '' }, groups: [], icons: { builtin: getBuiltinIcons(), stored: store.icons }, iconStore: store },
+      })
+      await w.find('details.icon-picker summary').trigger('click')
+      await w.find('input.icon-url').setValue('https://example.com/a.png')
+      await w.find('button.fetch-icon').trigger('click')
+      await vi.waitFor(() => expect(w.find('img.icon-current-img').attributes('src')).toMatch(/^data:image\/png;base64,/))
+      const keys = Object.keys(store.icons)
+      expect(keys).toHaveLength(1)
+      expect(keys[0]).toMatch(/^url:.+/) // url: 后必须跟非空 id，否则连续预填共享空串键互相覆盖
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})

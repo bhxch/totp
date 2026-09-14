@@ -65,16 +65,22 @@ let confirmTimer: ReturnType<typeof setTimeout> | null = null
 // ---------- otpauth URI 导入预填（粘贴框 / 协议回调 / 右键菜单共用） ----------
 const otpauthUri = ref('')
 const importError = ref('')
+/** 粘贴框开合经 open ref 绑定：@toggle 同步手动开合；导入成功自动收起 */
+const importOpen = ref(false)
+function onImportToggle(e: Event) {
+  importOpen.value = (e.target as HTMLDetailsElement).open
+}
 /** 导入预填对象（OtpEntry 形状，uuid/order/createdAt 为哑值）；与 editing 并存时导入预填优先 */
 const prefill = ref<OtpEntry | null>(null)
 /** 每次导入自增，驱动 EntryForm 重挂载以刷新预填 */
 const formKey = ref(0)
 
-/** URI → 表单预填；成功返回 null（并清除既有错误提示），失败返回中文错误消息（供粘贴框与后台入口共用） */
+/** URI → 表单预填；成功返回 null（并清除既有错误提示、收起粘贴框），失败返回中文错误消息（供粘贴框与后台入口共用） */
 function applyOtpauthPrefill(uri: string): string | null {
   const r = parseUriToEntryData(uri.trim())
   if ('error' in r) return r.error
   importError.value = ''
+  importOpen.value = false
   editing.value = null
   prefill.value = r.data
   creating.value = true
@@ -196,13 +202,14 @@ async function copy(entry: OtpEntry) {
       <span v-else-if="filterOn" class="hint">匹配 {{ matched.length }} 条</span>
     </div>
 
-    <details class="otpauth-import">
+    <!-- 错误提示置于 details 外常显：?uri= 回调报错时 details 默认折叠，放内部会静默不可见 -->
+    <div v-if="importError" class="error">{{ importError }}</div>
+    <details class="otpauth-import" :open="importOpen" @toggle="onImportToggle">
       <summary>粘贴 otpauth 链接导入</summary>
       <textarea v-model="otpauthUri" rows="2" placeholder="otpauth://totp/GitHub:me?secret=..." />
       <div class="import-row">
         <button type="button" @click="importOtpauth">导入</button>
       </div>
-      <div v-if="importError" class="error">{{ importError }}</div>
     </details>
 
     <EntryForm v-if="creating || editing" :key="editing?.uuid ?? (prefill ? `prefill-${formKey}` : 'new')" :initial="editing ?? prefill" :groups="vault.groups" :icons="entryIcons" :icon-store="icons" @save="onSave" @cancel="closeForm" />
