@@ -18,6 +18,9 @@ export interface MatchRule {
 
 export function baseUrlOf(host: string): string {
   const h = host.toLowerCase()
+  // IPv6 主机形如 [::1] 或 [::1]:8080；url.host 含端口时由调用方先剥离（含括号内的 IPv6）
+  // 含 '[' 即 IPv6 字面量，原样返回
+  if (h.startsWith('[')) return h
   const parts = h.split('.').filter(Boolean)
   if (parts.length <= 2) return parts.join('.')
   // IPv4（各段均为数字）原样返回，不当普通多段域名截取

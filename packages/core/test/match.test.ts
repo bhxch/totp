@@ -16,6 +16,11 @@ describe('baseUrlOf', () => {
   ])('%s → %s', (host, expected) => {
     expect(baseUrlOf(host)).toBe(expected)
   })
+
+  it('I38：IPv6 主机（含括号）原样返回，不按段切分', () => {
+    expect(baseUrlOf('[::1]')).toBe('[::1]')
+    expect(baseUrlOf('[2001:db8::1]')).toBe('[2001:db8::1]')
+  })
 })
 
 describe('urlMatches 五策略', () => {
