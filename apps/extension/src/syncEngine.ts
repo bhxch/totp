@@ -24,7 +24,9 @@ const SETTINGS_SYNC_KEY = 'sync:settings'
 const SECURITY_SYNC_KEY = 'sync:security'
 const CHUNK_PREFIX = 'sync:v1:'
 const APPLIED_REV_KEY = 'sync:appliedRev'
-const STATUS_KEY = 'sync:status'
+/** 设备本地记账（local 区）：UI 状态条读取的同步状态键（options 页 readStatus 复用） */
+export const SYNC_STATUS_KEY = 'sync:status'
+const STATUS_KEY = SYNC_STATUS_KEY
 
 export type SyncStatusState = 'ok' | 'quota' | 'error' | 'off'
 
@@ -205,3 +207,9 @@ export const pushSync = mkSerialized(async () => {
 
 /** 拉取：storage.onChanged(sync 区) 任一键变化即尝试；仅远端 rev 更新时应用 */
 export const pullSyncIfNewer = mkSerialized(pullOnce)
+
+/** 关闭同步时写入 off 状态（options 页 setSyncEnabled(false) 调用；页面端直写 local 区，
+ *  免 background 消息往返）：UI 状态条据此显示「未启用」 */
+export function markSyncOff(): Promise<void> {
+  return setSyncStatus('off')
+}

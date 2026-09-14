@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { backupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, OVERWRITE_NAME, SCHEMES_KEY, type BackupEnvelopeV1, type ImportScheme } from '@totp/core'
-import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, LockScreen, VaultManager, type BackupMode, type BackupPlatform, type ImportSchemesApi, type SecurityPlatform } from '@totp/ui'
+import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, LockScreen, VaultManager, type BackupMode, type BackupPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
 import { storageAdapter } from '../../src/store'
+import { markSyncOff, SYNC_STATUS_KEY } from '../../src/syncEngine'
 import {
   changePassphrase, commitSettings, disableEncryption, enableEncryption, hasEncryption, initStore, locked,
   registerStorageSync, replaceAllOp, settings, store,
@@ -149,6 +150,31 @@ const securityPlatform: SecurityPlatform = {
   },
 }
 
+/**
+ * 浏览器同步平台：开关经 settings+commitSettings 持久化（写路径由 store 统一调度推送）；
+ * 关闭时直写 local 区 sync:status='off'（engine 导出的 markSyncOff，免 background 往返）；
+ * 状态读取直查 local 区 sync:status，形状不符/读取失败按无状态处理。
+ */
+const syncPlatform: SyncPlatform = {
+  get syncEnabled() { return settings.syncEnabled },
+  async setSyncEnabled(v) {
+    settings.syncEnabled = v
+    await commitSettings()
+    if (!v) await markSyncOff().catch(() => {})
+  },
+  async readStatus() {
+    try {
+      const raw = (await chrome.storage.local.get(SYNC_STATUS_KEY))[SYNC_STATUS_KEY]
+      if (typeof raw !== 'object' || raw === null) return null
+      const s = raw as { state?: unknown; at?: unknown }
+      return typeof s.state === 'string' && typeof s.at === 'number' ? { state: s.state, at: s.at } : null
+    } catch {
+      return null
+    }
+  },
+  canSync: typeof chrome !== 'undefined' && !!chrome.storage?.sync,
+}
+
 const backupPlatform: BackupPlatform = {
   get mode() { return backupMode.value },
   async setMode(m) {
@@ -191,7 +217,7 @@ const backupPlatform: BackupPlatform = {
     <LockScreen v-if="locked" :store="store" />
     <template v-else>
       <div v-if="loadError" class="error">{{ loadError }}</div>
-      <VaultManager v-else :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :icons="icons" :schemes-api="schemesApi" enable-copy @copy="copyToClipboard" />
+      <VaultManager v-else :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :sync-platform="syncPlatform" :icons="icons" :schemes-api="schemesApi" enable-copy @copy="copyToClipboard" />
     </template>
   </main>
 </template>
