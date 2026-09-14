@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { aesGcmEncrypt, bytesToBase64, randomBytes } from '../src/crypto/aesgcm'
-import { setupVaultEncryption, unlockVaultEncryption } from '../src/security/securityStore'
+import { addPrfSource, setupVaultEncryption, unlockVaultEncryption } from '../src/security/securityStore'
 import type { SecuritySettings } from '../src/security/securityStore'
 import {
   kekSourcesOf, withPrfSource, withDpapiSource, removeKekSource, unlockWithPrf,
@@ -104,6 +104,50 @@ describe('removeKekSource 移除守护', () => {
   it('移除不存在的 kind：不抛，归一化写回', () => {
     const s2 = removeKekSource(bareSettings(), 'prf')
     expect(s2.kekSources).toEqual([{ kind: 'password' }])
+  })
+})
+
+describe('addPrfSource（securityStore 帮助函数）', () => {
+  it('缺省 settings 添加 prf：password+prf 并存，unlockWithPrf 解出原 DEK', async () => {
+    const { security, dek } = await setupVaultEncryption('{"v":1}', 'p')
+    const prfOutput = randomBytes(64)
+    const salt = bytesToBase64(randomBytes(32))
+    const s2 = await addPrfSource(security, dek, 'cred-1', prfOutput, salt)
+    expect(kekSourcesOf(s2)).toHaveLength(2)
+    expect(kekSourcesOf(s2)[1]).toMatchObject({ kind: 'prf', credentialId: 'cred-1', salt })
+    // wrappedDekP 契约 base64(nonce(12B)‖ct)：unlockWithPrf 走该解码路径成功即验证
+    expect(await unlockWithPrf(s2, prfOutput)).toEqual(dek)
+    // 口令路径不受影响
+    expect(await unlockVaultEncryption(s2, 'p')).toEqual(dek)
+    // 原对象不被修改
+    expect(security.kekSources).toBeUndefined()
+  })
+  it('同 credentialId 替换语义：旧条目被移除，旧 prfOutput 失效、新 prfOutput 可解', async () => {
+    const { security, dek } = await setupVaultEncryption('{"v":1}', 'p')
+    const oldPrf = randomBytes(64)
+    const s1 = await addPrfSource(security, dek, 'cred-1', oldPrf, 'c2FsdA==')
+    const newPrf = randomBytes(64)
+    const s2 = await addPrfSource(s1, dek, 'cred-1', newPrf, 'c2FsdEI=')
+    const prfEntries = kekSourcesOf(s2).filter((x) => x.kind === 'prf')
+    expect(prfEntries).toHaveLength(1)
+    expect(prfEntries[0]).toMatchObject({ kind: 'prf', credentialId: 'cred-1', salt: 'c2FsdEI=' })
+    expect(await unlockWithPrf(s2, newPrf)).toEqual(dek)
+    await expect(unlockWithPrf(s2, oldPrf)).rejects.toThrow('passkey 解锁失败')
+  })
+  it('不同 credentialId 并存：两个 prf 源均可用', async () => {
+    const { security, dek } = await setupVaultEncryption('{"v":1}', 'p')
+    const prfA = randomBytes(64)
+    const prfB = randomBytes(64)
+    const s1 = await addPrfSource(security, dek, 'cred-a', prfA, 'c2FsdEE=')
+    const s2 = await addPrfSource(s1, dek, 'cred-b', prfB, 'c2FsdEI=')
+    expect(kekSourcesOf(s2).filter((x) => x.kind === 'prf')).toHaveLength(2)
+    expect(await unlockWithPrf(s2, prfA, { credentialId: 'cred-a' })).toEqual(dek)
+    expect(await unlockWithPrf(s2, prfB, { credentialId: 'cred-b' })).toEqual(dek)
+  })
+  it('prfOutput 不足 32B 或 dek 非 32B → 抛错', async () => {
+    const { security, dek } = await setupVaultEncryption('{"v":1}', 'p')
+    await expect(addPrfSource(security, dek, 'c', randomBytes(16), 'c2FsdA==')).rejects.toThrow('invalid prf output')
+    await expect(addPrfSource(security, new Uint8Array(16), 'c', randomBytes(64), 'c2FsdA==')).rejects.toThrow('invalid dek')
   })
 })
 
