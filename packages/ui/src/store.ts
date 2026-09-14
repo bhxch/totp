@@ -192,6 +192,11 @@ export function createVueStore(
               }
               // 持有 DEK 才解密填充（changePassphrase 只重包裹、DEK 不变，旧 DEK 仍可解）
               replaceVault(JSON.parse(remoteJson) as Vault)
+              // 远端覆盖后必须强制锁定：注释承诺了「丢弃本端 DEK、转锁定」但未执行，
+              // 否则下次 commit 会以本端 DEK 加密 + 远端 security 落盘（仍属幽灵密文）。
+              // security 缓存同步重读为盘上值，与下次 unlock 的口令入口对齐
+              lock()
+              security.value = await readSecurity().catch(() => null)
               return
             }
             replaceVault(parsed as Vault)
