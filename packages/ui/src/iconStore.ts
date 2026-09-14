@@ -1,5 +1,12 @@
 import type { IconRef, StorageAdapter } from '@totp/core'
+import { getBuiltinIcons } from '@totp/core'
 import { reactive } from 'vue'
+
+/** 列表条目图标视图：OtpListItem icon prop（html=builtin path 片段；src=dataUrl）；无图标/解析失败 → undefined（回退首字母） */
+export interface IconView {
+  html?: string
+  src?: string
+}
 
 export interface IconStore {
   /** id→dataUrl 映射（含 'url:'+id 拉取缓存键），reactive */
@@ -74,4 +81,19 @@ export function createIconStore(adapter: StorageAdapter): IconStore {
   }
 
   return { icons, init, put, remove, resolve, fetchAndCache }
+}
+
+/**
+ * IconRef → IconView：builtin 用内置 path 构 `<path>` 片段（由 OtpListItem 包 `<svg viewBox="0 0 24 24" v-html>`，
+ * fill currentColor）；stored/url 经 store.resolve 取 dataUrl（url 走 'url:'+id 缓存键）。
+ * store 缺省时 builtin 仍可渲染，stored/url 不可解析 → undefined。
+ */
+export function iconView(ref: IconRef | undefined, icons?: IconStore): IconView | undefined {
+  if (!ref) return undefined
+  if (ref.kind === 'builtin') {
+    const bi = getBuiltinIcons()[ref.id]
+    return bi ? { html: `<path d="${bi.path}"></path>` } : undefined
+  }
+  const src = icons?.resolve(ref)
+  return src ? { src } : undefined
 }

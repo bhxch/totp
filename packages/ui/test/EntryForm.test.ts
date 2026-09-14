@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { createMemoryStorage, getBuiltinIcons, type OtpEntry } from '@totp/core'
 import EntryForm from '../src/components/EntryForm.vue'
-import type { OtpEntry } from '@totp/core'
+import { createIconStore } from '../src/iconStore'
 
 const entry: OtpEntry = {
   uuid: 'u1', type: 'totp', issuer: 'GitHub', label: 'me@ex.com', secret: 'JBSWY3DPEHPK3PXP',
@@ -61,5 +62,83 @@ describe('EntryForm', () => {
     await w.find('input[placeholder="密钥 base32"]').setValue('jbswy3dpehpk3pxp')
     await w.find('form').trigger('submit')
     expect(w.emitted('save')![0]![0]).toMatchObject({ secret: 'JBSWY3DPEHPK3PXP' })
+  })
+})
+
+describe('EntryForm 图标推荐与选择', () => {
+  const icons = () => ({ builtin: getBuiltinIcons(), stored: {} as Readonly<Record<string, string>> })
+  const issuerInput = (w: ReturnType<typeof mount>) => w.find('input[placeholder="服务名（如 GitHub）"]')
+
+  it('issuer 输入 github 防抖后出现推荐气泡，点「使用」后 save 携带 builtin icon', async () => {
+    const w = mount(EntryForm, { props: { initial: null, groups: [], icons: icons() } })
+    expect(w.text()).not.toContain('检测到图标')
+    await issuerInput(w).setValue('github')
+    // 300ms 防抖后才显示推荐
+    await vi.waitFor(() => expect(w.text()).toContain('检测到图标'))
+    expect(w.find('.icon-recommend svg.icon-preview').exists()).toBe(true)
+    await w.find('button.use-recommend-icon').trigger('click')
+    expect(w.text()).not.toContain('检测到图标')
+    await w.find('form').trigger('submit')
+    expect(w.emitted('save')![0]![0]).toMatchObject({ icon: { kind: 'builtin', id: 'github' } })
+  })
+
+  it('issuer 无匹配时不显示推荐气泡', async () => {
+    const w = mount(EntryForm, { props: { initial: null, groups: [], icons: icons() } })
+    await issuerInput(w).setValue('zzz-不存在的服务')
+    await new Promise((r) => setTimeout(r, 400))
+    await vi.waitFor(() => expect(issuerInput(w).element.value).toBe('zzz-不存在的服务'))
+    expect(w.text()).not.toContain('检测到图标')
+  })
+
+  it('图标选择区默认收起，展示当前图标（builtin→svg），清除后 save 不携带 icon', async () => {
+    const w = mount(EntryForm, {
+      props: { initial: { ...entry, icon: { kind: 'builtin', id: 'github' } }, groups: [], icons: icons() },
+    })
+    const picker = w.find('details.icon-picker')
+    expect(picker.exists()).toBe(true)
+    expect((picker.element as HTMLDetailsElement).open).toBe(false)
+    // 已有图标不弹推荐
+    await issuerInput(w).setValue('github')
+    await new Promise((r) => setTimeout(r, 400))
+    expect(w.text()).not.toContain('检测到图标')
+    await picker.find('summary').trigger('click')
+    expect(picker.find('svg.icon-preview').exists()).toBe(true)
+    await w.find('button.clear-icon').trigger('click')
+    await w.find('form').trigger('submit')
+    expect(w.emitted('save')![0]![0].icon).toBeUndefined()
+  })
+
+  it('URL 拉取成功后预览并随 save 携带 {kind:url}；清除按钮收起已设图标', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, blob: async () => new Blob(['png-bytes'], { type: 'image/png' }) })))
+    try {
+      const store = createIconStore(createMemoryStorage())
+      const w = mount(EntryForm, { props: { initial: null, groups: [], icons: { builtin: getBuiltinIcons(), stored: store.icons }, iconStore: store } })
+      await w.find('details.icon-picker summary').trigger('click')
+      await w.find('input.icon-url').setValue('https://example.com/a.png')
+      await w.find('button.fetch-icon').trigger('click')
+      await vi.waitFor(() => expect(w.find('img.icon-current-img').attributes('src')).toMatch(/^data:image\/png;base64,/))
+      await w.find('form').trigger('submit')
+      expect(w.emitted('save')![0]![0]).toMatchObject({ icon: { kind: 'url', url: 'https://example.com/a.png' } })
+      // store 内以 url:<id> 缓存
+      expect(Object.keys(store.icons).some((k) => k.startsWith('url:'))).toBe(true)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('URL 拉取失败显示错误提示且不设置 icon', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, blob: async () => new Blob([]) })))
+    try {
+      const store = createIconStore(createMemoryStorage())
+      const w = mount(EntryForm, { props: { initial: null, groups: [], icons: { builtin: getBuiltinIcons(), stored: store.icons }, iconStore: store } })
+      await w.find('details.icon-picker summary').trigger('click')
+      await w.find('input.icon-url').setValue('https://example.com/a.png')
+      await w.find('button.fetch-icon').trigger('click')
+      await vi.waitFor(() => expect(w.text()).toContain('图标拉取失败'))
+      await w.find('form').trigger('submit')
+      expect(w.emitted('save')![0]![0].icon).toBeUndefined()
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
