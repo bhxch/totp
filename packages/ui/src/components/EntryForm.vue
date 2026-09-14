@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { base32Decode, getBuiltinIcons, recommendBuiltinIcon, type BuiltinIcon, type Group, type HashAlgorithm, type OtpEntry } from '@totp/core'
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onScopeDispose, reactive, ref, watch } from 'vue'
 import { fileToScaledDataUrl, importIconPackZip } from '../iconImport'
 import type { IconStore } from '../iconStore'
 import { type EntryFormData, validateRegex } from './entryForm'
@@ -41,11 +41,32 @@ function cleanSecret(): string {
   return form.secret.replace(/\s+/g, '').toUpperCase()
 }
 
+/** I68：base32 实时校验——非 hotp 类型（不需 secret）+ secret 非空时按 [A-Z2-7]+=* 判定；用于输入框实时反馈。
+ *  实际合法性（含 RFC 4648 padding/长度）仍以 submit 时 base32Decode 为准；此处仅做轻量字符集合校验 */
+const isValidBase32 = computed(() => {
+  if (form.type === 'hotp') return true // hotp 不展示 secret 输入框
+  const s = cleanSecret()
+  if (!s) return true // 空串允许（HOTP 类型或预填待补）
+  return /^[A-Z2-7]+=*$/.test(s)
+})
+/** I68：inline 错误文案——非空 + 不合法时给提示，但不阻塞输入；submit 时 base32Decode 仍把关 */
+const base32Hint = computed(() => {
+  if (isValidBase32.value) return ''
+  return '密钥字符仅允许 A–Z 与 2–7（base32）'
+})
+
 // ---------- 图标推荐（issuer 防抖 300ms） ----------
 /** 用户是否已手动设置过图标（推荐气泡只在未手动设置时出现） */
 const iconTouched = ref(props.initial?.icon !== undefined)
 const recommended = ref<BuiltinIcon | null>(null)
 let recommendTimer: ReturnType<typeof setTimeout> | null = null
+// I67：组件卸载时清理防抖定时器，避免异步回调在 unmount 后写 ref 触发警告
+onScopeDispose(() => {
+  if (recommendTimer !== null) {
+    clearTimeout(recommendTimer)
+    recommendTimer = null
+  }
+})
 
 watch(
   () => form.issuer,
@@ -226,9 +247,18 @@ function submit() {
     </div>
     <input v-model="form.label" placeholder="账户名" />
     <div class="secret-row">
-      <input v-model="form.secret" :type="showSecret ? 'text' : 'password'" placeholder="密钥 base32" required autocomplete="off" />
+      <input
+        v-model="form.secret"
+        :type="showSecret ? 'text' : 'password'"
+        :class="{ invalid: !isValidBase32 }"
+        placeholder="密钥 base32"
+        required
+        autocomplete="off"
+      />
       <button type="button" class="secret-toggle" @click="showSecret = !showSecret">{{ showSecret ? '隐藏' : '显示' }}</button>
     </div>
+    <!-- I68：base32 实时校验的视觉反馈（不阻塞输入，submit 仍把关） -->
+    <p v-if="base32Hint" class="base32-hint" role="status">{{ base32Hint }}</p>
     <div class="advanced-row">
       <label class="field">
         算法
@@ -326,6 +356,8 @@ function submit() {
 .secret-row { display: flex; gap: 6px; }
 .secret-row input { flex: 1; }
 .secret-toggle { white-space: nowrap; }
+.base32-hint { font-size: 12px; color: #b8860b; margin: 0; }
+.entry-form input.invalid { border-color: #d9534f; }
 .advanced-row { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; }
 .advanced-row .field { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 80px; }
 .advanced-row .algorithm, .advanced-row .digits, .advanced-row .period, .advanced-row .counter { width: 100%; box-sizing: border-box; }

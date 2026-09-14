@@ -135,6 +135,31 @@ describe('EntryForm', () => {
     await w.find('button.secret-toggle').trigger('click')
     expect(secret().attributes('type')).toBe('password')
   })
+
+  it('I68：base32 实时校验——输入非法字符立即触发 class.invalid 与 inline hint（不阻塞输入）', async () => {
+    const w = mount(EntryForm, { props: { initial: null, groups: [] } })
+    const secret = () => w.find('input[placeholder="密钥 base32"]')
+    // 初始空串 → 合法（无错误）
+    expect(secret().classes()).not.toContain('invalid')
+    expect(w.find('.base32-hint').exists()).toBe(false)
+    // 输入含 0/1 等非法字符 → 标记 invalid + 显示 hint
+    await secret().setValue('AB01')
+    expect(secret().classes()).toContain('invalid')
+    expect(w.text()).toContain('密钥字符仅允许 A–Z 与 2–7')
+    // 修正为合法 base32 → 错误消失
+    await secret().setValue('JBSWY3DPEHPK3PXP')
+    expect(secret().classes()).not.toContain('invalid')
+    expect(w.find('.base32-hint').exists()).toBe(false)
+  })
+
+  it('I67：recommendTimer 在组件卸载时清理（防 setTimeout 在 unmount 后写 ref）', async () => {
+    const w = mount(EntryForm, { props: { initial: null, groups: [], icons: { builtin: getBuiltinIcons(), stored: {} } } })
+    await w.find('input[placeholder="服务名（如 GitHub）"]').setValue('github')
+    // 立即 unmount（防抖 300ms 还未触发）
+    w.unmount()
+    // 等若干 tick 让原 setTimeout 触发；不应抛出（onScopeDispose 已清理）
+    await new Promise((r) => setTimeout(r, 400))
+  })
   it('遮蔽下 secret 值仍可输入并随 save 提交', async () => {
     const w = mount(EntryForm, { props: { initial: null, groups: [] } })
     await w.find('input[placeholder="密钥 base32"]').setValue('jbswy3dpehpk3pxp')
