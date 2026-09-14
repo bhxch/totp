@@ -104,6 +104,8 @@ const emptyPaths = (): Record<MapFieldKey, string> => ({
 const rows = ref<unknown[]>([])
 const rowsKind = ref('')
 const paths = ref<Record<MapFieldKey, string>>(emptyPaths())
+/** 显式行数组点路径（留空走 findFirstArray 探测） */
+const rowsPath = ref('')
 
 // 常见键名猜测：按候选顺序扫描首行 keys（大小写不敏感）
 const GUESS: Array<{ key: MapFieldKey; candidates: string[] }> = [
@@ -156,6 +158,8 @@ async function saveScheme(): Promise<void> {
   if (!name) return fail(new Error('请先输入方案名称'))
   try {
     const s: ImportScheme = { id: crypto.randomUUID(), name, mapping, createdAt: Date.now() }
+    const rp = rowsPath.value.trim()
+    if (rp) s.rowsPath = rp
     const list = upsertScheme(schemes.value, s)
     await props.schemesApi.save(list)
     schemes.value = list
@@ -167,11 +171,12 @@ async function saveScheme(): Promise<void> {
   }
 }
 
-/** 应用方案：回填映射路径输入（覆盖预填/当前值），未映射字段清空；rowsPath 当前映射页无输入位，不回填 */
+/** 应用方案：回填映射路径输入（覆盖预填/当前值）与 rowsPath，未映射字段清空 */
 function applyScheme(): void {
   const s = schemes.value.find((x) => x.id === schemeSel.value)
   if (!s) return fail(new Error('请先选择方案'))
   for (const f of FIELDS) paths.value[f.key] = s.mapping[f.key]?.path ?? ''
+  rowsPath.value = s.rowsPath ?? ''
 }
 
 /** 删除方案：removeScheme 后整体落盘，清选中 */
@@ -210,6 +215,7 @@ function reset(): void {
   rows.value = []
   rowsKind.value = ''
   paths.value = emptyPaths()
+  rowsPath.value = ''
 }
 
 /** SQLite 文件头（SQLiteDatabase.HEADER_STRING，16 字节） */
@@ -370,6 +376,7 @@ async function nextFromPicked(): Promise<void> {
     rows.value = ex.rows
     rowsKind.value = ex.kind
     paths.value = emptyPaths()
+    rowsPath.value = ''
     guessPaths()
     sampleKeys.value = firstRowKeys()
     schemeName.value = ''
@@ -432,13 +439,14 @@ function buildMapping(): RowMapping | null {
   return mapping
 }
 
-/** 映射页下一步：组装 RowMapping 并解析 */
+/** 映射页下一步：组装 RowMapping 并解析；用户填写了 rowsPath 时按显式路径重新探测 */
 function nextFromMapping(): void {
   if (busy.value) return
   const mapping = buildMapping()
   if (!mapping) return fail(new Error('secret 字段的映射路径必填'))
   const text = fileText.value
-  const rowsOverride = rows.value
+  const rp = rowsPath.value.trim()
+  const rowsOverride = rp ? extractGenericRows(text, rp).rows : rows.value
   void parseAndConfirm(() => importGeneric(text, mapping, rowsOverride), { emptyGoesBack: true })
 }
 
@@ -536,6 +544,10 @@ function failureLabel(f: { index: number; message: string }): string {
 
     <template v-else-if="step === 'mapping'">
       <p class="meta">字段映射（点路径，如 otp.params.secret）· 共 {{ rows.length }} 行（{{ rowsKind }}）</p>
+      <div v-if="rowsKind === 'jsonObjectArray'" class="map-row">
+        <label>行数组路径</label>
+        <input v-model="rowsPath" data-field="rowsPath" placeholder="留空自动" />
+      </div>
       <div v-for="f in FIELDS" :key="f.key" class="map-row">
         <label>{{ f.label }}<span v-if="f.required" class="req">必填</span></label>
         <input v-model="paths[f.key]" :data-field="f.key" :placeholder="f.required ? '必填' : '留空使用默认值'" />

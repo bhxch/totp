@@ -82,4 +82,17 @@ describe('schemes', () => {
     expect(matchSchemes([], ['a'])).toEqual([])
     expect(matchSchemes([mk()], [])).toEqual([])
   })
+
+  it('I22：rowsPath 字段在 upsert 与 normalize 往返中保留', () => {
+    const a = mk({ id: 'a', rowsPath: 'data.items' })
+    const b = mk({ id: 'b' })
+    // upsert 同 id 覆盖保留 rowsPath
+    const updated = upsertScheme([a, b], { ...a, rowsPath: 'data.entries' })
+    expect(updated[0]).toMatchObject({ id: 'a', rowsPath: 'data.entries' })
+    // 归一化合法 rowsPath 保留
+    expect(normalizeSchemes([a, b])).toEqual([
+      { id: 'a', name: '方案一', rowsPath: 'data.items', mapping: a.mapping, createdAt: 1000 },
+      { id: 'b', name: '方案一', mapping: a.mapping, createdAt: 1000 },
+    ])
+  })
 })
