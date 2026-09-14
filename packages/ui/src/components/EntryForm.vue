@@ -19,6 +19,8 @@ const form = reactive({
 })
 const error = ref('')
 const isNew = !props.initial
+/** secret 遮蔽：默认 password，点右侧按钮明文查看 */
+const showSecret = ref(false)
 
 function cleanSecret(): string {
   return form.secret.replace(/\s+/g, '').toUpperCase()
@@ -47,7 +49,10 @@ function submit() {
     </select>
     <input v-model="form.issuer" placeholder="服务名（如 GitHub）" />
     <input v-model="form.label" placeholder="账户名" />
-    <input v-model="form.secret" placeholder="密钥 base32" required />
+    <div class="secret-row">
+      <input v-model="form.secret" :type="showSecret ? 'text' : 'password'" placeholder="密钥 base32" required autocomplete="off" />
+      <button type="button" class="secret-toggle" @click="showSecret = !showSecret">{{ showSecret ? '隐藏' : '显示' }}</button>
+    </div>
     <textarea v-model="form.note" placeholder="备注（可选）" rows="2" />
     <fieldset v-if="(groups ?? []).length > 0">
       <legend>分组</legend>
@@ -83,6 +88,9 @@ function submit() {
 .entry-form { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid rgba(128,128,128,.4); border-radius: 8px; }
 .entry-form input, .entry-form select, .entry-form textarea, .entry-form button { padding: 6px 8px; box-sizing: border-box; }
 .entry-form textarea { resize: vertical; font-family: inherit; }
+.secret-row { display: flex; gap: 6px; }
+.secret-row input { flex: 1; }
+.secret-toggle { white-space: nowrap; }
 fieldset { border: 1px solid rgba(128,128,128,.3); border-radius: 6px; display: flex; gap: 10px; flex-wrap: wrap; }
 .group-check { font-size: 13px; display: flex; align-items: center; gap: 4px; }
 .rule-row { display: flex; gap: 6px; }

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { entryMatchesUrl, type OtpEntry } from '@totp/core'
-import { EntryForm, OtpListItem, SearchBar, useOtpCodes, type EntryFormData } from '@totp/ui'
+import { CLIPBOARD_CLEAR_DELAY_MS, EntryForm, LockScreen, OtpListItem, SearchBar, useOtpCodes, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
 import {
-  addEntryOp, commitSettings, initStore, registerStorageSync, removeEntryOp, settings, updateEntryOp, vault,
+  addEntryOp, commitSettings, initStore, locked, registerStorageSync, removeEntryOp, settings, store, updateEntryOp, vault,
 } from '../../src/store'
 
 const loaded = ref(false)
@@ -71,21 +71,41 @@ function askRemove(uuid: string) {
   confirmTimer = setTimeout(() => (confirmingDelete.value = null), 3000)
 }
 
+/**
+ * 30s 清剪贴板：popup 复制后即将关闭，本地定时器随窗口销毁不可靠——
+ * Chromium（有 offscreen API）交由 background(alarms+offscreen) 承载；Firefox 无 offscreen 降级不调度
+ */
+function scheduleClipboardClear(): void {
+  if (!settings.clipboardClearEnabled) return
+  if (typeof chrome === 'undefined' || !chrome.offscreen) return
+  void chrome.runtime.sendMessage({ type: 'schedule-clipboard-clear', delayMs: CLIPBOARD_CLEAR_DELAY_MS }).catch(() => {})
+}
+const copied = ref(false) // 「已复制」横幅显隐
+let closeTimer: ReturnType<typeof setTimeout> | null = null
+
 async function copy(entry: OtpEntry) {
   const c = codes.value.get(entry.uuid)?.code
   if (!c) return
   await navigator.clipboard.writeText(c)
-  window.close()
+  scheduleClipboardClear()
+  // HOTP：复制的是旧 counter 的码（RFC 语义），复制完成后再递增
+  if (entry.type === 'hotp') await updateEntryOp(entry.uuid, { counter: (entry.counter ?? 0) + 1 })
+  // 「已复制」反馈：横幅提示后按 popupCloseDelayMs 延迟关闭（简单实现：不重置，到点关闭）
+  copied.value = true
+  if (closeTimer) clearTimeout(closeTimer)
+  closeTimer = setTimeout(() => window.close(), settings.popupCloseDelayMs ?? 2000)
 }
 </script>
 
 <template>
-  <main>
+  <LockScreen v-if="locked" :store="store" />
+  <main v-else>
     <header>
       <h1>TOTP 验证码</h1>
       <button v-if="!creating && !editing" @click="creating = true; editing = null">＋ 添加</button>
     </header>
 
+    <div v-if="copied" class="copied-banner">已复制到剪贴板</div>
     <div v-if="error" class="error">{{ error }}</div>
 
     <SearchBar v-model="query" />
@@ -121,6 +141,7 @@ main { display: flex; flex-direction: column; gap: 4px; }
 header { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 8px; }
 h1 { font-size: 16px; margin: 0; }
 .error { color: #d9534f; font-size: 12px; }
+.copied-banner { font-size: 12px; color: #2e7d32; background: #e8f5e9; border-radius: 6px; padding: 4px 8px; margin: 0 4px; }
 .filter-row { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 0 4px; }
 .hint { opacity: .6; }
 .empty { text-align: center; opacity: .6; padding: 32px 0; }

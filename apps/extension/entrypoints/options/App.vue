@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { backupFileName, createBackupEnvelope, openBackupEnvelope, OVERWRITE_NAME, type BackupEnvelopeV1 } from '@totp/core'
-import { VaultManager, type BackupMode, type BackupPlatform } from '@totp/ui'
-import { onMounted, ref } from 'vue'
-import { initStore, registerStorageSync, replaceAllOp, store } from '../../src/store'
+import { CLIPBOARD_CLEAR_DELAY_MS, LockScreen, VaultManager, type BackupMode, type BackupPlatform, type SecurityPlatform } from '@totp/ui'
+import { computed, onMounted, ref } from 'vue'
+import {
+  changePassphrase, commitSettings, disableEncryption, enableEncryption, hasEncryption, initStore, locked,
+  registerStorageSync, replaceAllOp, settings, store,
+} from '../../src/store'
 
 const loadError = ref('')
 
@@ -15,8 +18,19 @@ onMounted(async () => {
   }
 })
 
+/**
+ * 30s 清剪贴板：统一走 background(alarms+offscreen) 承载（与 popup 一致，重复复制由同名 alarm 覆盖重置）；
+ * Firefox 无 offscreen API 降级不调度
+ */
+function scheduleClipboardClear(): void {
+  if (!settings.clipboardClearEnabled) return
+  if (typeof chrome === 'undefined' || !chrome.offscreen) return
+  void chrome.runtime.sendMessage({ type: 'schedule-clipboard-clear', delayMs: CLIPBOARD_CLEAR_DELAY_MS }).catch(() => {})
+}
+
 async function copyToClipboard(code: string) {
   await navigator.clipboard.writeText(code)
+  scheduleClipboardClear()
 }
 
 // ---------- 备份平台实现 ----------
@@ -89,6 +103,27 @@ function pickFile(accept: string): Promise<File | null> {
 
 const pickBackupFile = (): Promise<File | null> => pickFile('.totpbackup')
 
+/** 安全平台：security 闭包绑 store；剪贴板/弹窗延迟走 settings+commitSettings（extension 有 popup，提供 popupCloseDelayMs） */
+const securityPlatform: SecurityPlatform = {
+  security: {
+    locked,
+    hasEncryption,
+    enableEncryption: (pw) => enableEncryption(pw),
+    disableEncryption: () => disableEncryption(),
+    changePassphrase: (pw) => changePassphrase(pw),
+  },
+  clipboardClearEnabled: computed(() => settings.clipboardClearEnabled),
+  async setClipboardClear(v) {
+    settings.clipboardClearEnabled = v
+    await commitSettings()
+  },
+  popupCloseDelayMs: computed(() => settings.popupCloseDelayMs),
+  async setPopupCloseDelay(ms) {
+    settings.popupCloseDelayMs = ms
+    await commitSettings()
+  },
+}
+
 const backupPlatform: BackupPlatform = {
   get mode() { return backupMode.value },
   async setMode(m) {
@@ -119,8 +154,11 @@ const backupPlatform: BackupPlatform = {
 <template>
   <main class="page">
     <h1>TOTP 验证码工具</h1>
-    <div v-if="loadError" class="error">{{ loadError }}</div>
-    <VaultManager v-else :store="store" :platform="backupPlatform" enable-copy @copy="copyToClipboard" />
+    <LockScreen v-if="locked" :store="store" />
+    <template v-else>
+      <div v-if="loadError" class="error">{{ loadError }}</div>
+      <VaultManager v-else :store="store" :platform="backupPlatform" :security-platform="securityPlatform" enable-copy @copy="copyToClipboard" />
+    </template>
   </main>
 </template>
 

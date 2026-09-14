@@ -9,7 +9,10 @@ export const store = createVueStore(createChromeStorage(), {
     }),
 })
 
-export const { vault, settings, initStore, registerStorageSync, commit, commitSettings } = store
+export const {
+  vault, settings, initStore, registerStorageSync, commit, commitSettings,
+  locked, hasEncryption, unlock, lock, enableEncryption, disableEncryption, changePassphrase,
+} = store
 export const addEntryOp = store.addEntryOp
 export const updateEntryOp = store.updateEntryOp
 export const removeEntryOp = store.removeEntryOp

@@ -8,9 +8,11 @@ import EntryForm from './EntryForm.vue'
 import ImportCard from './ImportCard.vue'
 import OtpListItem from './OtpListItem.vue'
 import SearchBar from './SearchBar.vue'
+import SecurityCard from './SecurityCard.vue'
 import type { BackupPlatform } from './backupPlatform'
 import type { EntryFormData } from './entryForm'
 import type { ImportPlatform } from './importPlatform'
+import type { SecurityPlatform } from './securityPlatform'
 
 const props = withDefaults(defineProps<{
   store: VueStore
@@ -18,7 +20,9 @@ const props = withDefaults(defineProps<{
   enableCopy?: boolean
   /** 备份平台实现；null/缺省不渲染备份卡（popup 零影响） */
   platform?: BackupPlatform | null
-}>(), { enableCopy: false, platform: null })
+  /** 安全平台实现（加密开关/换口令/剪贴板等通用设置）；null/缺省不渲染安全卡（popup 零影响） */
+  securityPlatform?: SecurityPlatform | null
+}>(), { enableCopy: false, platform: null, securityPlatform: null })
 
 const emit = defineEmits<{ copy: [code: string] }>()
 
@@ -70,11 +74,13 @@ async function addGroup() {
   await props.store.addGroupOp(name)
   newGroupName.value = ''
 }
-function onCopy(entry: OtpEntry) {
+async function onCopy(entry: OtpEntry) {
   if (!props.enableCopy) return
   const c = codes.value.get(entry.uuid)?.code
   if (!c) return
   emit('copy', c)
+  // HOTP：复制的是旧 counter 的码（RFC 语义），复制完成后再递增
+  if (entry.type === 'hotp') await props.store.updateEntryOp(entry.uuid, { counter: (entry.counter ?? 0) + 1 })
 }
 </script>
 
@@ -126,6 +132,7 @@ function onCopy(entry: OtpEntry) {
     </div>
   </section>
 
+  <SecurityCard :platform="securityPlatform" />
   <BackupCard :platform="platform" :vault-json="vaultJson" />
   <ImportCard :platform="importPlatform" />
 </template>

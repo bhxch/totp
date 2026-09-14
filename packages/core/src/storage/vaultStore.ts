@@ -23,9 +23,18 @@ export const SETTINGS_KEY = 'settings'
 export interface AppSettings {
   urlFilterEnabled: boolean
   blurHideEnabled: boolean
+  /** 复制后 30s 自动清空剪贴板 */
+  clipboardClearEnabled: boolean
+  /** popup「已复制」反馈后的自动关闭延迟（毫秒） */
+  popupCloseDelayMs: number
 }
 
-export const DEFAULT_SETTINGS: AppSettings = { urlFilterEnabled: true, blurHideEnabled: false }
+export const DEFAULT_SETTINGS: AppSettings = {
+  urlFilterEnabled: true,
+  blurHideEnabled: false,
+  clipboardClearEnabled: true,
+  popupCloseDelayMs: 2000,
+}
 
 export async function loadSettings(adapter: StorageAdapter): Promise<AppSettings> {
   const raw = await adapter.get(SETTINGS_KEY)
@@ -35,6 +44,8 @@ export async function loadSettings(adapter: StorageAdapter): Promise<AppSettings
     return {
       urlFilterEnabled: typeof parsed.urlFilterEnabled === 'boolean' ? parsed.urlFilterEnabled : DEFAULT_SETTINGS.urlFilterEnabled,
       blurHideEnabled: typeof parsed.blurHideEnabled === 'boolean' ? parsed.blurHideEnabled : DEFAULT_SETTINGS.blurHideEnabled,
+      clipboardClearEnabled: typeof parsed.clipboardClearEnabled === 'boolean' ? parsed.clipboardClearEnabled : DEFAULT_SETTINGS.clipboardClearEnabled,
+      popupCloseDelayMs: typeof parsed.popupCloseDelayMs === 'number' ? parsed.popupCloseDelayMs : DEFAULT_SETTINGS.popupCloseDelayMs,
     }
   } catch {
     return { ...DEFAULT_SETTINGS }
