@@ -51,6 +51,15 @@ describe('securityStore', () => {
     const bad = { ...security, kdf: { ...security.kdf, t: 99999 } } as typeof security
     await expect(unlockVaultEncryption(bad, 'p')).rejects.toThrow('invalid security settings')
   })
+  it('kdf 下限违规拒绝（m<1024/t<1/p<1；OWASP 最低推荐）', async () => {
+    const { security } = await setupVaultEncryption(vaultJson, 'p')
+    const badM = { ...security, kdf: { ...security.kdf, m: 512 } } as typeof security
+    const badT = { ...security, kdf: { ...security.kdf, t: 0 } } as typeof security
+    const badP = { ...security, kdf: { ...security.kdf, p: 0 } } as typeof security
+    await expect(unlockVaultEncryption(badM, 'p')).rejects.toThrow('invalid security settings')
+    await expect(unlockVaultEncryption(badT, 'p')).rejects.toThrow('invalid security settings')
+    await expect(unlockVaultEncryption(badP, 'p')).rejects.toThrow('invalid security settings')
+  })
   it('encrypt 对非 32B dek 抛 invalid dek；结构非法拒绝', async () => {
     await expect(encryptVaultWithDek(new Uint8Array(16), '{}')).rejects.toThrow('invalid dek')
     await expect(unlockVaultEncryption({ v: 2 } as never, 'p')).rejects.toThrow('invalid security settings')

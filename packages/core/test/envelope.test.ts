@@ -32,6 +32,13 @@ describe('envelope', () => {
     await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, t: 99999 } }, 'p')).rejects.toThrow('invalid backup envelope')
     await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, m: 2 ** 21 + 1 } }, 'p')).rejects.toThrow('invalid backup envelope')
   })
+  it('kdf 参数下限违规抛 invalid backup envelope（m<1024/t<1/p<1 拒绝；OWASP 最低推荐）', async () => {
+    const env = await createBackupEnvelope(vaultJson, 'p')
+    await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, m: 512 } }, 'p')).rejects.toThrow('invalid backup envelope')
+    await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, t: 0 } }, 'p')).rejects.toThrow('invalid backup envelope')
+    await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, p: 0 } }, 'p')).rejects.toThrow('invalid backup envelope')
+    await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, m: 1023 } }, 'p')).rejects.toThrow('invalid backup envelope')
+  })
   it('同口令两次创建产生不同 salt/nonce（随机性）', async () => {
     const a = await createBackupEnvelope(vaultJson, 'p')
     const b = await createBackupEnvelope(vaultJson, 'p')

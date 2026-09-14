@@ -21,17 +21,20 @@ export interface EncryptedVault { v: 1; enc: true; dataNonce: string; ciphertext
 
 export const SECURITY_KEY = 'security'
 
-// 钳制 security 自带的 KDF 参数：恶意数据可声明超大 m/t/p 使 argon2id 资源耗尽；
-// 上限与 backup/envelope 一致（m=2**21/t=10/p=8），超限或非数字一律拒绝
+// 钳制 security 自带的 KDF 参数：恶意数据可声明超大/超小 m/t/p 使 argon2id 资源耗尽或被旁路；
+// 下限遵循 Argon2id 规范/OWASP 最低推荐（m≥1024 KiB / t≥1 / p≥1），上限与 backup/envelope 一致（m=2**21/t=10/p=8）
+const MIN_M = 1024
 const MAX_M = 2 ** 21
+const MIN_T = 1
 const MAX_T = 10
+const MIN_P = 1
 const MAX_P = 8
 
 function assertKdfParams(params: { m?: unknown; t?: unknown; p?: unknown }): void {
   if (
-    (params.m !== undefined && (typeof params.m !== 'number' || params.m > MAX_M)) ||
-    (params.t !== undefined && (typeof params.t !== 'number' || params.t > MAX_T)) ||
-    (params.p !== undefined && (typeof params.p !== 'number' || params.p > MAX_P))
+    (params.m !== undefined && (typeof params.m !== 'number' || params.m < MIN_M || params.m > MAX_M)) ||
+    (params.t !== undefined && (typeof params.t !== 'number' || params.t < MIN_T || params.t > MAX_T)) ||
+    (params.p !== undefined && (typeof params.p !== 'number' || params.p < MIN_P || params.p > MAX_P))
   ) throw new Error('invalid security settings')
 }
 

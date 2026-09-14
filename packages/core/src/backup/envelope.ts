@@ -45,12 +45,12 @@ export async function openBackupEnvelope(env: unknown, password: string): Promis
   if (!isBackupEnvelope(env)) throw new Error('invalid backup envelope')
   const kdf = env.kdf as { alg?: string; m?: number; t?: number; p?: number; salt?: string }
   if (kdf.alg !== 'argon2id' || typeof kdf.salt !== 'string') throw new Error('invalid backup envelope')
-  // 钳制 envelope 自带的 KDF 参数：恶意文件可声明超大 m/t/p 使 argon2id 资源耗尽；
-  // 上限为正常写入参数（m=65536/t=3/p=1）的宽裕倍数，超限一律拒绝
+  // 钳制 envelope 自带的 KDF 参数：恶意文件可声明超大/超小 m/t/p 使 argon2id 资源耗尽或被旁路；
+  // 下限遵循 Argon2id 规范/OWASP 最低推荐（m≥1024 KiB / t≥1 / p≥1），上限为正常写入参数（m=65536/t=3/p=1）的宽裕倍数，超限一律拒绝
   if (
-    (kdf.m !== undefined && (typeof kdf.m !== 'number' || kdf.m > 2 ** 21)) ||
-    (kdf.t !== undefined && (typeof kdf.t !== 'number' || kdf.t > 10)) ||
-    (kdf.p !== undefined && (typeof kdf.p !== 'number' || kdf.p > 8))
+    (kdf.m !== undefined && (typeof kdf.m !== 'number' || kdf.m < 1024 || kdf.m > 2 ** 21)) ||
+    (kdf.t !== undefined && (typeof kdf.t !== 'number' || kdf.t < 1 || kdf.t > 10)) ||
+    (kdf.p !== undefined && (typeof kdf.p !== 'number' || kdf.p < 1 || kdf.p > 8))
   ) throw new Error('invalid backup envelope')
   let kek: Uint8Array
   try {
