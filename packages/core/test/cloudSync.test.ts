@@ -71,17 +71,47 @@ describe('syncWithCloud', () => {
     expect(backend.putCount).toBe(1)
   })
 
-  it('云端 hash 与 localHash 一致 → in-sync，不写云端', async () => {
-    const { bytes, hash } = await putRemoteEnvelope(REMOTE_VAULT, PASSWORD)
+  it('远端字节与本地 vault 内容一致 → in-sync（不依赖 cloudRev），不写云端', async () => {
+    const bytes = ENC.encode(LOCAL_VAULT)
     const backend = mockBackend(bytes)
-    const out = await syncWithCloud({ backend, path: PATH, vaultJson: LOCAL_VAULT, password: PASSWORD, localHash: hash })
+    const out = await syncWithCloud({
+      backend,
+      path: PATH,
+      vaultJson: LOCAL_VAULT,
+      password: PASSWORD,
+      localHash: '0'.repeat(64), // cloudRev 不一致也以内容一致优先
+    })
     expect(out.action).toBe('in-sync')
-    expect(out.hash).toBe(hash)
-    expect(out.envelopeJson).toBe(new TextDecoder().decode(bytes))
+    expect(out.hash).toBe(await sha256Hex(bytes))
+    expect(out.envelopeJson).toBe(LOCAL_VAULT)
     expect(backend.putCount).toBe(0)
   })
 
-  it('首次接云（localHash=null，远端可解）→ downloaded：先存本地冲突副本，envelopeJson 为远端明文', async () => {
+  it('本地较新（远端 == cloudRev 且 != 本地内容）→ uploaded：put 一次，云端可解开为本地 vault', async () => {
+    const { bytes, hash } = await putRemoteEnvelope(REMOTE_VAULT, PASSWORD)
+    const backend = mockBackend(bytes)
+    const out = await syncWithCloud({ backend, path: PATH, vaultJson: LOCAL_VAULT, password: PASSWORD, localHash: hash })
+    expect(out.action).toBe('uploaded')
+    expect(backend.putCount).toBe(1)
+    expect(out.hash).toBe(await sha256Hex(backend.store.get(PATH)!))
+    const env = JSON.parse(new TextDecoder().decode(backend.store.get(PATH)!))
+    expect(await import('../src/backup/envelope').then((m) => m.openBackupEnvelope(env, PASSWORD))).toBe(LOCAL_VAULT)
+  })
+
+  it('put 后回读内容与所传字节不一致 → 抛「云端校验失败」，不返回 uploaded', async () => {
+    const backend = mockBackend()
+    const origPut = backend.put.bind(backend)
+    backend.put = async (p, data) => {
+      await origPut(p, data)
+      backend.store.set(PATH, ENC.encode('tampered-by-cloud')) // 模拟云端落盘内容损坏
+    }
+    await expect(
+      syncWithCloud({ backend, path: PATH, vaultJson: LOCAL_VAULT, password: PASSWORD, localHash: null }),
+    ).rejects.toThrow('云端校验失败：上传内容与回读不一致')
+    expect(backend.store.get(PATH)!).toEqual(ENC.encode('tampered-by-cloud'))
+  })
+
+  it('首次接云（localHash=null，远端可解）→ downloaded：冲突副本为加密 envelope（可同口令解开），envelopeJson 为远端明文', async () => {
     const { bytes, hash } = await putRemoteEnvelope(REMOTE_VAULT, PASSWORD)
     const backend = mockBackend(bytes)
     const seen: Uint8Array[] = []
@@ -98,27 +128,35 @@ describe('syncWithCloud', () => {
     })
     expect(out.action).toBe('downloaded')
     expect(seen).toHaveLength(1)
-    expect(new TextDecoder().decode(seen[0]!)).toBe(LOCAL_VAULT)
+    const copyEnv = JSON.parse(new TextDecoder().decode(seen[0]!))
+    expect(await import('../src/backup/envelope').then((m) => m.openBackupEnvelope(copyEnv, PASSWORD))).toBe(LOCAL_VAULT)
     expect(out.conflictBackup).toBe('conflict-1.json')
     expect(out.hash).toBe(hash)
     expect(out.envelopeJson).toBe(REMOTE_VAULT)
     expect(backend.putCount).toBe(0)
   })
 
-  it('基线不一致（localHash 有值但内容不同，远端可解）→ conflict-resolved，回调返回文件名回填', async () => {
+  it('基线不一致（localHash 有值但内容不同，远端可解）→ conflict-resolved，副本加密可解开', async () => {
     const { bytes } = await putRemoteEnvelope(REMOTE_VAULT, PASSWORD)
     const backend = mockBackend(bytes)
+    const seen: Uint8Array[] = []
     const out = await syncWithCloud({
       backend,
       path: PATH,
       vaultJson: LOCAL_VAULT,
       password: PASSWORD,
       localHash: '0'.repeat(64),
-      onConflictBackup: () => 'conflict-2.json',
+      onConflictBackup: (b) => {
+        seen.push(b)
+        return 'conflict-2.json'
+      },
     })
     expect(out.action).toBe('conflict-resolved')
     expect(out.conflictBackup).toBe('conflict-2.json')
     expect(out.envelopeJson).toBe(REMOTE_VAULT)
+    const copyEnv = JSON.parse(new TextDecoder().decode(seen[0]!))
+    expect(await import('../src/backup/envelope').then((m) => m.openBackupEnvelope(copyEnv, PASSWORD))).toBe(LOCAL_VAULT)
+    expect(new TextDecoder().decode(seen[0]!)).not.toContain('local') // 副本为密文，不含明文片段
   })
 
   it('冲突回调返回 null / 未提供回调 → conflictBackup 为 undefined，分支仍完成', async () => {

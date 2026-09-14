@@ -88,7 +88,7 @@ pnpm --filter @totp/desktop tauri build  # 构建，产物为 exe + NSIS 安装�
 | S3 兼容 | Region + Bucket + AccessKeyId + SecretAccessKey；Endpoint 可选（如 MinIO `http://localhost:9000`），填了走 path-style；Key 前缀可选 |
 | Google Drive | OAuth Access Token（文件 id 首次推送自动创建并回存凭据） |
 | OneDrive | Microsoft Graph Access Token（写入云盘根目录下同名文件） |
-| GitHub Gist | GitHub Token + Gist ID |
+| GitHub Gist | GitHub Token + Gist ID（建议使用 secret gist，避免备份内容暴露在公开页） |
 
 - S3 上传为纯 fetch 实现的 AWS Signature V4 签名（无 SDK 依赖），兼容 MinIO 等自托管服务
 - 凭据仅存本地（桌面：`%APPDATA%/com.totp.desktop/` 下本地 JSON；插件：`chrome.storage.local`，不进浏览器同步区），随代码一起落地的只有你手动粘贴的内容；token 过期需自行重新获取粘贴

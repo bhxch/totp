@@ -1,12 +1,18 @@
 /**
- * 云同步编排：本地明文 vault 与云端加密 envelope 的单向同步（last-write-wins + 冲突副本保留）。
+ * 云同步编排：本地明文 vault 与云端加密 envelope 的同步（真 last-write-wins + 冲突副本保留）。
  *
- * 分支语义：
- * - 云端不存在：createBackupEnvelope 加密本地 → put → uploaded（hash 为所传字节摘要，调用方存为 cloudRev）
- * - 云端存在且内容 hash 与 localHash 一致：in-sync（回读校验，不写云端）
- * - 不一致且远端可用当前口令解密（远端较新或本地曾推）：先经 onConflictBackup 保留本地冲突副本，
- *   再以远端覆盖本地——localHash 缺失（首次接云）为 downloaded，有基线但内容不同为 conflict-resolved
- * - 不一致且解密失败（口令错/结构坏）：抛中文错误，不做任何写操作
+ * localHash 参数是调用方持有的 cloudRev（上次已知云端内容 hash）；本地内容 hash 每次现算，不依赖它。
+ *
+ * 分支语义（按序判定）：
+ * - 云端不存在：createBackupEnvelope 加密本地 → put → 回读校验 → uploaded
+ * - remoteHash === sha256(vaultJson)：本地与云端内容一致 → in-sync（不写云端）
+ * - remoteHash === cloudRev：远端未变、本地已改（本地较新）→ 推送本地 envelope → 回读校验 → uploaded
+ * - 其余（远端已变且与本地不同）：openBackupEnvelope 解远端——
+ *   - 成功：先经 onConflictBackup 把本地内容保存为加密冲突副本（envelope 字节），再采用远端覆盖本地——
+ *     cloudRev 缺失（首次接云）为 downloaded，有基线为 conflict-resolved
+ *   - 失败（口令错/结构坏）：抛中文错误，不做任何写操作
+ *
+ * uploaded 两分支均做 put 后 get 回读 sha256 比对，防止假写成功。
  *
  * envelopeJson 含义按分支：uploaded 为本次上传的 envelope JSON；in-sync 为云端原始 envelope JSON 文本；
  * downloaded / conflict-resolved 为解密后的远端 vault JSON（调用方据此覆盖本地存储）。
@@ -28,7 +34,7 @@ export interface SyncWithCloudOpts {
   password: string
   /** 上次已知云端内容 hash（cloudRev）；null 表示从未接云 */
   localHash: string | null
-  /** 冲突分支回调：把本地内容持久化为冲突副本，可返回文件名（回填到 outcome.conflictBackup）。 */
+  /** 冲突分支回调：把本地内容持久化为加密冲突副本（参数为 envelope JSON 字节，可被 openBackupEnvelope 恢复），可返回文件名（回填到 outcome.conflictBackup）。 */
   onConflictBackup?: (bytes: Uint8Array) => string | null | void | Promise<string | null | void>
   onCredChange?: never
 }
@@ -39,24 +45,45 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
+/** 加密本地 → put → 回读 sha256 比对（不一致抛中文错误），返回 uploaded 结果。 */
+async function pushLocal(
+  backend: CloudBackend,
+  path: string,
+  vaultJson: string,
+  password: string,
+): Promise<CloudSyncOutcome & { hash: string; envelopeJson: string }> {
+  const envelopeJson = JSON.stringify(await createBackupEnvelope(vaultJson, password))
+  const bytes = new TextEncoder().encode(envelopeJson)
+  const hash = await sha256Hex(bytes)
+  await backend.put(path, bytes)
+  const readBack = await backend.get(path)
+  if (readBack === null || (await sha256Hex(readBack)) !== hash) {
+    throw new Error('云端校验失败：上传内容与回读不一致')
+  }
+  return { action: 'uploaded', hash, envelopeJson }
+}
+
 export async function syncWithCloud(
   opts: SyncWithCloudOpts,
 ): Promise<CloudSyncOutcome & { hash: string; envelopeJson: string }> {
-  const { backend, path, vaultJson, password, localHash, onConflictBackup } = opts
+  const { backend, path, vaultJson, password, localHash: cloudRev, onConflictBackup } = opts
 
   const remote = (await backend.exists(path)) ? await backend.get(path) : null
   if (remote === null) {
-    const envelopeJson = JSON.stringify(await createBackupEnvelope(vaultJson, password))
-    const bytes = new TextEncoder().encode(envelopeJson)
-    await backend.put(path, bytes)
-    return { action: 'uploaded', hash: await sha256Hex(bytes), envelopeJson }
+    return await pushLocal(backend, path, vaultJson, password)
   }
 
-  const hash = await sha256Hex(remote)
-  if (localHash !== null && hash === localHash) {
-    return { action: 'in-sync', hash, envelopeJson: new TextDecoder().decode(remote) }
+  const remoteHash = await sha256Hex(remote)
+  const vaultHash = await sha256Hex(new TextEncoder().encode(vaultJson))
+  if (remoteHash === vaultHash) {
+    return { action: 'in-sync', hash: remoteHash, envelopeJson: new TextDecoder().decode(remote) }
+  }
+  // 远端未变（与 cloudRev 一致）、本地已改：本地较新，推送
+  if (cloudRev !== null && remoteHash === cloudRev) {
+    return await pushLocal(backend, path, vaultJson, password)
   }
 
+  // 远端已变且与本地不同：可解密则保留本地冲突副本并采用远端；不可解密抛中文错误
   let remoteVaultJson: string
   try {
     remoteVaultJson = await openBackupEnvelope(JSON.parse(new TextDecoder().decode(remote)), password)
@@ -64,16 +91,17 @@ export async function syncWithCloud(
     throw new Error('云端备份口令不匹配，无法合并——请确认口令或手动下载处理')
   }
 
-  // 远端可解密但与已知基线不同：先保留本地冲突副本，再以远端覆盖本地（LWW，远端胜）
+  // 冲突副本与备份同形态：createBackupEnvelope 加密后的 envelope JSON 字节（密文落盘，恢复链路与备份卡一致）
   let conflictBackup: string | undefined
   if (onConflictBackup) {
-    const name = await onConflictBackup(new TextEncoder().encode(vaultJson))
+    const copyJson = JSON.stringify(await createBackupEnvelope(vaultJson, password))
+    const name = await onConflictBackup(new TextEncoder().encode(copyJson))
     if (typeof name === 'string' && name.length > 0) conflictBackup = name
   }
   return {
-    action: localHash === null ? 'downloaded' : 'conflict-resolved',
+    action: cloudRev === null ? 'downloaded' : 'conflict-resolved',
     conflictBackup,
-    hash,
+    hash: remoteHash,
     envelopeJson: remoteVaultJson,
   }
 }

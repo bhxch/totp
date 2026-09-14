@@ -18,6 +18,7 @@ export function createCloudBackend(cred: CloudCred, onCredChange?: (cred: CloudC
     case 'gist': return createGistBackend(cred)
     case 'gdrive': return createGDriveBackend(cred, onCredChange ? { onCredChange } : {})
     case 'onedrive': return createOneDriveBackend(cred)
+    default: throw new Error('未知的云后端类型')
   }
 }
 
