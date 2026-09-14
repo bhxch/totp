@@ -193,6 +193,7 @@ vault 加密支持多种解锁来源（KEK 来源）并存，在管理页「安�
 
 - 复制验证码后 30 秒自动清空剪贴板，可在「安全」卡中关闭
 - 插件端在 Chrome/Edge 上经 background（alarms + offscreen）执行，popup 提前关闭也能清空；Firefox 暂不支持自动清空
+- Firefox 下扩展 manifest 申请了 `offscreen` 权限但不被支持，剪贴板自动清空仅在 Chrome/Edge 生效；在 Firefox 下「剪贴板自动清空」开关保留但无效果
 
 ### 密钥遮蔽
 
