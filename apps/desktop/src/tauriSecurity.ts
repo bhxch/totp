@@ -5,12 +5,19 @@ import { base64ToBytes, bytesToBase64 } from '@totp/core'
 // CryptProtectData 直接包裹 DEK 本体（T1 裁定 wrappedDekD 语义），base64 进出。
 // SecurityCard（启用/移除）与 LockScreen（静默解锁）经 ui DpapiUnlockOps 通道使用。
 
+// C8：DEK 长度强校验（XChaCha20-Poly1305 key = 32 字节）。Rust dpapi_protect 不再隐式接受任意
+// 长度字节，前端先拒可避免无效调用打到 Win32 边界上才报错。
+const DEK_LENGTH = 32
+
 /** DEK 字节 → base64(DPAPI(DEK))（wrappedDekD） */
 export async function dpapiProtectOs(dek: Uint8Array): Promise<string> {
+  if (dek.length !== DEK_LENGTH) throw new Error('DEK must be 32 bytes')
   return invoke<string>('dpapi_protect', { dataB64: bytesToBase64(dek) })
 }
 
 /** base64(wrappedDekD) → DEK 字节；失败（跨机器/跨用户/损坏）由调用方静默处理 */
 export async function dpapiUnprotectOs(wrappedB64: string): Promise<Uint8Array> {
-  return base64ToBytes(await invoke<string>('dpapi_unprotect', { wrappedB64 }))
+  const bytes = base64ToBytes(await invoke<string>('dpapi_unprotect', { wrappedB64 }))
+  if (bytes.length !== DEK_LENGTH) throw new Error('DEK must be 32 bytes')
+  return bytes
 }
