@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { backupFileName, createBackupEnvelope, openBackupEnvelope, OVERWRITE_NAME, type BackupEnvelopeV1 } from '@totp/core'
-import { createClipboardClearer, LockScreen, VaultManager, type BackupMode, type BackupPlatform, type SecurityPlatform } from '@totp/ui'
+import { CLIPBOARD_CLEAR_DELAY_MS, LockScreen, VaultManager, type BackupMode, type BackupPlatform, type SecurityPlatform } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
 import {
   changePassphrase, commitSettings, disableEncryption, enableEncryption, hasEncryption, initStore, locked,
@@ -18,12 +18,19 @@ onMounted(async () => {
   }
 })
 
-/** 30s 清剪贴板：settings.clipboardClearEnabled 开启时复制后定时清空（重复复制重置计时；setup 作用域销毁自动 dispose） */
-const clearer = createClipboardClearer(() => settings.clipboardClearEnabled, () => navigator.clipboard.writeText(''))
+/**
+ * 30s 清剪贴板：统一走 background(alarms+offscreen) 承载（与 popup 一致，重复复制由同名 alarm 覆盖重置）；
+ * Firefox 无 offscreen API 降级不调度
+ */
+function scheduleClipboardClear(): void {
+  if (!settings.clipboardClearEnabled) return
+  if (typeof chrome === 'undefined' || !chrome.offscreen) return
+  void chrome.runtime.sendMessage({ type: 'schedule-clipboard-clear', delayMs: CLIPBOARD_CLEAR_DELAY_MS }).catch(() => {})
+}
 
 async function copyToClipboard(code: string) {
   await navigator.clipboard.writeText(code)
-  clearer.notifyCopied()
+  scheduleClipboardClear()
 }
 
 // ---------- 备份平台实现 ----------

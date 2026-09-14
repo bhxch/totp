@@ -125,7 +125,7 @@ async function onDelayChange(e: Event): Promise<void> {
     <!-- 通用设置区 -->
     <label class="opt">
       <input class="clipboard-clear" type="checkbox" :checked="clipboardOn" @change="onClipboardChange" />
-      复制后 30 秒自动清空剪贴板
+      复制后 30 秒自动清空剪贴板<span class="opt-hint">（剪贴板自动清空当前仅在 Chrome/Edge 生效）</span>
     </label>
     <label v-if="platform.popupCloseDelayMs && platform.setPopupCloseDelay" class="opt">
       复制后弹窗自动关闭延迟（毫秒）
@@ -147,6 +147,7 @@ h2 { font-size: 15px; margin: 0; }
 .confirm-row { display: flex; align-items: center; gap: 8px; font-size: 13px; flex-wrap: wrap; }
 .danger { color: #d9534f; }
 .opt { font-size: 13px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.opt-hint { opacity: .65; font-size: 12px; }
 .delay-ms { width: 80px; }
 .hint, .locked-hint { font-size: 13px; opacity: .65; margin: 0; }
 .ok { color: #2e7d32; font-size: 13px; }
