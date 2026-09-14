@@ -12,9 +12,11 @@
   "dependencies": {
     "@totp/core": "workspace:*",
     "fflate": "^0.8.3",
+    "sql.js": "1.14.2",
     "vue": "^3.5.0"
   },
   "devDependencies": {
+    "@types/sql.js": "^1.4.11",
     "@vitejs/plugin-vue": "^5.1.0",
     "@vue/test-utils": "^2.4.0",
     "jsdom": "^25.0.0",
