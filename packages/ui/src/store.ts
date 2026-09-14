@@ -72,9 +72,16 @@ export function createVueStore(
     inited = true
   }
 
+  /** 串行入队原语：任务依次执行，单任务失败不传染后续任务（与原 commit 队列语义一致） */
+  function enqueue<T>(task: () => Promise<T>): Promise<T> {
+    const p = queue.then(task)
+    queue = p.then(() => {}, () => {})
+    return p
+  }
+
   async function commit(fn: (v: Vault) => Vault): Promise<void> {
-    const task = queue.then(async () => {
-      // 锁定时拒绝写操作：在 fn 执行前抛出，本次 commit reject 但队列继续（catch 兜底不传染后续任务）
+    return enqueue(async () => {
+      // 锁定时拒绝写操作：在 fn 执行前抛出，本次 commit reject 但队列继续
       if (locked.value) throw new Error('vault locked')
       // 防加密降级：本端 security 缓存为空时核对盘上 security（远端已启用而本端陈旧→转锁定并拒绝本次明文写，
       // 避免明文覆盖密文造成降级与「security 在但 vault 明文」的不一致态）。代价：未加密用户每次写多一次 adapter.get
@@ -94,12 +101,31 @@ export function createVueStore(
         console.error('[store] saveVault failed:', e)
       }
     })
-    queue = task.catch(() => {})
-    return task
   }
 
-  /** 落盘：已启用加密且持有 DEK → 写 EncryptedVault 密文；否则明文 Vault */
+  /** 落盘：已启用加密且持有 DEK → 写 EncryptedVault 密文；否则明文 Vault。
+   *  加密分支写盘前对称核对盘上 security（与未加密分支的防降级核对对称）：
+   *  - 读不到（远端已 disableEncryption）→ 丢弃本端加密态、保持解锁、改写明文，跟随远端；
+   *    否则「security 缓存非 null 但盘上已删」时密文写回会造成 EncryptedVault 无 security 键的不可恢复死锁
+   *  - 存在但与本端缓存不同（远端已换口令）→ 刷新缓存后照常加密写（DEK 是内容密钥不受换口令影响，
+   *    wrappedDek 与本端 dek 无关）
+   *  - 核对读瞬态失败 → 保守视为存在，照常加密写 */
   async function saveVaultToAdapter(): Promise<void> {
+    if (security.value && dek) {
+      let disk: SecuritySettings | null
+      try {
+        disk = await readSecurity()
+      } catch {
+        disk = security.value // 瞬态 IO 失败：保守视为存在
+      }
+      if (disk === null) {
+        security.value = null
+        dek = null
+        locked.value = false
+      } else {
+        security.value = disk
+      }
+    }
     if (security.value && dek) {
       const encrypted = await encryptVaultWithDek(dek, JSON.stringify(vault))
       await adapter.set(VAULT_KEY, JSON.stringify(encrypted))
@@ -151,58 +177,70 @@ export function createVueStore(
     })
   }
 
-  /** 启用加密：以当前内存 vault 明文建 KEK/wrap DEK → 写 security + 密文 vault → 缓存 DEK */
-  async function enableEncryption(password: string): Promise<void> {
-    if (locked.value) throw new Error('vault locked')
-    // 不用 toRaw：直接序列化响应式对象（P5 裁定，避免 raw target 与 reactive 视图不一致）
-    const r = await setupVaultEncryption(JSON.stringify(vault), password)
-    security.value = r.security
-    dek = r.dek
-    try {
-      // 先写 security 后写密文：中途崩溃最多出现「security 在但 vault 仍明文」，数据不丢
-      lastSelfWrite.vault = Date.now() // security 键写入复用 vault 自写窗口抑制（onChanged 无 security 通道）
-      await adapter.set(SECURITY_KEY, JSON.stringify(r.security))
+  /** 启用加密：以当前内存 vault 明文建 KEK/wrap DEK → 写 security + 密文 vault → 缓存 DEK。
+   *  经 commit 队列执行：Argon2 派生耗时数百 ms，期间的并发写 op 必须排队，
+   *  否则会以 enable 前的旧快照落盘覆盖新写（真实竞态） */
+  function enableEncryption(password: string): Promise<void> {
+    return enqueue(async () => {
+      if (locked.value) throw new Error('vault locked')
+      // 不用 toRaw：直接序列化响应式对象（P5 裁定，避免 raw target 与 reactive 视图不一致）
+      const r = await setupVaultEncryption(JSON.stringify(vault), password)
+      security.value = r.security
+      dek = r.dek
+      try {
+        // 先写 security 后写密文：中途崩溃最多出现「security 在但 vault 仍明文」，数据不丢
+        lastSelfWrite.vault = Date.now() // security 键写入复用 vault 自写窗口抑制（onChanged 无 security 通道）
+        await adapter.set(SECURITY_KEY, JSON.stringify(r.security))
+        lastSelfWrite.vault = Date.now()
+        await adapter.set(VAULT_KEY, JSON.stringify(r.encrypted))
+      } catch (e) {
+        security.value = null
+        dek = null
+        throw e
+      }
+      locked.value = false
+    })
+  }
+
+  /** 关闭加密：需已解锁 → 内存明文写回 vault → 删 security → 丢弃 DEK（经 commit 队列，与写 op 串行） */
+  function disableEncryption(): Promise<void> {
+    return enqueue(async () => {
+      if (locked.value) throw new Error('vault locked')
+      if (!security.value || !dek) throw new Error('encryption not enabled')
       lastSelfWrite.vault = Date.now()
-      await adapter.set(VAULT_KEY, JSON.stringify(r.encrypted))
-    } catch (e) {
+      await saveVault(adapter, toRaw(vault) as Vault)
+      await adapter.delete(SECURITY_KEY)
       security.value = null
       dek = null
-      throw e
-    }
-    locked.value = false
+      locked.value = false
+    })
   }
 
-  /** 关闭加密：需已解锁 → 内存明文写回 vault → 删 security → 丢弃 DEK */
-  async function disableEncryption(): Promise<void> {
-    if (locked.value) throw new Error('vault locked')
-    if (!security.value || !dek) throw new Error('encryption not enabled')
-    lastSelfWrite.vault = Date.now()
-    await saveVault(adapter, toRaw(vault) as Vault)
-    await adapter.delete(SECURITY_KEY)
-    security.value = null
-    dek = null
-    locked.value = false
+  /** 更换口令：需已解锁 → 仅重包裹 DEK → 写 security（数据无需重加密；经 commit 队列，与写 op 串行） */
+  function changePassphrase(newPassword: string): Promise<void> {
+    return enqueue(async () => {
+      if (locked.value) throw new Error('vault locked')
+      if (!security.value || !dek) throw new Error('encryption not enabled')
+      const next = await changeVaultPassphrase(security.value, dek, newPassword)
+      security.value = next
+      lastSelfWrite.vault = Date.now()
+      await adapter.set(SECURITY_KEY, JSON.stringify(next))
+    })
   }
 
-  /** 更换口令：需已解锁 → 仅重包裹 DEK → 写 security（数据无需重加密） */
-  async function changePassphrase(newPassword: string): Promise<void> {
-    if (locked.value) throw new Error('vault locked')
-    if (!security.value || !dek) throw new Error('encryption not enabled')
-    const next = await changeVaultPassphrase(security.value, dek, newPassword)
-    security.value = next
-    lastSelfWrite.vault = Date.now()
-    await adapter.set(SECURITY_KEY, JSON.stringify(next))
-  }
-
-  /** 解锁：口令解出 DEK → 读盘密文解密填充 → 退出锁定；口令错时原样抛出供组件展示 */
+  /** 解锁：口令解出 DEK → 读盘解密/明文填充 → 退出锁定；口令错时原样抛出供组件展示。
+   *  盘上 vault 非密文（缺失或明文）时宽容接受：这是「security 在但 vault 明文」的
+   *  enableEncryption 半失败不一致态，直接加载并恢复持有 DEK，后续写 op 经加密分支自愈回密文 */
   async function unlock(password: string): Promise<void> {
     if (!security.value) throw new Error('encryption not enabled')
     const key = await unlockVaultEncryption(security.value, password)
     const parsed = await readRawVault()
-    if (!isEncryptedVault(parsed)) throw new Error('invalid encrypted vault')
-    const plain = JSON.parse(await decryptVaultWithDek(key, parsed)) as Vault
+    if (isEncryptedVault(parsed)) {
+      replaceVault(JSON.parse(await decryptVaultWithDek(key, parsed)) as Vault)
+    } else {
+      replaceVault(parsed !== null ? (parsed as Vault) : createVault())
+    }
     dek = key
-    replaceVault(plain)
     locked.value = false
   }
 

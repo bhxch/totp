@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createMemoryStorage, newEntryFromUri, setupVaultEncryption, type Vault } from '@totp/core'
+import {
+  createMemoryStorage, createVault, newEntryFromUri, SECURITY_KEY, setupVaultEncryption, type Vault,
+} from '@totp/core'
 import { createVueStore } from '../src/store'
 
 function flush(): Promise<void> { return new Promise((r) => setTimeout(r, 0)) }
@@ -191,5 +193,88 @@ describe('createVueStore', () => {
     const raw = JSON.parse((await adapter.get('vault'))!)
     expect(raw.enc).toBe(true) // 盘上密文未被明文覆盖
     expect(await adapter.get('security')).toBeTruthy()
+  })
+
+  it('跨窗口 disableEncryption：B 解锁持 DEK 收明文通知后写 op→跟随远端转明文，不死锁', async () => {
+    const adapter = createMemoryStorage()
+    let notify: ((p: { vault?: boolean; settings?: boolean }) => void) | null = null
+    const a = createVueStore(adapter)
+    await a.initStore()
+    const b = createVueStore(adapter, { registerSync: (cb) => { notify = cb } })
+    await b.initStore()
+    b.registerStorageSync()
+    await a.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await a.enableEncryption('pw')
+    notify!({ vault: true })
+    await flush()
+    await b.unlock('pw') // B：security 缓存非 null、持有 DEK、解锁
+    expect(b.hasEncryption.value).toBe(true)
+
+    await a.disableEncryption() // 盘上：vault 明文 + security 已删除
+    notify!({ vault: true })
+    await flush()
+    // B 消费明文通知更新了内容，但 security 缓存仍陈旧非 null
+    expect(b.hasEncryption.value).toBe(true)
+    expect(b.locked.value).toBe(false)
+
+    // B 写 op：加密分支对称核对发现盘上 security 已删→丢弃本端加密态、改写明文
+    await b.addEntryOp(newEntryFromUri('otpauth://totp/B:c?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    const raw = JSON.parse((await adapter.get('vault'))!)
+    expect(raw.enc).toBeUndefined() // 盘上保持明文，未被密文覆盖成死锁态
+    expect(await adapter.get(SECURITY_KEY)).toBeNull()
+    expect(b.hasEncryption.value).toBe(false)
+    expect(b.locked.value).toBe(false)
+    expect(b.vault.entries).toHaveLength(2)
+  })
+
+  it('跨窗口换口令：B 持旧 DEK 写 op→刷新 security 缓存照常加密写，盘上密文新口令可解', async () => {
+    const adapter = createMemoryStorage()
+    const a = createVueStore(adapter)
+    await a.initStore()
+    await a.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await a.enableEncryption('pw1')
+    const b = createVueStore(adapter)
+    await b.initStore() // 密文在手无 dek → 锁定
+    await b.unlock('pw1')
+    await a.changePassphrase('pw2') // 盘上 security 已更新，DEK 不变；B 缓存陈旧（pw1 版）
+
+    await b.addEntryOp(newEntryFromUri('otpauth://totp/B:c?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    const raw = JSON.parse((await adapter.get('vault'))!)
+    expect(raw.enc).toBe(true)
+    // 新口令可解开盘上密文（含 A 与 B 的条目）
+    const c = createVueStore(adapter)
+    await c.initStore()
+    expect(c.locked.value).toBe(true)
+    await c.unlock('pw2')
+    expect(c.locked.value).toBe(false)
+    expect(c.vault.entries).toHaveLength(2)
+    expect(b.hasEncryption.value).toBe(true)
+  })
+
+  it('enableEncryption 经队列执行：Argon2 进行中的并发写 op 不被旧快照覆盖', async () => {
+    const adapter = createMemoryStorage()
+    const s = createVueStore(adapter)
+    await s.initStore()
+    const p1 = s.enableEncryption('pw')
+    const p2 = s.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await Promise.all([p1, p2])
+    expect(s.vault.entries).toHaveLength(1)
+    const c = createVueStore(adapter)
+    await c.initStore()
+    await c.unlock('pw')
+    expect(c.vault.entries).toHaveLength(1) // 旧快照覆盖则此处为 0
+  })
+
+  it('unlock 宽容接受「security 在但 vault 明文/缺失」不一致态，后续写自愈回密文', async () => {
+    const adapter = createMemoryStorage()
+    const { security } = await setupVaultEncryption(JSON.stringify(createVault()), 'pw')
+    await adapter.set(SECURITY_KEY, JSON.stringify(security)) // enableEncryption 半失败态：security 在、vault 缺失
+    const s = createVueStore(adapter)
+    await s.initStore()
+    await s.unlock('pw')
+    expect(s.locked.value).toBe(false)
+    await s.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    const raw = JSON.parse((await adapter.get('vault'))!)
+    expect(raw.enc).toBe(true) // 自愈：写 op 走加密分支转回密文
   })
 })
