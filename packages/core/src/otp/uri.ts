@@ -17,6 +17,9 @@ export interface OtpUriParams {
 
 const ALGORITHMS: HashAlgorithm[] = ['SHA1', 'SHA256', 'SHA512']
 
+// 合法 digits 值：6/7/8（Steam 强制 5；与 RFC 6238 一致）
+const ALLOWED_DIGITS = new Set([5, 6, 7, 8])
+
 export function parseOtpUri(uri: string): OtpUriParams {
   let url: URL
   try {
@@ -49,8 +52,22 @@ export function parseOtpUri(uri: string): OtpUriParams {
 
   const issuer = q.get('issuer') ?? prefixIssuer
   const algRaw = (q.get('algorithm') ?? 'SHA1').toUpperCase() as HashAlgorithm
-  const typeFinal: OtpUriParams['type'] = type === 'steam' || issuer.toLowerCase() === 'steam' ? 'steam' : type
+  // I32：仅按 host 判定 steam，不再看 issuer（避免 hotp/totp URI 因 issuer='Steam' 误转）
+  const typeFinal: OtpUriParams['type'] = type === 'steam' ? 'steam' : type
+  // I34：steam 强制 SHA1（Steam 官方规范只支持 SHA-1，query 写其他值忽略）
+  const algorithm: HashAlgorithm = typeFinal === 'steam' ? 'SHA1' : (ALGORITHMS.includes(algRaw) ? algRaw : 'SHA1')
+
+  // I33：digits/period/counter 范围校验
+  let digits = typeFinal === 'steam' ? 5 : Number(q.get('digits') ?? 6)
+  if (!ALLOWED_DIGITS.has(digits)) throw new Error('invalid otpauth uri: digits out of range')
+  let period = Number(q.get('period') ?? 30)
+  if (!Number.isFinite(period) || period < 1) throw new Error('invalid otpauth uri: period out of range')
+  let counter: number | undefined
   const counterRaw = q.get('counter')
+  if (counterRaw !== null) {
+    counter = Number(counterRaw)
+    if (!Number.isFinite(counter) || counter < 0) throw new Error('invalid otpauth uri: counter out of range')
+  }
 
   // C2：按类型解码 secret——原实现只返回 base32 字符串，调用方统一用 RFC4648 解码。
   // Steam 字母表是 RFC4648 的字符子集（去除视觉混淆字符 0/1/8/I/L/O）；
@@ -59,8 +76,6 @@ export function parseOtpUri(uri: string): OtpUriParams {
   // 主动按对应字母表解码，避免调用方遗漏/误用。
   const secretBytes = ((): Uint8Array | undefined => {
     try {
-      // totp/hotp 用 RFC4648，steam 也用 RFC4648（Steam alphabet 是其子集）
-      // 这里保留 alphabet 参数钩子供未来扩展（Steam 独立字母表暂不实施——RFC4648 子集已覆盖）
       const alphabet = typeFinal === 'steam' ? undefined : undefined
       void STEAM_ALPHABET // 保留导入避免 lint 报错
       return base32Decode(secret, alphabet)
@@ -75,10 +90,10 @@ export function parseOtpUri(uri: string): OtpUriParams {
     label,
     secret,
     ...(secretBytes !== undefined ? { secretBytes } : {}),
-    algorithm: ALGORITHMS.includes(algRaw) ? algRaw : 'SHA1',
-    digits: typeFinal === 'steam' ? 5 : Number(q.get('digits') ?? 6) || 6,
-    period: Number(q.get('period') ?? 30) || 30,
-    ...(counterRaw !== null ? { counter: Number(counterRaw) || 0 } : {}),
+    algorithm,
+    digits,
+    period,
+    ...(counter !== undefined ? { counter } : {}),
   }
 }
 
@@ -88,10 +103,12 @@ export function buildOtpUri(p: OtpUriParams): string {
   const q = new URLSearchParams()
   q.set('secret', p.secret)
   if (p.issuer) q.set('issuer', p.issuer)
-  if (p.algorithm !== 'SHA1') q.set('algorithm', p.algorithm)
+  // I34：steam 强制 SHA1，不写 algorithm 参数（默认即 SHA1）
+  if (p.algorithm !== 'SHA1' && p.type !== 'steam') q.set('algorithm', p.algorithm)
   if (p.type !== 'steam' && p.digits !== 6) q.set('digits', String(p.digits))
   if (p.period !== 30) q.set('period', String(p.period))
-  if (p.type === 'hotp' && p.counter !== undefined) q.set('counter', String(p.counter))
+  // I35：hotp 始终输出 counter（默认 0），跨工具导入时对方默认处理不一致
+  if (p.type === 'hotp') q.set('counter', String(p.counter ?? 0))
   return `otpauth://${host}/${encodeURIComponent(labelPart)}?${q.toString()}`
 }
 

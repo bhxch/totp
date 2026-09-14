@@ -50,6 +50,28 @@ describe('parseOtpUri', () => {
     expect(p.label).toBe('alice')
   })
 
+  it('I32：issuer=Steam 但 host=totp 不再被强转为 steam（按 host 判定）', () => {
+    const p = parseOtpUri('otpauth://totp/Steam:user?secret=JBSWY3DPEHPK3PXP')
+    expect(p.type).toBe('totp')
+    expect(p.issuer).toBe('Steam')
+    expect(p.label).toBe('user')
+  })
+
+  it('I33：digits/period/counter 越界抛 invalid otpauth uri', () => {
+    expect(() => parseOtpUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP&digits=4')).toThrow(/digits out of range/)
+    expect(() => parseOtpUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP&digits=9')).toThrow(/digits out of range/)
+    expect(() => parseOtpUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP&period=0')).toThrow(/period out of range/)
+    expect(() => parseOtpUri('otpauth://hotp/A:b?secret=JBSWY3DPEHPK3PXP&counter=-1')).toThrow(/counter out of range/)
+    expect(() => parseOtpUri('otpauth://hotp/A:b?secret=JBSWY3DPEHPK3PXP&counter=abc')).toThrow(/counter out of range/)
+  })
+
+  it('I34：steam URI 即使 query 写 algorithm=SHA512 也强制 SHA1', () => {
+    const p = parseOtpUri('otpauth://steam/Steam:u?secret=JBSWY3DPEHPK3PXP&algorithm=SHA512')
+    expect(p.type).toBe('steam')
+    expect(p.algorithm).toBe('SHA1')
+    expect(p.digits).toBe(5)
+  })
+
   it('C2：steam URI secret 按 Steam 字母表解码；round-trip 出参考 Steam 码', async () => {
     // 关键回归点：otpauth://steam/ 的 secret 必须按 Steam 自定义字母表解码，
     // 否则 steamCode 会算出错误码（参考 vectors/steam.json）。
@@ -89,5 +111,15 @@ describe('buildOtpUri', () => {
   it('steam 生成 otpauth://steam/', () => {
     const uri = buildOtpUri({ type: 'steam', issuer: 'Steam', label: 'user', secret: 'AB', algorithm: 'SHA1', digits: 5, period: 30 })
     expect(uri).toContain('otpauth://steam/')
+  })
+
+  it('I35：hotp 即使 counter=undefined 也输出 counter=0', () => {
+    const uri = buildOtpUri({ type: 'hotp', issuer: 'X', label: 'y', secret: 'AB', algorithm: 'SHA1', digits: 6, period: 30 })
+    expect(uri).toContain('counter=0')
+  })
+
+  it('I34：buildOtpUri steam 不输出 algorithm 参数', () => {
+    const uri = buildOtpUri({ type: 'steam', issuer: 'Steam', label: 'u', secret: 'AB', algorithm: 'SHA512', digits: 5, period: 30 })
+    expect(uri).not.toContain('algorithm=')
   })
 })
