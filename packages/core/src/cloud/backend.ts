@@ -5,6 +5,8 @@
 
 export interface CloudBackend {
   readonly id: 'webdav' | 's3' | 'gdrive' | 'onedrive' | 'gist'
+  /** 凭据发生变化（如 GDrive 首推自动创建文件后回存 fileId）时回调；调用方负责持久化新凭据。 */
+  onCredChange?(cred: CloudCred): void
   put(path: string, data: Uint8Array): Promise<void>
   get(path: string): Promise<Uint8Array | null>
   delete(path: string): Promise<void>
@@ -24,8 +26,32 @@ export interface GistCred {
   gistId: string
 }
 
-/** 云后端凭据判别联合（s3/gdrive/onedrive 由后续任务扩展）。 */
-export type CloudCred = WebdavCred | GistCred
+export interface S3Cred {
+  backend: 's3'
+  region: string
+  bucket: string
+  accessKeyId: string
+  secretAccessKey: string
+  /** 自定义 endpoint（如 MinIO：http://localhost:9000），走 path-style；缺省为 AWS virtual-host style。 */
+  endpoint?: string
+  /** 对象 key 前缀（默认根）。 */
+  prefix?: string
+}
+
+export interface GDriveCred {
+  backend: 'gdrive'
+  accessToken: string
+  /** 目标文件 id；缺省时首推自动创建并经 onCredChange 回存。 */
+  fileId?: string
+}
+
+export interface OneDriveCred {
+  backend: 'onedrive'
+  accessToken: string
+}
+
+/** 云后端凭据判别联合。 */
+export type CloudCred = WebdavCred | GistCred | S3Cred | GDriveCred | OneDriveCred
 
 /** fetch 网络层包装：连接失败/中断等 reject 统一转为中文错误。 */
 export async function cloudFetch(label: string, url: string, init?: RequestInit): Promise<Response> {
