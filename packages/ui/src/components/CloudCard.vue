@@ -25,7 +25,7 @@ const gdriveFileId = ref('')
 const password = ref('')
 const busy = ref(false)
 const msg = ref('')
-const msgKind = ref<'ok' | 'err' | 'hint'>('ok')
+const msgKind = ref<'ok' | 'err'>('ok')
 
 /** 已解密待确认覆盖的远端 vault JSON（两步确认防误覆盖，复用 BackupCard 恢复语义） */
 const pending = ref<string | null>(null)
@@ -133,7 +133,7 @@ async function onSync(): Promise<void> {
     const backend = createCloudBackend(cred, (c) => {
       // GDrive 首推自动建文件：回存 fileId 到会话状态与持久凭据
       gdriveFileId.value = c.backend === 'gdrive' ? c.fileId ?? '' : ''
-      void p.saveCred(c).catch(() => {})
+      void p.saveCred(c).catch((e) => console.warn('[CloudCard] 凭据回存失败（fileId 未持久化）:', e))
     })
     const out = await syncWithCloud({
       backend,
@@ -199,30 +199,30 @@ async function onConfirmAdopt(): Promise<void> {
     <div v-if="backendSel === 'webdav'" class="fields">
       <input v-model.trim="f.serverUrl" placeholder="服务器地址（https://dav.example.com）" autocomplete="off" />
       <input v-model.trim="f.username" placeholder="用户名" autocomplete="off" />
-      <input v-model="f.password" placeholder="应用密码" autocomplete="new-password" />
+      <input v-model="f.password" type="password" placeholder="应用密码" autocomplete="new-password" />
     </div>
     <div v-else-if="backendSel === 's3'" class="fields">
       <input v-model.trim="f.region" placeholder="Region（如 us-east-1）" autocomplete="off" />
       <input v-model.trim="f.bucket" placeholder="Bucket" autocomplete="off" />
       <input v-model.trim="f.accessKeyId" placeholder="AccessKeyId" autocomplete="off" />
-      <input v-model="f.secretAccessKey" placeholder="SecretAccessKey" autocomplete="new-password" />
+      <input v-model="f.secretAccessKey" type="password" placeholder="SecretAccessKey" autocomplete="new-password" />
       <input v-model.trim="f.endpoint" placeholder="Endpoint（可选，如 http://localhost:9000）" autocomplete="off" />
       <input v-model.trim="f.prefix" placeholder="Key 前缀（可选）" autocomplete="off" />
     </div>
     <div v-else-if="backendSel === 'gdrive'" class="fields">
-      <input v-model.trim="f.accessToken" placeholder="Access Token（Google OAuth）" autocomplete="off" />
+      <input v-model.trim="f.accessToken" type="password" placeholder="Access Token（Google OAuth）" autocomplete="new-password" />
     </div>
     <div v-else-if="backendSel === 'onedrive'" class="fields">
-      <input v-model.trim="f.accessToken" placeholder="Access Token（Microsoft Graph）" autocomplete="off" />
+      <input v-model.trim="f.accessToken" type="password" placeholder="Access Token（Microsoft Graph）" autocomplete="new-password" />
     </div>
     <div v-else class="fields">
-      <input v-model.trim="f.token" placeholder="GitHub Token" autocomplete="off" />
+      <input v-model.trim="f.token" type="password" placeholder="GitHub Token" autocomplete="new-password" />
       <input v-model.trim="f.gistId" placeholder="Gist ID" autocomplete="off" />
     </div>
     <div class="actions">
       <button class="save-cred" :disabled="busy" @click="onSaveCred">保存凭据</button>
       <input v-model="password" type="password" class="cloud-pw" placeholder="同步口令" autocomplete="new-password" :disabled="busy" />
-      <button class="sync-now" :disabled="busy" @click="onSync">立即同步</button>
+      <button class="sync-now" :disabled="busy || pending !== null" @click="onSync">立即同步</button>
     </div>
     <p class="hint">同步口令即备份加密口令，云端对象为加密 envelope；口令不保存。</p>
     <div v-if="pending" class="confirm-row">
@@ -246,5 +246,4 @@ h2 { font-size: 15px; margin: 0; }
 .hint { font-size: 12px; opacity: .65; margin: 0; }
 .ok { color: #2e7d32; font-size: 13px; }
 .err { color: #d9534f; font-size: 13px; }
-.hint-msg { opacity: .65; font-size: 13px; }
 </style>

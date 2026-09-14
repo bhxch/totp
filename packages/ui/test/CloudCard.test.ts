@@ -45,6 +45,30 @@ async function clickSync(w: VueWrapper): Promise<void> {
 describe('CloudCard', () => {
   beforeEach(() => vi.clearAllMocks())
 
+  it('敏感凭据字段以密码形态遮蔽，非敏感字段保持文本；回填后仍遮蔽', async () => {
+    const w = mount(CloudCard, { props: { platform: makePlatform() } })
+    const type = (ph: string) => inputByPh(w, ph)!.attributes('type')
+    expect(type('应用密码')).toBe('password')
+    expect(type('用户名')).not.toBe('password')
+    await w.find('select.cloud-backend').setValue('s3')
+    expect(type('SecretAccessKey')).toBe('password')
+    expect(type('Region（如 us-east-1）')).not.toBe('password')
+    expect(type('Bucket')).not.toBe('password')
+    await w.find('select.cloud-backend').setValue('gdrive')
+    expect(type('Access Token（Google OAuth）')).toBe('password')
+    await w.find('select.cloud-backend').setValue('onedrive')
+    expect(type('Access Token（Microsoft Graph）')).toBe('password')
+    await w.find('select.cloud-backend').setValue('gist')
+    expect(type('GitHub Token')).toBe('password')
+    expect(type('Gist ID')).not.toBe('password')
+    // loadCred 回填后仍以遮蔽形态显示
+    const p2 = makePlatform({ loadCred: vi.fn().mockResolvedValue({ backend: 'gist', token: 'tok', gistId: 'gid' }) })
+    const w2 = mount(CloudCard, { props: { platform: p2 } })
+    await flushPromises()
+    expect((inputByPh(w2, 'GitHub Token')!.element as HTMLInputElement).value).toBe('tok')
+    expect(inputByPh(w2, 'GitHub Token')!.attributes('type')).toBe('password')
+  })
+
   it('保存凭据：表单字段组装成 CloudCred 调 saveCred', async () => {
     const p = makePlatform()
     const w = mount(CloudCard, { props: { platform: p } })
@@ -88,9 +112,12 @@ describe('CloudCard', () => {
     expect(mockedSync.mock.calls[0]![0]).toMatchObject({ path: 'totp-backup.totpbackup', password: 'pw', localHash: null, vaultJson: VALID_VAULT })
     expect(w.find('.confirm-row').exists()).toBe(true)
     expect(w.text()).toContain('已保留本地冲突副本')
+    // 确认行挂起期间禁用立即同步（防二次同步覆盖 lastHash 错写 cloudRev），确认完成后恢复
+    expect(w.find('button.sync-now').attributes('disabled')).toBeDefined()
     expect(p.persistDownloaded).not.toHaveBeenCalled()
     await w.findAll('button').find((b) => b.text() === '确认覆盖')!.trigger('click')
     await flushPromises()
+    expect(w.find('button.sync-now').attributes('disabled')).toBeUndefined()
     expect(p.persistDownloaded).toHaveBeenCalledWith(VALID_VAULT)
     expect(p.saveHash).toHaveBeenCalledWith('h1')
     expect(w.text()).toContain('已应用云端备份')
