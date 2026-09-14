@@ -196,4 +196,71 @@ describe('SecurityCard', () => {
     await vi.waitFor(() => expect(w.text()).toContain('仅 Windows 支持'))
     expect(dpapi.add).not.toHaveBeenCalled()
   })
+
+  it('I53：换口令成功且存在 Passkey 绑定 → 提示中包含「Passkey/Windows 自动解锁保持不变」', async () => {
+    const passkey = { sources: computed(() => [{ credentialId: 'Y3JlZC0x' }]), prfSupported: vi.fn().mockResolvedValue(true), add: vi.fn(), remove: vi.fn() }
+    const p = makePlatform({ security: unlockedSecurity({ passkey }) })
+    const w = mount(SecurityCard, { props: { platform: p } })
+    const inputs = w.findAll('input[type="password"]')
+    await inputs[0]!.setValue('new')
+    await inputs[1]!.setValue('new')
+    await w.find('button.change-pw').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('Passkey/Windows 自动解锁保持不变'))
+  })
+
+  it('I53：换口令成功且无其他解锁方式 → 提示中不包含保持不变文案', async () => {
+    const p = makePlatform({ security: unlockedSecurity() })
+    const w = mount(SecurityCard, { props: { platform: p } })
+    const inputs = w.findAll('input[type="password"]')
+    await inputs[0]!.setValue('new')
+    await inputs[1]!.setValue('new')
+    await w.find('button.change-pw').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('口令已更换'))
+    expect(w.text()).not.toContain('保持不变')
+  })
+
+  it('I54：仅口令解锁时显示「跨设备需用同一口令」；存在 passkey 或 dpapi 时不显示', () => {
+    // 仅口令
+    const onlyPw = mount(SecurityCard, { props: { platform: makePlatform({ security: unlockedSecurity() }) } })
+    expect(onlyPw.text()).toContain('当前为口令解锁')
+    expect(onlyPw.text()).toContain('跨设备需用同一口令')
+
+    // 已绑定 passkey
+    const passkey = { sources: computed(() => [{ credentialId: 'Y3JlZC0x' }]), prfSupported: vi.fn().mockResolvedValue(true), add: vi.fn(), remove: vi.fn() }
+    const withPasskey = mount(SecurityCard, { props: { platform: makePlatform({ security: unlockedSecurity({ passkey }) }) } })
+    expect(withPasskey.text()).not.toContain('跨设备需用同一口令')
+
+    // 已绑定 dpapi
+    const dpapi = makeDpapi({ source: computed(() => ({ wrappedDekD: 'W' })) })
+    const withDpapi = mount(SecurityCard, { props: { platform: makePlatform({ security: unlockedSecurity(), dpapi }) } })
+    expect(withDpapi.text()).not.toContain('跨设备需用同一口令')
+  })
+
+  it('I65：锁定态下剪贴板自动清空/弹窗延迟控件禁用 + 提示「解锁后可调整」', () => {
+    const p = makePlatform({
+      security: unlockedSecurity({ locked: ref(true) }),
+      popupCloseDelayMs: computed(() => 2000),
+      setPopupCloseDelay: vi.fn(),
+    })
+    const w = mount(SecurityCard, { props: { platform: p } })
+    const clipboard = w.find('input.clipboard-clear')
+    expect(clipboard.attributes('disabled')).toBeDefined()
+    expect(w.find('input.delay-ms').attributes('disabled')).toBeDefined()
+    expect(w.text()).toContain('解锁后可调整')
+  })
+
+  it('I71：关闭加密失败后 confirmDisable 仍复位（不依赖 run 副作用）', async () => {
+    const p = makePlatform({
+      security: unlockedSecurity({ disableEncryption: vi.fn().mockRejectedValue(new Error('boom')) }),
+    })
+    const w = mount(SecurityCard, { props: { platform: p } })
+    await w.find('button.disable-enc').trigger('click')
+    expect(w.find('.confirm-row').exists()).toBe(true)
+    const confirm = w.findAll('button').find((b) => b.text() === '确认关闭')!
+    await confirm.trigger('click')
+    await vi.waitFor(() => expect(p.security!.disableEncryption).toHaveBeenCalled())
+    expect(w.text()).toContain('boom')
+    // 关键：confirmDisable 已复位（不再显示确认行）
+    expect(w.find('.confirm-row').exists()).toBe(false)
+  })
 })

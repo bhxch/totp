@@ -30,6 +30,13 @@ const passkeySources = computed(() => passkeyOps.value?.sources.value ?? [])
 const dpapiOps = computed(() => props.platform?.dpapi ?? null)
 const dpapiSource = computed(() => dpapiOps.value?.source.value ?? null)
 
+/** I54：检测本端 KEK 来源仅 password（无 Passkey/DPAPI 备用）→ 跨设备必须用同一口令 */
+const kekOnlyPassword = computed(() => {
+  if (!hasEnc.value) return false
+  // passkey/DPAPI 任意存在即不算「仅口令」
+  return passkeySources.value.length === 0 && dpapiSource.value === null
+})
+
 onMounted(() => {
   const pk = passkeyOps.value
   if (!pk) return
@@ -88,7 +95,10 @@ async function onChangePw(): Promise<void> {
   if (!p) return
   const err = validatePw(newPw.value, newPwConfirm.value)
   if (err) return fail(new Error(err))
-  if (await run(() => p.changePassphrase(newPw.value), '口令已更换')) {
+  // I53：成功后消息补充说明 Passkey/DPAPI 来源不受换口令影响（DEK 不变，仅重包裹）
+  const keepHint = passkeySources.value.length > 0 || dpapiSource.value !== null
+    ? '；Passkey/Windows 自动解锁保持不变' : ''
+  if (await run(() => p.changePassphrase(newPw.value), `口令已更换${keepHint}`)) {
     newPw.value = ''
     newPwConfirm.value = ''
   }
@@ -97,7 +107,13 @@ async function onChangePw(): Promise<void> {
 async function onDisable(): Promise<void> {
   const p = props.platform?.security
   if (!p) return
-  if (await run(() => p.disableEncryption(), '已关闭加密')) confirmDisable.value = false
+  // I71：无论 run 成功失败都显式复位 confirmDisable（run 内部已 finally 复位 busy，
+  // 但 confirmDisable 不能依赖 run 副作用；当前实现 run=false 时不进入 if 分支导致状态残留）
+  try {
+    await run(() => p.disableEncryption(), '已关闭加密')
+  } finally {
+    confirmDisable.value = false
+  }
 }
 
 async function onAddPasskey(): Promise<void> {
@@ -209,16 +225,20 @@ async function onDelayChange(e: Event): Promise<void> {
     </template>
     <!-- 通用设置区 -->
     <label class="opt">
-      <input class="clipboard-clear" type="checkbox" :checked="clipboardOn" @change="onClipboardChange" />
+      <input class="clipboard-clear" type="checkbox" :checked="clipboardOn" :disabled="isLocked" @change="onClipboardChange" />
       复制后 30 秒自动清空剪贴板<span class="opt-hint">（剪贴板自动清空当前仅在 Chrome/Edge 生效）</span>
     </label>
     <label v-if="platform.popupCloseDelayMs && platform.setPopupCloseDelay" class="opt">
       复制后弹窗自动关闭延迟（毫秒）
       <input
         class="delay-ms" type="number" min="0" :value="platform.popupCloseDelayMs.value"
-        :disabled="busy" @change="onDelayChange"
+        :disabled="busy || isLocked" @change="onDelayChange"
       />
     </label>
+    <!-- I65：锁定态下两个通用设置均被禁用，提示用户先解锁 -->
+    <p v-if="isLocked" class="locked-hint">解锁后可调整</p>
+    <!-- I54：双端独立加密提示——仅 password 解锁时提醒跨设备需用同一口令 -->
+    <p v-if="kekOnlyPassword" class="kek-hint">当前为口令解锁，跨设备需用同一口令</p>
     <div v-if="msg" :class="msgKind" role="status">{{ msg }}</div>
   </section>
 </template>
@@ -246,4 +266,5 @@ h2 { font-size: 15px; margin: 0; }
 .ok { color: #2e7d32; font-size: 13px; }
 .err { color: #d9534f; font-size: 13px; }
 .hint { opacity: .65; font-size: 13px; }
+.kek-hint { font-size: 12px; color: #b8860b; margin: 0; }
 </style>
