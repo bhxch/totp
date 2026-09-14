@@ -95,6 +95,31 @@ describe('ImportCard', () => {
     await w.find('button.import-next').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('无法识别的 SQLite 数据库'))
   })
+  it('手动指定 authy：口令页→importAuthy 被分派（加密令牌空口令报 Authy 特有错误）', async () => {
+    const store = await readyStore()
+    // 合法 shared_prefs XML（.key 值为加密令牌数组）；不含 winauth/tokenOrder 特征 → 嗅探失败
+    const xml =
+      '<map>\n  <string name="com.authy.storage.tokens.authenticator.key">[{"encryptedSecret":"AAAA","salt":"c2FsdA==","digits":6,"name":"Authy x"}]</string>\n</map>'
+    const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text: xml, name: 'prefs.xml' }), store } } })
+    await w.find('button.import-start').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('手动指定'))
+    await w.find('select.format-select').setValue('authy')
+    await w.find('button.import-next').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('Authy 令牌可能受口令保护'))
+    await w.find('button.import-next').trigger('click') // 空口令 → importAuthy 链路结构级报错（误分派会走 winauth 解析出空结果）
+    await vi.waitFor(() => expect(w.text()).toContain('Authy 导出受口令保护'))
+  })
+  it('手动指定 winauth：口令页→importWinauth 被分派（非 XML 文本报 WinAuth 特有错误）', async () => {
+    const store = await readyStore()
+    const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text: 'hello', name: 'x' }), store } } })
+    await w.find('button.import-start').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('手动指定'))
+    await w.find('select.format-select').setValue('winauth')
+    await w.find('button.import-next').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('WinAuth 文件可能受口令保护'))
+    await w.find('button.import-next').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('WinAuth 文件结构非法')) // importWinauth 特有结构级错误
+  })
   it('generic JSON：映射页按常见键名预填 secret 路径→确认导入成功', async () => {
     const store = await readyStore()
     const text = JSON.stringify([{ name: 'Svc', userName: 'a@b.c', key: 'JBSWY3DPEHPK3PXP' }])

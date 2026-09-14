@@ -434,15 +434,19 @@ function nextFromMapping(): void {
   void parseAndConfirm(() => importGeneric(text, mapping, rowsOverride), { emptyGoesBack: true })
 }
 
-/** 口令页下一步：aegis 加密必填口令；winauth/authy 口令可选（缺失且需要时结构级报错回到本页提示） */
+/**
+ * 口令页下一步（按生效格式分派——手动指定覆盖嗅探，勿用 format.value）：
+ * aegis 加密必填口令；authy/winauth 口令可选（缺失且需要时结构级报错回到本页提示）
+ */
 async function nextFromPassword(): Promise<void> {
   if (busy.value) return
-  if (format.value === 'aegis') {
+  const f = effectiveFormat.value
+  if (f === 'aegis') {
     if (!password.value) return fail(new Error('请输入口令'))
     await parseAndConfirm(() => importAegisEncrypted(fileText.value, password.value))
     return
   }
-  if (format.value === 'authy') {
+  if (f === 'authy') {
     await parseAndConfirm(() => importAuthy(fileText.value, password.value || undefined))
     return
   }
@@ -480,9 +484,9 @@ async function commitImport(): Promise<void> {
   }
 }
 
-/** 报告页失败逐条：uriBatch 的 index 即原始行号，附原始行文本便于定位 */
+/** 报告页失败逐条：uriBatch 的 index 即原始行号，附原始行文本便于定位（手动指定同样生效） */
 function failureLabel(f: { index: number; message: string }): string {
-  if (format.value === 'uriBatch') {
+  if (effectiveFormat.value === 'uriBatch') {
     const line = fileText.value.split(/\r?\n/)[f.index]?.trim() ?? ''
     return `第 ${f.index + 1} 行：${line}：${f.message}`
   }
