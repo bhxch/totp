@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createMemoryStorage, type Vault } from '@totp/core'
+import { createMemoryStorage, newEntryFromUri, setupVaultEncryption, type Vault } from '@totp/core'
 import { createVueStore } from '../src/store'
-import { newEntryFromUri } from '@totp/core'
 
 function flush(): Promise<void> { return new Promise((r) => setTimeout(r, 0)) }
 
@@ -81,5 +80,55 @@ describe('createVueStore', () => {
     notify!({ settings: true })
     await flush()
     expect(s.settings.urlFilterEnabled).toBe(false)
+  })
+
+  it('enableEncryption→locked=false；lock 后写操作抛错；unlock 恢复', async () => {
+    const adapter = createMemoryStorage()
+    const s = createVueStore(adapter)
+    await s.initStore()
+    await s.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await s.enableEncryption('pw')
+    expect(s.locked.value).toBe(false)
+    const raw = JSON.parse((await adapter.get('vault'))!)
+    expect(raw.enc).toBe(true)
+    expect(await adapter.get('security')).toBeTruthy()
+
+    s.lock()
+    expect(s.locked.value).toBe(true)
+    await expect(s.addEntryOp(newEntryFromUri('otpauth://totp/B:c?secret=JBSWY3DPEHPK3PXP', 1700000000000))).rejects.toThrow('vault locked')
+
+    await s.unlock('pw')
+    expect(s.locked.value).toBe(false)
+    expect(s.vault.entries).toHaveLength(1)
+    await s.addEntryOp(newEntryFromUri('otpauth://totp/B:c?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    expect(s.vault.entries).toHaveLength(2)
+  })
+
+  it('initStore 对加密 vault 且未解锁→locked', async () => {
+    const adapter = createMemoryStorage()
+    const s1 = createVueStore(adapter)
+    await s1.initStore()
+    // 简报原稿未录入条目却断言解锁后 entries 为 1，自相矛盾；补一条使断言成立（加密已有数据的真实场景）
+    await s1.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await s1.enableEncryption('pw')
+    const s2 = createVueStore(adapter)
+    await s2.initStore()
+    expect(s2.locked.value).toBe(true)
+    expect(s2.vault.entries).toHaveLength(0)
+    await s2.unlock('pw')
+    expect(s2.locked.value).toBe(false)
+    expect(s2.vault.entries).toHaveLength(1)
+  })
+
+  it('disableEncryption 回到明文', async () => {
+    const adapter = createMemoryStorage()
+    const s = createVueStore(adapter)
+    await s.initStore()
+    await s.enableEncryption('pw')
+    await s.disableEncryption()
+    expect(s.hasEncryption.value).toBe(false)
+    const raw = JSON.parse((await adapter.get('vault'))!)
+    expect(raw.enc).toBeUndefined()
+    expect(await adapter.get('security')).toBeNull()
   })
 })

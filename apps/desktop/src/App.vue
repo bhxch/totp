@@ -3,7 +3,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { backupFileName, createBackupEnvelope, openBackupEnvelope } from '@totp/core'
-import { VaultManager, createVueStore, type BackupMode, type BackupPlatform, type VueStore } from '@totp/ui'
+import { LockScreen, VaultManager, createVueStore, type BackupMode, type BackupPlatform, type VueStore } from '@totp/ui'
 import { onMounted, onScopeDispose, ref } from 'vue'
 import { createBackupToDir, listBackups, readBackupByName, readBackupFileOs, writeBackupFileOs } from './backupService'
 import { decryptDpapiOs, readImportFileOs } from './importService'
@@ -123,7 +123,8 @@ async function onBlurHideChange(e: Event) {
         <button @click="getCurrentWindow().hide()">隐藏到托盘</button>
       </div>
     </header>
-    <div v-if="loadError" class="error">{{ loadError }}</div>
+    <div v-if="loadError && !store" class="error">{{ loadError }}</div>
+    <LockScreen v-else-if="store && store.locked" :store="store" />
     <VaultManager v-else-if="store" :store="store" :platform="backupPlatform" enable-copy @copy="copyToClipboard" />
   </main>
 </template>

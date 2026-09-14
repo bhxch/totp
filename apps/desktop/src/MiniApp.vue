@@ -38,7 +38,8 @@ async function copy(entry: { uuid: string }) {
 
 <template>
   <main class="mini">
-    <div v-if="!store || sorted.length === 0" class="empty">暂无条目</div>
+    <div v-if="store && store.locked" class="empty">已锁定，请先在主窗口解锁</div>
+    <div v-else-if="!store || sorted.length === 0" class="empty">暂无条目</div>
     <OtpListItem v-for="e in sorted" :key="e.uuid" :entry="e" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" />
   </main>
 </template>

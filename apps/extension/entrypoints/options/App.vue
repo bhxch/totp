@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { backupFileName, createBackupEnvelope, openBackupEnvelope, OVERWRITE_NAME, type BackupEnvelopeV1 } from '@totp/core'
-import { VaultManager, type BackupMode, type BackupPlatform } from '@totp/ui'
+import { LockScreen, VaultManager, type BackupMode, type BackupPlatform } from '@totp/ui'
 import { onMounted, ref } from 'vue'
-import { initStore, registerStorageSync, replaceAllOp, store } from '../../src/store'
+import { initStore, locked, registerStorageSync, replaceAllOp, store } from '../../src/store'
 
 const loadError = ref('')
 
@@ -119,8 +119,11 @@ const backupPlatform: BackupPlatform = {
 <template>
   <main class="page">
     <h1>TOTP 验证码工具</h1>
-    <div v-if="loadError" class="error">{{ loadError }}</div>
-    <VaultManager v-else :store="store" :platform="backupPlatform" enable-copy @copy="copyToClipboard" />
+    <LockScreen v-if="locked" :store="store" />
+    <template v-else>
+      <div v-if="loadError" class="error">{{ loadError }}</div>
+      <VaultManager v-else :store="store" :platform="backupPlatform" enable-copy @copy="copyToClipboard" />
+    </template>
   </main>
 </template>
 

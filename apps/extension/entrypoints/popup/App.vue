@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { entryMatchesUrl, type OtpEntry } from '@totp/core'
-import { EntryForm, OtpListItem, SearchBar, useOtpCodes, type EntryFormData } from '@totp/ui'
+import { EntryForm, LockScreen, OtpListItem, SearchBar, useOtpCodes, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
 import {
-  addEntryOp, commitSettings, initStore, registerStorageSync, removeEntryOp, settings, updateEntryOp, vault,
+  addEntryOp, commitSettings, initStore, locked, registerStorageSync, removeEntryOp, settings, store, updateEntryOp, vault,
 } from '../../src/store'
 
 const loaded = ref(false)
@@ -80,7 +80,8 @@ async function copy(entry: OtpEntry) {
 </script>
 
 <template>
-  <main>
+  <LockScreen v-if="locked" :store="store" />
+  <main v-else>
     <header>
       <h1>TOTP 验证码</h1>
       <button v-if="!creating && !editing" @click="creating = true; editing = null">＋ 添加</button>
