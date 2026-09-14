@@ -2,10 +2,10 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { open, save } from '@tauri-apps/plugin-dialog'
-import { backupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, SCHEMES_KEY, type ImportScheme, type StorageAdapter } from '@totp/core'
-import { LockScreen, VaultManager, createClipboardClearer, createIconStore, createVueStore, type BackupMode, type BackupPlatform, type IconStore, type ImportSchemesApi, type SecurityPlatform, type VueStore } from '@totp/ui'
+import { backupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, SCHEMES_KEY, type CloudCred, type ImportScheme, type StorageAdapter, type Vault } from '@totp/core'
+import { LockScreen, VaultManager, createClipboardClearer, createIconStore, createVueStore, type BackupMode, type BackupPlatform, type CloudPlatform, type IconStore, type ImportSchemesApi, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref } from 'vue'
-import { createBackupToDir, listBackups, readBackupByName, readBackupFileOs, writeBackupFileOs } from './backupService'
+import { createBackupToDir, listBackups, readBackupByName, readBackupFileOs, saveConflictBackupToDir, writeBackupFileOs } from './backupService'
 import { decryptDpapiOs, readImportFileBytesOs, readImportFileOs } from './importService'
 import { createTauriFs } from './tauriFs'
 
@@ -119,6 +119,52 @@ const backupPlatform: BackupPlatform = {
   decryptDpapi: (b64) => decryptDpapiOs(b64),
 }
 
+/**
+ * 云同步平台实现：凭据与 cloudRev 存 AppData 本地 JSON（cloudCred/cloudRev 键，不做系统级加密）；
+ * 冲突副本写 backups/conflict-{ts}.totpbackup；采用云端数据经 store.replaceAllOp 整体替换。
+ */
+const CLOUD_CRED_KEY = 'cloudCred'
+const CLOUD_REV_KEY = 'cloudRev'
+
+const cloudPlatform: CloudPlatform = {
+  async loadCred() {
+    if (!fsAdapter) return null
+    try {
+      const raw = await fsAdapter.get(CLOUD_CRED_KEY)
+      return raw ? (JSON.parse(raw) as CloudCred) : null
+    } catch {
+      return null
+    }
+  },
+  async saveCred(c) {
+    if (!fsAdapter) throw new Error('数据尚未就绪')
+    await fsAdapter.set(CLOUD_CRED_KEY, JSON.stringify(c))
+  },
+  readVaultJson() {
+    const s = store.value
+    if (!s) throw new Error('数据尚未就绪')
+    return JSON.stringify(s.vault)
+  },
+  async persistDownloaded(json) {
+    const s = store.value
+    if (!s) throw new Error('数据尚未就绪')
+    await s.replaceAllOp(JSON.parse(json) as Vault)
+  },
+  saveConflictBackup: (bytes) => saveConflictBackupToDir(bytes),
+  async loadHash() {
+    if (!fsAdapter) return null
+    try {
+      return await fsAdapter.get(CLOUD_REV_KEY)
+    } catch {
+      return null
+    }
+  },
+  async saveHash(hash) {
+    if (!fsAdapter) throw new Error('数据尚未就绪')
+    await fsAdapter.set(CLOUD_REV_KEY, hash)
+  },
+}
+
 /** 安全平台：security 闭包绑 store；剪贴板开关走 settings+commitSettings；desktop 无 popup，不提供 popupCloseDelayMs */
 const securityPlatform = computed<SecurityPlatform | null>(() => {
   const s = store.value
@@ -192,7 +238,7 @@ async function onBlurHideChange(e: Event) {
     </header>
     <div v-if="loadError && !store" class="error">{{ loadError }}</div>
     <LockScreen v-else-if="store && store.locked" :store="store" />
-    <VaultManager v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :icons="icons ?? undefined" :schemes-api="schemesApi" enable-copy @copy="copyToClipboard" />
+    <VaultManager v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :cloud-platform="cloudPlatform" :icons="icons ?? undefined" :schemes-api="schemesApi" enable-copy @copy="copyToClipboard" />
   </main>
 </template>
 

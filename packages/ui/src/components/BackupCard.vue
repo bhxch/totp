@@ -2,6 +2,7 @@
 import type { Vault } from '@totp/core'
 import { onMounted, ref } from 'vue'
 import type { BackupMode, BackupPlatform } from './backupPlatform'
+import { parseVaultJson } from './parseVaultJson'
 
 const props = defineProps<{
   /** 平台备份实现；null 时整卡不渲染（popup 不受影响） */
@@ -89,15 +90,6 @@ async function refreshList(): Promise<void> {
 onMounted(() => {
   if (props.platform?.listBackups) void refreshList()
 })
-
-/** 恢复统一流程第 1 步产物校验：version===1 且 entries/groups 是数组（缺 groups 会在 replaceVault 半途抛错污染 commit 队列） */
-function parseVaultJson(json: string): Vault {
-  const parsed: unknown = JSON.parse(json)
-  if (typeof parsed !== 'object' || parsed === null) throw new Error('备份内容不是有效的 vault 数据')
-  const v = parsed as Vault
-  if (v.version !== 1 || !Array.isArray(v.entries) || !Array.isArray(v.groups)) throw new Error('备份内容不是有效的 vault 数据')
-  return v
-}
 
 /** 恢复第 1 步：取备份并解密（口令复用输入框），成功后进入两步确认 */
 async function startRestore(kind: 'picker' | 'name', name?: string): Promise<void> {

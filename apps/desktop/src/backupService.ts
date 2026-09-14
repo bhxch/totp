@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { mkdir, readDir, readTextFile, rename, writeTextFile, BaseDirectory } from '@tauri-apps/plugin-fs'
-import { backupFileName, selectBackupsToKeep, READABLE_BACKUP_RE, OVERWRITE_NAME, createBackupEnvelope, type BackupEnvelopeV1 } from '@totp/core'
+import { backupFileName, conflictBackupFileName, selectBackupsToKeep, READABLE_BACKUP_RE, OVERWRITE_NAME, createBackupEnvelope, type BackupEnvelopeV1 } from '@totp/core'
 
 const dir = 'backups'
 
@@ -25,6 +25,13 @@ export async function createBackupToDir(vaultJson: string, password: string, mod
   const stale = selectBackupsToKeep(entries.map((e) => e.name), mode.n)
   for (const name of stale) await invoke('remove_backup_file', { name })
   return 'created'
+}
+
+/** 云同步冲突副本：本地 vault JSON 字节写 backups/conflict-{ts}.totpbackup（不参与滚动删除），返回文件名 */
+export async function saveConflictBackupToDir(bytes: Uint8Array): Promise<string> {
+  const name = conflictBackupFileName(new Date())
+  await writeDirFile(name, new TextDecoder().decode(bytes))
+  return name
 }
 
 export async function listBackups(): Promise<Array<{ name: string }>> {

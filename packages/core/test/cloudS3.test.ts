@@ -1,0 +1,272 @@
+import { createHash, createHmac } from 'node:crypto'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  awsUriEncode,
+  createS3Backend,
+  sigV4CanonicalRequest,
+  sigV4Signature,
+  sigV4SigningKey,
+  sigV4StringToSign,
+} from '../src/cloud/s3'
+
+const PATH = 'totp-backup.totpbackup'
+const AKID = 'AKIDEXAMPLE'
+const SECRET = 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY'
+// SHA-256("")——AWS 官方测试向量中的空 payload 哈希
+const EMPTY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+// 官方套件上下文：date=20150830 region=us-east-1 service=service（占位符字面量）
+const SCOPE = '20150830/us-east-1/service/aws4_request'
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+/**
+ * 用 node:crypto 按 AWS SigV4 官方步骤独立复算 Authorization 头，
+ * 与被测实现完全独立，用于端到端逐字锚定。
+ */
+function expectedS3Authorization(
+  method: string,
+  url: string,
+  body: Uint8Array | undefined,
+  cred: { accessKeyId: string; secretAccessKey: string; region: string },
+): string {
+  const payloadHash = createHash('sha256').update(body ?? new Uint8Array()).digest('hex')
+  const u = new URL(url)
+  const amzDate = '20150830T123600Z'
+  const canonical = [
+    method,
+    u.pathname,
+    '',
+    `host:${u.host}`,
+    `x-amz-content-sha256:${payloadHash}`,
+    `x-amz-date:${amzDate}`,
+    '',
+    'host;x-amz-content-sha256;x-amz-date',
+    payloadHash,
+  ].join('\n')
+  const scope = `20150830/${cred.region}/s3/aws4_request`
+  const sts = `AWS4-HMAC-SHA256\n${amzDate}\n${scope}\n${createHash('sha256').update(canonical).digest('hex')}`
+  let key = createHmac('sha256', `AWS4${cred.secretAccessKey}`).update('20150830').digest()
+  key = createHmac('sha256', key).update(cred.region).digest()
+  key = createHmac('sha256', key).update('s3').digest()
+  key = createHmac('sha256', key).update('aws4_request').digest()
+  const signature = createHmac('sha256', key).update(sts).digest('hex')
+  return `AWS4-HMAC-SHA256 Credential=${cred.accessKeyId}/${scope}, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=${signature}`
+}
+
+describe('SigV4 核心步骤（AWS aws-sig-v4-test-suite 官方向量锚定）', () => {
+  it('get-vanilla：canonical request 与官方向量逐字一致', () => {
+    const creq = sigV4CanonicalRequest(
+      'GET',
+      '/',
+      '',
+      [
+        ['host', 'example.amazonaws.com'],
+        ['x-amz-date', '20150830T123600Z'],
+      ],
+      EMPTY_SHA256,
+    )
+    expect(creq).toBe(
+      [
+        'GET',
+        '/',
+        '',
+        'host:example.amazonaws.com',
+        'x-amz-date:20150830T123600Z',
+        '',
+        'host;x-amz-date',
+        EMPTY_SHA256,
+      ].join('\n'),
+    )
+  })
+
+  it('get-vanilla：string to sign 与 signature 匹配官方值 5fa00fa3…', async () => {
+    const creq = sigV4CanonicalRequest(
+      'GET',
+      '/',
+      '',
+      [
+        ['host', 'example.amazonaws.com'],
+        ['x-amz-date', '20150830T123600Z'],
+      ],
+      EMPTY_SHA256,
+    )
+    const sts = await sigV4StringToSign('20150830T123600Z', SCOPE, creq)
+    expect(sts).toBe(
+      `AWS4-HMAC-SHA256\n20150830T123600Z\n${SCOPE}\nbb579772317eb040ac9ed261061d46c1f17a8133879d6129b6e1c25292927e63`,
+    )
+    const key = await sigV4SigningKey(SECRET, '20150830', 'us-east-1', 'service')
+    expect(await sigV4Signature(key, sts)).toBe(
+      '5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31',
+    )
+  })
+
+  it('get-header-key-duplicate：重复头保持出现顺序合并，signature 匹配官方值 c9d5ea9f…', async () => {
+    const creq = sigV4CanonicalRequest(
+      'GET',
+      '/',
+      '',
+      [
+        ['host', 'example.amazonaws.com'],
+        ['my-header1', 'value2'],
+        ['my-header1', 'value2'],
+        ['my-header1', 'value1'],
+        ['x-amz-date', '20150830T123600Z'],
+      ],
+      EMPTY_SHA256,
+    )
+    expect(creq).toBe(
+      [
+        'GET',
+        '/',
+        '',
+        'host:example.amazonaws.com',
+        'my-header1:value2,value2,value1',
+        'x-amz-date:20150830T123600Z',
+        '',
+        'host;my-header1;x-amz-date',
+        EMPTY_SHA256,
+      ].join('\n'),
+    )
+    const sts = await sigV4StringToSign('20150830T123600Z', SCOPE, creq)
+    expect(sts).toBe(
+      `AWS4-HMAC-SHA256\n20150830T123600Z\n${SCOPE}\ndc7f04a3abfde8d472b0ab1a418b741b7c67174dad1551b4117b15527fbe966c`,
+    )
+    const key = await sigV4SigningKey(SECRET, '20150830', 'us-east-1', 'service')
+    expect(await sigV4Signature(key, sts)).toBe(
+      'c9d5ea9f3f72853aea855b47ea873832890dbdd183b4468f858259531a5138ea',
+    )
+  })
+
+  it('awsUriEncode：保留 unreserved 字符与路径斜杠，其余 UTF-8 百分号大写编码', () => {
+    expect(awsUriEncode('a b/c+d~e-f_g.h', false)).toBe('a%20b/c%2Bd~e-f_g.h')
+    expect(awsUriEncode('a/b', true)).toBe('a%2Fb')
+  })
+})
+
+describe('S3 后端（默认 AWS endpoint，virtual-host style）', () => {
+  const CRED = {
+    backend: 's3' as const,
+    region: 'us-east-1',
+    bucket: 'mybucket',
+    accessKeyId: AKID,
+    secretAccessKey: SECRET,
+  }
+  const URL_OF = (p: string) => `https://mybucket.s3.us-east-1.amazonaws.com/${p}`
+  // 时钟注入：固定到官方套件同一时刻，签名可确定性复算
+  const OPTS = { now: () => new Date('2015-08-30T12:36:00Z') }
+
+  it('put：SigV4 Authorization 头与独立复算值逐字一致，含 x-amz-date/x-amz-content-sha256', async () => {
+    const fetchMock = vi.fn(async (_u: RequestInfo | URL, _i?: RequestInit) => new Response(null, { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createS3Backend(CRED, OPTS)
+    const body = new TextEncoder().encode('hello')
+    await backend.put(PATH, body)
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(url).toBe(URL_OF(PATH))
+    expect(init!.method).toBe('PUT')
+    const headers = init!.headers as Record<string, string>
+    expect(headers['x-amz-date']).toBe('20150830T123600Z')
+    expect(headers['x-amz-content-sha256']).toBe(createHash('sha256').update(body).digest('hex'))
+    expect(headers.Authorization).toBe(expectedS3Authorization('PUT', URL_OF(PATH), body, CRED))
+  })
+
+  it('put：时间注入生效——两次调用签名确定一致', async () => {
+    const backend = createS3Backend(CRED, OPTS)
+    const bodies: RequestInit[] = []
+    const fetchMock = vi.fn(async (_u: RequestInfo | URL, i?: RequestInit) => {
+      bodies.push(i!)
+      return new Response(null, { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const body = new TextEncoder().encode('data')
+    await backend.put(PATH, body)
+    await backend.put(PATH, body)
+    const authOf = (i: RequestInit) => (i.headers as Record<string, string>).Authorization
+    expect(authOf(bodies[0]!)).toBe(authOf(bodies[1]!))
+  })
+
+  it('get：200 返回字节（GET 请求签名正确），404 返回 null', async () => {
+    const bytes = new Uint8Array([1, 2, 3])
+    const fetchMock = vi.fn(async (_u: RequestInfo | URL, _i?: RequestInit) => new Response(bytes, { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createS3Backend(CRED, OPTS)
+    expect(await backend.get(PATH)).toEqual(bytes)
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(url).toBe(URL_OF(PATH))
+    expect(init!.method).toBe('GET')
+    expect((init!.headers as Record<string, string>).Authorization).toBe(expectedS3Authorization('GET', URL_OF(PATH), undefined, CRED))
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 404 })))
+    expect(await backend.get(PATH)).toBeNull()
+  })
+
+  it('delete：DELETE 请求签名正确，非 2xx 抛中文错误', async () => {
+    const fetchMock = vi.fn(async (_u: RequestInfo | URL, _i?: RequestInit) => new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createS3Backend(CRED, OPTS)
+    await backend.delete(PATH)
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(url).toBe(URL_OF(PATH))
+    expect(init!.method).toBe('DELETE')
+    expect((init!.headers as Record<string, string>).Authorization).toBe(expectedS3Authorization('DELETE', URL_OF(PATH), undefined, CRED))
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 403 })))
+    await expect(backend.delete(PATH)).rejects.toThrow('S3 请求失败（HTTP 403）')
+  })
+
+  it('exists：HEAD 200 → true，404 → false', async () => {
+    const backend = createS3Backend(CRED, OPTS)
+    const fetchMock = vi.fn(async (_u: RequestInfo | URL, i?: RequestInit) => {
+      expect(i!.method).toBe('HEAD')
+      return new Response(null, { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await backend.exists(PATH)).toBe(true)
+    expect((fetchMock.mock.calls[0]![1]!.headers as Record<string, string>).Authorization).toBe(
+      expectedS3Authorization('HEAD', URL_OF(PATH), undefined, CRED),
+    )
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 404 })))
+    expect(await backend.exists(PATH)).toBe(false)
+  })
+
+  it('get：网络失败抛中文错误', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed') }))
+    const backend = createS3Backend(CRED, OPTS)
+    await expect(backend.get(PATH)).rejects.toThrow('S3 网络请求失败：fetch failed')
+  })
+})
+
+describe('S3 后端（自定义 endpoint 兼容 MinIO，path-style）', () => {
+  const CRED = {
+    backend: 's3' as const,
+    region: 'us-east-1',
+    bucket: 'mybucket',
+    accessKeyId: AKID,
+    secretAccessKey: SECRET,
+    endpoint: 'http://localhost:9000/',
+  }
+  const OPTS = { now: () => new Date('2015-08-30T12:36:00Z') }
+
+  it('put：URL 为 {endpoint}/{bucket}/{key}，签名 host 含端口', async () => {
+    const fetchMock = vi.fn(async (_u: RequestInfo | URL, _i?: RequestInit) => new Response(null, { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createS3Backend(CRED, OPTS)
+    const body = new TextEncoder().encode('hello')
+    await backend.put(PATH, body)
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(url).toBe(`http://localhost:9000/mybucket/${PATH}`)
+    const headers = init!.headers as Record<string, string>
+    expect(headers.Authorization).toBe(expectedS3Authorization('PUT', `http://localhost:9000/mybucket/${PATH}`, body, CRED))
+  })
+
+  it('prefix：key 前缀拼接为 {prefix}/{path}，首尾斜杠归一', async () => {
+    const fetchMock = vi.fn(async (_u: RequestInfo | URL, _i?: RequestInit) => new Response(null, { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createS3Backend({ ...CRED, prefix: '/backups/sub/' }, OPTS)
+    await backend.put(PATH, new TextEncoder().encode('x'))
+    expect(fetchMock.mock.calls[0]![0]).toBe(`http://localhost:9000/mybucket/backups/sub/${PATH}`)
+  })
+})

@@ -1,14 +1,24 @@
 export const BACKUP_EXT = '.totpbackup'
 export const OVERWRITE_NAME = 'vault-backup.totpbackup'
 
-export function backupFileName(now: Date): string {
+function stamp(now: Date): string {
   const p = (n: number, w = 2) => String(n).padStart(w, '0')
-  return `vault-${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}${BACKUP_EXT}`
+  return `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`
+}
+
+export function backupFileName(now: Date): string {
+  return `vault-${stamp(now)}${BACKUP_EXT}`
+}
+
+/** 云同步冲突副本文件名（conflict 前缀，与常规备份区分；不参与滚动删除） */
+export function conflictBackupFileName(now: Date): string {
+  return `conflict-${stamp(now)}${BACKUP_EXT}`
 }
 
 export const BACKUP_NAME_RE = /^vault-\d{8}-\d{6}\.totpbackup$/
-// 可读（恢复）范围：时间戳名或 overwrite 名均可；滚动删除仍仅认 BACKUP_NAME_RE（overwrite 名永不滚动删除）
-export const READABLE_BACKUP_RE = /^vault-(\d{8}-\d{6}|backup)\.totpbackup$/
+// 可读（恢复）范围：时间戳名或 overwrite 名均可 + 云同步冲突副本名（备份列表可恢复）；
+// 滚动删除仍仅认 BACKUP_NAME_RE（overwrite 名与 conflict 名永不滚动删除）
+export const READABLE_BACKUP_RE = /^(vault-(\d{8}-\d{6}|backup)|conflict-\d{8}-\d{6})\.totpbackup$/
 
 export function selectBackupsToKeep(names: string[], keep: number): string[] {
   const valid = names.filter((n) => BACKUP_NAME_RE.test(n)).sort() // 字典序=时间序
