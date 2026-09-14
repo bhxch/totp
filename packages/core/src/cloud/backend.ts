@@ -53,13 +53,19 @@ export interface OneDriveCred {
 /** 云后端凭据判别联合。 */
 export type CloudCred = WebdavCred | GistCred | S3Cred | GDriveCred | OneDriveCred
 
-/** fetch 网络层包装：连接失败/中断等 reject 统一转为中文错误。 */
+/** fetch 网络层包装：连接失败/中断等 reject 统一转为中文错误。
+ *  TypeError: Failed to fetch 与 NetworkError when attempting to fetch resource 是浏览器对
+ *  CORS 拒绝/连接中断的统一表现（无具体响应）；自建 WebDAV/S3(MinIO) 等场景下绝大多数成因是
+ *  服务端未配置 Access-Control-Allow-Origin/-Methods/-Headers，主动追加提示以减少误判。 */
 export async function cloudFetch(label: string, url: string, init?: RequestInit): Promise<Response> {
   try {
     return await fetch(url, init)
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
-    throw new Error(`${label} 网络请求失败：${reason}`)
+    const isCorsLikely = err instanceof TypeError
+      && /fetch failed|NetworkError when attempting to fetch resource/i.test(reason)
+    const hint = isCorsLikely ? ' — 若为自建 WebDAV/S3(MinIO)请检查服务端 CORS 配置' : ''
+    throw new Error(`${label} 网络请求失败：${reason}${hint}`)
   }
 }
 

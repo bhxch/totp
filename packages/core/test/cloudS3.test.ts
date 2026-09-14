@@ -237,6 +237,22 @@ describe('S3 后端（默认 AWS endpoint，virtual-host style）', () => {
     const backend = createS3Backend(CRED, OPTS)
     await expect(backend.get(PATH)).rejects.toThrow('S3 网络请求失败：fetch failed')
   })
+  it('网络层 TypeError 命中 CORS 模式时追加「请检查服务端 CORS 配置」中文提示（自建 WebDAV/MinIO 场景）', async () => {
+    const cases: Array<[string, string]> = [
+      ['fetch failed', '请检查服务端 CORS 配置'],
+      ['NetworkError when attempting to fetch resource.', '请检查服务端 CORS 配置'],
+    ]
+    for (const [reason, expected] of cases) {
+      vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError(reason) }))
+      const backend = createS3Backend(CRED, OPTS)
+      await expect(backend.get(PATH)).rejects.toThrow(expected)
+    }
+    // 其他 TypeError 不应误加提示
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('其他错误') }))
+    const ok = createS3Backend(CRED, OPTS)
+    await expect(ok.get(PATH)).rejects.toThrow('S3 网络请求失败：其他错误')
+    await expect(ok.get(PATH)).rejects.not.toThrow('CORS')
+  })
 })
 
 describe('S3 后端（自定义 endpoint 兼容 MinIO，path-style）', () => {
