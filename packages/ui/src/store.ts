@@ -76,6 +76,16 @@ export function createVueStore(
     const task = queue.then(async () => {
       // 锁定时拒绝写操作：在 fn 执行前抛出，本次 commit reject 但队列继续（catch 兜底不传染后续任务）
       if (locked.value) throw new Error('vault locked')
+      // 防加密降级：本端 security 缓存为空时核对盘上 security（远端已启用而本端陈旧→转锁定并拒绝本次明文写，
+      // 避免明文覆盖密文造成降级与「security 在但 vault 明文」的不一致态）。代价：未加密用户每次写多一次 adapter.get
+      if (!security.value) {
+        const disk = await readSecurity()
+        if (disk) {
+          security.value = disk
+          lock()
+          throw new Error('vault locked')
+        }
+      }
       replaceVault(fn(vault))
       try {
         lastSelfWrite.vault = Date.now()
@@ -117,9 +127,17 @@ export function createVueStore(
           .then(async (raw) => {
             if (raw === null) return
             const parsed: unknown = JSON.parse(raw)
-            // 密文：持有 DEK 才解密填充（changePassphrase 只重包裹、DEK 不变，旧 DEK 仍可解）；无 DEK（锁定）不进内存
+            // 锁定窗口不消费任何远端 vault 内容（防锁定态下明文/密文混入内存）
+            if (locked.value) return
             if (isEncryptedVault(parsed)) {
-              if (!dek) return
+              if (!dek) {
+                // 远端已启用加密而本端未持有 DEK：转锁定并从盘刷新 security 缓存，
+                // 与远端状态对齐；否则本端后续明文写会降级覆盖密文
+                lock()
+                security.value = await readSecurity().catch(() => null)
+                return
+              }
+              // 持有 DEK 才解密填充（changePassphrase 只重包裹、DEK 不变，旧 DEK 仍可解）
               replaceVault(JSON.parse(await decryptVaultWithDek(dek, parsed)) as Vault)
               return
             }

@@ -131,4 +131,65 @@ describe('createVueStore', () => {
     expect(raw.enc).toBeUndefined()
     expect(await adapter.get('security')).toBeNull()
   })
+
+  it('远端启用加密：本端收密文通知→锁定，unlock 后数据正确且写回密文', async () => {
+    const adapter = createMemoryStorage()
+    let notify: ((p: { vault?: boolean; settings?: boolean }) => void) | null = null
+    const a = createVueStore(adapter)
+    await a.initStore()
+    // 窗口 B 在明文时代初始化：解锁态、security 缓存陈旧为 null、无 dek
+    const b = createVueStore(adapter, { registerSync: (cb) => { notify = cb } })
+    await b.initStore()
+    b.registerStorageSync()
+    await a.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await a.enableEncryption('pw')
+
+    notify!({ vault: true })
+    await flush()
+    expect(b.locked.value).toBe(true)
+    expect(b.vault.entries).toHaveLength(0)
+    await b.unlock('pw')
+    expect(b.locked.value).toBe(false)
+    expect(b.vault.entries).toHaveLength(1)
+    // B 后续写 op 走加密分支（security 缓存已刷新），不再降级覆盖
+    await b.addEntryOp(newEntryFromUri('otpauth://totp/B:c?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    const raw = JSON.parse((await adapter.get('vault'))!)
+    expect(raw.enc).toBe(true)
+  })
+
+  it('锁定窗口不消费远端明文通知', async () => {
+    const adapter = createMemoryStorage()
+    let notify: ((p: { vault?: boolean; settings?: boolean }) => void) | null = null
+    const a = createVueStore(adapter)
+    await a.initStore()
+    await a.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await a.enableEncryption('pw')
+    const b = createVueStore(adapter, { registerSync: (cb) => { notify = cb } })
+    await b.initStore() // 密文在手无 dek → 锁定
+    expect(b.locked.value).toBe(true)
+    b.registerStorageSync()
+    // 模拟远端 disableEncryption 后的明文落盘
+    await adapter.set('vault', JSON.stringify({ version: 1, entries: [{ uuid: 'x' }], groups: [], updatedAt: 9 }))
+    notify!({ vault: true })
+    await flush()
+    expect(b.locked.value).toBe(true)
+    expect(b.vault.entries).toHaveLength(0)
+  })
+
+  it('通知丢失时明文写防御：远端已加密而本端陈旧→拒绝写入、转锁定、密文不被覆盖', async () => {
+    const adapter = createMemoryStorage()
+    const a = createVueStore(adapter)
+    await a.initStore()
+    // 窗口 B 无 registerSync（收不到任何通知）：明文时代 initStore 后停在陈旧解锁态
+    const b = createVueStore(adapter)
+    await b.initStore()
+    await a.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await a.enableEncryption('pw')
+
+    await expect(b.addEntryOp(newEntryFromUri('otpauth://totp/B:c?secret=JBSWY3DPEHPK3PXP', 1700000000000))).rejects.toThrow('vault locked')
+    expect(b.locked.value).toBe(true)
+    const raw = JSON.parse((await adapter.get('vault'))!)
+    expect(raw.enc).toBe(true) // 盘上密文未被明文覆盖
+    expect(await adapter.get('security')).toBeTruthy()
+  })
 })
