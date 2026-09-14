@@ -56,7 +56,9 @@ const base32Hint = computed(() => {
 })
 
 // ---------- 图标推荐（issuer 防抖 300ms） ----------
-/** 用户是否已手动设置过图标（推荐气泡只在未手动设置时出现） */
+/** 用户是否已手动设置过图标（推荐气泡只在未手动设置时出现）
+ *  M25（intentional）：iconTouched 仅在表单实例生命周期内有效 —— 用户手动清除图标后不会再显示推荐，
+ *  这是有意行为：避免「清空即重置推荐 → 推荐又立刻填充」的视觉跳跃；推荐应只在首次进入表单时介入一次。 */
 const iconTouched = ref(props.initial?.icon !== undefined)
 const recommended = ref<BuiltinIcon | null>(null)
 let recommendTimer: ReturnType<typeof setTimeout> | null = null
