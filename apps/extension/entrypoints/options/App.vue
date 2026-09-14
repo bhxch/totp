@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { backupFileName, createBackupEnvelope, openBackupEnvelope, OVERWRITE_NAME, type BackupEnvelopeV1 } from '@totp/core'
-import { LockScreen, VaultManager, type BackupMode, type BackupPlatform } from '@totp/ui'
-import { onMounted, ref } from 'vue'
-import { initStore, locked, registerStorageSync, replaceAllOp, store } from '../../src/store'
+import { LockScreen, VaultManager, type BackupMode, type BackupPlatform, type SecurityPlatform } from '@totp/ui'
+import { computed, onMounted, ref } from 'vue'
+import {
+  changePassphrase, commitSettings, disableEncryption, enableEncryption, hasEncryption, initStore, locked,
+  registerStorageSync, replaceAllOp, settings, store,
+} from '../../src/store'
 
 const loadError = ref('')
 
@@ -89,6 +92,27 @@ function pickFile(accept: string): Promise<File | null> {
 
 const pickBackupFile = (): Promise<File | null> => pickFile('.totpbackup')
 
+/** 安全平台：security 闭包绑 store；剪贴板/弹窗延迟走 settings+commitSettings（extension 有 popup，提供 popupCloseDelayMs） */
+const securityPlatform: SecurityPlatform = {
+  security: {
+    locked,
+    hasEncryption,
+    enableEncryption: (pw) => enableEncryption(pw),
+    disableEncryption: () => disableEncryption(),
+    changePassphrase: (pw) => changePassphrase(pw),
+  },
+  clipboardClearEnabled: computed(() => settings.clipboardClearEnabled),
+  async setClipboardClear(v) {
+    settings.clipboardClearEnabled = v
+    await commitSettings()
+  },
+  popupCloseDelayMs: computed(() => settings.popupCloseDelayMs),
+  async setPopupCloseDelay(ms) {
+    settings.popupCloseDelayMs = ms
+    await commitSettings()
+  },
+}
+
 const backupPlatform: BackupPlatform = {
   get mode() { return backupMode.value },
   async setMode(m) {
@@ -122,7 +146,7 @@ const backupPlatform: BackupPlatform = {
     <LockScreen v-if="locked" :store="store" />
     <template v-else>
       <div v-if="loadError" class="error">{{ loadError }}</div>
-      <VaultManager v-else :store="store" :platform="backupPlatform" enable-copy @copy="copyToClipboard" />
+      <VaultManager v-else :store="store" :platform="backupPlatform" :security-platform="securityPlatform" enable-copy @copy="copyToClipboard" />
     </template>
   </main>
 </template>

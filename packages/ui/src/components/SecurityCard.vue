@@ -1,0 +1,155 @@
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+import type { SecurityPlatform } from './securityPlatform'
+
+const props = defineProps<{
+  /** 安全平台能力；null 时整卡不渲染（popup 不受影响） */
+  platform: SecurityPlatform | null
+}>()
+
+const password = ref('')
+const confirmPw = ref('')
+const newPw = ref('')
+const newPwConfirm = ref('')
+const busy = ref(false)
+const msg = ref('')
+const msgKind = ref<'ok' | 'err' | 'hint'>('ok')
+/** 关闭加密的两步确认（警示明文存储） */
+const confirmDisable = ref(false)
+
+const hasEnc = computed(() => props.platform?.security?.hasEncryption.value ?? false)
+const isLocked = computed(() => props.platform?.security?.locked.value ?? false)
+const clipboardOn = computed(() => props.platform?.clipboardClearEnabled.value ?? true)
+
+function fail(e: unknown): void {
+  msg.value = e instanceof Error ? e.message : String(e)
+  msgKind.value = 'err'
+}
+
+/** 口令校验：非空且两次一致（启用/换口令共用） */
+function validatePw(a: string, b: string): string | null {
+  if (!a) return '请输入口令'
+  if (a !== b) return '两次输入的口令不一致'
+  return null
+}
+
+/** busy/消息统一包装（同 BackupCard 模式） */
+async function run(fn: () => Promise<void>, okMsg: string): Promise<boolean> {
+  busy.value = true
+  msg.value = ''
+  try {
+    await fn()
+    msg.value = okMsg
+    msgKind.value = 'ok'
+    return true
+  } catch (e) {
+    fail(e)
+    return false
+  } finally {
+    busy.value = false
+  }
+}
+
+async function onEnable(): Promise<void> {
+  const p = props.platform?.security
+  if (!p) return
+  const err = validatePw(password.value, confirmPw.value)
+  if (err) return fail(new Error(err))
+  if (await run(() => p.enableEncryption(password.value), '已启用加密')) {
+    password.value = ''
+    confirmPw.value = ''
+  }
+}
+
+async function onChangePw(): Promise<void> {
+  const p = props.platform?.security
+  if (!p) return
+  const err = validatePw(newPw.value, newPwConfirm.value)
+  if (err) return fail(new Error(err))
+  if (await run(() => p.changePassphrase(newPw.value), '口令已更换')) {
+    newPw.value = ''
+    newPwConfirm.value = ''
+  }
+}
+
+async function onDisable(): Promise<void> {
+  const p = props.platform?.security
+  if (!p) return
+  if (await run(() => p.disableEncryption(), '已关闭加密')) confirmDisable.value = false
+}
+
+async function onClipboardChange(e: Event): Promise<void> {
+  await props.platform?.setClipboardClear((e.target as HTMLInputElement).checked)
+}
+
+async function onDelayChange(e: Event): Promise<void> {
+  const ms = Math.max(0, Math.floor(Number((e.target as HTMLInputElement).value) || 0))
+  await props.platform?.setPopupCloseDelay?.(ms)
+}
+</script>
+
+<template>
+  <section v-if="platform" class="card security">
+    <h2>安全</h2>
+    <template v-if="platform.security">
+      <!-- 未启用：口令+确认 → 启用加密 -->
+      <template v-if="!hasEnc">
+        <div class="pw-row">
+          <input v-model="password" type="password" placeholder="加密口令" autocomplete="new-password" :disabled="busy" />
+          <input v-model="confirmPw" type="password" placeholder="确认口令" autocomplete="new-password" :disabled="busy" />
+        </div>
+        <div class="actions">
+          <button class="enable-enc" :disabled="busy" @click="onEnable">启用加密</button>
+        </div>
+        <p class="hint">启用后本地数据以口令加密存储，每次打开需输入口令解锁。</p>
+      </template>
+      <!-- 已启用且解锁：换口令 + 关闭加密 -->
+      <template v-else-if="!isLocked">
+        <div class="pw-row">
+          <input v-model="newPw" type="password" placeholder="新口令" autocomplete="new-password" :disabled="busy" />
+          <input v-model="newPwConfirm" type="password" placeholder="确认新口令" autocomplete="new-password" :disabled="busy" />
+        </div>
+        <div class="actions">
+          <button class="change-pw" :disabled="busy" @click="onChangePw">更换口令</button>
+          <button v-if="!confirmDisable" class="disable-enc" :disabled="busy" @click="confirmDisable = true">关闭加密</button>
+        </div>
+        <div v-if="confirmDisable" class="confirm-row">
+          <span>关闭加密将把全部条目以明文存储，确定？</span>
+          <button class="danger" :disabled="busy" @click="onDisable">确认关闭</button>
+          <button @click="confirmDisable = false">取消</button>
+        </div>
+      </template>
+      <!-- 锁定：仅提示（解锁入口由主 LockScreen 处理） -->
+      <p v-else class="locked-hint">已锁定——解锁后可管理加密设置</p>
+    </template>
+    <!-- 通用设置区 -->
+    <label class="opt">
+      <input class="clipboard-clear" type="checkbox" :checked="clipboardOn" @change="onClipboardChange" />
+      复制后 30 秒自动清空剪贴板
+    </label>
+    <label v-if="platform.popupCloseDelayMs && platform.setPopupCloseDelay" class="opt">
+      复制后弹窗自动关闭延迟（毫秒）
+      <input
+        class="delay-ms" type="number" min="0" :value="platform.popupCloseDelayMs.value"
+        :disabled="busy" @change="onDelayChange"
+      />
+    </label>
+    <div v-if="msg" :class="msgKind" role="status">{{ msg }}</div>
+  </section>
+</template>
+
+<style scoped>
+.card { border: 1px solid rgba(128,128,128,.4); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+h2 { font-size: 15px; margin: 0; }
+.pw-row { display: flex; gap: 8px; }
+.pw-row input { flex: 1; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.confirm-row { display: flex; align-items: center; gap: 8px; font-size: 13px; flex-wrap: wrap; }
+.danger { color: #d9534f; }
+.opt { font-size: 13px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.delay-ms { width: 80px; }
+.hint, .locked-hint { font-size: 13px; opacity: .65; margin: 0; }
+.ok { color: #2e7d32; font-size: 13px; }
+.err { color: #d9534f; font-size: 13px; }
+.hint { opacity: .65; font-size: 13px; }
+</style>
