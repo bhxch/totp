@@ -27,9 +27,9 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
       // 防止用户同名文档(如 txt/json)被误当作备份命中而覆盖上传内容
       body: JSON.stringify({ name, mimeType: 'application/json' }),
     })
-    ensureHttpOk(LABEL, res)
+    ensureHttpOk(LABEL, res) // HTTP 层错误（如 401/403/5xx）由 ensureHttpOk 抛 "Google Drive xxx"，前缀与业务字段缺失错误区分
     const json = (await res.json()) as { id?: string }
-    if (!json.id) throw new Error('Google Drive 创建文件失败：响应缺少文件 id')
+    if (!json.id) throw new Error('Google Drive 业务字段缺失：files.create 响应缺少文件 id')
     fileId = json.id
     opts.onCredChange?.({ ...cred, fileId })
     return fileId
@@ -44,7 +44,7 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
       method: 'GET',
       headers: auth,
     })
-    ensureHttpOk(LABEL, res)
+    ensureHttpOk(LABEL, res) // 同上：HTTP 错误 vs 业务字段缺失错误文案区分
     const json = (await res.json()) as { files?: Array<{ id?: string }> }
     const found = json.files?.[0]?.id ?? null
     if (found && found !== fileId) {
