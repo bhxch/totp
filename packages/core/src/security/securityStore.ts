@@ -144,8 +144,9 @@ export async function changeVaultPassphrase(
     kdf: { alg: 'argon2id', m: security.kdf.m, t: security.kdf.t, p: security.kdf.p, salt: bytesToBase64(salt) },
     wrapNonce: bytesToBase64(wrapNonce),
     wrappedDek: bytesToBase64(wrappedDek),
-    // 多绑来源（prf/dpapi 的 wrappedDekP/D 与 DEK 绑定）不受换口令影响，原样保留
-    ...(security.kekSources ? { kekSources: security.kekSources } : {}),
+    // 多绑来源（prf/dpapi 的 wrappedDekP/D 与 DEK 绑定）不受换口令影响，原样保留；
+    // 走 kekSourcesOf 归一：旧数据缺字段/空数组/全非法 → [{kind:'password'}]，避免原条件展开在「旧密码无 kekSources」分支漏写 password 源导致换口令后多绑列表丢失
+    kekSources: kekSourcesOf(security),
   }
 }
 
