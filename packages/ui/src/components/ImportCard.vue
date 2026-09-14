@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import {
   applyImport, extractGenericRows, findConflicts, importAegisEncrypted, importAegisPlaintext,
-  importGeneric, importUriBatch, importWinauth, sniffFormat,
-  type ConflictPolicy, type ImportFormat, type ImportResult, type RowMapping,
+  importGeneric, importUriBatch, importWinauth, matchSchemes, normalizeSchemes, removeScheme, sniffFormat, upsertScheme,
+  type ConflictPolicy, type ImportFormat, type ImportResult, type ImportScheme, type RowMapping,
 } from '@totp/core'
 import { computed, ref } from 'vue'
 import type { VueStore } from '../store'
-import type { ImportPlatform } from './importPlatform'
+import type { ImportPlatform, ImportSchemesApi } from './importPlatform'
 
 const props = defineProps<{
   /** 平台导入能力（readImportFile + 可选 decryptDpapi + store）；null 时整卡不渲染（popup 不受影响） */
   platform: ImportPlatform | null
+  /** 映射方案存取能力（宿主直读写 storage 的 SCHEMES_KEY）；缺省时映射页方案区不渲染 */
+  schemesApi?: ImportSchemesApi | null
 }>()
 
 // 流程状态机：idle → picked →（generic→mapping / aegis 加密与 winauth→password）→ confirm → report
@@ -62,14 +64,80 @@ const GUESS: Array<{ key: MapFieldKey; candidates: string[] }> = [
   { key: 'issuer', candidates: ['issuer', 'name', 'service'] },
   { key: 'label', candidates: ['label', 'account', 'username'] },
 ]
-function guessPaths(): void {
+/** 首个对象行的键（sampleKeys：方案推荐匹配 + 猜测预填共用） */
+function firstRowKeys(): string[] {
   const row = rows.value.find((r) => r !== null && typeof r === 'object' && !Array.isArray(r))
-  if (!row) return
-  const keys = Object.keys(row as Record<string, unknown>)
+  return row ? Object.keys(row as Record<string, unknown>) : []
+}
+function guessPaths(): void {
+  const keys = firstRowKeys()
+  if (keys.length === 0) return
   const lower = keys.map((k) => k.toLowerCase())
   for (const g of GUESS) {
     const hit = g.candidates.map((c) => keys[lower.indexOf(c)]).find(Boolean)
     if (hit) paths.value[g.key] = hit
+  }
+}
+
+// ---------- 映射方案（命名保存/推荐复用/删除）：schemesApi 缺省时整区不渲染 ----------
+const schemes = ref<ImportScheme[]>([])
+const schemeName = ref('')
+const schemeSel = ref('')
+const sampleKeys = ref<string[]>([])
+const recommended = computed(() => matchSchemes(schemes.value, sampleKeys.value))
+const otherSchemes = computed(() => {
+  const rec = new Set(recommended.value.map((s) => s.id))
+  return schemes.value.filter((s) => !rec.has(s.id))
+})
+
+/** 进映射页时后台加载方案表；load 失败视为无方案，不阻断映射流程 */
+async function refreshSchemes(): Promise<void> {
+  if (!props.schemesApi) return
+  try {
+    schemes.value = normalizeSchemes(await props.schemesApi.load())
+  } catch {
+    schemes.value = []
+  }
+}
+
+/** 保存方案：当前映射按输入名存为新方案（id=randomUUID），upsert 同名同 id 覆盖后整体落盘 */
+async function saveScheme(): Promise<void> {
+  if (!props.schemesApi || busy.value) return
+  const mapping = buildMapping()
+  if (!mapping) return fail(new Error('secret 字段的映射路径必填'))
+  const name = schemeName.value.trim()
+  if (!name) return fail(new Error('请先输入方案名称'))
+  try {
+    const s: ImportScheme = { id: crypto.randomUUID(), name, mapping, createdAt: Date.now() }
+    const list = upsertScheme(schemes.value, s)
+    await props.schemesApi.save(list)
+    schemes.value = list
+    schemeSel.value = s.id
+    msg.value = `方案「${name}」已保存`
+    msgKind.value = 'ok'
+  } catch (e) {
+    fail(e)
+  }
+}
+
+/** 应用方案：回填映射路径输入（覆盖预填/当前值），未映射字段清空；rowsPath 当前映射页无输入位，不回填 */
+function applyScheme(): void {
+  const s = schemes.value.find((x) => x.id === schemeSel.value)
+  if (!s) return fail(new Error('请先选择方案'))
+  for (const f of FIELDS) paths.value[f.key] = s.mapping[f.key]?.path ?? ''
+}
+
+/** 删除方案：removeScheme 后整体落盘，清选中 */
+async function deleteScheme(): Promise<void> {
+  const api = props.schemesApi
+  if (!api || busy.value || !schemeSel.value) return
+  try {
+    const list = removeScheme(schemes.value, schemeSel.value)
+    await api.save(list)
+    schemes.value = list
+    schemeSel.value = ''
+  } catch (e) {
+    fail(e)
   }
 }
 
@@ -162,6 +230,10 @@ async function nextFromPicked(): Promise<void> {
     rowsKind.value = ex.kind
     paths.value = emptyPaths()
     guessPaths()
+    sampleKeys.value = firstRowKeys()
+    schemeName.value = ''
+    schemeSel.value = ''
+    void refreshSchemes()
     step.value = 'mapping'
     return
   }
@@ -188,10 +260,9 @@ async function nextFromPicked(): Promise<void> {
   await parseAndConfirm(() => importUriBatch(fileText.value))
 }
 
-/** 映射页下一步：组装 RowMapping（留空字段不带，走 core 默认值）并解析 */
-function nextFromMapping(): void {
-  if (busy.value) return
-  if (!paths.value.secret.trim()) return fail(new Error('secret 字段的映射路径必填'))
+/** 当前路径输入 → RowMapping（留空字段不带，走 core 默认值）；secret 未填返回 null */
+function buildMapping(): RowMapping | null {
+  if (!paths.value.secret.trim()) return null
   const mapping: RowMapping = { secret: { path: paths.value.secret } }
   if (paths.value.issuer) mapping.issuer = { path: paths.value.issuer }
   if (paths.value.label) mapping.label = { path: paths.value.label }
@@ -201,6 +272,14 @@ function nextFromMapping(): void {
   if (paths.value.period) mapping.period = { path: paths.value.period }
   if (paths.value.counter) mapping.counter = { path: paths.value.counter }
   if (paths.value.note) mapping.note = { path: paths.value.note }
+  return mapping
+}
+
+/** 映射页下一步：组装 RowMapping 并解析 */
+function nextFromMapping(): void {
+  if (busy.value) return
+  const mapping = buildMapping()
+  if (!mapping) return fail(new Error('secret 字段的映射路径必填'))
   const text = fileText.value
   const rowsOverride = rows.value
   void parseAndConfirm(() => importGeneric(text, mapping, rowsOverride), { emptyGoesBack: true })
@@ -283,6 +362,25 @@ function failureLabel(f: { index: number; message: string }): string {
         <label>{{ f.label }}<span v-if="f.required" class="req">必填</span></label>
         <input v-model="paths[f.key]" :data-field="f.key" :placeholder="f.required ? '必填' : '留空使用默认值'" />
       </div>
+      <div v-if="schemesApi" class="schemes">
+        <div class="scheme-row">
+          <input v-model="schemeName" class="scheme-name" placeholder="方案名称（保存当前映射）" @keydown.enter.prevent="saveScheme" />
+          <button class="scheme-save" :disabled="busy" @click="saveScheme">保存方案</button>
+        </div>
+        <div v-if="schemes.length" class="scheme-row">
+          <select v-model="schemeSel" class="scheme-select">
+            <option value="">选择方案…</option>
+            <optgroup v-if="recommended.length" label="推荐">
+              <option v-for="s in recommended" :key="s.id" :value="s.id">{{ s.name }}</option>
+            </optgroup>
+            <optgroup v-if="otherSchemes.length" label="其他">
+              <option v-for="s in otherSchemes" :key="s.id" :value="s.id">{{ s.name }}</option>
+            </optgroup>
+          </select>
+          <button class="scheme-apply" :disabled="!schemeSel" @click="applyScheme">应用</button>
+          <button class="scheme-delete" :disabled="!schemeSel || busy" @click="deleteScheme">删除</button>
+        </div>
+      </div>
       <div class="actions">
         <button class="prefill" :disabled="busy" @click="guessPaths">使用预填</button>
         <button class="import-next" :disabled="busy" @click="nextFromMapping">下一步</button>
@@ -342,6 +440,9 @@ h2 { font-size: 15px; margin: 0; }
 .map-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .map-row label { width: 90px; flex: none; }
 .map-row input { flex: 1; }
+.schemes { display: flex; flex-direction: column; gap: 6px; border-top: 1px dashed rgba(128,128,128,.3); padding-top: 8px; }
+.scheme-row { display: flex; gap: 8px; }
+.scheme-row input, .scheme-row select { flex: 1; min-width: 0; }
 .policies { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; }
 .policies label { display: flex; align-items: center; gap: 4px; }
 .failures { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 160px; overflow: auto; font-size: 12px; color: #d9534f; }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { backupFileName, createBackupEnvelope, openBackupEnvelope, OVERWRITE_NAME, type BackupEnvelopeV1 } from '@totp/core'
-import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, LockScreen, VaultManager, type BackupMode, type BackupPlatform, type SecurityPlatform } from '@totp/ui'
+import { backupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, OVERWRITE_NAME, SCHEMES_KEY, type BackupEnvelopeV1, type ImportScheme } from '@totp/core'
+import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, LockScreen, VaultManager, type BackupMode, type BackupPlatform, type ImportSchemesApi, type SecurityPlatform } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
 import { storageAdapter } from '../../src/store'
 import {
@@ -9,6 +9,24 @@ import {
 } from '../../src/store'
 
 const icons = createIconStore(storageAdapter)
+
+/**
+ * 导入映射方案存取：直读写 storageAdapter 的 SCHEMES_KEY（跨端随 storage 同步）。
+ * load 容错：坏 JSON/读失败 → 空表（core normalizeSchemes 兜底解析）。
+ */
+const schemesApi: ImportSchemesApi = {
+  async load(): Promise<ImportScheme[]> {
+    try {
+      const raw = await storageAdapter.get(SCHEMES_KEY)
+      return raw ? normalizeSchemes(JSON.parse(raw)) : []
+    } catch {
+      return []
+    }
+  },
+  async save(list: ImportScheme[]): Promise<void> {
+    await storageAdapter.set(SCHEMES_KEY, JSON.stringify(list))
+  },
+}
 
 const loadError = ref('')
 
@@ -161,7 +179,7 @@ const backupPlatform: BackupPlatform = {
     <LockScreen v-if="locked" :store="store" />
     <template v-else>
       <div v-if="loadError" class="error">{{ loadError }}</div>
-      <VaultManager v-else :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :icons="icons" enable-copy @copy="copyToClipboard" />
+      <VaultManager v-else :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :icons="icons" :schemes-api="schemesApi" enable-copy @copy="copyToClipboard" />
     </template>
   </main>
 </template>

@@ -1,3 +1,4 @@
+import type { ImportScheme } from '@totp/core'
 import type { VueStore } from '../store'
 
 /**
@@ -11,4 +12,13 @@ export interface ImportPlatform {
   decryptDpapi?(b64: string): Promise<string>
   /** 共享 vault store：解析结果经 store.commit + applyImport 落库 */
   store: VueStore
+}
+
+/**
+ * 导入映射方案存取能力（由宿主注入，直读写 storage adapter 的 SCHEMES_KEY 键）；缺省时映射页方案区不渲染。
+ * load 宿主自容错（core normalizeSchemes 解析），save 接收去重后的全量列表整体覆写。
+ */
+export interface ImportSchemesApi {
+  load(): Promise<ImportScheme[]>
+  save(list: ImportScheme[]): Promise<void>
 }

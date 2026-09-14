@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { createMemoryStorage, newEntryFromUri } from '@totp/core'
+import { createMemoryStorage, newEntryFromUri, type ImportScheme } from '@totp/core'
 import { createVueStore } from '../src/store'
 import ImportCard from '../src/components/ImportCard.vue'
 
@@ -56,5 +56,54 @@ describe('ImportCard', () => {
     await w.find('button.import-commit').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('成功导入 1 条'))
     expect(store.vault.entries).toHaveLength(2) // 原有 GitHub + Svc
+  })
+  it('方案保存：映射页命名保存当前映射→save 落盘且下拉出现该方案', async () => {
+    const store = await readyStore()
+    const text = JSON.stringify([{ name: 'Svc', userName: 'a@b.c', key: 'JBSWY3DPEHPK3PXP' }])
+    const schemesApi = { load: vi.fn().mockResolvedValue([]), save: vi.fn().mockResolvedValue(undefined) }
+    const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text, name: 'g.json' }), store }, schemesApi } })
+    await w.find('button.import-start').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('generic'))
+    await w.find('button.import-next').trigger('click') // 进入映射页
+    await vi.waitFor(() => expect(w.text()).toContain('字段映射'))
+    expect(schemesApi.load).toHaveBeenCalledTimes(1)
+    await w.find('input.scheme-name').setValue('我的方案')
+    await w.find('button.scheme-save').trigger('click')
+    await vi.waitFor(() => expect(schemesApi.save).toHaveBeenCalledTimes(1))
+    const saved = schemesApi.save.mock.calls[0]![0] as ImportScheme[]
+    expect(saved).toHaveLength(1)
+    expect(saved[0]!.name).toBe('我的方案')
+    expect(saved[0]!.mapping).toEqual({ secret: { path: 'key' }, issuer: { path: 'name' }, label: { path: 'userName' } })
+    expect(typeof saved[0]!.id).toBe('string')
+    expect(saved[0]!.createdAt).toBeGreaterThan(0)
+    const sel = w.find('select.scheme-select')
+    expect(sel.exists()).toBe(true)
+    expect(sel.html()).toContain('我的方案')
+  })
+  it('方案应用：下拉选中后应用回填映射路径（覆盖预填）', async () => {
+    const store = await readyStore()
+    const text = JSON.stringify([{ name: 'Svc', userName: 'a@b.c', key: 'JBSWY3DPEHPK3PXP' }])
+    const premade: ImportScheme = {
+      id: 's9',
+      name: '品牌方案',
+      rowsPath: 'data.items',
+      createdAt: 1,
+      mapping: { secret: { path: 'secretKey' }, issuer: { path: 'brand' }, label: { path: 'account' }, period: { path: 'step' } },
+    }
+    const schemesApi = { load: vi.fn().mockResolvedValue([premade]), save: vi.fn().mockResolvedValue(undefined) }
+    const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text, name: 'g.json' }), store }, schemesApi } })
+    await w.find('button.import-start').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('generic'))
+    await w.find('button.import-next').trigger('click')
+    await vi.waitFor(() => expect(w.find('select.scheme-select').exists()).toBe(true))
+    const val = (f: string) => (w.find(`input[data-field="${f}"]`).element as HTMLInputElement).value
+    expect(val('secret')).toBe('key') // 预填先生效
+    await w.find('select.scheme-select').setValue('s9')
+    await w.find('button.scheme-apply').trigger('click')
+    expect(val('secret')).toBe('secretKey')
+    expect(val('issuer')).toBe('brand')
+    expect(val('label')).toBe('account')
+    expect(val('period')).toBe('step')
+    expect(val('digits')).toBe('') // 未映射字段清空
   })
 })

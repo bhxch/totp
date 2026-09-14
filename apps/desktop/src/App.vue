@@ -2,8 +2,8 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { open, save } from '@tauri-apps/plugin-dialog'
-import { backupFileName, createBackupEnvelope, openBackupEnvelope } from '@totp/core'
-import { LockScreen, VaultManager, createClipboardClearer, createIconStore, createVueStore, type BackupMode, type BackupPlatform, type IconStore, type SecurityPlatform, type VueStore } from '@totp/ui'
+import { backupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, SCHEMES_KEY, type ImportScheme, type StorageAdapter } from '@totp/core'
+import { LockScreen, VaultManager, createClipboardClearer, createIconStore, createVueStore, type BackupMode, type BackupPlatform, type IconStore, type ImportSchemesApi, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref } from 'vue'
 import { createBackupToDir, listBackups, readBackupByName, readBackupFileOs, writeBackupFileOs } from './backupService'
 import { decryptDpapiOs, readImportFileOs } from './importService'
@@ -13,6 +13,27 @@ const store = ref<VueStore | null>(null)
 const icons = ref<IconStore | null>(null)
 const loadError = ref('')
 let unlistenFocus: (() => void) | null = null
+
+// ---------- 导入映射方案存取 ----------
+// adapter 在 onMounted 就绪后赋值；schemesApi 闭包实时读取（VaultManager 仅在 store 就绪后渲染，不会读到 null）
+let fsAdapter: StorageAdapter | null = null
+
+/** 直读写 adapter 的 SCHEMES_KEY（本地 AppData JSON）；load 容错：坏 JSON → 空表 */
+const schemesApi: ImportSchemesApi = {
+  async load(): Promise<ImportScheme[]> {
+    if (!fsAdapter) return []
+    try {
+      const raw = await fsAdapter.get(SCHEMES_KEY)
+      return raw ? normalizeSchemes(JSON.parse(raw)) : []
+    } catch {
+      return []
+    }
+  },
+  async save(list: ImportScheme[]): Promise<void> {
+    if (!fsAdapter) throw new Error('数据尚未就绪')
+    await fsAdapter.set(SCHEMES_KEY, JSON.stringify(list))
+  },
+}
 
 // ---------- 备份平台实现 ----------
 // 模式与保留份数属本地偏好（非同步内容）：存桌面 localStorage，key backupMode/backupKeepN
@@ -114,6 +135,7 @@ onMounted(async () => {
   unlistenFocus = un
   try {
     const adapter = await createTauriFs()
+    fsAdapter = adapter
     const s = createVueStore(adapter)
     await s.initStore()
     store.value = s
@@ -157,7 +179,7 @@ async function onBlurHideChange(e: Event) {
     </header>
     <div v-if="loadError && !store" class="error">{{ loadError }}</div>
     <LockScreen v-else-if="store && store.locked" :store="store" />
-    <VaultManager v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :icons="icons ?? undefined" enable-copy @copy="copyToClipboard" />
+    <VaultManager v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :icons="icons ?? undefined" :schemes-api="schemesApi" enable-copy @copy="copyToClipboard" />
   </main>
 </template>
 
