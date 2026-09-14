@@ -3,7 +3,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { backupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, SCHEMES_KEY, type CloudCred, type ImportScheme, type StorageAdapter, type Vault } from '@totp/core'
-import { LockScreen, VaultManager, createClipboardClearer, createIconStore, createVueStore, type BackupMode, type BackupPlatform, type CloudPlatform, type IconStore, type ImportSchemesApi, type SecurityPlatform, type VueStore } from '@totp/ui'
+import { createPrfCredential, createClipboardClearer, createIconStore, LockScreen, createVueStore, prfSupported, VaultManager, type BackupMode, type BackupPlatform, type CloudPlatform, type IconStore, type ImportSchemesApi, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref } from 'vue'
 import { createBackupToDir, listBackups, readBackupByName, readBackupFileOs, saveConflictBackupToDir, writeBackupFileOs } from './backupService'
 import { decryptDpapiOs, readImportFileBytesOs, readImportFileOs } from './importService'
@@ -165,7 +165,8 @@ const cloudPlatform: CloudPlatform = {
   },
 }
 
-/** 安全平台：security 闭包绑 store；剪贴板开关走 settings+commitSettings；desktop 无 popup，不提供 popupCloseDelayMs */
+/** 安全平台：security 闭包绑 store；剪贴板开关走 settings+commitSettings；desktop 无 popup，不提供 popupCloseDelayMs；
+ *  passkey(PRF)：WebAuthn 交互（创建/求值）经 ui prf.ts，绑定落盘走 store 的 prf 源 op */
 const securityPlatform = computed<SecurityPlatform | null>(() => {
   const s = store.value
   if (!s) return null
@@ -176,6 +177,17 @@ const securityPlatform = computed<SecurityPlatform | null>(() => {
       enableEncryption: (pw) => s.enableEncryption(pw),
       disableEncryption: () => s.disableEncryption(),
       changePassphrase: (pw) => s.changePassphrase(pw),
+      passkey: {
+        sources: computed(() => s.prfSources.value.map((p) => ({ credentialId: p.credentialId }))),
+        prfSupported: () => prfSupported(),
+        async add() {
+          const created = await createPrfCredential('TOTP 验证码工具')
+          if (!created) return false
+          await s.addPrfSourceOp(created.credentialId, created.prfOutput)
+          return true
+        },
+        remove: (credentialId) => s.removePrfSourceOp(credentialId),
+      },
     },
     clipboardClearEnabled: computed(() => s.settings.clipboardClearEnabled),
     async setClipboardClear(v) {

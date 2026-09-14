@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
-  createMemoryStorage, createVault, newEntryFromUri, SECURITY_KEY, setupVaultEncryption, type Vault,
+  createMemoryStorage, createVault, kekSourcesOf, newEntryFromUri, randomBytes, SECURITY_KEY,
+  setupVaultEncryption, unlockWithPrf,
+  type SecuritySettings, type Vault,
 } from '@totp/core'
 import { createVueStore } from '../src/store'
 
@@ -324,5 +326,75 @@ describe('createVueStore', () => {
     await s.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
     const raw = JSON.parse((await adapter.get('vault'))!)
     expect(raw.enc).toBe(true) // 自愈：写 op 走加密分支转回密文
+  })
+})
+
+describe('passkey PRF（plan11 Task2）', () => {
+  async function setupEncrypted(): Promise<{ adapter: ReturnType<typeof createMemoryStorage>; s: ReturnType<typeof createVueStore> }> {
+    const adapter = createMemoryStorage()
+    const s = createVueStore(adapter)
+    await s.initStore()
+    await s.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await s.enableEncryption('pw')
+    return { adapter, s }
+  }
+
+  const diskSecurity = async (adapter: ReturnType<typeof createMemoryStorage>): Promise<SecuritySettings> =>
+    JSON.parse((await adapter.get(SECURITY_KEY))!) as SecuritySettings
+
+  it('addPrfSourceOp：kekSources 写盘（password+prf），prfSources 视图反映绑定', async () => {
+    const { adapter, s } = await setupEncrypted()
+    const prfOutput = randomBytes(64)
+    await s.addPrfSourceOp('cred-1', prfOutput)
+    const onDisk = await diskSecurity(adapter)
+    const srcs = kekSourcesOf(onDisk)
+    expect(srcs).toHaveLength(2)
+    expect(srcs[1]).toMatchObject({ kind: 'prf', credentialId: 'cred-1' })
+    // 盘上 wrappedDekP 可由 PRF 输出解出（unlockWithPrf 成功即验证 wrappedDekP 契约）
+    await expect(unlockWithPrf(onDisk, prfOutput, { credentialId: 'cred-1' })).resolves.toBeInstanceOf(Uint8Array)
+    expect(s.prfSources.value).toEqual([{ credentialId: 'cred-1', salt: (srcs[1] as { salt: string }).salt }])
+  })
+
+  it('锁定后 passkey 解锁：unlockWithPrf→unlockWithDek 恢复数据', async () => {
+    const { adapter, s } = await setupEncrypted()
+    const prfOutput = randomBytes(64)
+    await s.addPrfSourceOp('cred-1', prfOutput)
+    s.lock()
+    expect(s.locked.value).toBe(true)
+    const dek = await unlockWithPrf(await diskSecurity(adapter), prfOutput, { credentialId: 'cred-1' })
+    await s.unlockWithDek(dek)
+    expect(s.locked.value).toBe(false)
+    expect(s.vault.entries).toHaveLength(1)
+  })
+
+  it('unlockWithDek：security 缓存缺失时从盘读（新实例跳过 initStore）', async () => {
+    const { adapter, s } = await setupEncrypted()
+    const prfOutput = randomBytes(64)
+    await s.addPrfSourceOp('cred-1', prfOutput)
+    const s2 = createVueStore(adapter) // 未 initStore：security 缓存为 null
+    const dek = await unlockWithPrf(await diskSecurity(adapter), prfOutput)
+    await s2.unlockWithDek(dek)
+    expect(s2.locked.value).toBe(false)
+    expect(s2.vault.entries).toHaveLength(1)
+    expect(s2.hasEncryption.value).toBe(true) // 缓存已从盘补齐
+  })
+
+  it('removePrfSourceOp：盘上 kekSources 回落 password；锁定态操作抛错', async () => {
+    const { adapter, s } = await setupEncrypted()
+    await s.addPrfSourceOp('cred-1', randomBytes(64))
+    await s.removePrfSourceOp('cred-1')
+    expect(kekSourcesOf(await diskSecurity(adapter))).toEqual([{ kind: 'password' }])
+    expect(s.prfSources.value).toEqual([])
+    s.lock()
+    await expect(s.addPrfSourceOp('c2', randomBytes(64))).rejects.toThrow('encryption not enabled')
+    await expect(s.removePrfSourceOp('x')).rejects.toThrow('encryption not enabled')
+  })
+
+  it('同 credentialId 重复绑定走替换：盘上仅一条该 id 条目', async () => {
+    const { adapter, s } = await setupEncrypted()
+    await s.addPrfSourceOp('cred-1', randomBytes(64))
+    await s.addPrfSourceOp('cred-1', randomBytes(64))
+    const srcs = kekSourcesOf(await diskSecurity(adapter)).filter((x) => x.kind === 'prf')
+    expect(srcs).toHaveLength(1)
   })
 })

@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { base64ToBytes, unlockWithPrf } from '@totp/core'
+import { computed, ref } from 'vue'
+import { getPrfOutput } from '../prf'
 import type { VueStore } from '../store'
 
 const props = defineProps<{
@@ -12,6 +14,8 @@ const emit = defineEmits<{ (e: 'unlocked'): void }>()
 const password = ref('')
 const busy = ref(false)
 const msg = ref('')
+/** 已绑定 passkey 解锁来源（kekSources 含 prf 条目时显示按钮） */
+const hasPrf = computed(() => props.store.prfSources.value.length > 0)
 
 /** 解锁：成功清空口令与错误并 emit unlocked（父级可凭 locked 变化自行切换视图）；失败展示错误消息 */
 async function onUnlock(): Promise<void> {
@@ -31,6 +35,30 @@ async function onUnlock(): Promise<void> {
     busy.value = false
   }
 }
+
+/** Passkey 解锁：逐来源 PRF 求值（UV 弹窗）→ core unlockWithPrf 解出 DEK → store 注入解锁。
+ *  用户取消/无 PRF 输出 → getPrfOutput 返回 null，尝试下一来源；全部失败提示统一文案 */
+async function onPasskeyUnlock(): Promise<void> {
+  busy.value = true
+  msg.value = ''
+  try {
+    const security = props.store.securitySettings.value
+    if (!security) throw new Error('encryption not enabled')
+    for (const src of props.store.prfSources.value) {
+      const out = await getPrfOutput(src.credentialId, base64ToBytes(src.salt))
+      if (!out) continue
+      const dek = await unlockWithPrf(security, out, { credentialId: src.credentialId })
+      await props.store.unlockWithDek(dek)
+      emit('unlocked')
+      return
+    }
+    msg.value = 'passkey 解锁失败'
+  } catch (e) {
+    msg.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    busy.value = false
+  }
+}
 </script>
 
 <template>
@@ -44,6 +72,9 @@ async function onUnlock(): Promise<void> {
       />
       <button type="submit" :disabled="busy">解锁</button>
     </form>
+    <button v-if="hasPrf" type="button" class="passkey" :disabled="busy" @click="onPasskeyUnlock">
+      使用 Passkey 解锁
+    </button>
     <div v-if="msg" class="err" role="alert">{{ msg }}</div>
   </section>
 </template>

@@ -1,5 +1,17 @@
 import type { ComputedRef, Ref } from 'vue'
 
+/** Passkey(PRF) 解锁管理（宿主从 store 闭包绑定；WebAuthn 交互由宿主侧 prf.ts 承载） */
+export interface PasskeyUnlockOps {
+  /** 已绑定凭据列表（渲染与移除参数；credentialId 为 base64url(rawId)） */
+  sources: ComputedRef<{ credentialId: string }[]>
+  /** 当前浏览器是否支持 PRF（SecurityCard 用于渲染判定与提示） */
+  prfSupported(): Promise<boolean>
+  /** 创建 passkey 并绑定到 DEK（含 WebAuthn 创建弹窗）；用户取消/认证器不支持 PRF → false */
+  add(): Promise<boolean>
+  /** 移除指定绑定（core 守卫：移除后无任何解锁方式时抛错） */
+  remove(credentialId: string): Promise<void>
+}
+
 /** 加密状态与操作（宿主从 store 闭包绑定；desktop/options 各自组装） */
 export interface SecurityOps {
   /** 是否处于锁定态（真值时卡片只提示，解锁入口由主 LockScreen 承担） */
@@ -12,6 +24,8 @@ export interface SecurityOps {
   disableEncryption(): Promise<void>
   /** 更换口令（仅重包裹 DEK，数据无需重加密） */
   changePassphrase(newPassword: string): Promise<void>
+  /** [可选] Passkey(PRF) 解锁管理；未提供时 SecurityCard 隐藏「解锁方式」区 */
+  passkey?: PasskeyUnlockOps
 }
 
 /**

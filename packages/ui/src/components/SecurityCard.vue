@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import type { SecurityPlatform } from './securityPlatform'
 
 const props = defineProps<{
@@ -20,6 +20,24 @@ const confirmDisable = ref(false)
 const hasEnc = computed(() => props.platform?.security?.hasEncryption.value ?? false)
 const isLocked = computed(() => props.platform?.security?.locked.value ?? false)
 const clipboardOn = computed(() => props.platform?.clipboardClearEnabled.value ?? true)
+
+/** Passkey(PRF) 能力探测结果：unknown=探测中/宿主未提供；false 时显示不支持提示 */
+const prfCap = ref<'unknown' | boolean>('unknown')
+const passkeyOps = computed(() => props.platform?.security?.passkey ?? null)
+const passkeySources = computed(() => passkeyOps.value?.sources.value ?? [])
+
+onMounted(() => {
+  const pk = passkeyOps.value
+  if (!pk) return
+  pk.prfSupported()
+    .then((ok) => { prfCap.value = ok })
+    .catch(() => { prfCap.value = false })
+})
+
+/** credentialId 缩略显示：base64url 串较长，取首尾各 6 字符 */
+function shortId(id: string): string {
+  return id.length > 16 ? id.slice(0, 6) + '…' + id.slice(-6) : id
+}
 
 function fail(e: unknown): void {
   msg.value = e instanceof Error ? e.message : String(e)
@@ -78,6 +96,20 @@ async function onDisable(): Promise<void> {
   if (await run(() => p.disableEncryption(), '已关闭加密')) confirmDisable.value = false
 }
 
+async function onAddPasskey(): Promise<void> {
+  const pk = passkeyOps.value
+  if (!pk) return
+  await run(async () => {
+    if (!(await pk.add())) throw new Error('Passkey 创建未完成（已取消或认证器不支持 PRF）')
+  }, 'Passkey 已绑定，下次锁定后可使用 Passkey 解锁')
+}
+
+async function onRemovePasskey(credentialId: string): Promise<void> {
+  const pk = passkeyOps.value
+  if (!pk) return
+  await run(() => pk.remove(credentialId), 'Passkey 已移除')
+}
+
 async function onClipboardChange(e: Event): Promise<void> {
   await props.platform?.setClipboardClear((e.target as HTMLInputElement).checked)
 }
@@ -104,8 +136,25 @@ async function onDelayChange(e: Event): Promise<void> {
         <p class="hint">启用后本地数据以口令加密存储，每次打开需输入口令解锁。</p>
         <p class="hint">启用后浏览器同步的数据也将是密文。</p>
       </template>
-      <!-- 已启用且解锁：换口令 + 关闭加密 -->
+      <!-- 已启用且解锁：解锁方式 + 换口令 + 关闭加密 -->
       <template v-else-if="!isLocked">
+        <!-- 解锁方式（宿主提供 passkey ops 才渲染；prf 不支持时仅提示） -->
+        <div v-if="passkeyOps" class="unlock-methods">
+          <h3>解锁方式</h3>
+          <p v-if="prfCap === false" class="hint">当前浏览器不支持 Passkey 解锁（PRF）</p>
+          <template v-else>
+            <span class="method">口令</span>
+            <ul v-if="passkeySources.length" class="passkey-list">
+              <li v-for="c in passkeySources" :key="c.credentialId">
+                <code>Passkey {{ shortId(c.credentialId) }}</code>
+                <button class="remove-passkey" :disabled="busy" @click="onRemovePasskey(c.credentialId)">移除</button>
+              </li>
+            </ul>
+            <div class="actions">
+              <button class="add-passkey" :disabled="busy || prfCap !== true" @click="onAddPasskey">添加 Passkey 解锁</button>
+            </div>
+          </template>
+        </div>
         <div class="pw-row">
           <input v-model="newPw" type="password" placeholder="新口令" autocomplete="new-password" :disabled="busy" />
           <input v-model="newPwConfirm" type="password" placeholder="确认新口令" autocomplete="new-password" :disabled="busy" />
@@ -142,6 +191,11 @@ async function onDelayChange(e: Event): Promise<void> {
 <style scoped>
 .card { border: 1px solid rgba(128,128,128,.4); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
 h2 { font-size: 15px; margin: 0; }
+.unlock-methods h3 { font-size: 13px; margin: 0; opacity: .8; }
+.method { font-size: 13px; }
+.passkey-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.passkey-list li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.passkey-list code { font-size: 12px; opacity: .75; }
 .pw-row { display: flex; gap: 8px; }
 .pw-row input { flex: 1; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }

@@ -1,9 +1,9 @@
 import {
-  DEFAULT_SETTINGS, SECURITY_KEY, VAULT_KEY, addEntry, addGroup, changeVaultPassphrase, createVault,
-  decryptVaultWithDek, encryptVaultWithDek, isEncryptedVault, loadSettings, loadVault, removeEntry,
-  removeGroup, renameGroup, reorderEntries, saveSettings, saveVault, setupVaultEncryption,
-  unlockVaultEncryption, updateEntry,
-  type AppSettings, type OtpEntry, type SecuritySettings, type StorageAdapter, type Vault,
+  DEFAULT_SETTINGS, SECURITY_KEY, VAULT_KEY, addEntry, addGroup, addPrfSource, bytesToBase64, changeVaultPassphrase,
+  createVault, decryptVaultWithDek, encryptVaultWithDek, isEncryptedVault, kekSourcesOf, loadSettings, loadVault,
+  randomBytes, removeEntry, removeGroup, removeKekSource, renameGroup, reorderEntries, saveSettings, saveVault,
+  setupVaultEncryption, unlockVaultEncryption, updateEntry,
+  type AppSettings, type KekSource, type OtpEntry, type SecuritySettings, type StorageAdapter, type Vault,
 } from '@totp/core'
 import { computed, reactive, ref, toRaw } from 'vue'
 
@@ -260,7 +260,11 @@ export function createVueStore(
    *  enableEncryption 半失败不一致态，直接加载并恢复持有 DEK，后续写 op 经加密分支自愈回密文 */
   async function unlock(password: string): Promise<void> {
     if (!security.value) throw new Error('encryption not enabled')
-    const key = await unlockVaultEncryption(security.value, password)
+    await applyDekAndUnlock(await unlockVaultEncryption(security.value, password))
+  }
+
+  /** unlock(password) 共享的后置逻辑：读盘解密/明文填充 → 持有 DEK → 退出锁定 */
+  async function applyDekAndUnlock(key: Uint8Array): Promise<void> {
     const parsed = await readRawVault()
     if (isEncryptedVault(parsed)) {
       replaceVault(JSON.parse(await decryptVaultWithDek(key, parsed)) as Vault)
@@ -271,6 +275,38 @@ export function createVueStore(
     locked.value = false
   }
 
+  /** passkey 解锁第二跳：外部经 core unlockWithPrf 解出 DEK 后注入。
+   *  security 缓存缺失（跨窗口陈旧/未 initStore）时从盘补读，保证后续加密写路径可用 */
+  async function unlockWithDek(key: Uint8Array): Promise<void> {
+    if (!security.value) security.value = await readSecurity()
+    if (!security.value) throw new Error('encryption not enabled')
+    await applyDekAndUnlock(key)
+  }
+
+  /** 绑定 passkey 解锁（已解锁态）：core addPrfSource 重包裹 DEK → security 经队列写盘。
+   *  同 credentialId 为替换语义（core 内先移除再添加） */
+  function addPrfSourceOp(credentialId: string, prfOutput: Uint8Array): Promise<void> {
+    return enqueue(async () => {
+      if (locked.value || !security.value || !dek) throw new Error('encryption not enabled')
+      const next = await addPrfSource(security.value, dek, credentialId, prfOutput, bytesToBase64(randomBytes(32)))
+      security.value = next
+      // security 键写入复用 vault 自写窗口抑制（onChanged 无 security 通道，与 changePassphrase 一致）
+      lastSelfWrite.vault = Date.now()
+      await adapter.set(SECURITY_KEY, JSON.stringify(next))
+    })
+  }
+
+  /** 移除指定 passkey 解锁来源（core 守卫：移除后无任何来源时抛「至少保留一种解锁方式」） */
+  function removePrfSourceOp(credentialId: string): Promise<void> {
+    return enqueue(async () => {
+      if (locked.value || !security.value) throw new Error('encryption not enabled')
+      const next = removeKekSource(security.value, 'prf', { credentialId })
+      security.value = next
+      lastSelfWrite.vault = Date.now()
+      await adapter.set(SECURITY_KEY, JSON.stringify(next))
+    })
+  }
+
   /** 锁定：丢弃 DEK、清空内存 vault（防内存残留读取） */
   function lock(): void {
     dek = null
@@ -278,9 +314,23 @@ export function createVueStore(
     replaceVault(createVault())
   }
 
+  /** 已绑定的 passkey(PRF) 解锁来源视图（LockScreen 渲染按钮 / SecurityCard 列表用） */
+  const prfSources = computed(() => {
+    const s = security.value
+    if (!s) return []
+    return kekSourcesOf(s)
+      .filter((src): src is Extract<KekSource, { kind: 'prf' }> => src.kind === 'prf')
+      .map((src) => ({ credentialId: src.credentialId, salt: src.salt }))
+  })
+
   return {
     vault, settings, initStore, registerStorageSync, commit, commitSettings,
     locked, hasEncryption, unlock, lock, enableEncryption, disableEncryption, changePassphrase,
+    /** security settings 只读缓存（锁定态非 null；宿主/组件读 kekSources 判定解锁方式） */
+    securitySettings: security,
+    /** 已绑定 prf 来源（credentialId+salt） */
+    prfSources,
+    unlockWithDek, addPrfSourceOp, removePrfSourceOp,
     addEntryOp: (entry: OtpEntry) => commit((v) => addEntry(v, entry)),
     updateEntryOp: (uuid: string, patch: Partial<Omit<OtpEntry, 'uuid'>>) => commit((v) => updateEntry(v, uuid, patch)),
     removeEntryOp: (uuid: string) => commit((v) => removeEntry(v, uuid)),
