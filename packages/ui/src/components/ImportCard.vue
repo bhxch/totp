@@ -4,7 +4,7 @@ import {
   importAegisPlaintext, importAndOtp, importAuthy, importBattleNet, importBitwarden, importDuo,
   importFreeOtp, importFreeOtpLegacy, importGeneric, importProton, importStratum,
   importTotpAuthenticator, importTwoFas, importUriBatch, importWinauth, matchSchemes,
-  normalizeSchemes, removeScheme, sniffFormat, upsertScheme,
+  normalizeSchemes, removeScheme, sniffAegis, sniffFormat, upsertScheme,
   type ConflictPolicy, type ImportFormat, type ImportResult, type ImportScheme, type RowMapping,
 } from '@totp/core'
 import { computed, ref } from 'vue'
@@ -386,13 +386,9 @@ async function nextFromPicked(): Promise<void> {
     return
   }
   if (f === 'aegis') {
-    let encrypted = false
-    try {
-      encrypted = 'header' in (JSON.parse(fileText.value) as Record<string, unknown>)
-    } catch {
-      encrypted = false
-    }
-    if (encrypted) {
+    // M11：使用 sniffAegis 暴露的 encrypted 标志（'header' 键存在 → 加密）
+    const aegis = sniffAegis(fileText.value)
+    if (aegis?.encrypted) {
       passwordHint.value = '该 Aegis 备份已加密，请输入导出口令'
       step.value = 'password'
       return
@@ -602,7 +598,7 @@ function failureLabel(f: { index: number; message: string }): string {
     </template>
 
     <template v-else-if="step === 'report' && report">
-      <p class="ok">成功导入 {{ report.imported }} 条</p>
+      <p class="ok">成功落库 {{ report.imported }} 条</p>
       <p v-if="report.skipped" class="meta">跳过 {{ report.skipped }} 条（与现有条目冲突）</p>
       <p v-if="report.replaced" class="meta">覆盖 {{ report.replaced }} 条（与现有条目冲突）</p>
       <div v-if="report.failures.length">

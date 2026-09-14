@@ -29,6 +29,34 @@ export * from './uriBatch'
  * uriBatch，不设独立判定；Ente 加密导出与未知 JSON 无可靠特征，留给手动选择（generic/uriBatch）。
  * TOTP Authenticator 外部分享为纯 base64 密文，与任意文本无可靠区分特征，不强判（手动选择）。
  */
+// Aegis 特征键：明文 vault 顶层含 'db'（明文对象），加密 vault 顶层含 'header'（{slots,params}）。
+// 嗅探结果包含 encrypted 标志，让 UI 调用方决定走口令页 vs 直接解析。
+export interface AegisSniff {
+  kind: 'aegis'
+  encrypted: boolean
+}
+
+/** 对象级 Aegis 判定（仅 JSON.parse 之后的对象）；为 sniffFormat 抽出共用判定逻辑（M11） */
+function sniffAegisObject(obj: Record<string, unknown>): boolean {
+  return 'db' in obj || 'header' in obj
+}
+
+/** 顶层入口：JSON.parse 失败返回 null；返回 {kind, encrypted}，其中 encrypted=true 需走口令页 */
+export function sniffAegis(text: string): AegisSniff | null {
+  const trimmed = text.trim()
+  if (!trimmed.startsWith('{')) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(trimmed)
+  } catch {
+    return null
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+  const obj = parsed as Record<string, unknown>
+  if (!sniffAegisObject(obj)) return null
+  return { kind: 'aegis', encrypted: 'header' in obj }
+}
+
 export function sniffFormat(text: string): ImportFormat | null {
   const trimmed = text.trim()
   if (!trimmed) return null
@@ -39,7 +67,7 @@ export function sniffFormat(text: string): ImportFormat | null {
       const parsed: unknown = JSON.parse(trimmed)
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         const obj = parsed as Record<string, unknown>
-        if ('db' in obj || 'header' in obj) return 'aegis'
+        if (sniffAegisObject(obj)) return 'aegis' // 加密/明文均判 aegis；加密区分走 sniffAegis
         const twoFas = sniffTwoFas(obj)
         if (twoFas === 'ok' || twoFas === 'empty') return 'twoFas' // 'empty' 由 importTwoFas 给出明确「无条目」错误
         if (sniffBitwarden(obj)) return 'bitwarden'
