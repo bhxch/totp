@@ -223,6 +223,16 @@ describe('sniffFormat misc app 格式扩展', () => {
     expect(
       sniffFormat(JSON.stringify({ tokenOrder: [], tokens: [{ issuerExt: 'A', secret: [1, -2], type: 'TOTP' }] })),
     ).toBe('freeOtp')
+    // 旧版 issuer 键名（部分 fork / 历史导出）也归 freeOtp
+    expect(
+      sniffFormat(JSON.stringify({ tokenOrder: [], tokens: [{ issuer: 'Legacy', secret: [1, -2], type: 'TOTP' }] })),
+    ).toBe('freeOtp')
+    // issuerExt 优先：两者并存仍归 freeOtp（避免误判为 generic）
+    expect(
+      sniffFormat(
+        JSON.stringify({ tokenOrder: [], tokens: [{ issuerExt: 'A', issuer: 'B', secret: [1, -2], type: 'TOTP' }] }),
+      ),
+    ).toBe('freeOtp')
     // andOTP：JSON 数组且存在条目含 type/algorithm/label/secret 字符串
     expect(sniffFormat(JSON.stringify([{ type: 'TOTP', algorithm: 'SHA1', label: 'a', secret: SECRET }]))).toBe('andOtp')
     // Totp Authenticator 明文数组：条目含 base 整数 + key 字符串

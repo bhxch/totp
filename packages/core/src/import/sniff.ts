@@ -136,7 +136,7 @@ function sniffProton(obj: Record<string, unknown>): boolean {
   )
 }
 
-// tokens 数组（FreeOTP+）且存在条目 issuerExt 字符串 + secret 字节数组（Gson byte[]）；
+// tokens 数组（FreeOTP+）且存在条目 issuer 字符串（兼容旧版 `issuer` 键）+ secret 字节数组（Gson byte[]）；
 // 空数组不判，留给 generic
 function sniffFreeOtp(obj: Record<string, unknown>): boolean {
   const { tokens } = obj
@@ -145,7 +145,9 @@ function sniffFreeOtp(obj: Record<string, unknown>): boolean {
     tokens.some((t) => {
       if (t === null || typeof t !== 'object') return false
       const entry = t as Record<string, unknown>
-      return typeof entry.issuerExt === 'string' && Array.isArray(entry.secret)
+      // 兼容 issuerExt（FreeOTP+）与旧版 issuer 键名（部分 fork / 历史导出）
+      const issuerName = entry.issuerExt ?? entry.issuer
+      return typeof issuerName === 'string' && Array.isArray(entry.secret)
     })
   )
 }
