@@ -6,11 +6,17 @@ import SettingsPage from '../src/pages/SettingsPage.vue'
 import NavigationShell from '../src/pages/NavigationShell.vue'
 import { themeRoutes } from '../src/pages/routes'
 
-// 占位页不消费 props:stub 只需满足「页面组件不崩」的最小对象,不必满足完整
-// VueStore/平台签名(Task 9-12 替换真实现时按完整签名接线;NavigationShell
-// 自身 props 的 TS 类型已是完整签名)。CodesPage 真实现(Task 9)消费
-// vault.entries 与 vault.groups,stub 需补 groups。
-const stubStore = { vault: { entries: [], groups: [] } } as never
+// SettingsPage 真实现(Task 11)消费 settings/useTheme:stub 补外观区所需
+// 最小字段与 commitSettings;CodesPage 真实现(Task 9)消费 vault.entries/groups。
+const stubStore = {
+  vault: { entries: [], groups: [] },
+  settings: {
+    themeMode: 'auto', themeColor: 'blue',
+    urlFilterEnabled: true, blurHideEnabled: false, clipboardClearEnabled: true,
+    popupCloseDelayMs: 2000, syncEnabled: false,
+  },
+  commitSettings: vi.fn(async () => {}),
+} as never
 
 function makeRouter() {
   return createRouter({ history: createMemoryHistory(), routes: themeRoutes })
@@ -29,10 +35,10 @@ describe('NavigationShell', () => {
     const router = makeRouter()
     await router.push('/settings'); await router.isReady()
     const w = mount(NavigationShell, { global: { plugins: [router] }, props: { store: stubStore } })
-    // 占位页未声明 props,传入的 props 落入实例 $attrs,以此验证分发;
-    // 对象 prop 在挂载链路上会被包成 reactive 代理,用 toRaw 还原后比对引用
-    const attrs = w.findComponent(SettingsPage).vm.$attrs as Record<string, unknown>
-    expect(toRaw(attrs.store as object)).toBe(stubStore)
+    // SettingsPage 真实现已声明 store prop(pageProps 直传,不再落 $attrs);
+    // 对象 prop 经挂载链路会包成 reactive 代理,toRaw 还原后比对引用
+    const storeProp = w.findComponent(SettingsPage).props('store') as object
+    expect(toRaw(storeProp)).toBe(stubStore)
   })
 
   it('railActions 透传到 Rail 底部 actions 区', async () => {

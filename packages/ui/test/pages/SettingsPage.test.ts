@@ -1,0 +1,104 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mount } from '@vue/test-utils'
+import { computed } from 'vue'
+import { createMemoryStorage } from '@totp/core'
+import { createVueStore } from '../../src/store'
+import SettingsPage from '../../src/pages/SettingsPage.vue'
+import type { SecurityPlatform } from '../../src/components/securityPlatform'
+
+async function readyStore(themeMode: 'auto' | 'light' | 'dark' = 'auto') {
+  const s = createVueStore(createMemoryStorage())
+  await s.initStore()
+  s.settings.themeMode = themeMode
+  return s
+}
+
+function secPlatform(): SecurityPlatform {
+  return {
+    security: null,
+    clipboardClearEnabled: computed(() => true),
+    setClipboardClear: vi.fn(async () => {}),
+  }
+}
+
+beforeEach(() => {
+  localStorage.clear()
+})
+
+describe('SettingsPage 外观区', () => {
+  it('色板渲染 10 个圆点（title=色名，默认 blue 选中）', async () => {
+    const s = await readyStore()
+    const w = mount(SettingsPage, { props: { store: s } })
+    const dots = w.findAll('button.theme-dot')
+    expect(dots).toHaveLength(10)
+    expect(w.find('button.theme-dot[data-color-id="blue"].theme-dot--selected').exists()).toBe(true)
+    expect(w.find('button.theme-dot[data-color-id="teal"]').attributes('style')).toContain('rgb(0, 121, 107)') // teal #00796B
+  })
+
+  it('点 teal 圆点 → settings.themeColor=teal + commitSettings 调用 + localStorage 镜像写入', async () => {
+    const s = await readyStore()
+    const commit = vi.spyOn(s, 'commitSettings')
+    const w = mount(SettingsPage, { props: { store: s } })
+    await w.find('button.theme-dot[data-color-id="teal"]').trigger('click')
+    expect(s.settings.themeColor).toBe('teal')
+    expect(commit).toHaveBeenCalled()
+    expect(JSON.parse(localStorage.getItem('themePref')!)).toMatchObject({ mode: 'auto', color: 'teal' })
+    expect(w.find('button.theme-dot--selected[data-color-id="teal"]').exists()).toBe(true)
+  })
+
+  it('模式分段点「深色」→ settings.themeMode=dark + 镜像写入', async () => {
+    const s = await readyStore()
+    const commit = vi.spyOn(s, 'commitSettings')
+    const w = mount(SettingsPage, { props: { store: s } })
+    await w.findAll('.md-seg__item').find((b) => b.text() === '深色')!.trigger('click')
+    expect(s.settings.themeMode).toBe('dark')
+    expect(commit).toHaveBeenCalled()
+    expect(JSON.parse(localStorage.getItem('themePref')!)).toMatchObject({ mode: 'dark' })
+    expect(w.find('.md-seg__item--selected').text()).toContain('深色')
+  })
+
+  it('resolvedMode 展示当前生效模式（themeMode=dark → 深色）', async () => {
+    const s = await readyStore('dark')
+    const w = mount(SettingsPage, { props: { store: s } })
+    expect(w.find('.theme-resolved').text()).toContain('深色')
+  })
+})
+
+describe('SettingsPage 通用区', () => {
+  it('showDesktop=false 不渲染失焦自动隐藏开关；true 渲染且切换写 settings + commitSettings', async () => {
+    const s = await readyStore()
+    const w = mount(SettingsPage, { props: { store: s, showDesktop: false } })
+    expect(w.find('.set-blur-hide').exists()).toBe(false)
+    const w2 = mount(SettingsPage, { props: { store: s, showDesktop: true } })
+    const commit = vi.spyOn(s, 'commitSettings')
+    expect(s.settings.blurHideEnabled).toBe(false)
+    await w2.find('.set-blur-hide input').setValue(true)
+    expect(s.settings.blurHideEnabled).toBe(true)
+    expect(commit).toHaveBeenCalled()
+  })
+
+  it('showExtension=false 不渲染 URL 过滤与弹窗延迟；true 渲染且写入生效', async () => {
+    const s = await readyStore()
+    const w = mount(SettingsPage, { props: { store: s, showDesktop: true, showExtension: false } })
+    expect(w.find('.set-url-filter').exists()).toBe(false)
+    expect(w.find('.set-popup-delay').exists()).toBe(false)
+    const w2 = mount(SettingsPage, { props: { store: s, showDesktop: true, showExtension: true } })
+    // 默认 urlFilterEnabled=true、popupCloseDelayMs=2000（DEFAULT_SETTINGS）
+    expect((w2.find('.set-url-filter input').element as HTMLInputElement).checked).toBe(true)
+    await w2.find('.set-url-filter input').setValue(false)
+    expect(s.settings.urlFilterEnabled).toBe(false)
+    await w2.find('.set-popup-delay input').setValue('3000')
+    expect(s.settings.popupCloseDelayMs).toBe(3000)
+  })
+
+  it('剪贴板开关：securityPlatform.setClipboardClear 缺失不渲染；存在则渲染且切换写 settings', async () => {
+    const s = await readyStore()
+    const w = mount(SettingsPage, { props: { store: s } })
+    expect(w.find('.set-clipboard-clear').exists()).toBe(false)
+    const w2 = mount(SettingsPage, { props: { store: s, securityPlatform: secPlatform() } })
+    expect(w2.find('.set-clipboard-clear').exists()).toBe(true)
+    expect(s.settings.clipboardClearEnabled).toBe(true)
+    await w2.find('.set-clipboard-clear input').setValue(false)
+    expect(s.settings.clipboardClearEnabled).toBe(false)
+  })
+})
