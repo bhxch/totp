@@ -134,24 +134,45 @@ describe('CodesPage 分组筛选 chips', () => {
     expect(chip(w, '全部').classes()).toContain('md-chip--selected')
   })
 
-  it('点「管理分组」emit open-groups（Task 10 接 GroupManagerDialog）', async () => {
+  it('点「管理分组」emit open-groups 并打开 GroupManagerDialog，遮罩关闭', async () => {
     const { s } = await storeWithGroups()
     const w = mount(CodesPage, { props: { store: s } })
     await chip(w, '管理分组').trigger('click')
     expect(w.emitted('open-groups')).toHaveLength(1)
+    expect(w.find('.md-dialog').exists()).toBe(true)
+    expect(w.find('.md-dialog__headline').text()).toBe('分组管理')
+    // 点遮罩关闭
+    await w.find('.md-dialog__scrim').trigger('click')
+    expect(w.find('.md-dialog').exists()).toBe(false)
   })
 })
 
 describe('CodesPage FAB 新建入口', () => {
-  it('点 MdFab 进入 creating 态渲染 EntryForm，取消后收起', async () => {
+  it('点 MdFab 打开 EntryFormDialog（新建态）渲染 EntryForm，取消后弹层收起', async () => {
     const s = await readyStore()
     const w = mount(CodesPage, { props: { store: s } })
-    expect(w.find('form.entry-form').exists()).toBe(false)
+    expect(w.find('.md-dialog').exists()).toBe(false)
     await w.find('.md-fab').trigger('click')
+    expect(w.find('.md-dialog').exists()).toBe(true)
+    expect(w.find('.md-dialog__headline').text()).toBe('新建条目')
     expect(w.find('form.entry-form').exists()).toBe(true)
     const cancel = w.findAll('form.entry-form button').find((b) => b.text() === '取消')!
     await cancel.trigger('click')
-    expect(w.find('form.entry-form').exists()).toBe(false)
+    expect(w.find('.md-dialog').exists()).toBe(false)
+  })
+
+  it('行内「编辑」打开 EntryFormDialog 编辑态，save 后写库并关弹（新建默认值分支留在本页）', async () => {
+    const s = await readyStore()
+    const w = mount(CodesPage, { props: { store: s } })
+    await vi.waitFor(() => expect(w.text()).toContain('GitHub'))
+    const editBtn = w.findAll('.ops button').find((b) => b.text() === '编辑')!
+    await editBtn.trigger('click')
+    expect(w.find('.md-dialog__headline').text()).toBe('编辑条目')
+    await w.find('input[placeholder="服务名（如 GitHub）"]').setValue('GitHubX')
+    await w.find('form.entry-form').trigger('submit')
+    await vi.waitFor(() => expect(s.vault.entries[0]!.issuer).toBe('GitHubX'))
+    // 关弹发生在写库 promise resolve 之后，同样 waitFor
+    await vi.waitFor(() => expect(w.find('.md-dialog').exists()).toBe(false))
   })
 })
 
@@ -165,17 +186,19 @@ describe('CodesPage reveal / 右键菜单 / pinned（自 VaultManager C16 迁移
     return s
   }
 
-  it('点击 reveal 按钮弹模态显示前 4 + 后 4 形态密钥，不在列表 DOM 留明文', async () => {
+  it('点击 reveal 按钮弹 RevealDialog 显示前 4 + 后 4 形态密钥，不在页面 DOM 留明文', async () => {
     const s = await storeWithTwo()
     const w = mount(CodesPage, { props: { store: s } })
     await w.find('button.reveal').trigger('click')
-    await vi.waitFor(() => expect(w.find('.reveal-mask').exists()).toBe(true))
+    await vi.waitFor(() => expect(w.find('.md-dialog').exists()).toBe(true))
+    expect(w.find('.md-dialog__headline').text()).toBe('A — 密钥')
     expect(w.find('.reveal-secret').text()).toMatch(/^[A-Z2-7]{4}…[A-Z2-7]{4}$/)
-    // 列表 DOM 内不应出现完整密钥明文
+    // 页面 DOM 内不应出现完整密钥明文（列表与对话框均遮蔽）
     expect(w.find('.otp-item').text()).not.toContain('JBSWY3DPEHPK3PXP')
-    // 点遮罩关闭
-    await w.find('.reveal-mask').trigger('click')
-    expect(w.find('.reveal-mask').exists()).toBe(false)
+    expect(w.text()).not.toContain('JBSWY3DPEHPK3PXP')
+    // 点「关闭」（data-md-close 委托）关闭
+    await w.find('[data-md-close]').trigger('click')
+    expect(w.find('.md-dialog').exists()).toBe(false)
   })
 
   it('右键条目：MdMenu 渲染三项菜单，点「置顶」调用 updateEntryOp 并排序前置', async () => {

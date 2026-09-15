@@ -4,11 +4,13 @@ import { computed, ref, watch } from 'vue'
 import { useOtpCodes } from '../composables/useOtpCodes'
 import { iconView, type IconStore } from '../iconStore'
 import type { VueStore } from '../store'
-import EntryForm from '../components/EntryForm.vue'
+import EntryFormDialog from '../components/EntryFormDialog.vue'
+import GroupManagerDialog from '../components/GroupManagerDialog.vue'
 import MdChip from '../components/md/MdChip.vue'
 import MdFab from '../components/md/MdFab.vue'
 import MdMenu from '../components/md/MdMenu.vue'
 import OtpListItem from '../components/OtpListItem.vue'
+import RevealDialog from '../components/RevealDialog.vue'
 import SearchBar from '../components/SearchBar.vue'
 import type { EntryFormData } from '../components/entryForm'
 
@@ -29,8 +31,10 @@ const creating = ref(false)
 const confirmingDelete = ref<string | null>(null)
 /** 分组筛选：null=全部；指向已删分组的悬空 id 由 watch 兜底自动回 null */
 const groupFilter = ref<string | null>(null)
-/** reveal：列表点击「🔑」后弹模态显前 4 + 后 4（避免列表常驻明文） */
+/** reveal：列表点击「🔑」后弹 RevealDialog 显前 4 + 后 4（避免列表常驻明文） */
 const revealing = ref<OtpEntry | null>(null)
+/** 分组管理弹层：chips「管理分组」触发（同时向宿主 emit open-groups 保留 Task 9 契约） */
+const groupsOpen = ref(false)
 /** 右键菜单：菜单位置与目标条目 */
 const contextMenu = ref<{ x: number; y: number; entry: OtpEntry } | null>(null)
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
@@ -105,14 +109,7 @@ async function onCopy(entry: OtpEntry) {
   if (entry.type === 'hotp') await props.store.updateEntryOp(entry.uuid, { counter: (entry.counter ?? 0) + 1 })
 }
 
-/** reveal 模态：显前 4 + 后 4，中间遮蔽，避免整段密钥常驻在列表 DOM 内 */
-function maskSecret(secret: string): string {
-  const s = secret.replace(/\s+/g, '')
-  if (s.length <= 8) return s
-  return `${s.slice(0, 4)}…${s.slice(-4)}`
-}
-
-/** 点击「🔑」：仅在 reveal 模态中显示密钥（不写入剪贴板、不在列表 DOM 留明文） */
+/** 点击「🔑」：仅在 RevealDialog 中显示密钥（不写入剪贴板、不在列表 DOM 留明文） */
 function onReveal(entry: OtpEntry) {
   revealing.value = entry
 }
@@ -161,7 +158,7 @@ async function contextTogglePin(entry: OtpEntry) {
     <section class="card">
       <h2>条目（{{ store.vault.entries.length }}）</h2>
       <SearchBar v-model="query" v-model:search-secret="searchSecret" />
-      <!-- 分组筛选 chips：全部 / 各分组（按 vault.groups 顺序）/ 管理分组（Task 10 接 GroupManagerDialog） -->
+      <!-- 分组筛选 chips：全部 / 各分组（按 vault.groups 顺序）/ 管理分组（打开 GroupManagerDialog 并 emit open-groups） -->
       <div class="chips-row" role="group" aria-label="分组筛选">
         <MdChip label="全部" :selected="groupFilter === null" @click="groupFilter = null" />
         <MdChip
@@ -171,19 +168,8 @@ async function contextTogglePin(entry: OtpEntry) {
           :selected="groupFilter === g.id"
           @click="groupFilter = groupFilter === g.id ? null : g.id"
         />
-        <MdChip label="管理分组" @click="emit('open-groups')" />
+        <MdChip label="管理分组" @click="groupsOpen = true; emit('open-groups')" />
       </div>
-      <!-- EntryForm 内联直渲染（Task 10 换 EntryFormDialog） -->
-      <EntryForm
-        v-if="creating || editing"
-        :key="editing?.uuid ?? 'new'"
-        :initial="editing"
-        :groups="store.vault.groups"
-        :icons="entryIcons"
-        :icon-store="icons ?? undefined"
-        @save="onSave"
-        @cancel="creating = false; editing = null"
-      />
       <div v-if="sorted.length === 0" class="empty">暂无条目，点击右下「添加」录入。</div>
       <div v-else-if="visible.length === 0" class="empty">无匹配条目</div>
       <div v-for="e in visible" :key="e.uuid" class="row" @click="closeContextMenu">
@@ -210,15 +196,22 @@ async function contextTogglePin(entry: OtpEntry) {
     <!-- 新建入口：MdFab 替代原「＋ 添加」text button，触发同一 creating 态 -->
     <MdFab class="page-fab" aria-label="添加条目" title="添加条目" @click="creating = true; editing = null">＋</MdFab>
 
-    <!-- reveal 模态（Task 10 换 RevealDialog）：仅在被请求时显前 4 + 后 4 形态的密钥；点击遮罩或关闭按钮关闭 -->
-    <div v-if="revealing" class="reveal-mask" @click="closeReveal">
-      <div class="reveal-card" @click.stop>
-        <h3>{{ revealing.issuer }} — 密钥</h3>
-        <code class="reveal-secret">{{ maskSecret(revealing.secret) }}</code>
-        <p class="reveal-hint">出于安全考虑，仅显示密钥前后各 4 位；如需完整密钥请使用编辑功能。</p>
-        <button class="reveal-close" @click="closeReveal">关闭</button>
-      </div>
-    </div>
+    <!-- 表单对话框：编辑/新建共用（onSave 新建默认值分支保留在本页） -->
+    <EntryFormDialog
+      :open="creating || editing !== null"
+      :editing="editing"
+      :groups="store.vault.groups"
+      :icons="entryIcons"
+      :icon-store="icons ?? undefined"
+      @save="onSave"
+      @close="creating = false; editing = null"
+    />
+
+    <!-- reveal 对话框：仅在被请求时显前 4 + 后 4 形态的密钥；Esc/遮罩/「关闭」按钮关闭 -->
+    <RevealDialog :open="revealing !== null" :entry="revealing" @close="closeReveal" />
+
+    <!-- 分组管理对话框：chips「管理分组」触发 -->
+    <GroupManagerDialog :open="groupsOpen" :store="store" @close="groupsOpen = false" />
 
     <!-- 右键菜单：MdMenu 负责定位/越界钳制/Esc 关闭；点别处关闭（绑定在 .row @click） -->
     <MdMenu :x="contextMenu?.x ?? 0" :y="contextMenu?.y ?? 0" :open="contextMenu !== null" @close="closeContextMenu">
@@ -245,12 +238,6 @@ h2 { margin: 0; font-size: 15px; }
 .empty { text-align: center; opacity: .6; padding: 16px 0; }
 /* 新建 FAB：悬浮于页面右下 */
 .page-fab { position: fixed; right: 24px; bottom: 24px; }
-/* reveal 模态遮罩 */
-.reveal-mask { position: fixed; inset: 0; background: color-mix(in srgb, var(--md-sys-color-scrim) 55%, transparent); display: grid; place-items: center; z-index: 1000; }
-.reveal-card { background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); padding: 20px 24px; border-radius: 10px; max-width: 360px; width: 90%; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 4px 24px color-mix(in srgb, var(--md-sys-color-shadow) 25%, transparent); }
-.reveal-secret { font-family: ui-monospace, monospace; font-size: 18px; letter-spacing: 1px; background: var(--md-sys-color-surface-container-highest); padding: 10px; border-radius: 6px; text-align: center; word-break: break-all; }
-.reveal-hint { font-size: 12px; opacity: .65; margin: 0; }
-.reveal-close { align-self: flex-end; }
 /* 右键菜单项（MdMenu 容器自带定位与外观；slot 内容归本组件作用域） */
 .ctx-item { display: block; width: 100%; padding: 6px 14px; border: none; background: none; text-align: left; cursor: pointer; font-size: 13px; color: inherit; }
 .ctx-item:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
