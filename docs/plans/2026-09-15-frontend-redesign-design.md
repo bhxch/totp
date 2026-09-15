@@ -70,7 +70,7 @@ packages/ui/src/
 
 ### 4.3 Token 集
 
-每种子 × 明暗两套,同名不同值,命名 `--md-sys-color-*`,34 角色/套:
+每种子 × 明暗两套,同名不同值,命名 `--md-sys-color-*`,35 角色/套:
 
 - primary / on-primary / primary-container / on-primary-container
 - secondary、tertiary、error 各自同构 4 件套
@@ -156,7 +156,7 @@ packages/ui/src/
 
 ## 8. 测试策略
 
-- **新增**:generate.mjs 产物校验测试(§4.3 清单 34 变量每套齐全、明暗成对、10 种子完整;关键角色对 surface 对比度抽查);`useTheme` 属性写入与 localStorage 镜像;`loadSettings` 对 `themeMode/themeColor` 的类型兜底与非法色回退。
+- **新增**:generate.mjs 产物校验测试(§4.3 清单 35 变量每套齐全、明暗成对、10 种子完整;关键角色对 surface 对比度抽查);`useTheme` 属性写入与 localStorage 镜像;`loadSettings` 对 `themeMode/themeColor` 的类型兜底与非法色回退。
 - **存量**:17 个组件测试保持通过;断言以行为为主,个别因 DOM 结构调整的选择器更新。测试中主题相关断言只依赖 CSS 变量存在性,不依赖具体色值。
 - **验收**:每入口 typecheck + vitest;popup 打包体积对比基线(不允许因 md/ 组件显著回退);真机过一遍四入口 × 明暗 × 两种子色。
 
