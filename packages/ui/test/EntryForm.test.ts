@@ -52,6 +52,26 @@ describe('EntryForm', () => {
     expect(select.html()).toContain('hotp')
     expect(select.html()).toContain('steam')
   })
+  it('F2：type 切 steam 时 digits 实时置 5，切回落回 6（所见即所存）', async () => {
+    const w = mount(EntryForm, { props: { initial: null, groups: [] } })
+    const select = w.find('select')
+    await select.setValue('steam')
+    expect((w.find('input.digits').element as HTMLInputElement).value).toBe('5')
+    // steam 状态下 save 携带 digits 5
+    await w.find('input[placeholder="密钥 base32"]').setValue('JBSWY3DPEHPK3PXP')
+    await w.find('form').trigger('submit')
+    expect(w.emitted('save')![0]![0]).toMatchObject({ type: 'steam', digits: 5 })
+    // 切回 totp：digits 回落 6
+    await select.setValue('totp')
+    expect((w.find('input.digits').element as HTMLInputElement).value).toBe('6')
+  })
+  it('F2：编辑 8 位 totp 切 steam 再提交，save 携带 digits 5', async () => {
+    const w = mount(EntryForm, { props: { initial: { ...entry, digits: 8 }, groups: [] } })
+    await w.find('select').setValue('steam')
+    expect((w.find('input.digits').element as HTMLInputElement).value).toBe('5')
+    await w.find('form').trigger('submit')
+    expect(w.emitted('save')![0]![0]).toMatchObject({ type: 'steam', digits: 5 })
+  })
   it('表单编辑既有 hotp：算法/位数/计数器编辑控件可见且 save 携带', async () => {
     const hotpEntry = { ...entry, type: 'hotp' as const, counter: 3, digits: 6, algorithm: 'SHA256' as const }
     const w = mount(EntryForm, { props: { initial: hotpEntry, groups: [] } })
@@ -69,7 +89,7 @@ describe('EntryForm', () => {
     expect(w.find('input.period').exists()).toBe(true)
     expect(w.find('input.counter').exists()).toBe(false) // 非 hotp 不显示 counter
     await w.find('form').trigger('submit')
-    const payload = w.emitted('save')![0]![0]
+    const payload = w.emitted('save')![0]![0] as EntryFormData
     expect(payload).toMatchObject({ algorithm: 'SHA1', digits: 6, period: 30 })
     expect(payload.counter).toBeUndefined()
   })

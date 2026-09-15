@@ -32,6 +32,16 @@ const form = reactive({
   icon: props.initial?.icon as EntryFormData['icon'],
 })
 const error = ref('')
+// F2：type 切换时实时同步 digits（steam 固定 5；从 steam 切回其他类型回落 6），输入框所见即所存，
+// 不再依赖 submit 时的静默纠正（此前 UI 显示 6 但保存为 5，视觉与数据不一致）
+watch(
+  () => form.type,
+  (t, old) => {
+    if (t === old) return
+    if (t === 'steam') form.digits = 5
+    else if (old === 'steam') form.digits = 6
+  },
+)
 // isNew：预填对象（URI 导入）uuid 为哑值空串，须按新建处理（按钮「添加」而非「保存」）
 const isNew = !props.initial || !props.initial.uuid
 /** secret 遮蔽：默认 password，点右侧按钮明文查看 */
