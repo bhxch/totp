@@ -161,4 +161,40 @@ describe('CloudCard', () => {
     expect(p.persistDownloaded).not.toHaveBeenCalled()
     expect(w.find('.confirm-row').exists()).toBe(false)
   })
+
+  it('M19：切换 backend 时清空旧后端字段（避免敏感凭据跨后端残留）', async () => {
+    const p = makePlatform()
+    const w = mount(CloudCard, { props: { platform: p } })
+    await fillWebdav(w)
+    // 填了 WebDAV 凭据 → 切到 S3 → WebDAV 字段应被清空
+    await w.find('select.cloud-backend').setValue('s3')
+    // 切回 WebDAV → serverUrl/username/password 都为空（说明它们被清空了）
+    await w.find('select.cloud-backend').setValue('webdav')
+    expect((inputByPh(w, '服务器地址（https://dav.example.com）')!.element as HTMLInputElement).value).toBe('')
+    expect((inputByPh(w, '用户名')!.element as HTMLInputElement).value).toBe('')
+    expect((inputByPh(w, '应用密码')!.element as HTMLInputElement).value).toBe('')
+    // 再填一次 WebDAV → 切到 gist → 再切到 WebDAV 还是空（说明每次切换都清）
+    await fillWebdav(w)
+    await w.find('select.cloud-backend').setValue('gist')
+    await w.find('select.cloud-backend').setValue('webdav')
+    expect((inputByPh(w, '应用密码')!.element as HTMLInputElement).value).toBe('')
+  })
+
+  it('M19：S3 切到 gist 时清空 S3 字段（accessKeyId/secretAccessKey 不残留）', async () => {
+    const p = makePlatform()
+    const w = mount(CloudCard, { props: { platform: p } })
+    await w.find('select.cloud-backend').setValue('s3')
+    await inputByPh(w, 'Region（如 us-east-1）')!.setValue('us-east-1')
+    await inputByPh(w, 'Bucket')!.setValue('my-bucket')
+    await inputByPh(w, 'AccessKeyId')!.setValue('AKIAEXAMPLE')
+    await inputByPh(w, 'SecretAccessKey')!.setValue('secret-value')
+    // 切到 gist
+    await w.find('select.cloud-backend').setValue('gist')
+    // 再切回 S3 → S3 字段都为空
+    await w.find('select.cloud-backend').setValue('s3')
+    expect((inputByPh(w, 'Region（如 us-east-1）')!.element as HTMLInputElement).value).toBe('')
+    expect((inputByPh(w, 'Bucket')!.element as HTMLInputElement).value).toBe('')
+    expect((inputByPh(w, 'AccessKeyId')!.element as HTMLInputElement).value).toBe('')
+    expect((inputByPh(w, 'SecretAccessKey')!.element as HTMLInputElement).value).toBe('')
+  })
 })

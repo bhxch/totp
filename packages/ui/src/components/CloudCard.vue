@@ -79,6 +79,8 @@ function buildCred(): CloudCred {
 /** 已存凭据 → 表单回填 */
 function applyCred(c: CloudCred): void {
   backendSel.value = c.backend
+  // M19：先清空所有后端字段，再回填当前后端——避免跨后端敏感字段（WebDAV password / S3 secretAccessKey 等）混淆显示
+  clearBackendFields(c.backend)
   if (c.backend === 'webdav') {
     f.serverUrl = c.serverUrl; f.username = c.username; f.password = c.password
   } else if (c.backend === 's3') {
@@ -94,6 +96,30 @@ function applyCred(c: CloudCred): void {
   } else {
     f.accessToken = c.accessToken
   }
+}
+
+/** 清空指定后端对应的所有表单字段；切换 backend 时由 select change 处理器调用，避免旧字段残留
+ *  语义：除目标 backend 外，其余所有后端专属字段都清空；gdrive/onedrive 共享 accessToken，切换时一并清理 */
+function clearBackendFields(backend: CloudCred['backend']): void {
+  if (backend !== 'webdav') { f.serverUrl = ''; f.username = ''; f.password = '' }
+  if (backend !== 's3') {
+    f.region = ''; f.bucket = ''; f.accessKeyId = ''; f.secretAccessKey = ''
+    f.endpoint = ''; f.prefix = ''; f.sessionToken = ''; f.forcePathStyle = false
+  }
+  if (backend !== 'gist') { f.token = ''; f.gistId = '' }
+  // accessToken 是 gdrive/onedrive 共用字段；非这两个后端都清空
+  if (backend !== 'gdrive' && backend !== 'onedrive') f.accessToken = ''
+  // gdrive fileId 单独存储，仅 gdrive 用；其他后端清掉
+  if (backend !== 'gdrive') gdriveFileId.value = ''
+  // gist public 警示标志仅 gist 用；其他后端清掉
+  if (backend !== 'gist') gistPublic.value = false
+}
+
+/** select 切换后端：清空旧后端字段（仅保留密码字段由 buildCred 兜底），但用户尚未点保存时输入是临时的，
+ *  这等同于「丢弃当前正在编辑的临时凭据」，与切换语言/类别语义一致 */
+function onBackendChange(ev: Event): void {
+  const next = (ev.target as HTMLSelectElement).value as CloudCred['backend']
+  clearBackendFields(next)
 }
 
 onMounted(() => {
@@ -201,7 +227,7 @@ async function onConfirmAdopt(): Promise<void> {
 <template>
   <section v-if="platform" class="card cloud">
     <h2>云同步</h2>
-    <select v-model="backendSel" class="cloud-backend" :disabled="busy">
+    <select v-model="backendSel" class="cloud-backend" :disabled="busy" @change="onBackendChange">
       <option value="webdav">WebDAV</option>
       <option value="s3">S3</option>
       <option value="gdrive">Google Drive</option>
