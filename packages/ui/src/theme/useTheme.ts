@@ -1,4 +1,4 @@
-import { computed, ref, watchEffect, type ComputedRef, type WritableComputedRef } from 'vue'
+import { computed, getCurrentScope, onScopeDispose, ref, watchEffect, type ComputedRef, type WritableComputedRef } from 'vue'
 import type { VueStore } from '../store'
 import { DEFAULT_THEME_COLOR, isThemeColor } from './palette'
 
@@ -21,8 +21,13 @@ export function useTheme(store: VueStore): { mode: WritableComputedRef<ThemeMode
   const systemDark = ref(false)
   if (typeof window.matchMedia === 'function') {
     const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const onSystemChange = (e: MediaQueryListEvent): void => {
+      systemDark.value = e.matches
+    }
     systemDark.value = mq.matches
-    mq.addEventListener?.('change', (e) => (systemDark.value = e.matches))
+    mq.addEventListener?.('change', onSystemChange)
+    // scope 存在（setup/onMounted 调用契约）时挂销毁清理，避免组件卸载后监听器泄漏
+    if (getCurrentScope()) onScopeDispose(() => mq.removeEventListener?.('change', onSystemChange))
   }
   const mode = computed<ThemeModeValue>({
     get: () => (store.settings.themeMode === 'light' || store.settings.themeMode === 'dark' ? store.settings.themeMode : 'auto'),
@@ -42,8 +47,16 @@ export function useTheme(store: VueStore): { mode: WritableComputedRef<ThemeMode
     },
   })
   const resolvedMode = computed<'light' | 'dark'>(() => (mode.value === 'auto' ? (systemDark.value ? 'dark' : 'light') : mode.value))
-  // 仅应用属性(首帧由 html 内联脚本兜底);镜像仅在 set 写,避免加载前默认值覆盖镜像
-  watchEffect(() => applyThemeAttributes(mode.value, color.value))
+  // 应用属性(首帧由 html 内联脚本兜底)+ spec §4.5 镜像校正:调用契约是 initStore 成功后进入 setup,
+  // watchEffect 首次执行时 settings 已是真实值;镜像与 settings 不一致则以 AppSettings 为准回写镜像,
+  // 镜像不存在时写入的也是同一值,不会用默认值覆盖有效镜像
+  watchEffect(() => {
+    const m = mode.value
+    const c = color.value
+    applyThemeAttributes(m, c)
+    const mirror = readThemeMirror()
+    if (mirror.mode !== m || mirror.color !== c) writeMirror(m, c)
+  })
   function writeMirror(m: string, c: string) {
     try { localStorage.setItem(THEME_PREF_KEY, JSON.stringify({ mode: m, color: c })) } catch { /* 镜像失败不影响功能 */ }
   }

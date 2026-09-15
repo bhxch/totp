@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 const css = readFileSync(join(__dirname, '../src/theme/tokens.css'), 'utf8')
 const palettes = JSON.parse(readFileSync(join(__dirname, '../src/theme/palettes.json'), 'utf8')) as { id: string; hex: string }[]
 
-// 34 角色权威清单(与设计文档 §4.3 一致,kebab-case)
+// 35 角色权威清单(与设计文档 §4.3 一致,kebab-case)
 const ROLES = ['primary','on-primary','primary-container','on-primary-container',
   'secondary','on-secondary','secondary-container','on-secondary-container',
   'tertiary','on-tertiary','tertiary-container','on-tertiary-container',
@@ -17,7 +17,7 @@ const ROLES = ['primary','on-primary','primary-container','on-primary-container'
   'outline','outline-variant','inverse-surface','inverse-on-surface','inverse-primary','shadow','scrim']
 
 describe('tokens.css 产物', () => {
-  it('每种子 × light/dark × 34 角色齐全', () => {
+  it('每种子 × light/dark × 35 角色齐全', () => {
     for (const p of palettes) {
       for (const mode of ['light', 'dark']) {
         const block = css.match(new RegExp(`\\[data-color="${p.id}"\\]\\[data-mode="${mode}"\\]\\s*\\{([^}]*)\\}`))
@@ -41,8 +41,6 @@ describe('tokens.css 产物', () => {
     const block = css.match(/\[data-color="blue"\]\[data-mode="light"\]\s*\{([^}]*)\}/)!
     const got = block![1]!.match(/--md-sys-color-primary:\s*(#\w{6})/)![1]!.toLowerCase()
     expect(got).toBe(expectPrimary)
-    const errs = [...css.matchAll(/--md-sys-color-primary:\s*#\w{6}/g)] // 占位防误配:error 用独立断言
-    expect(errs.length).toBeGreaterThan(0)
     // error 不随种子变化:同一 mode 下 10 种子的 error 值全一致(明暗两 mode 的 error 本身允许不同)
     for (const mode of ['light', 'dark']) {
       const errSet = new Set([...css.matchAll(new RegExp(`\\[data-color="\\w+"\\]\\[data-mode="${mode}"\\]\\s*\\{([^}]*)\\}`, 'g'))]

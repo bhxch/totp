@@ -39,11 +39,12 @@ async function setBool(key: BoolKey, v: boolean): Promise<void> {
   await props.store.commitSettings()
 }
 
-/** popup 关闭延迟（毫秒）：number 语义输入，非法/负值忽略不落盘 */
+/** popup 关闭延迟（毫秒）：number 语义输入，空串/非法/负值忽略不落盘，小数取整落盘 */
 async function setPopupDelay(v: string): Promise<void> {
+  if (v.trim() === '') return
   const n = Number(v)
   if (!Number.isFinite(n) || n < 0) return
-  props.store.settings.popupCloseDelayMs = n
+  props.store.settings.popupCloseDelayMs = Math.round(n)
   await props.store.commitSettings()
 }
 

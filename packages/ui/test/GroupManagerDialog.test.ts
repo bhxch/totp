@@ -65,6 +65,19 @@ describe('GroupManagerDialog', () => {
     expect(s.vault.groups.find((g) => g.id === gid)!.name).toBe('工作')
   })
 
+  it('关闭后状态复位：重开无行内编辑残留、新建输入为空', async () => {
+    const s = await readyStore()
+    const w = mount(GroupManagerDialog, { props: { open: true, store: s } })
+    const row = w.findAll('.group-list li').find((li) => li.text().includes('工作'))!
+    await row.findAll('button.icon')[0]!.trigger('click') // 进入行内编辑
+    expect(w.find('.group-list input').exists()).toBe(true)
+    await w.find('.group-add input').setValue('待清空')
+    await w.setProps({ open: false })
+    await w.setProps({ open: true })
+    expect(w.find('.group-list input').exists()).toBe(false) // 无行内编辑残留
+    expect((w.find('.group-add input').element as HTMLInputElement).value).toBe('') // 新建输入已清空
+  })
+
   it('删除走 removeGroupOp（级联清理 groupIds）', async () => {
     const s = await readyStore()
     const gid = s.vault.groups[0]!.id

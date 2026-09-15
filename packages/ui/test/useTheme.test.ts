@@ -45,6 +45,14 @@ describe('useTheme', () => {
     const s = store(); s.settings.themeMode = 'auto'
     expect(useTheme(s).resolvedMode.value).toBe('dark')
   })
+  it('镜像与 settings 不一致时创建即回写校正(spec §4.5)', () => {
+    localStorage.setItem('themePref', JSON.stringify({ mode: 'light', color: 'blue' }))
+    const s = store()
+    s.settings.themeMode = 'dark'
+    s.settings.themeColor = 'teal'
+    useTheme(s)
+    expect(JSON.parse(localStorage.getItem('themePref')!)).toEqual({ mode: 'dark', color: 'teal' })
+  })
 })
 
 describe('applyThemeAttributes', () => {

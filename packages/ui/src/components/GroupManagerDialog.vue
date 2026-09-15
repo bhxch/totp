@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Group } from '@totp/core'
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import type { VueStore } from '../store'
 import MdDialog from './md/MdDialog.vue'
 
@@ -15,6 +15,15 @@ const emit = defineEmits<{ close: [] }>()
 const newGroupName = ref('')
 const renaming = ref<string | null>(null)
 const renameValue = ref('')
+
+// 关闭即复位行内编辑与新建输入，避免重开后残留上次的编辑态
+watch(() => props.open, (open) => {
+  if (!open) {
+    renaming.value = null
+    newGroupName.value = ''
+    renameValue.value = ''
+  }
+})
 
 async function addGroup() {
   const name = newGroupName.value.trim()

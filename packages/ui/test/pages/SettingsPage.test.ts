@@ -91,6 +91,20 @@ describe('SettingsPage 通用区', () => {
     expect(s.settings.popupCloseDelayMs).toBe(3000)
   })
 
+  it('弹窗延迟：空串/负值忽略不落盘不调 commitSettings；小数四舍五入取整', async () => {
+    const s = await readyStore()
+    const commit = vi.spyOn(s, 'commitSettings')
+    const w = mount(SettingsPage, { props: { store: s, showDesktop: true, showExtension: true } })
+    await w.find('.set-popup-delay input').setValue('   ')
+    expect(s.settings.popupCloseDelayMs).toBe(2000) // 默认值未被空串清成 0
+    expect(commit).not.toHaveBeenCalled()
+    await w.find('.set-popup-delay input').setValue('12.7')
+    expect(s.settings.popupCloseDelayMs).toBe(13)
+    await w.find('.set-popup-delay input').setValue('-5')
+    expect(s.settings.popupCloseDelayMs).toBe(13)
+    expect(commit).toHaveBeenCalledTimes(1)
+  })
+
   it('剪贴板开关：securityPlatform.setClipboardClear 缺失不渲染；存在则渲染且切换写 settings', async () => {
     const s = await readyStore()
     const w = mount(SettingsPage, { props: { store: s } })
