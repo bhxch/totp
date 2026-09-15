@@ -144,6 +144,31 @@ describe('SigV4 核心步骤（AWS aws-sig-v4-test-suite 官方向量锚定）',
     expect(awsUriEncode('a b/c+d~e-f_g.h', false)).toBe('a%20b/c%2Bd~e-f_g.h')
     expect(awsUriEncode('a/b', true)).toBe('a%2Fb')
   })
+  it('M15：awsUriEncode 多字节 UTF-8（中文/Emoji）按字节百分号大写编码；+/space/斜杠按 RFC 3986 编码', () => {
+    // 中文 '中文' UTF-8: E4 B8 AD E6 96 87
+    expect(awsUriEncode('中文', true)).toBe('%E4%B8%AD%E6%96%87')
+    // Emoji '🚀' (U+1F680) UTF-8: F0 9F 9A 80
+    expect(awsUriEncode('🚀', true)).toBe('%F0%9F%9A%80')
+    // 混合：中文/斜杠/Emoji → 中文 + %2F + Emoji
+    expect(awsUriEncode('中文/🚀', true)).toBe('%E4%B8%AD%E6%96%87%2F%F0%9F%9A%80')
+    expect(awsUriEncode('中文/🚀', false)).toBe('%E4%B8%AD%E6%96%87/%F0%9F%9A%80') // 保留斜杠
+    // '+' 必须编码为 %2B（不能解为空格——S3 query string 语义）
+    expect(awsUriEncode('+', true)).toBe('%2B')
+    expect(awsUriEncode('a+b', true)).toBe('a%2Bb')
+    // 空格编码为 %20（不是 +，那是 application/x-www-form-urlencoded 语义）
+    expect(awsUriEncode(' ', true)).toBe('%20')
+    expect(awsUriEncode('a b', true)).toBe('a%20b')
+    // '/' 默认编码为 %2F；encodeSlash=false 时保留
+    expect(awsUriEncode('/', true)).toBe('%2F')
+    expect(awsUriEncode('/', false)).toBe('/')
+    expect(awsUriEncode('a/b/c', true)).toBe('a%2Fb%2Fc')
+    expect(awsUriEncode('a/b/c', false)).toBe('a/b/c')
+    // unreserved 字符原样保留
+    expect(awsUriEncode('A-Za-z0-9-_.~', true)).toBe('A-Za-z0-9-_.~')
+    // 复合：中文 + 保留字符 + 特殊字符
+    expect(awsUriEncode('备份-2026/backups_中文+🚀.json', false))
+      .toBe('%E5%A4%87%E4%BB%BD-2026/backups_%E4%B8%AD%E6%96%87%2B%F0%9F%9A%80.json')
+  })
   it('buildCanonicalQueryString：键值各自 AWS uri-encode，按编码键名升序连接；空对象/缺省 → 空串', () => {
     expect(buildCanonicalQueryString()).toBe('')
     expect(buildCanonicalQueryString({})).toBe('')
