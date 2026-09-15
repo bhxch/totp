@@ -3,7 +3,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { backupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, randomBytes, SCHEMES_KEY, type CloudCred, type ImportScheme, type StorageAdapter, type Vault } from '@totp/core'
-import { createPrfCredential, createClipboardClearer, createIconStore, LockScreen, createVueStore, prfSupported, useTheme, VaultManager, type BackupMode, type BackupPlatform, type CloudPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type SecurityPlatform, type VueStore } from '@totp/ui'
+import { createPrfCredential, createClipboardClearer, createIconStore, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupMode, type BackupPlatform, type CloudPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref } from 'vue'
 import { createBackupToDir, listBackups, readBackupByName, readBackupFileOs, saveConflictBackupToDir, writeBackupFileOs } from './backupService'
 import { decryptDpapiOs, readImportFileBytesOs, readImportFileOs } from './importService'
@@ -259,35 +259,17 @@ async function copyToClipboard(code: string) {
   clearer.notifyCopied()
 }
 
-async function onBlurHideChange(e: Event) {
-  const s = store.value
-  if (!s) return
-  s.settings.blurHideEnabled = (e.target as HTMLInputElement).checked
-  await s.commitSettings()
-}
+/** Rail 底部「隐藏到托盘」：原 header 按钮迁移为 Shell 动作（失焦自动隐藏开关迁至设置页） */
+const railActions = [{ label: '隐藏到托盘', onClick: () => void getCurrentWindow().hide() }]
 </script>
 
 <template>
-  <main class="page">
-    <header>
-      <h1>TOTP 验证码工具</h1>
-      <div class="header-ops">
-        <label class="blur-hide"><input type="checkbox" :checked="store?.settings.blurHideEnabled" @change="onBlurHideChange" /> 失焦自动隐藏</label>
-        <button @click="getCurrentWindow().hide()">隐藏到托盘</button>
-      </div>
-    </header>
-    <div v-if="loadError && !store" class="error">{{ loadError }}</div>
-    <LockScreen v-else-if="store && store.locked" :store="store" :dpapi="dpapiOps" />
-    <VaultManager v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :cloud-platform="cloudPlatform" :icons="icons ?? undefined" :schemes-api="schemesApi" enable-copy @copy="copyToClipboard" />
-  </main>
+  <div v-if="loadError && !store" class="error">{{ loadError }}</div>
+  <LockScreen v-else-if="store && store.locked" :store="store" :dpapi="dpapiOps" />
+  <NavigationShell v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :cloud-platform="cloudPlatform" :icons="icons" :schemes-api="schemesApi" :rail-actions="railActions" @copy="copyToClipboard" />
 </template>
 
 <style>
 body { font-family: system-ui, sans-serif; margin: 0; }
-.page { max-width: 720px; margin: 0 auto; padding: 16px; }
-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-h1 { font-size: 20px; margin: 0; }
-.header-ops { display: flex; align-items: center; gap: 12px; }
-.blur-hide { font-size: 13px; display: flex; align-items: center; gap: 4px; cursor: pointer; }
-.error { color: var(--md-sys-color-error); }
+.error { color: var(--md-sys-color-error); padding: 16px; }
 </style>

@@ -36,6 +36,13 @@ const props = withDefaults(defineProps<{
 const route = useRoute()
 const router = useRouter()
 
+// 宿主剪贴板链路：仅 /codes 路由挂 copy 监听（其余页面未声明 copy emit，
+// 恒挂会经 attrs 落到根元素变成原生 copy(DOM 事件) 监听，误传 ClipboardEvent）
+const emit = defineEmits<{ copy: [code: string] }>()
+const pageListeners = computed(() =>
+  route.name === 'codes' ? { copy: (code: string) => emit('copy', code) } : {},
+)
+
 const navItems: { name: string; label: string; icon: string; to: string }[] = [
   { name: 'codes', label: '验证码', icon: NAV_ICONS.codes, to: '/codes' },
   { name: 'import', label: '导入', icon: NAV_ICONS.import, to: '/import' },
@@ -87,7 +94,7 @@ const pageProps = computed<Record<string, unknown>>(() => {
     <MdTabs v-else :items="navItems" :active="active" @select="onSelect" />
     <main class="nav-shell__main">
       <router-view v-slot="{ Component }">
-        <component :is="Component" v-bind="pageProps" />
+        <component :is="Component" v-bind="pageProps" v-on="pageListeners" />
       </router-view>
     </main>
   </div>

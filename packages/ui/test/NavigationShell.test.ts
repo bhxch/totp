@@ -3,6 +3,7 @@ import { toRaw } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import SettingsPage from '../src/pages/SettingsPage.vue'
+import CodesPage from '../src/pages/CodesPage.vue'
 import NavigationShell from '../src/pages/NavigationShell.vue'
 import { themeRoutes } from '../src/pages/routes'
 
@@ -62,5 +63,14 @@ describe('NavigationShell', () => {
     await w.findAll('.md-rail__item')[4]!.trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.path).toBe('/settings')
+  })
+
+  it('CodesPage copy 事件上抛为 Shell copy（宿主剪贴板链路）', async () => {
+    const router = makeRouter()
+    await router.push('/codes'); await router.isReady()
+    const w = mount(NavigationShell, { global: { plugins: [router] }, props: { store: stubStore } })
+    w.findComponent(CodesPage).vm.$emit('copy', '123456')
+    await flushPromises()
+    expect(w.emitted('copy')).toEqual([['123456']])
   })
 })
