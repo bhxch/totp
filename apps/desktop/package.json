@@ -16,7 +16,8 @@
     "@tauri-apps/plugin-fs": "^2.0.0",
     "@totp/core": "workspace:*",
     "@totp/ui": "workspace:*",
-    "vue": "^3.5.0"
+    "vue": "^3.5.0",
+    "vue-router": "^4.4.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",
