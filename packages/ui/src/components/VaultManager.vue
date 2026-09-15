@@ -195,8 +195,8 @@ async function contextTogglePin(entry: OtpEntry) {
         <template v-else>
           <span class="gname">{{ g.name }}</span>
           <span class="gcount">{{ store.vault.entries.filter((e) => e.groupIds.includes(g.id)).length }} 条</span>
-          <button class="icon" @click="renaming = g.id; renameValue = g.name">✎</button>
-          <button class="icon" @click="store.removeGroupOp(g.id)">🗑</button>
+          <button class="icon" :title="'编辑分组 ' + g.name" :aria-label="'编辑分组 ' + g.name" @click="renaming = g.id; renameValue = g.name">编辑</button>
+          <button class="icon" :title="'删除分组 ' + g.name" :aria-label="'删除分组 ' + g.name" @click="store.removeGroupOp(g.id)">删除</button>
         </template>
       </li>
       <li v-if="store.vault.groups.length === 0" class="empty">暂无分组</li>
@@ -226,8 +226,8 @@ async function contextTogglePin(entry: OtpEntry) {
           <button class="danger" @click.stop="askRemove(e.uuid)">确认删除？</button>
         </template>
         <template v-else>
-          <button class="icon" @click.stop="editing = e; creating = false">✎</button>
-          <button class="icon" @click.stop="askRemove(e.uuid)">🗑</button>
+          <button class="icon" :title="'编辑 ' + e.label" :aria-label="'编辑 ' + e.label" @click.stop="editing = e; creating = false">编辑</button>
+          <button class="icon" :title="'删除 ' + e.label" :aria-label="'删除 ' + e.label" @click.stop="askRemove(e.uuid)">删除</button>
         </template>
       </div>
     </div>
