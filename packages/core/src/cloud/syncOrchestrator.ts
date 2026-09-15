@@ -19,6 +19,10 @@
  * - downloaded / conflict-resolved 为解密后的远端 vault JSON（明文）。
  * in-sync 分支返回中**不包含** envelopeJson——该字段语义因密文/明文而异，
  * 避免调用方误把 envelope JSON 当作 vault JSON 使用。如需重新拉取 envelope，调用方自行 backend.get。
+ *
+ * M20：编排层不持有「待确认覆盖」的 UI 状态（pending）——那属于调用方（CloudCard）的视图状态。
+ *  fail path 抛错后是否清空 pending 由调用方决定：故意不复位，让用户能继续看到上一次「待确认」
+ *  的远端覆盖（避免同步失败意外清掉 pending）。本层保持纯函数语义，不引入 UI 状态耦合。
  */
 import { createBackupEnvelope, openBackupEnvelope } from '../backup/envelope'
 import type { CloudBackend } from './backend'
