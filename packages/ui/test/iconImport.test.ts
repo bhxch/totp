@@ -87,6 +87,56 @@ describe('importIconPackZip', () => {
     expect(icons.icons['b']).toBeDefined()
     expect(icons.icons['c']).toBeUndefined()
   })
+
+  it('M13：over-quota 时 overwrite 也正确计数（不与 imported/skipped 错算）', async () => {
+    // 字典序：a-copy.png (0x2D) < a.png (0x2E) < b.png
+    // normalize 后：a-copy → 'acopy'；a → 'a'；b → 'b'
+    // 三个 id 均不重复，全部走 imported 分支（overwritten=0）；seen.size=3 > max=2
+    // → 遍历 seen（插入序：acopy, a, b）→ keep={acopy, a}，b 计入 skipped
+    const icons = createIconStore(createMemoryStorage())
+    await icons.init()
+    const zip = zipSync({ 'a.png': PNG_BYTES, 'a-copy.png': PNG_BYTES, 'b.png': PNG_BYTES })
+    const result = await importIconPackZip(zip, icons, { max: 2 })
+    expect(result.imported).toBe(3)
+    expect(result.overwritten).toBe(0)
+    expect(result.skipped).toBe(1) // b 超出 max
+    expect(result.names).toEqual(['acopy', 'a', 'b'])
+    expect(icons.icons['acopy']).toBeDefined() // 插入序靠前，保留
+    expect(icons.icons['a']).toBeDefined()
+    expect(icons.icons['b']).toBeUndefined() // 超出 max 被踢出 pending
+  })
+
+  it('M13：同 id 在 max 内 overwrite 不影响 max 计数（overwrite 不增加 seen.size）', async () => {
+    // 验证 seen 大小只由「唯一 id 数」决定，overwrite 不递增。
+    // a.png + a-copy.png → normalize 后是不同 id('a'/'acopy') 都各自 imported；overwrite=0
+    // 用真正同名 normalize 后同 id 的场景：a.png + a_.png（同 id='a'），后者覆盖前者。
+    const icons = createIconStore(createMemoryStorage())
+    await icons.init()
+    const later = PNG_BYTES.slice()
+    later[0] = later[0]! ^ 0xff
+    // 文件名：a.png normalize 后是 'a'；a_.png normalize 后是 'a'（normalizeIssuer 去下划线）
+    const zip = zipSync({ 'a.png': PNG_BYTES, 'a_.png': later })
+    const result = await importIconPackZip(zip, icons, { max: 1 })
+    expect(result.imported).toBe(1)
+    expect(result.overwritten).toBe(1) // 同 id overwrite
+    expect(result.skipped).toBe(0) // seen.size=1 = max，未触发 skip
+    expect(result.names).toEqual(['a'])
+    expect(icons.icons['a']).toBeDefined()
+  })
+
+  it('M13：所有唯一 id 都超 max 时——imported 全量计、全部 skipped、pending 为空', async () => {
+    const icons = createIconStore(createMemoryStorage())
+    await icons.init()
+    const zip = zipSync({ 'a.png': PNG_BYTES, 'b.png': PNG_BYTES, 'c.png': PNG_BYTES })
+    const result = await importIconPackZip(zip, icons, { max: 0 })
+    expect(result.imported).toBe(3)
+    expect(result.overwritten).toBe(0)
+    expect(result.skipped).toBe(3)
+    expect(result.names).toEqual(['a', 'b', 'c'])
+    expect(icons.icons['a']).toBeUndefined()
+    expect(icons.icons['b']).toBeUndefined()
+    expect(icons.icons['c']).toBeUndefined()
+  })
 })
 
 describe('fileToScaledDataUrl', () => {
