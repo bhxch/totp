@@ -56,6 +56,7 @@ export function createGistBackend(cred: GistCred, opts: { onCredChange?: (cred: 
       return new TextEncoder().encode(file.content)
     },
     async delete(path) {
+      // TODO: UI 暂不暴露 delete 入口（PATCH content='' 不是真删）；保留实现以备未来"清理云端备份"功能
       await patchFile(path, '')
     },
     async exists(path) {
