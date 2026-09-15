@@ -8,8 +8,8 @@ describe('settingsStore', () => {
   })
   it('save/load 往返', async () => {
     const s = createMemoryStorage()
-    await saveSettings(s, { urlFilterEnabled: false, blurHideEnabled: false, clipboardClearEnabled: false, popupCloseDelayMs: 5000, syncEnabled: true })
-    expect(await loadSettings(s)).toEqual({ urlFilterEnabled: false, blurHideEnabled: false, clipboardClearEnabled: false, popupCloseDelayMs: 5000, syncEnabled: true })
+    await saveSettings(s, { urlFilterEnabled: false, blurHideEnabled: false, clipboardClearEnabled: false, popupCloseDelayMs: 5000, syncEnabled: true, themeMode: 'dark', themeColor: 'teal' })
+    expect(await loadSettings(s)).toEqual({ urlFilterEnabled: false, blurHideEnabled: false, clipboardClearEnabled: false, popupCloseDelayMs: 5000, syncEnabled: true, themeMode: 'dark', themeColor: 'teal' })
   })
   it('损坏 JSON 回退默认值', async () => {
     const s = createMemoryStorage()
@@ -19,7 +19,7 @@ describe('settingsStore', () => {
   it('未知字段被丢弃（只保留已知键）', async () => {
     const s = createMemoryStorage()
     await s.set(SETTINGS_KEY, JSON.stringify({ urlFilterEnabled: true, hacked: 1 }))
-    expect(await loadSettings(s)).toEqual({ urlFilterEnabled: true, blurHideEnabled: false, clipboardClearEnabled: true, popupCloseDelayMs: 2000, syncEnabled: false })
+    expect(await loadSettings(s)).toEqual({ urlFilterEnabled: true, blurHideEnabled: false, clipboardClearEnabled: true, popupCloseDelayMs: 2000, syncEnabled: false, themeMode: 'auto', themeColor: 'blue' })
   })
   it('类型非法的值回退默认', async () => {
     const s = createMemoryStorage()
@@ -28,7 +28,7 @@ describe('settingsStore', () => {
   })
   it('blurHideEnabled 缺省 false；非法类型回退 false', async () => {
     const s = createMemoryStorage()
-    expect(await loadSettings(s)).toEqual({ urlFilterEnabled: true, blurHideEnabled: false, clipboardClearEnabled: true, popupCloseDelayMs: 2000, syncEnabled: false })
+    expect(await loadSettings(s)).toEqual({ urlFilterEnabled: true, blurHideEnabled: false, clipboardClearEnabled: true, popupCloseDelayMs: 2000, syncEnabled: false, themeMode: 'auto', themeColor: 'blue' })
     await s.set(SETTINGS_KEY, JSON.stringify({ blurHideEnabled: 'yes' }))
     expect((await loadSettings(s)).blurHideEnabled).toBe(false)
   })
@@ -67,5 +67,28 @@ describe('settingsStore', () => {
     expect(loaded.blurHideEnabled).toBe(true)
     expect(loaded.clipboardClearEnabled).toBe(false)
     expect(loaded.popupCloseDelayMs).toBe(5000)
+  })
+})
+
+describe('theme settings 合并兜底', () => {
+  it('缺省 → auto/blue', async () => {
+    // memory storage 初始为空,等价于 adapter.get 返回 null
+    const s = await loadSettings(createMemoryStorage())
+    expect(s.themeMode).toBe('auto')
+    expect(s.themeColor).toBe('blue')
+  })
+  it('合法值透传', async () => {
+    const st = createMemoryStorage()
+    await st.set(SETTINGS_KEY, JSON.stringify({ themeMode: 'dark', themeColor: 'teal' }))
+    const s = await loadSettings(st)
+    expect(s.themeMode).toBe('dark')
+    expect(s.themeColor).toBe('teal')
+  })
+  it('非法值回退默认', async () => {
+    const st = createMemoryStorage()
+    await st.set(SETTINGS_KEY, JSON.stringify({ themeMode: 'sepia', themeColor: 42 }))
+    const s = await loadSettings(st)
+    expect(s.themeMode).toBe('auto')
+    expect(s.themeColor).toBe('blue')
   })
 })

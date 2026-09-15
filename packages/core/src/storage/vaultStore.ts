@@ -20,6 +20,8 @@ export async function saveVault(adapter: StorageAdapter, vault: Vault): Promise<
 
 export const SETTINGS_KEY = 'settings'
 
+export type ThemeMode = 'light' | 'dark' | 'auto'
+
 export interface AppSettings {
   urlFilterEnabled: boolean
   blurHideEnabled: boolean
@@ -29,6 +31,10 @@ export interface AppSettings {
   popupCloseDelayMs: number
   /** 浏览器同步（chrome.storage 分片同步）总开关：默认关闭，需用户显式开启 */
   syncEnabled: boolean
+  /** 主题模式:auto=跟随系统(prefers-color-scheme) */
+  themeMode: ThemeMode
+  /** 主题种子色 id(packages/ui theme/palettes.json 定义);core 仅做格式校验 */
+  themeColor: string
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -37,6 +43,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   clipboardClearEnabled: true,
   popupCloseDelayMs: 2000,
   syncEnabled: false,
+  themeMode: 'auto',
+  themeColor: 'blue',
 }
 
 export async function loadSettings(adapter: StorageAdapter): Promise<AppSettings> {
@@ -53,6 +61,8 @@ export async function loadSettings(adapter: StorageAdapter): Promise<AppSettings
       clipboardClearEnabled: typeof merged.clipboardClearEnabled === 'boolean' ? (merged.clipboardClearEnabled as boolean) : DEFAULT_SETTINGS.clipboardClearEnabled,
       popupCloseDelayMs: typeof merged.popupCloseDelayMs === 'number' ? (merged.popupCloseDelayMs as number) : DEFAULT_SETTINGS.popupCloseDelayMs,
       syncEnabled: typeof merged.syncEnabled === 'boolean' ? (merged.syncEnabled as boolean) : DEFAULT_SETTINGS.syncEnabled,
+      themeMode: merged.themeMode === 'light' || merged.themeMode === 'dark' || merged.themeMode === 'auto' ? merged.themeMode : DEFAULT_SETTINGS.themeMode,
+      themeColor: typeof merged.themeColor === 'string' && merged.themeColor.length > 0 && merged.themeColor.length <= 32 ? merged.themeColor : DEFAULT_SETTINGS.themeColor,
     }
   } catch {
     return { ...DEFAULT_SETTINGS }
