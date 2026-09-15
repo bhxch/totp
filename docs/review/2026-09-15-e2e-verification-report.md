@@ -3,6 +3,8 @@
 配套方案：`docs/review/2026-09-15-e2e-verification-plan.md`（48 项验证矩阵 + mock 策略）。
 产物：`apps/extension/.output/chrome-mv3`（`scripts/inject-test-shim.mjs` 注入 chrome shim + fetch/clipboard mock 后经 `http://127.0.0.1:8765` 提供）。
 
+> **后续修复（2026-09-15）**：F1（ad896dd 之后 9dca50b）与 F2（ad896dd）已修复并经浏览器复验通过——popup 🔑 揭示模态（前 4+后 4）、右键菜单三项（编辑/复制 URI/置顶，置顶持久化+排序生效、URI 入剪贴板）、F2 digits 6→5→6 实时同步；同时消除了 I36 遗留的全部 typecheck 错误（4f91bfd，OtpDigits 收口 5|6|7|8 + toOtpDigits 边界钳制），全仓 typecheck 4 包全绿。
+
 ## 总判定
 
 **44 项通过 / 2 项部分通过 / 2 项新发现（1 功能缺口 + 1 上轮已记录 UX 缺口）**。规格承诺的核心功能在真实浏览器环境下全部端到端可用；上一轮代码修复（90 commit）中被修复的路径均得到真实浏览器验证。
