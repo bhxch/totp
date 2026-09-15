@@ -11,7 +11,7 @@ async function readyStore() {
   return s
 }
 
-describe('CodesPage 列表与搜索（自 VaultManager 迁移）', () => {
+describe('CodesPage 列表与搜索（自 旧单页 迁移）', () => {
   it('渲染条目与搜索过滤', async () => {
     const s = await readyStore()
     const w = mount(CodesPage, { props: { store: s } })
@@ -59,7 +59,7 @@ describe('CodesPage 列表与搜索（自 VaultManager 迁移）', () => {
   })
 })
 
-describe('CodesPage I49 搜 secret 开关（自 VaultManager 迁移）', () => {
+describe('CodesPage I49 搜 secret 开关（自 旧单页 迁移）', () => {
   it('默认关闭：搜密钥片段不命中（issuer/label 不含密钥）；开启后命中', async () => {
     const s = await readyStore() // 条目 issuer=GitHub, secret=JBSWY3DPEHPK3PXP
     const w = mount(CodesPage, { props: { store: s } })
@@ -176,7 +176,7 @@ describe('CodesPage FAB 新建入口', () => {
   })
 })
 
-describe('CodesPage reveal / 右键菜单 / pinned（自 VaultManager C16 迁移）', () => {
+describe('CodesPage reveal / 右键菜单 / pinned（自 旧单页 C16 迁移）', () => {
   /** 准备含 2 条条目的 store（a/b） */
   async function storeWithTwo(): Promise<ReturnType<typeof createVueStore>> {
     const s = createVueStore(createMemoryStorage())

@@ -16,7 +16,7 @@ const loadError = ref('')
 let unlistenFocus: (() => void) | null = null
 
 // ---------- 导入映射方案存取 ----------
-// adapter 在 onMounted 就绪后赋值；schemesApi 闭包实时读取（VaultManager 仅在 store 就绪后渲染，不会读到 null）
+// adapter 在 onMounted 就绪后赋值；schemesApi 闭包实时读取（旧单页 仅在 store 就绪后渲染，不会读到 null）
 let fsAdapter: StorageAdapter | null = null
 
 /** 直读写 adapter 的 SCHEMES_KEY（本地 AppData JSON）；load 容错：坏 JSON → 空表 */

@@ -10,7 +10,7 @@ defineProps<{
 
 const emit = defineEmits<{ close: [] }>()
 
-/** 自 VaultManager reveal 模态逐字迁移：显前 4 + 后 4，中间遮蔽（≤8 全显），避免整段密钥常驻 DOM */
+/** 自 旧单页 reveal 模态逐字迁移：显前 4 + 后 4，中间遮蔽（≤8 全显），避免整段密钥常驻 DOM */
 function maskSecret(secret: string): string {
   const s = secret.replace(/\s+/g, '')
   if (s.length <= 8) return s

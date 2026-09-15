@@ -12,7 +12,7 @@ import type { IconStore } from '../iconStore'
 import type { VueStore } from '../store'
 import { NAV_ICONS } from './navIcons'
 
-// props = VaultManager 全量(VaultManager 的 enableCopy 属列表行为,不属于壳)+
+// props = 旧单页 全量(旧单页 的 enableCopy 属列表行为,不属于壳)+
 // railActions;均可缺省,popup 等窄宿主零影响。
 const props = withDefaults(defineProps<{
   /** 全局响应式 store;Task 9-11 页面真实现按 pageProps 消费 */

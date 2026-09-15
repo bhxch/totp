@@ -20,7 +20,7 @@ const props = withDefaults(defineProps<{
   syncPlatform?: SyncPlatform | null
 }>(), { platform: null, cloudPlatform: null, syncPlatform: null })
 
-/** 备份内容快照（saveVault 同款 JSON）：序列化 reactive 代理以保持 computed 依赖追踪（与 VaultManager 一致） */
+/** 备份内容快照（saveVault 同款 JSON）：序列化 reactive 代理以保持 computed 依赖追踪（与 旧单页 一致） */
 const vaultJson = computed(() => JSON.stringify(props.store.vault))
 </script>
 

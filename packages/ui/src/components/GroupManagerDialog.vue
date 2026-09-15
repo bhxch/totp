@@ -11,7 +11,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{ close: [] }>()
 
-// 自 VaultManager「分组管理」卡逐字迁移：建组（回车/按钮）、计数、行内重命名（enter 保存/取消）、删除
+// 自 旧单页「分组管理」卡逐字迁移：建组（回车/按钮）、计数、行内重命名（enter 保存/取消）、删除
 const newGroupName = ref('')
 const renaming = ref<string | null>(null)
 const renameValue = ref('')

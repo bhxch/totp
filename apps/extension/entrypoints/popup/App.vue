@@ -76,7 +76,7 @@ const creating = ref(false)
 const confirmingDelete = ref<string | null>(null)
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
 
-// ---------- F1：secret 揭示 + 右键菜单（spec §10「右键菜单（编辑/复制 URI/置顶）」，与 VaultManager 同语义） ----------
+// ---------- F1：secret 揭示 + 右键菜单（spec §10「右键菜单（编辑/复制 URI/置顶）」，与 旧单页 同语义） ----------
 /** reveal：点「🔑」后弹模态显前 4 + 后 4（不在列表 DOM 常驻明文） */
 const revealing = ref<OtpEntry | null>(null)
 /** 右键菜单：菜单位置与目标条目 */
@@ -300,7 +300,7 @@ async function copy(entry: OtpEntry) {
       </div>
     </div>
 
-    <!-- F1：reveal 模态（与 VaultManager 同语义：仅显前 4 + 后 4） -->
+    <!-- F1：reveal 模态（与 旧单页 同语义：仅显前 4 + 后 4） -->
     <div v-if="revealing" class="reveal-mask" @click="closeReveal">
       <div class="reveal-card" @click.stop>
         <h3>{{ revealing.issuer }} — 密钥</h3>
@@ -344,7 +344,7 @@ h1 { font-size: 16px; margin: 0; }
 .item-wrap:hover .ops, .ops:focus-within { opacity: 1; }
 .ops .icon { border: none; background: none; cursor: pointer; font-size: 14px; padding: 2px 4px; }
 .ops .danger { border: none; background: none; cursor: pointer; color: var(--md-sys-color-error); font-size: 12px; font-weight: 600; }
-/* F1：reveal 模态 + 右键菜单（类名与样式同 VaultManager，保证跨宿主一致观感） */
+/* F1：reveal 模态 + 右键菜单（类名与样式同 旧单页，保证跨宿主一致观感） */
 .reveal-mask { position: fixed; inset: 0; background: color-mix(in srgb, var(--md-sys-color-scrim) 55%, transparent); display: grid; place-items: center; z-index: 1000; }
 .reveal-card { background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); padding: 20px 24px; border-radius: 10px; max-width: 320px; width: 88%; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 4px 24px color-mix(in srgb, var(--md-sys-color-shadow) 25%, transparent); }
 .reveal-card h3 { font-size: 14px; margin: 0; }
