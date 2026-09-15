@@ -1,4 +1,5 @@
 import type { Group, OtpEntry, Vault } from './model'
+import { toOtpDigits } from './import/normalize'
 import { parseOtpUri } from './otp/uri'
 
 export function createVault(): Vault {
@@ -54,7 +55,7 @@ export function newEntryFromUri(uri: string, nowMs: number = Date.now()): OtpEnt
     label: p.label,
     secret: p.secret,
     algorithm: p.algorithm,
-    digits: p.digits,
+    digits: toOtpDigits(p.digits, p.type),
     period: p.period,
     ...(p.counter !== undefined ? { counter: p.counter } : {}),
     groupIds: [],

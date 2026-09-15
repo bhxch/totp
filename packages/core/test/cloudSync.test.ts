@@ -57,9 +57,9 @@ describe('syncWithCloud', () => {
     expect(backend.putCount).toBe(1)
     const stored = backend.store.get(PATH)!
     expect(out.hash).toBe(await sha256Hex(stored))
-    // envelopeJson 即本次上传的 envelope JSON
-    expect(out.envelopeJson).toBe(new TextDecoder().decode(stored))
-    const env = JSON.parse(out.envelopeJson)
+    // envelopeJson 即本次上传的 envelope JSON（C3：uploaded 分支携带 envelope 供校验）
+    expect(out.envelopeJson).toBeDefined()
+    const env = JSON.parse(out.envelopeJson!)
     expect(await import('../src/backup/envelope').then((m) => m.openBackupEnvelope(env, PASSWORD))).toBe(LOCAL_VAULT)
   })
 

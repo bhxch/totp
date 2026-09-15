@@ -3,8 +3,8 @@ import type { MatchRule } from './match/engine'
 import type { IconRef } from './icons/registry'
 
 export type EntryType = 'totp' | 'hotp' | 'steam'
-/** spec §4：digits 仅支持 6/7/8（Steam 在 URI 解析/导入层强制 5，本类型按 6/7/8 收口） */
-export type OtpDigits = 6 | 7 | 8
+/** spec §4：digits 支持 5/6/7/8——5 为 Steam 专用（URI 解析/导入/表单层强制），6/7/8 对应 RFC 6238 */
+export type OtpDigits = 5 | 6 | 7 | 8
 
 export interface OtpEntry {
   uuid: string

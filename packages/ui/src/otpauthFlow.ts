@@ -1,4 +1,4 @@
-import { normalizeExtOtpauth, parseOtpUri, type OtpEntry } from '@totp/core'
+import { normalizeExtOtpauth, parseOtpUri, toOtpDigits, type OtpEntry } from '@totp/core'
 
 export { normalizeExtOtpauth }
 
@@ -20,7 +20,7 @@ export function parseUriToEntryData(uri: string): ParseUriResult {
         label: p.label,
         secret: p.secret,
         algorithm: p.algorithm,
-        digits: p.digits,
+        digits: toOtpDigits(p.digits, p.type),
         period: p.period,
         ...(p.counter !== undefined ? { counter: p.counter } : {}),
         note: '',

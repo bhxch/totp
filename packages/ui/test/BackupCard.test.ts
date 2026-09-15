@@ -74,7 +74,8 @@ describe('BackupCard', () => {
     await keepRadio.setValue(true)
     await vi.waitFor(() => {
       expect(mode.type).toBe('keep')
-      expect(mode.n).toBe(7) // 关键：保留用户配置的 7
+      // I70：切回 keep 保留用户配置的 keepN（不是默认 3）
+      if (mode.type === 'keep') expect(mode.n).toBe(7)
     })
   })
 })

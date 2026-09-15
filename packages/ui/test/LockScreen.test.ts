@@ -195,7 +195,7 @@ describe('LockScreen', () => {
     vi.useFakeTimers()
     try {
       const unprotect = vi.fn().mockRejectedValue(new Error('DPAPI 解密失败'))
-      const store = mockStore({ locked: ref(true), prfSources: computed(() => []), securitySettings: ref(null) })
+      const store = mockStore({ locked: computed(() => true), prfSources: computed(() => []), securitySettings: ref(null) })
       const w = mount(LockScreen, { props: { store, dpapi: makeDpapi({ unprotect }) } })
       // 0：尚未显示重试按钮
       expect(w.find('button.dpapi-retry').exists()).toBe(false)

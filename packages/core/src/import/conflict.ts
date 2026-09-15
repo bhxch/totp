@@ -1,5 +1,6 @@
 import type { OtpEntry, Vault } from '../model'
 import { addEntry, updateEntry } from '../vault'
+import { toOtpDigits } from './normalize'
 import type { ParsedEntry } from './types'
 
 export type ConflictPolicy = 'skip' | 'replace' | 'merge'
@@ -17,7 +18,7 @@ export function newEntryFromParsed(p: ParsedEntry, uuid: string, nowMs: number, 
     label: p.label,
     secret: p.secret,
     algorithm: p.algorithm,
-    digits: p.digits,
+    digits: toOtpDigits(p.digits, p.type),
     period: p.period,
     ...(p.counter !== undefined ? { counter: p.counter } : {}),
     ...(p.note !== undefined ? { note: p.note } : {}),
@@ -56,7 +57,7 @@ export function applyImport(v: Vault, entries: ParsedEntry[], policy: ConflictPo
           label: p.label,
           secret: p.secret,
           algorithm: p.algorithm,
-          digits: p.digits,
+          digits: toOtpDigits(p.digits, p.type),
           period: p.period,
           ...(p.counter !== undefined ? { counter: p.counter } : {}),
           ...(p.note !== undefined ? { note: p.note } : {}),

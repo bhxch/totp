@@ -1,3 +1,4 @@
+import type { OtpDigits } from '../model'
 import type { ImportResult, ParsedEntry } from './types'
 
 // 跨 4 个 importer 重复的规整 / 收集工具，统一收敛到本模块（M10）。
@@ -34,6 +35,12 @@ export function toPositiveNumber(raw: unknown, fallback: number): number {
 export function toNonNegativeNumber(raw: unknown, fallback: number): number {
   const n = Number(raw)
   return Number.isFinite(n) && n >= 0 ? n : fallback
+}
+
+/** digits 收口到 OtpDigits（I36 类型收紧的运行时边界）：steam 强制 5，其余仅接受 6/7/8、非法回落 6 */
+export function toOtpDigits(raw: number, type: ParsedEntry['type']): OtpDigits {
+  if (type === 'steam') return 5
+  return raw === 6 || raw === 7 || raw === 8 ? raw : 6
 }
 
 /** 任意 unknown → 对象（null/数组均返回 null），统一 importer 内 row→obj 转换 */
