@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
-import { OtpListItem, createClipboardClearer, createIconStore, createVueStore, iconView, useOtpCodes, type IconStore, type VueStore } from '@totp/ui'
+import { OtpListItem, createClipboardClearer, createIconStore, createVueStore, iconView, useOtpCodes, useTheme, type IconStore, type VueStore } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
 import { createTauriFs } from './tauriFs'
 
@@ -16,6 +16,8 @@ async function load() {
     const s = createVueStore(adapter, { windowId: 'mini' })
     await s.initStore()
     store.value = s
+    // 主题接线:initStore 成功后挂 useTheme(设置已加载为真实值;首帧属性由 html 内联脚本负责)
+    useTheme(s)
     const iconStore = createIconStore(adapter)
     await iconStore.init()
     icons.value = iconStore

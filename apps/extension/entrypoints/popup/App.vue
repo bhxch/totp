@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { entryMatchesUrl, getBuiltinIcons, type OtpEntry } from '@totp/core'
-import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, normalizeExtOtpauth, OtpListItem, parseUriToEntryData, SearchBar, useOtpCodes, type EntryFormData } from '@totp/ui'
+import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, normalizeExtOtpauth, OtpListItem, parseUriToEntryData, SearchBar, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
 import { PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
 import { storageAdapter } from '../../src/store'
@@ -19,6 +19,8 @@ const filterOn = computed(() => settings.urlFilterEnabled)
 onMounted(async () => {
   try {
     await initStore()
+    // 主题接线:initStore 成功后挂 useTheme(设置已加载为真实值;首帧属性由 html 内联脚本负责)
+    useTheme(store)
     registerStorageSync()
     await icons.init()
   } catch (e) {

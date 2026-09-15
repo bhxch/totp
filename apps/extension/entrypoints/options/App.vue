@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { backupFileName, conflictBackupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, OVERWRITE_NAME, randomBytes, SCHEMES_KEY, type BackupEnvelopeV1, type CloudCred, type ImportScheme, type Vault } from '@totp/core'
-import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, createPrfCredential, LockScreen, prfSupported, VaultManager, type BackupMode, type BackupPlatform, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
+import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, createPrfCredential, LockScreen, prfSupported, useTheme, VaultManager, type BackupMode, type BackupPlatform, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
 import { createExtensionStore, storageAdapter } from '../../src/store'
 import { markSyncOff, SYNC_STATUS_KEY } from '../../src/syncEngine'
@@ -39,6 +39,8 @@ const loadError = ref('')
 onMounted(async () => {
   try {
     await initStore()
+    // 主题接线:initStore 成功后挂 useTheme(设置已加载为真实值;首帧属性由 html 内联脚本负责)
+    useTheme(store)
     registerStorageSync()
     await icons.init()
   } catch (e) {

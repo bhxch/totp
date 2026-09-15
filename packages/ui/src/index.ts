@@ -1,5 +1,7 @@
 export * from './composables/useOtpCodes'
 export * from './store'
+export * from './theme/palette'
+export * from './theme/useTheme'
 export * from './prf'
 export * from './iconStore'
 export * from './iconImport'

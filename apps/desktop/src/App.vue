@@ -3,7 +3,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { backupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, randomBytes, SCHEMES_KEY, type CloudCred, type ImportScheme, type StorageAdapter, type Vault } from '@totp/core'
-import { createPrfCredential, createClipboardClearer, createIconStore, LockScreen, createVueStore, prfSupported, VaultManager, type BackupMode, type BackupPlatform, type CloudPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type SecurityPlatform, type VueStore } from '@totp/ui'
+import { createPrfCredential, createClipboardClearer, createIconStore, LockScreen, createVueStore, prfSupported, useTheme, VaultManager, type BackupMode, type BackupPlatform, type CloudPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref } from 'vue'
 import { createBackupToDir, listBackups, readBackupByName, readBackupFileOs, saveConflictBackupToDir, writeBackupFileOs } from './backupService'
 import { decryptDpapiOs, readImportFileBytesOs, readImportFileOs } from './importService'
@@ -236,6 +236,8 @@ onMounted(async () => {
     const s = createVueStore(adapter, { windowId: 'main' })
     await s.initStore()
     store.value = s
+    // 主题接线:initStore 成功后挂 useTheme(设置已加载为真实值;首帧属性由 html 内联脚本负责)
+    useTheme(s)
     const iconStore = createIconStore(adapter)
     await iconStore.init()
     icons.value = iconStore
