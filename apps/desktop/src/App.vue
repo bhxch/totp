@@ -289,5 +289,5 @@ header { display: flex; justify-content: space-between; align-items: center; mar
 h1 { font-size: 20px; margin: 0; }
 .header-ops { display: flex; align-items: center; gap: 12px; }
 .blur-hide { font-size: 13px; display: flex; align-items: center; gap: 4px; cursor: pointer; }
-.error { color: #d9534f; }
+.error { color: var(--md-sys-color-error); }
 </style>

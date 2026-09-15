@@ -74,21 +74,21 @@ function onContextMenu(e: MouseEvent): void {
 
 <style scoped>
 .otp-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; cursor: pointer; border-radius: 8px; }
-.otp-item:hover { background: rgba(128, 128, 128, 0.15); }
-.avatar { width: 36px; height: 36px; border-radius: 50%; background: #5b6b8c; color: #fff; display: grid; place-items: center; font-weight: 600; flex: none; overflow: hidden; }
+.otp-item:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
+.avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); display: grid; place-items: center; font-weight: 600; flex: none; overflow: hidden; }
 .icon-svg { width: 22px; height: 22px; fill: currentColor; }
 .icon-img { width: 100%; height: 100%; object-fit: cover; }
 .meta { flex: 1; min-width: 0; }
 .issuer { font-weight: 600; display: flex; align-items: center; gap: 4px; }
-.pin { color: #f5a623; font-size: 14px; }
+.pin { color: var(--md-sys-color-primary); font-size: 14px; }
 .label { font-size: 12px; opacity: 0.7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .right { display: flex; align-items: center; gap: 8px; }
 .code { font-family: ui-monospace, monospace; font-size: 18px; letter-spacing: 1px; }
-.code.invalid { color: #d9534f; font-size: 13px; cursor: help; }
+.code.invalid { color: var(--md-sys-color-error); font-size: 13px; cursor: help; }
 .reveal { border: none; background: none; cursor: pointer; padding: 4px; font-size: 14px; opacity: 0.5; }
 .reveal:hover { opacity: 1; }
 .ring { width: 32px; height: 32px; transform: rotate(-90deg); }
-.ring-bg { fill: none; stroke: rgba(128,128,128,.3); stroke-width: 3; }
-.ring-fg { fill: none; stroke: #4a90d9; stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset 1s linear; }
+.ring-bg { fill: none; stroke: var(--md-sys-color-outline-variant); stroke-width: 3; }
+.ring-fg { fill: none; stroke: var(--md-sys-color-primary); stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset 1s linear; }
 .ring-text { transform: rotate(90deg); transform-origin: 18px 18px; font-size: 11px; fill: currentColor; }
 </style>

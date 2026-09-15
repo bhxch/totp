@@ -264,7 +264,7 @@ async function contextTogglePin(entry: OtpEntry) {
 
 <style scoped>
 h2 { font-size: 15px; display: flex; justify-content: space-between; align-items: center; }
-.card { border: 1px solid rgba(128,128,128,.4); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+.card { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
 .group-add { display: flex; gap: 8px; }
 .group-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .group-list li { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
@@ -274,16 +274,16 @@ h2 { font-size: 15px; display: flex; justify-content: space-between; align-items
 .ops { display: flex; gap: 4px; opacity: 0; transition: opacity .15s; }
 .row:hover .ops, .ops:focus-within { opacity: 1; }
 .icon, .danger { border: none; background: none; cursor: pointer; padding: 4px; }
-.danger { color: #d9534f; font-size: 12px; }
+.danger { color: var(--md-sys-color-error); font-size: 12px; }
 .empty { text-align: center; opacity: .6; padding: 16px 0; }
 /* reveal 模态遮罩 */
-.reveal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: grid; place-items: center; z-index: 1000; }
-.reveal-card { background: #fff; color: #222; padding: 20px 24px; border-radius: 10px; max-width: 360px; width: 90%; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 4px 24px rgba(0,0,0,.25); }
-.reveal-secret { font-family: ui-monospace, monospace; font-size: 18px; letter-spacing: 1px; background: rgba(128,128,128,.12); padding: 10px; border-radius: 6px; text-align: center; word-break: break-all; }
+.reveal-mask { position: fixed; inset: 0; background: color-mix(in srgb, var(--md-sys-color-scrim) 55%, transparent); display: grid; place-items: center; z-index: 1000; }
+.reveal-card { background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); padding: 20px 24px; border-radius: 10px; max-width: 360px; width: 90%; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 4px 24px color-mix(in srgb, var(--md-sys-color-shadow) 25%, transparent); }
+.reveal-secret { font-family: ui-monospace, monospace; font-size: 18px; letter-spacing: 1px; background: var(--md-sys-color-surface-container-highest); padding: 10px; border-radius: 6px; text-align: center; word-break: break-all; }
 .reveal-hint { font-size: 12px; opacity: .65; margin: 0; }
 .reveal-close { align-self: flex-end; }
 /* 右键菜单 */
-.ctx-menu { position: fixed; z-index: 1001; list-style: none; margin: 0; padding: 4px 0; background: #fff; color: #222; border: 1px solid rgba(0,0,0,.15); border-radius: 6px; box-shadow: 0 2px 12px rgba(0,0,0,.18); min-width: 120px; }
+.ctx-menu { position: fixed; z-index: 1001; list-style: none; margin: 0; padding: 4px 0; background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); border: 1px solid var(--md-sys-color-outline-variant); border-radius: 6px; box-shadow: 0 2px 12px color-mix(in srgb, var(--md-sys-color-shadow) 18%, transparent); min-width: 120px; }
 .ctx-menu li button { display: block; width: 100%; padding: 6px 14px; border: none; background: none; text-align: left; cursor: pointer; font-size: 13px; }
-.ctx-menu li button:hover { background: rgba(0,0,0,.06); }
+.ctx-menu li button:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
 </style>

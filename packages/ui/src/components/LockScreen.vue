@@ -156,5 +156,5 @@ h2 { font-size: 16px; margin: 0; text-align: center; }
 .hint { font-size: 13px; opacity: .65; margin: 0; text-align: center; }
 .row { display: flex; gap: 8px; }
 .row input { flex: 1; }
-.err { color: #d9534f; font-size: 13px; }
+.err { color: var(--md-sys-color-error); font-size: 13px; }
 </style>

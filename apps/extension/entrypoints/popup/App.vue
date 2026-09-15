@@ -318,8 +318,8 @@ body { font-family: system-ui, sans-serif; margin: 0; padding: 8px; }
 main { display: flex; flex-direction: column; gap: 4px; }
 header { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 8px; }
 h1 { font-size: 16px; margin: 0; }
-.error { color: #d9534f; font-size: 12px; }
-.copied-banner { font-size: 12px; color: #2e7d32; background: #e8f5e9; border-radius: 6px; padding: 4px 8px; margin: 0 4px; }
+.error { color: var(--md-sys-color-error); font-size: 12px; }
+.copied-banner { font-size: 12px; color: var(--md-sys-color-primary); background: var(--md-sys-color-primary-container); border-radius: 6px; padding: 4px 8px; margin: 0 4px; }
 .filter-row { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 0 4px; }
 .otpauth-import { font-size: 13px; padding: 0 4px; }
 .otpauth-import summary { cursor: pointer; opacity: .8; }
@@ -331,15 +331,15 @@ h1 { font-size: 16px; margin: 0; }
 .ops { position: absolute; top: 4px; right: 4px; display: flex; gap: 4px; opacity: 0; transition: opacity .15s; }
 .item-wrap:hover .ops, .ops:focus-within { opacity: 1; }
 .ops .icon { border: none; background: none; cursor: pointer; font-size: 14px; padding: 2px 4px; }
-.ops .danger { border: none; background: none; cursor: pointer; color: #d9534f; font-size: 12px; font-weight: 600; }
+.ops .danger { border: none; background: none; cursor: pointer; color: var(--md-sys-color-error); font-size: 12px; font-weight: 600; }
 /* F1：reveal 模态 + 右键菜单（类名与样式同 VaultManager，保证跨宿主一致观感） */
-.reveal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: grid; place-items: center; z-index: 1000; }
-.reveal-card { background: #fff; color: #222; padding: 20px 24px; border-radius: 10px; max-width: 320px; width: 88%; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 4px 24px rgba(0,0,0,.25); }
+.reveal-mask { position: fixed; inset: 0; background: color-mix(in srgb, var(--md-sys-color-scrim) 55%, transparent); display: grid; place-items: center; z-index: 1000; }
+.reveal-card { background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); padding: 20px 24px; border-radius: 10px; max-width: 320px; width: 88%; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 4px 24px color-mix(in srgb, var(--md-sys-color-shadow) 25%, transparent); }
 .reveal-card h3 { font-size: 14px; margin: 0; }
-.reveal-secret { font-family: ui-monospace, monospace; font-size: 18px; letter-spacing: 1px; background: rgba(128,128,128,.12); padding: 10px; border-radius: 6px; text-align: center; word-break: break-all; }
+.reveal-secret { font-family: ui-monospace, monospace; font-size: 18px; letter-spacing: 1px; background: var(--md-sys-color-surface-container-highest); padding: 10px; border-radius: 6px; text-align: center; word-break: break-all; }
 .reveal-hint { font-size: 12px; opacity: .65; margin: 0; }
 .reveal-close { align-self: flex-end; }
-.ctx-menu { position: fixed; z-index: 1001; list-style: none; margin: 0; padding: 4px 0; background: #fff; color: #222; border: 1px solid rgba(0,0,0,.15); border-radius: 6px; box-shadow: 0 2px 12px rgba(0,0,0,.18); min-width: 120px; }
+.ctx-menu { position: fixed; z-index: 1001; list-style: none; margin: 0; padding: 4px 0; background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); border: 1px solid var(--md-sys-color-outline-variant); border-radius: 6px; box-shadow: 0 2px 12px color-mix(in srgb, var(--md-sys-color-shadow) 18%, transparent); min-width: 120px; }
 .ctx-menu li button { display: block; width: 100%; padding: 6px 14px; border: none; background: none; text-align: left; cursor: pointer; font-size: 13px; }
-.ctx-menu li button:hover { background: rgba(0,0,0,.06); }
+.ctx-menu li button:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
 </style>

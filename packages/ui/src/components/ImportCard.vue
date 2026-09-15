@@ -617,22 +617,22 @@ function failureLabel(f: { index: number; message: string }): string {
 </template>
 
 <style scoped>
-.card { border: 1px solid rgba(128,128,128,.4); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+.card { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
 h2 { font-size: 15px; margin: 0; }
 .meta { font-size: 13px; margin: 0; }
 .hint { font-size: 12px; opacity: .65; margin: 0; }
-.req { margin-left: 4px; font-size: 11px; color: #d9534f; }
+.req { margin-left: 4px; font-size: 11px; color: var(--md-sys-color-error); }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .actions .format-select { min-width: 0; flex: 1; max-width: 320px; }
 .map-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .map-row label { width: 90px; flex: none; }
 .map-row input { flex: 1; }
-.schemes { display: flex; flex-direction: column; gap: 6px; border-top: 1px dashed rgba(128,128,128,.3); padding-top: 8px; }
+.schemes { display: flex; flex-direction: column; gap: 6px; border-top: 1px dashed var(--md-sys-color-outline-variant); padding-top: 8px; }
 .scheme-row { display: flex; gap: 8px; }
 .scheme-row input, .scheme-row select { flex: 1; min-width: 0; }
 .policies { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; }
 .policies label { display: flex; align-items: center; gap: 4px; }
-.failures { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 160px; overflow: auto; font-size: 12px; color: #d9534f; }
-.ok { color: #2e7d32; font-size: 13px; margin: 0; }
-.err { color: #d9534f; font-size: 13px; }
+.failures { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 160px; overflow: auto; font-size: 12px; color: var(--md-sys-color-error); }
+.ok { color: var(--md-sys-color-primary); font-size: 13px; margin: 0; }
+.err { color: var(--md-sys-color-error); font-size: 13px; }
 </style>

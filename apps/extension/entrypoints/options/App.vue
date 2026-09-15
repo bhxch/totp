@@ -305,5 +305,5 @@ const cloudPlatform: CloudPlatform = {
 body { font-family: system-ui, sans-serif; }
 .page { max-width: 640px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
 h1 { font-size: 20px; }
-.error { color: #d9534f; font-size: 12px; }
+.error { color: var(--md-sys-color-error); font-size: 12px; }
 </style>

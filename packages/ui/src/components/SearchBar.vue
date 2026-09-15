@@ -37,8 +37,8 @@ function onSecretToggle(e: Event): void {
 
 <style scoped>
 .search-row { display: flex; gap: 8px; align-items: center; }
-.search { flex: 1; box-sizing: border-box; padding: 7px 10px; border: 1px solid rgba(128,128,128,.4); border-radius: 8px; background: transparent; color: inherit; }
-.search:focus { outline: none; border-color: #4a90d9; }
+.search { flex: 1; box-sizing: border-box; padding: 7px 10px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: 8px; background: transparent; color: inherit; }
+.search:focus { outline: none; border-color: var(--md-sys-color-primary); }
 .secret-toggle { font-size: 12px; opacity: .75; display: flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap; }
 .secret-toggle-input { margin: 0; }
 </style>

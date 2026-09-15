@@ -88,10 +88,10 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
 body { font-family: system-ui, sans-serif; margin: 0; }
 .mini { display: flex; flex-direction: column; gap: 2px; padding: 6px; }
 .empty { text-align: center; opacity: .6; padding: 32px 0; font-size: 13px; }
-.reveal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: grid; place-items: center; z-index: 1000; }
-.reveal-card { background: #fff; color: #222; padding: 16px 18px; border-radius: 10px; max-width: 280px; width: 86%; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 4px 24px rgba(0,0,0,.25); }
+.reveal-mask { position: fixed; inset: 0; background: color-mix(in srgb, var(--md-sys-color-scrim) 55%, transparent); display: grid; place-items: center; z-index: 1000; }
+.reveal-card { background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); padding: 16px 18px; border-radius: 10px; max-width: 280px; width: 86%; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 4px 24px color-mix(in srgb, var(--md-sys-color-shadow) 25%, transparent); }
 .reveal-card h3 { font-size: 13px; margin: 0; }
-.reveal-secret { font-family: ui-monospace, monospace; font-size: 16px; letter-spacing: 1px; background: rgba(128,128,128,.12); padding: 8px; border-radius: 6px; text-align: center; word-break: break-all; }
+.reveal-secret { font-family: ui-monospace, monospace; font-size: 16px; letter-spacing: 1px; background: var(--md-sys-color-surface-container-highest); padding: 8px; border-radius: 6px; text-align: center; word-break: break-all; }
 .reveal-hint { font-size: 11px; opacity: .65; margin: 0; }
 .reveal-close { align-self: flex-end; }
 </style>

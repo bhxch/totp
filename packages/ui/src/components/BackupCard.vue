@@ -188,7 +188,7 @@ async function confirmRestore(): Promise<void> {
 </template>
 
 <style scoped>
-.card { border: 1px solid rgba(128,128,128,.4); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+.card { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
 h2 { font-size: 15px; margin: 0; }
 .pw-row { display: flex; gap: 8px; }
 .pw-row input { flex: 1; }
@@ -200,8 +200,8 @@ h2 { font-size: 15px; margin: 0; }
 .backup-list li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .bname { flex: 1; opacity: .8; }
 .confirm-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-.danger { color: #d9534f; }
-.ok { color: #2e7d32; font-size: 13px; }
-.err { color: #d9534f; font-size: 13px; }
+.danger { color: var(--md-sys-color-error); }
+.ok { color: var(--md-sys-color-primary); font-size: 13px; }
+.err { color: var(--md-sys-color-error); font-size: 13px; }
 .hint { opacity: .65; font-size: 13px; }
 </style>
