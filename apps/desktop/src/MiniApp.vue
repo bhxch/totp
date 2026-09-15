@@ -35,6 +35,14 @@ onMounted(async () => {
 const sorted = computed(() => (store.value ? [...store.value.vault.entries].sort((a, b) => a.order - b.order) : []))
 const { codes } = useOtpCodes(sorted)
 
+// F1：mini 接线 🔎 揭示（spec §7 mini 只读，右键编辑类菜单裁剪；OtpListItem 已阻止原生右键菜单）
+const revealing = ref<{ issuer: string; secret: string } | null>(null)
+function maskSecret(secret: string): string {
+  const s = secret.replace(/\s+/g, '')
+  if (s.length <= 8) return s
+  return `${s.slice(0, 4)}…${s.slice(-4)}`
+}
+
 /** 30s 清剪贴板：settings.clipboardClearEnabled 开启时复制后定时清空（重复复制重置计时；setup 作用域销毁自动 dispose；store 未就绪时读不到开关视为关闭） */
 const clearer = createClipboardClearer(
   () => store.value?.settings.clipboardClearEnabled === true,
@@ -60,7 +68,17 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
   <main class="mini">
     <div v-if="store && store.locked" class="empty">加密启用后迷你窗不可用，请在主窗口解锁使用</div>
     <div v-else-if="!store || sorted.length === 0" class="empty">暂无条目</div>
-    <OtpListItem v-for="e in sorted" :key="e.uuid" :entry="e" :icon="iconView(e.icon, icons ?? undefined)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" />
+    <OtpListItem v-for="e in sorted" :key="e.uuid" :entry="e" :icon="iconView(e.icon, icons ?? undefined)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" @reveal="revealing = e" />
+
+    <!-- F1：reveal 模态（只读展示密钥前后各 4 位） -->
+    <div v-if="revealing" class="reveal-mask" @click="revealing = null">
+      <div class="reveal-card" @click.stop>
+        <h3>{{ revealing.issuer }} — 密钥</h3>
+        <code class="reveal-secret">{{ maskSecret(revealing.secret) }}</code>
+        <p class="reveal-hint">仅显示密钥前后各 4 位；完整密钥请在主窗口编辑查看。</p>
+        <button class="reveal-close" @click="revealing = null">关闭</button>
+      </div>
+    </div>
   </main>
 </template>
 
@@ -68,4 +86,10 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
 body { font-family: system-ui, sans-serif; margin: 0; }
 .mini { display: flex; flex-direction: column; gap: 2px; padding: 6px; }
 .empty { text-align: center; opacity: .6; padding: 32px 0; font-size: 13px; }
+.reveal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: grid; place-items: center; z-index: 1000; }
+.reveal-card { background: #fff; color: #222; padding: 16px 18px; border-radius: 10px; max-width: 280px; width: 86%; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 4px 24px rgba(0,0,0,.25); }
+.reveal-card h3 { font-size: 13px; margin: 0; }
+.reveal-secret { font-family: ui-monospace, monospace; font-size: 16px; letter-spacing: 1px; background: rgba(128,128,128,.12); padding: 8px; border-radius: 6px; text-align: center; word-break: break-all; }
+.reveal-hint { font-size: 11px; opacity: .65; margin: 0; }
+.reveal-close { align-self: flex-end; }
 </style>

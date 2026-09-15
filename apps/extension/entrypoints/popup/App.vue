@@ -37,7 +37,13 @@ onMounted(async () => {
   }
 })
 
-const sorted = computed(() => [...vault.entries].sort((a, b) => a.order - b.order))
+const sorted = computed(() =>
+  [...vault.entries].sort((a, b) => {
+    // 置顶优先（右键菜单「置顶」生效位）；pinned 用 truthy 检查兼容无该字段的旧 vault
+    if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1
+    return a.order - b.order
+  }),
+)
 const { codes } = useOtpCodes(sorted)
 /** EntryForm 图标数据源：builtin 全集 + store 内 stored/url dataUrl 映射 */
 const entryIcons = computed(() => ({ builtin: getBuiltinIcons(), stored: icons.icons }))
@@ -61,6 +67,57 @@ const editing = ref<OtpEntry | null>(null)
 const creating = ref(false)
 const confirmingDelete = ref<string | null>(null)
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
+
+// ---------- F1：secret 揭示 + 右键菜单（spec §10「右键菜单（编辑/复制 URI/置顶）」，与 VaultManager 同语义） ----------
+/** reveal：点「🔑」后弹模态显前 4 + 后 4（不在列表 DOM 常驻明文） */
+const revealing = ref<OtpEntry | null>(null)
+/** 右键菜单：菜单位置与目标条目 */
+const contextMenu = ref<{ x: number; y: number; entry: OtpEntry } | null>(null)
+
+function maskSecret(secret: string): string {
+  const s = secret.replace(/\s+/g, '')
+  if (s.length <= 8) return s
+  return `${s.slice(0, 4)}…${s.slice(-4)}`
+}
+function onReveal(entry: OtpEntry) {
+  revealing.value = entry
+}
+function closeReveal() {
+  revealing.value = null
+}
+function onContextMenu(entry: OtpEntry, e: MouseEvent) {
+  contextMenu.value = { x: e.clientX, y: e.clientY, entry }
+}
+function closeContextMenu() {
+  contextMenu.value = null
+}
+function contextEdit(entry: OtpEntry) {
+  editing.value = entry
+  creating.value = false
+  closeContextMenu()
+}
+async function contextCopyUri(entry: OtpEntry) {
+  const params = new URLSearchParams()
+  params.set('secret', entry.secret.replace(/\s+/g, ''))
+  if (entry.algorithm !== 'SHA1') params.set('algorithm', entry.algorithm)
+  if (entry.digits !== 6) params.set('digits', String(entry.digits))
+  if (entry.type !== 'totp' && entry.period !== 30) params.set('period', String(entry.period))
+  if (entry.type === 'hotp' && typeof entry.counter === 'number') params.set('counter', String(entry.counter))
+  if (entry.issuer) params.set('issuer', entry.issuer)
+  const label = entry.issuer ? `${encodeURIComponent(entry.issuer)}:${encodeURIComponent(entry.label)}` : encodeURIComponent(entry.label)
+  try {
+    await navigator.clipboard.writeText(`otpauth://${entry.type}/${label}?${params.toString()}`)
+    scheduleClipboardClear()
+    copied.value = true
+  } catch {
+    /* 剪贴板不可用时静默 */
+  }
+  closeContextMenu()
+}
+async function contextTogglePin(entry: OtpEntry) {
+  await updateEntryOp(entry.uuid, { pinned: !entry.pinned })
+  closeContextMenu()
+}
 
 // ---------- otpauth URI 导入预填（粘贴框 / 协议回调 / 右键菜单共用） ----------
 const otpauthUri = ref('')
@@ -186,7 +243,7 @@ async function copy(entry: OtpEntry) {
 
 <template>
   <LockScreen v-if="locked" :store="store" :allow-passkey="false" />
-  <main v-else>
+  <main v-else @click="closeContextMenu">
     <header>
       <h1>TOTP 验证码</h1>
       <button v-if="!creating && !editing" @click="startCreate">＋ 添加</button>
@@ -217,8 +274,8 @@ async function copy(entry: OtpEntry) {
 
     <div v-if="loaded && sorted.length === 0" class="empty">暂无条目，点击右上角「＋ 添加」录入。</div>
     <div v-else-if="loaded && visible.length === 0" class="empty">无匹配结果</div>
-    <div v-for="e in visible" :key="e.uuid" class="item-wrap">
-      <OtpListItem :entry="e" :icon="iconView(e.icon, icons)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" />
+    <div v-for="e in visible" :key="e.uuid" class="item-wrap" @click="closeContextMenu">
+      <OtpListItem :entry="e" :icon="iconView(e.icon, icons)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" @reveal="onReveal(e)" @context="(ev) => onContextMenu(e, ev)" />
       <div class="ops">
         <template v-if="confirmingDelete === e.uuid">
           <button class="danger" @click.stop="askRemove(e.uuid)">确认删除？</button>
@@ -229,6 +286,28 @@ async function copy(entry: OtpEntry) {
         </template>
       </div>
     </div>
+
+    <!-- F1：reveal 模态（与 VaultManager 同语义：仅显前 4 + 后 4） -->
+    <div v-if="revealing" class="reveal-mask" @click="closeReveal">
+      <div class="reveal-card" @click.stop>
+        <h3>{{ revealing.issuer }} — 密钥</h3>
+        <code class="reveal-secret">{{ maskSecret(revealing.secret) }}</code>
+        <p class="reveal-hint">出于安全考虑，仅显示密钥前后各 4 位；如需完整密钥请使用编辑功能。</p>
+        <button class="reveal-close" @click="closeReveal">关闭</button>
+      </div>
+    </div>
+
+    <!-- F1：右键菜单（编辑 / 复制 URI / 置顶，spec §10） -->
+    <ul
+      v-if="contextMenu"
+      class="ctx-menu"
+      :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
+      @click.stop
+    >
+      <li><button @click="contextEdit(contextMenu.entry)">编辑</button></li>
+      <li><button @click="contextCopyUri(contextMenu.entry)">复制 URI</button></li>
+      <li><button @click="contextTogglePin(contextMenu.entry)">{{ contextMenu.entry.pinned ? '取消置顶' : '置顶' }}</button></li>
+    </ul>
   </main>
 </template>
 
@@ -251,4 +330,14 @@ h1 { font-size: 16px; margin: 0; }
 .item-wrap:hover .ops, .ops:focus-within { opacity: 1; }
 .ops .icon { border: none; background: none; cursor: pointer; font-size: 14px; padding: 2px 4px; }
 .ops .danger { border: none; background: none; cursor: pointer; color: #d9534f; font-size: 12px; font-weight: 600; }
+/* F1：reveal 模态 + 右键菜单（类名与样式同 VaultManager，保证跨宿主一致观感） */
+.reveal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: grid; place-items: center; z-index: 1000; }
+.reveal-card { background: #fff; color: #222; padding: 20px 24px; border-radius: 10px; max-width: 320px; width: 88%; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 4px 24px rgba(0,0,0,.25); }
+.reveal-card h3 { font-size: 14px; margin: 0; }
+.reveal-secret { font-family: ui-monospace, monospace; font-size: 18px; letter-spacing: 1px; background: rgba(128,128,128,.12); padding: 10px; border-radius: 6px; text-align: center; word-break: break-all; }
+.reveal-hint { font-size: 12px; opacity: .65; margin: 0; }
+.reveal-close { align-self: flex-end; }
+.ctx-menu { position: fixed; z-index: 1001; list-style: none; margin: 0; padding: 4px 0; background: #fff; color: #222; border: 1px solid rgba(0,0,0,.15); border-radius: 6px; box-shadow: 0 2px 12px rgba(0,0,0,.18); min-width: 120px; }
+.ctx-menu li button { display: block; width: 100%; padding: 6px 14px; border: none; background: none; text-align: left; cursor: pointer; font-size: 13px; }
+.ctx-menu li button:hover { background: rgba(0,0,0,.06); }
 </style>
