@@ -8,8 +8,9 @@ import { themeRoutes } from '../src/pages/routes'
 
 // 占位页不消费 props:stub 只需满足「页面组件不崩」的最小对象,不必满足完整
 // VueStore/平台签名(Task 9-12 替换真实现时按完整签名接线;NavigationShell
-// 自身 props 的 TS 类型已是完整签名)。
-const stubStore = { vault: { entries: [] } } as never
+// 自身 props 的 TS 类型已是完整签名)。CodesPage 真实现(Task 9)消费
+// vault.entries 与 vault.groups,stub 需补 groups。
+const stubStore = { vault: { entries: [], groups: [] } } as never
 
 function makeRouter() {
   return createRouter({ history: createMemoryHistory(), routes: themeRoutes })
