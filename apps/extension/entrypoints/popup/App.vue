@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { entryMatchesUrl, getBuiltinIcons, type OtpEntry } from '@totp/core'
-import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, normalizeExtOtpauth, OtpListItem, parseUriToEntryData, SearchBar, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
+import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, MdIconButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, parseUriToEntryData, SearchBar, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
 import { PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
 import { storageAdapter } from '../../src/store'
@@ -9,6 +9,12 @@ import {
 } from '../../src/store'
 
 const icons = createIconStore(storageAdapter)
+
+/** 设置深链:直达 options 的 /settings 页(hash 路由);openOptionsPage 不支持 hash 故用 tabs.create */
+const SETTINGS_ICON_PATH = NAV_ICONS.settings
+function openSettings(): void {
+  void chrome.tabs.create({ url: chrome.runtime.getURL('options.html#/settings') })
+}
 
 const loaded = ref(false)
 const error = ref('')
@@ -248,7 +254,12 @@ async function copy(entry: OtpEntry) {
   <main v-else @click="closeContextMenu">
     <header>
       <h1>TOTP 验证码</h1>
-      <button v-if="!creating && !editing" @click="startCreate">＋ 添加</button>
+      <div class="header-ops">
+        <button v-if="!creating && !editing" @click="startCreate">＋ 添加</button>
+        <MdIconButton title="设置" aria-label="打开设置" @click="openSettings">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path :d="SETTINGS_ICON_PATH" fill="currentColor" /></svg>
+        </MdIconButton>
+      </div>
     </header>
 
     <div v-if="copied" class="copied-banner">已复制到剪贴板</div>
@@ -317,6 +328,7 @@ async function copy(entry: OtpEntry) {
 body { font-family: system-ui, sans-serif; margin: 0; padding: 8px; }
 main { display: flex; flex-direction: column; gap: 4px; }
 header { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 8px; }
+.header-ops { display: flex; align-items: center; gap: 6px; }
 h1 { font-size: 16px; margin: 0; }
 .error { color: var(--md-sys-color-error); font-size: 12px; }
 .copied-banner { font-size: 12px; color: var(--md-sys-color-primary); background: var(--md-sys-color-primary-container); border-radius: 6px; padding: 4px 8px; margin: 0 4px; }

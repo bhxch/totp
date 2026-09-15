@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { backupFileName, conflictBackupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, OVERWRITE_NAME, randomBytes, SCHEMES_KEY, type BackupEnvelopeV1, type CloudCred, type ImportScheme, type Vault } from '@totp/core'
-import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, createPrfCredential, LockScreen, prfSupported, useTheme, VaultManager, type BackupMode, type BackupPlatform, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
+import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, createPrfCredential, LockScreen, NavigationShell, prfSupported, useTheme, type BackupMode, type BackupPlatform, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
 import { createExtensionStore, storageAdapter } from '../../src/store'
 import { markSyncOff, SYNC_STATUS_KEY } from '../../src/syncEngine'
@@ -291,19 +291,15 @@ const cloudPlatform: CloudPlatform = {
 </script>
 
 <template>
-  <main class="page">
-    <h1>TOTP 验证码工具</h1>
-    <LockScreen v-if="locked" :store="store" />
-    <template v-else>
-      <div v-if="loadError" class="error">{{ loadError }}</div>
-      <VaultManager v-else :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :sync-platform="syncPlatform" :cloud-platform="cloudPlatform" :icons="icons" :schemes-api="schemesApi" enable-copy @copy="copyToClipboard" />
-    </template>
-  </main>
+  <LockScreen v-if="locked" :store="store" />
+  <template v-else>
+    <div v-if="loadError" class="error">{{ loadError }}</div>
+    <!-- 同构五页:与桌面同一 Shell(无 railActions → 设置页不渲染桌面专属项;传 syncPlatform → 渲染扩展专属项) -->
+    <NavigationShell v-else :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :sync-platform="syncPlatform" :cloud-platform="cloudPlatform" :icons="icons" :schemes-api="schemesApi" @copy="copyToClipboard" />
+  </template>
 </template>
 
 <style scoped>
-body { font-family: system-ui, sans-serif; }
-.page { max-width: 640px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
-h1 { font-size: 20px; }
-.error { color: var(--md-sys-color-error); font-size: 12px; }
+body { font-family: system-ui, sans-serif; margin: 0; }
+.error { color: var(--md-sys-color-error); font-size: 12px; padding: 16px; }
 </style>
