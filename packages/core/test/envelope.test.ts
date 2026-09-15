@@ -34,10 +34,23 @@ describe('envelope', () => {
   })
   it('kdf 参数下限违规抛 invalid backup envelope（m<1024/t<1/p<1 拒绝；OWASP 最低推荐）', async () => {
     const env = await createBackupEnvelope(vaultJson, 'p')
+    // m 下限：m=512/1023/0/负数/小数/非数字 全部拒绝
     await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, m: 512 } }, 'p')).rejects.toThrow('invalid backup envelope')
-    await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, t: 0 } }, 'p')).rejects.toThrow('invalid backup envelope')
-    await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, p: 0 } }, 'p')).rejects.toThrow('invalid backup envelope')
     await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, m: 1023 } }, 'p')).rejects.toThrow('invalid backup envelope')
+    await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, m: 0 } }, 'p')).rejects.toThrow('invalid backup envelope')
+    await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, m: -1 } }, 'p')).rejects.toThrow('invalid backup envelope')
+    await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, m: 1023.5 } }, 'p')).rejects.toThrow('invalid backup envelope')
+    await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, m: '1024' as unknown as number } }, 'p')).rejects.toThrow('invalid backup envelope')
+    // t 下限：t=0/负数/小数 拒绝
+    await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, t: 0 } }, 'p')).rejects.toThrow('invalid backup envelope')
+    await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, t: -3 } }, 'p')).rejects.toThrow('invalid backup envelope')
+    await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, t: 0.5 } }, 'p')).rejects.toThrow('invalid backup envelope')
+    // p 下限：p=0/负数/小数 拒绝
+    await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, p: 0 } }, 'p')).rejects.toThrow('invalid backup envelope')
+    await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, p: -1 } }, 'p')).rejects.toThrow('invalid backup envelope')
+    await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, p: 0.5 } }, 'p')).rejects.toThrow('invalid backup envelope')
+    // 组合违规：m/t/p 同时越界仍抛错（不被单一字段短路掩盖）
+    await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, m: 8, t: 0, p: 0 } }, 'p')).rejects.toThrow('invalid backup envelope')
   })
   it('同口令两次创建产生不同 salt/nonce（随机性）', async () => {
     const a = await createBackupEnvelope(vaultJson, 'p')
