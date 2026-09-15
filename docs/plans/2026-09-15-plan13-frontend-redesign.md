@@ -4,7 +4,7 @@
 
 **Goal:** 按设计文档将前端从「VaultManager 九功能单页 + 硬编码配色」重构为「MD3 令牌化 + 5 页导航(桌面主窗口/扩展 options)+ 明/暗/自动主题 + 10 种子色主题色设置」,popup 与 mini 保持行为与体积不变。
 
-**Architecture:** 主题三层——`palettes.json`(种子色单一事实源)→ 构建期 `generate.mjs`(material-color-utilities 生成 10 种子 × 明暗 × 34 角色变量,产物 `tokens.css` 入库)→ 运行时纯 CSS `data-mode`/`data-color` 属性选择器矩阵(auto 走 prefers-color-scheme);`useTheme()` 双向绑定 AppSettings 新字段并写 localStorage 镜像,入口 `index.html` 内联脚本防首帧闪。页面层:`packages/ui/src/pages/` 五页 + `NavigationShell.vue`(宽屏 Rail / 窄屏 Tabs),vue-router@4 仅桌面主窗口与扩展 options(hash),`VaultManager.vue` 拆解散场;`components/md/` 自建 11 个 MD3 展示组件。数据层零改动。
+**Architecture:** 主题三层——`palettes.json`(种子色单一事实源)→ 构建期 `generate.mjs`(material-color-utilities 生成 10 种子 × 明暗 × 35 角色变量,产物 `tokens.css` 入库)→ 运行时纯 CSS `data-mode`/`data-color` 属性选择器矩阵(auto 走 prefers-color-scheme);`useTheme()` 双向绑定 AppSettings 新字段并写 localStorage 镜像,入口 `index.html` 内联脚本防首帧闪。页面层:`packages/ui/src/pages/` 五页 + `NavigationShell.vue`(宽屏 Rail / 窄屏 Tabs),vue-router@4 仅桌面主窗口与扩展 options(hash),`VaultManager.vue` 拆解散场;`components/md/` 自建 11 个 MD3 展示组件。数据层零改动。
 
 **Tech Stack:** Vue 3.5(script setup)、vue-router@4(hash)、@material/material-color-utilities(仅 devDep)、vitest + @vue/test-utils(既有)。
 
@@ -143,7 +143,7 @@ import { describe, expect, it } from 'vitest'
 const css = readFileSync(join(__dirname, '../src/theme/tokens.css'), 'utf8')
 const palettes = JSON.parse(readFileSync(join(__dirname, '../src/theme/palettes.json'), 'utf8')) as { id: string; hex: string }[]
 
-// 34 角色权威清单(与设计文档 §4.3 一致,kebab-case)
+// 35 角色权威清单(勘误:初稿34,实数35,含 surface-variant/surface-tint)
 const ROLES = ['primary','on-primary','primary-container','on-primary-container',
   'secondary','on-secondary','secondary-container','on-secondary-container',
   'tertiary','on-tertiary','tertiary-container','on-tertiary-container',
@@ -154,7 +154,7 @@ const ROLES = ['primary','on-primary','primary-container','on-primary-container'
   'outline','outline-variant','inverse-surface','inverse-on-surface','inverse-primary','shadow','scrim']
 
 describe('tokens.css 产物', () => {
-  it('每种子 × light/dark × 34 角色齐全', () => {
+  it('每种子 × light/dark × 35 角色齐全', () => {
     for (const p of palettes) {
       for (const mode of ['light', 'dark']) {
         const block = css.match(new RegExp(`\\[data-color="${p.id}"\\]\\[data-mode="${mode}"\\]\\s*\\{([^}]*)\\}`))
@@ -182,7 +182,8 @@ describe('tokens.css 产物', () => {
     expect(errs.length).toBeGreaterThan(0)
     const errSet = new Set([...css.matchAll(/\[data-color="\w+"\]\[data-mode="(?:light|dark)"\]\s*\{([^}]*)\}/g)]
       .map((b) => b[1].match(/--md-sys-color-error:\s*(#\w{6})/)![1].toLowerCase()))
-    expect(errSet.size).toBe(1) // error 不随种子变化
+    // 勘误(终审):按 mode 分组断言——light/dark 的 error 值本就不同,合并收集必为 size=2;实现已按 mode 分组,此处回写勘误
+    // (原 plan 写法 errSet.size===1 不分明暗,必挂;实现修正为按 mode 分组后各 size===1)
   })
 })
 ```

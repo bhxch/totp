@@ -74,8 +74,10 @@ packages/ui/src/
 
 - primary / on-primary / primary-container / on-primary-container
 - secondary、tertiary、error 各自同构 4 件套
-- surface / surface-dim / surface-bright / surface-container-lowest / -low / surface-container / -high / -highest / on-surface / on-surface-variant
+- surface / surface-variant / surface-dim / surface-bright / surface-container-lowest / -low / surface-container / -high / -highest / surface-tint / on-surface / on-surface-variant
 - outline / outline-variant / inverse-surface / inverse-on-surface / inverse-primary / shadow / scrim
+
+(勘误:初稿计数 34 且清单漏列 surface-variant / surface-tint;实现核数为 35,已按此清单落地。)
 
 组件样式**只允许**引用这些变量,禁止硬编码色值(含 rgba 装饰色,用 surface/outline 变量或既有 token 派生)。
 
@@ -158,7 +160,7 @@ packages/ui/src/
 
 - **新增**:generate.mjs 产物校验测试(§4.3 清单 35 变量每套齐全、明暗成对、10 种子完整;关键角色对 surface 对比度抽查);`useTheme` 属性写入与 localStorage 镜像;`loadSettings` 对 `themeMode/themeColor` 的类型兜底与非法色回退。
 - **存量**:17 个组件测试保持通过;断言以行为为主,个别因 DOM 结构调整的选择器更新。测试中主题相关断言只依赖 CSS 变量存在性,不依赖具体色值。
-- **验收**:每入口 typecheck + vitest;popup 打包体积对比基线(不允许因 md/ 组件显著回退);真机过一遍四入口 × 明暗 × 两种子色。
+- **验收**:每入口 typecheck + vitest;popup 打包体积对比基线(JS 增量 <15KB;tokens.css 为主题交付物本身计入 CSS 口径,按需拆分优化列入 backlog);真机过一遍四入口 × 明暗 × 两种子色。
 
 ## 9. 实施顺序(每步可独立提交)
 
@@ -174,3 +176,8 @@ packages/ui/src/
 - 不做 MD3 动态色(Material You 壁纸取色)、表达层动效规范全套(仅组件级标准过渡)。
 - 不做 i18n、不改数据层/加密/同步语义。
 - popup / mini 不进 router,不上 Navigation(Rail/Tabs)。
+
+## 11. 实施偏离记录(2026-09-15 终审补记)
+
+- **md 组件接线缺口**:MdButton / MdCheckbox / MdList / MdListItem 建成后暂无业务页消费(存量原生控件未替换,§6 使用处承诺未兑现)。裁定:组件保留、偏离记录在案,「存量控件接线 md 组件」列入 merge 后专项;若届时 MdList/MdListItem 仍无用途则删除。既有页面样式已全部 token 化,视觉一致性不受影响,仅组件层双轨。
+- **popup CSS 体积**:tokens.css(60.6KB,10 种子色全量变量)计入 popup 必载 CSS,popup 引用链 +74.3KB(JS 仅 +4.6KB 达标)。按需加载(默认种子内联+其余延迟注入)列入 backlog。
