@@ -1,0 +1,12 @@
+[
+  { "id": "blue",   "hex": "#0B57D0", "label": "蓝(默认)" },
+  { "id": "indigo", "hex": "#4355B9", "label": "靛蓝" },
+  { "id": "teal",   "hex": "#00796B", "label": "青绿" },
+  { "id": "green",  "hex": "#2E7D32", "label": "绿" },
+  { "id": "amber",  "hex": "#9A6A00", "label": "琥珀" },
+  { "id": "orange", "hex": "#E8590C", "label": "橙" },
+  { "id": "red",    "hex": "#C5221F", "label": "红" },
+  { "id": "violet", "hex": "#6750A4", "label": "紫罗兰" },
+  { "id": "pink",   "hex": "#B32784", "label": "粉" },
+  { "id": "slate",  "hex": "#5F6368", "label": "石板灰" }
+]
