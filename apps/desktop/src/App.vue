@@ -380,10 +380,14 @@ const cloudSync = createDesktopCloudSync({
   loadCreds: loadCredsImpl,
   loadTargetHash: loadTargetHashImpl,
   saveTargetHash: saveTargetHashImpl,
-  // onCredChange（GDrive 首推回存 fileId / gist public 探测回写）：以新凭据替换同 backend 项后落盘
+  // onCredChange（GDrive 首推回存 fileId / gist public 探测回写）：以新凭据替换同 backend 项后落盘；
+  // loadCreds 返回空（IO/坏 JSON 瞬时失败）时跳过回写，防止把空列表固化为凭据存储（审查 M-1）
   makeBackend: (cred) => createCloudBackend(cred, (next) => {
     void loadCredsImpl()
-      .then((targets) => saveCredsImpl(targets.map((t) => (t.cred.backend === next.backend ? { ...t, cred: next } : t))))
+      .then((targets) => {
+        if (targets.length === 0) return
+        return saveCredsImpl(targets.map((t) => (t.cred.backend === next.backend ? { ...t, cred: next } : t)))
+      })
       .catch((e) => console.warn('[cloudAutoSync] 凭据回存失败', e))
   }),
   persistAdopted: (json) => replaceAllOps(JSON.parse(json) as Vault),
