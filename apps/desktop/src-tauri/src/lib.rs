@@ -154,7 +154,7 @@ fn list_backup_files_os(dir: String) -> Result<Vec<String>, String> {
     let mut names: Vec<String> = rd
         .flatten()
         .map(|e| e.file_name().to_string_lossy().to_string())
-        .filter(|n| valid_backup_name(n) || n.starts_with("conflict-"))
+        .filter(|n| valid_backup_name(n) || (n.starts_with("conflict-") && n.ends_with(".totpbackup")))
         .collect();
     names.sort();
     Ok(names)
@@ -538,7 +538,7 @@ mod tests {
     fn list_backup_files_os_returns_sorted_vault_and_conflict_only() {
         let base = std::env::temp_dir().join("totp_list_os_test");
         std::fs::create_dir_all(&base).unwrap();
-        for n in ["vault-20260916-120001.totpbackup", "vault-20260916-120000.totpbackup", "conflict-20260916-120000.totpbackup", "secret.txt"] {
+        for n in ["vault-20260916-120001.totpbackup", "vault-20260916-120000.totpbackup", "conflict-20260916-120000.totpbackup", "conflict-foo.txt", "secret.txt"] {
             std::fs::write(base.join(n), "x").unwrap();
         }
         let names = list_backup_files_os(base.to_str().unwrap().into()).unwrap();
