@@ -7,9 +7,9 @@
  * - saveTargetHash(null)=删除该 backend 的基线键（非写入 null 值）+删除旧 cloudRev 键
  */
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { CloudCred, StorageAdapter } from '@totp/core'
+import { READABLE_BACKUP_RE, type CloudCred, type StorageAdapter } from '@totp/core'
 import type { CloudTarget } from '@totp/ui'
-import { createCloudCredStore } from '../src/cloudCredStore'
+import { conflictBackupName, createCloudCredStore } from '../src/cloudCredStore'
 
 const CLOUD_CRED_KEY = 'cloudCred'
 const CLOUD_CREDS_KEY = 'cloudCreds'
@@ -125,5 +125,17 @@ describe('saveTargetHash', () => {
     await store.saveTargetHash('webdav', null)
     await store.saveTargetHash('webdav', null) // 幂等
     await expect(store.loadTargetHash('webdav')).resolves.toBeNull()
+  })
+})
+
+describe('conflictBackupName（审查 Minor-1）', () => {
+  const d = new Date(2026, 8, 16, 12, 0, 0) // 2026-09-16 12:00:00 本地
+  it('带 backendKey：conflict-{key}-{yyyyMMdd-HHmmss}（与 desktop 同构，匹配 READABLE_BACKUP_RE）', () => {
+    const name = conflictBackupName('webdav', d)
+    expect(name).toBe('conflict-webdav-20260916-120000.totpbackup')
+    expect(READABLE_BACKUP_RE.test(name)).toBe(true)
+  })
+  it('backendKey 缺省：无 backend 段（旧名格式，同样可恢复）', () => {
+    expect(conflictBackupName(undefined, d)).toBe('conflict-20260916-120000.totpbackup')
   })
 })

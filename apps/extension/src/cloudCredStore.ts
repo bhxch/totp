@@ -8,13 +8,21 @@
  * - 与 desktop 的差异：不维护 cloudRevs 进程内缓存——storage.local 读取廉价，且
  *   options/popup 双上下文并发写（CloudCard 手动同步与自动 runner）下直读更不易陈旧。
  */
-import type { CloudCred, StorageAdapter } from '@totp/core'
+import { conflictBackupFileName, type CloudCred, type StorageAdapter } from '@totp/core'
 import type { CloudTarget } from '@totp/ui'
 
 const CLOUD_CRED_KEY = 'cloudCred'
 const CLOUD_CREDS_KEY = 'cloudCreds'
 const CLOUD_REV_KEY = 'cloudRev'
 const CLOUD_REVS_KEY = 'cloudRevs'
+
+/** 多目标冲突副本名：conflict-{backendKey}-{yyyyMMdd-HHmmss}.totpbackup——与 desktop backupService
+ *  同构（core conflictBackupFileName 取 conflict- 后缀段拼接），匹配 READABLE_BACKUP_RE 的可选
+ *  backend 段，跨宿主备份列表均可恢复；backendKey 缺省保持旧名格式 */
+export function conflictBackupName(backendKey: string | undefined, now: Date): string {
+  const base = conflictBackupFileName(now)
+  return backendKey ? `conflict-${backendKey}-${base.slice('conflict-'.length)}` : base
+}
 
 export function createCloudCredStore(adapter: StorageAdapter): {
   loadCreds(): Promise<CloudTarget[]>

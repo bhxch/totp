@@ -171,6 +171,32 @@ describe('CloudCard（多目标）', () => {
     expect(w.find('.confirm-row').exists()).toBe(false)
   })
 
+  it('⑦b混合采纳：确认前非采纳目标基线已写、采纳目标未写；取消后采纳目标零调用且非采纳基线保持', async () => {
+    mockedSync.mockResolvedValue({
+      results: [
+        { key: 'webdav', outcome: { action: 'downloaded', hash: 'hw', envelopeJson: VALID_VAULT } },
+        { key: 'gist', outcome: { action: 'in-sync', hash: 'hg' } },
+      ],
+      finalVaultJson: VALID_VAULT,
+      adopted: true,
+      hashes: { webdav: 'hw', gist: 'hg' },
+    })
+    const p = makePlatform({ loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET, GIST_TARGET]) })
+    const w = await mountCard(p)
+    await clickSync(w)
+    expect(w.find('.confirm-row').exists()).toBe(true)
+    // 确认前：非采纳目标（in-sync）基线已立即回写；采纳目标（downloaded）基线延后未写
+    expect(p.saveTargetHash).toHaveBeenCalledTimes(1)
+    expect(p.saveTargetHash).toHaveBeenCalledWith('gist', 'hg')
+    // 取消：采纳目标 saveTargetHash 零调用，persistDownloaded 不调，非采纳目标已写基线保持（不回滚）
+    await w.findAll('button').find((b) => b.text() === '取消')!.trigger('click')
+    await flushPromises()
+    expect(p.saveTargetHash).toHaveBeenCalledTimes(1)
+    expect(p.saveTargetHash).not.toHaveBeenCalledWith('webdav', 'hw')
+    expect(p.persistDownloaded).not.toHaveBeenCalled()
+    expect(w.text()).toContain('已保留冲突副本，未改动本地')
+  })
+
   it('⑧无 sessionSecret：同步按钮禁用并显示设置口令提示', async () => {
     const p = makePlatform({ loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET]) })
     const w = await mountCard(p, null)

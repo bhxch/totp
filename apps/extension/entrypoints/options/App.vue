@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { backupFileName, conflictBackupFileName, createAutoRunScheduler, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, OVERWRITE_NAME, randomBytes, SCHEMES_KEY, type BackupEnvelopeV1, type ImportScheme, type Vault } from '@totp/core'
+import { backupFileName, createAutoRunScheduler, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, OVERWRITE_NAME, randomBytes, SCHEMES_KEY, type BackupEnvelopeV1, type ImportScheme, type Vault } from '@totp/core'
 import { CLIPBOARD_CLEAR_DELAY_MS, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, LockScreen, NavigationShell, prfSupported, useTheme, type BackupMode, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { createCloudCredStore } from '../../src/cloudCredStore'
+import { createCloudCredStore, conflictBackupName } from '../../src/cloudCredStore'
 import { createExtensionStore, storageAdapter } from '../../src/store'
 import { markSyncOff, SYNC_STATUS_KEY } from '../../src/syncEngine'
 
@@ -292,9 +292,10 @@ async function persistCloudAutoPrefs(p: CloudAutoPrefs): Promise<void> {
   await storageAdapter.set(CLOUD_AUTO_PREFS_KEY, JSON.stringify(p))
 }
 
-/** 冲突副本 Blob 下载：带 backendKey → conflict-{backendKey}-{ts}.totpbackup；缺省名不变 */
+/** 冲突副本 Blob 下载：命名经 conflictBackupName（与 desktop 同构，带 backendKey 时
+ *  conflict-{backendKey}-{yyyyMMdd-HHmmss}.totpbackup，匹配 READABLE_BACKUP_RE 可恢复） */
 async function downloadConflictBackup(bytes: Uint8Array, backendKey?: string): Promise<string> {
-  const name = backendKey ? `conflict-${backendKey}-${Date.now()}.totpbackup` : conflictBackupFileName(new Date())
+  const name = conflictBackupName(backendKey, new Date)
   const blob = new Blob([bytes as BlobPart], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
