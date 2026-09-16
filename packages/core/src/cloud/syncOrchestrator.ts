@@ -54,22 +54,41 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-/** 加密本地 → put → 回读 sha256 比对（不一致抛中文错误），返回 uploaded 结果。 */
-async function pushLocal(
+/**
+ * 加密本地 vault → put → 回读 sha256 比对（不一致抛中文错误）。
+ * 供 syncWithCloud 的 uploaded 分支与多目标收敛（multiTarget）复用。
+ * 返回 hash 为 vaultJson 明文内容摘要（多目标收敛的基线口径），envelopeJson 为本次上传的密文 envelope JSON。
+ */
+export async function pushEnvelope(opts: {
+  backend: CloudBackend
+  path: string
+  vaultJson: string
+  password: string
+}): Promise<{ hash: string; envelopeJson: string }> {
+  const { backend, path, vaultJson, password } = opts
+  const envelopeJson = JSON.stringify(await createBackupEnvelope(vaultJson, password))
+  const bytes = new TextEncoder().encode(envelopeJson)
+  await backend.put(path, bytes)
+  const readBack = await backend.get(path)
+  if (readBack === null || (await sha256Hex(readBack)) !== (await sha256Hex(bytes))) {
+    throw new Error('云端校验失败：上传内容与回读不一致')
+  }
+  return { hash: await sha256Hex(new TextEncoder().encode(vaultJson)), envelopeJson }
+}
+
+/** uploaded 分支组装：hash 保持对外契约——上传字节的 sha256 摘要（pushEnvelope 回读已校验一致）。 */
+async function uploadedOutcome(
   backend: CloudBackend,
   path: string,
   vaultJson: string,
   password: string,
 ): Promise<CloudSyncOutcome & { hash: string; envelopeJson: string }> {
-  const envelopeJson = JSON.stringify(await createBackupEnvelope(vaultJson, password))
-  const bytes = new TextEncoder().encode(envelopeJson)
-  const hash = await sha256Hex(bytes)
-  await backend.put(path, bytes)
-  const readBack = await backend.get(path)
-  if (readBack === null || (await sha256Hex(readBack)) !== hash) {
-    throw new Error('云端校验失败：上传内容与回读不一致')
+  const pushed = await pushEnvelope({ backend, path, vaultJson, password })
+  return {
+    action: 'uploaded',
+    hash: await sha256Hex(new TextEncoder().encode(pushed.envelopeJson)),
+    envelopeJson: pushed.envelopeJson,
   }
-  return { action: 'uploaded', hash, envelopeJson }
 }
 
 export async function syncWithCloud(opts: SyncWithCloudOpts): Promise<CloudSyncOutcome & { hash: string }> {
@@ -77,7 +96,7 @@ export async function syncWithCloud(opts: SyncWithCloudOpts): Promise<CloudSyncO
 
   const remote = (await backend.exists(path)) ? await backend.get(path) : null
   if (remote === null) {
-    return await pushLocal(backend, path, vaultJson, password)
+    return await uploadedOutcome(backend, path, vaultJson, password)
   }
 
   const remoteHash = await sha256Hex(remote)
@@ -88,7 +107,7 @@ export async function syncWithCloud(opts: SyncWithCloudOpts): Promise<CloudSyncO
   }
   // 远端未变（与 cloudRev 一致）、本地已改：本地较新，推送
   if (cloudRev !== null && remoteHash === cloudRev) {
-    return await pushLocal(backend, path, vaultJson, password)
+    return await uploadedOutcome(backend, path, vaultJson, password)
   }
 
   // 远端已变且与本地不同：可解密则保留本地冲突副本并采用远端；不可解密抛中文错误
