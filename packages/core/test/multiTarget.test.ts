@@ -136,6 +136,34 @@ describe('syncMultipleTargets', () => {
     expect(r.adopted).toBe(false)
   })
 
+  it('pass1 失败的目标在收敛回推成功后改写为 uploaded 且清除残留 error', async () => {
+    // flaky 仅首次 get 抛错：pass1 上传回读失败；收敛回推时 get 已恢复，可成功
+    const flaky = fakeBackend()
+    let getCalls = 0
+    flaky.get = async (p) => {
+      getCalls++
+      if (getCalls === 1) throw new Error('网络错误')
+      return flaky.store.get(p) ?? null
+    }
+    const newer = fakeBackend(await envelopeBytesOf(B, PW))
+    const r = await syncMultipleTargets({
+      targets: [
+        { key: 'flaky', backend: flaky, path: PATH, hash: null },
+        { key: 'newer', backend: newer, path: PATH, hash: null },
+      ],
+      vaultJson: A,
+      password: PW,
+    })
+    expect(r.adopted).toBe(true)
+    expect(r.finalVaultJson).toBe(B)
+    // pass1 失败（outcome null + error），收敛回推成功后改写为 uploaded 且 error 清除
+    expect(r.results[0]!.outcome!.action).toBe('uploaded')
+    expect(r.results[0]!.error).toBeUndefined()
+    expect(r.results[0]!.convergeError).toBeUndefined()
+    await expectOpensTo(flaky.store.get(PATH)!, PW, B)
+    expect(r.hashes['flaky']).toBe(await sha256Hex(flaky.store.get(PATH)!))
+  })
+
   it('云端口令不符 → 该目标报错不采纳（localHash=null 时远端解不开直接抛错）', async () => {
     const b = fakeBackend(await envelopeBytesOf(A, 'other'))
     const r = await syncMultipleTargets({

@@ -84,6 +84,7 @@ export async function syncMultipleTargets(opts: {
   }
 
   if (winnerHash !== undefined) {
+    // 不变量：pass1 对每个目标（无论成败）都恰好产生一条 result，故 results 与 targets 按索引一一对应
     for (let i = 0; i < targets.length; i++) {
       const t = targets[i]!
       if (hashes[t.key] === winnerHash) continue
@@ -92,6 +93,7 @@ export async function syncMultipleTargets(opts: {
         const pushed = await pushEnvelope({ backend: t.backend, path: t.path, vaultJson: current, password })
         hashes[t.key] = pushed.hash
         result.outcome = { action: 'uploaded', envelopeJson: undefined, conflictBackup: undefined, hash: pushed.hash }
+        delete result.error // pass1 失败残留的 error 随收敛改写清除——该目标已有确定的 uploaded 结果
       } catch (err) {
         result.convergeError = err instanceof Error ? err.message : String(err)
       }
