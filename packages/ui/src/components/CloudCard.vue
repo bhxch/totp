@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { CloudCred } from '@totp/core'
-import { DEFAULT_OBJECT_PATH, resolveObjectPath, syncMultipleTargets } from '@totp/core'
+import { DEFAULT_OBJECT_PATH, pushEnvelope, resolveObjectPath, syncMultipleTargets } from '@totp/core'
 import { computed, onMounted, ref } from 'vue'
 import { createCloudBackend } from './cloudPlatform'
 import type { CloudAutoPrefs, CloudPlatform, CloudTarget } from './cloudPlatform'
@@ -22,6 +22,10 @@ type BackendId = (typeof BACKENDS)[number]
 const BACKEND_LABEL: Record<BackendId, string> = {
   webdav: 'WebDAV', s3: 'S3', gist: 'GitHub Gist', gdrive: 'Google Drive', onedrive: 'OneDrive',
 }
+/** 任意 backend 键的显示名（未知键原样返回；重置确认文案用） */
+function backendLabel(b: string): string {
+  return BACKEND_LABEL[b as BackendId] ?? b
+}
 
 /** 多目标列表（挂载时 loadCreds 回填；卡内编辑=内存副本，「保存凭据」才落盘） */
 const targets = ref<CloudTarget[]>([])
@@ -42,6 +46,11 @@ function statusFor(backend: string): string {
 const pendingAdopt = ref<string | null>(null)
 /** 采纳目标待确认的基线 hash：「采用云端」确认成功后才落盘；取消则不写（下次同步重新下载提示） */
 const pendingHashes = ref<Array<[string, string]>>([])
+
+/** 同步报「口令不匹配」的目标 backend 键（换口令后云端为旧口令信封）：提供行内重置救济入口 */
+const resettableBackends = ref<string[]>([])
+/** 待确认重置的 backend 键（行内两步确认，同 pendingAdopt 模式；挂起期间同步按钮禁用） */
+const pendingReset = ref<string | null>(null)
 
 /** 自动触发偏好（卡内编辑副本，挂载时读初值；每次变更整体回写） */
 const autoPrefs = ref<CloudAutoPrefs>({ onChange: false, onInterval: false, intervalMinutes: 60 })
@@ -148,10 +157,18 @@ async function onSync(): Promise<void> {
       onConflictBackup: (key, bytes) => p.saveConflictBackup?.(bytes, key),
     })
     statusMap.value = {}
+    resettableBackends.value = []
     pendingHashes.value = []
     for (const res of r.results) {
       if (!res.outcome) {
-        statusMap.value[res.key] = `失败：${trunc(res.error ?? '')}`
+        const errMsg = res.error ?? ''
+        if (errMsg.includes('口令不匹配')) {
+          // 换口令后云端为旧口令信封：专用状态 + 行内重置救济入口
+          statusMap.value[res.key] = '失败：口令不匹配'
+          resettableBackends.value.push(res.key)
+        } else {
+          statusMap.value[res.key] = `失败：${trunc(errMsg)}`
+        }
         await p.saveTargetHash(res.key, null) // 失败目标删基线，下轮全量重比
         continue
       }
@@ -205,6 +222,47 @@ function onCancelAdopt(): void {
   pendingHashes.value = []
   msg.value = '已保留冲突副本，未改动本地'
   msgKind.value = 'hint'
+}
+
+/** 口令不匹配救济第一步：进入行内两步确认（挂起期间同步/重置按钮禁用，同 pendingAdopt 模式） */
+function askReset(backend: string): void {
+  pendingReset.value = backend
+}
+
+/** 取消重置：不触碰云端，仅退出确认行 */
+function onCancelReset(): void {
+  pendingReset.value = null
+}
+
+/**
+ * 确认重置（§3.2 换口令救济）：以当前会话备份口令把本地 vault 重新加密覆盖云端该目标对象
+ * （云端旧口令信封被替换），成功后以新信封 hash 落基线并清出可重置集合；busy 期间防重入。
+ */
+async function onConfirmReset(): Promise<void> {
+  const p = props.platform
+  const b = pendingReset.value
+  const t = targets.value.find((x) => x.cred.backend === b)
+  if (!p || !b || !t || !props.sessionSecret) {
+    pendingReset.value = null
+    return
+  }
+  busy.value = true
+  try {
+    const r = await pushEnvelope({
+      backend: createCloudBackend(t.cred),
+      path: resolveObjectPath(t.cred),
+      vaultJson: p.readVaultJson(),
+      password: props.sessionSecret,
+    })
+    await p.saveTargetHash(b, r.hash)
+    statusMap.value[b] = '已重置'
+    resettableBackends.value = resettableBackends.value.filter((x) => x !== b)
+    pendingReset.value = null
+  } catch (e) {
+    fail(e)
+  } finally {
+    busy.value = false
+  }
 }
 
 /** 以卡内最新偏好整体回写平台（每次展开完整对象，连续切换不丢字段） */
@@ -271,11 +329,15 @@ function onIntervalChange(e: Event): void {
         <MdTextField :model-value="t.cred.objectPath ?? ''" label="目标文件路径" :placeholder="DEFAULT_OBJECT_PATH" aria-label="目标文件路径" :disabled="busy" @update:model-value="t.cred.objectPath = $event.trim()" />
       </template>
       <span v-if="statusFor(t.cred.backend)" class="target-status">{{ statusFor(t.cred.backend) }}</span>
+      <MdButton
+        v-if="resettableBackends.includes(t.cred.backend)" variant="text" danger class="cloud-reset"
+        :disabled="busy" @click="askReset(t.cred.backend)"
+      >用当前口令重置云端</MdButton>
     </div>
     <div class="actions">
       <MdButton v-if="nextBackend" variant="text" class="target-add" @click="addTarget(nextBackend)">添加目标：{{ BACKEND_LABEL[nextBackend] }}</MdButton>
       <MdButton class="creds-save" :disabled="busy" @click="onSaveCreds">保存凭据</MdButton>
-      <MdButton class="cloud-sync" :disabled="busy || !sessionSecret || pendingAdopt !== null" @click="onSync">立即同步</MdButton>
+      <MdButton class="cloud-sync" :disabled="busy || !sessionSecret || pendingAdopt !== null || pendingReset !== null" @click="onSync">立即同步</MdButton>
     </div>
     <p v-if="!sessionSecret" class="hint">先在上方设置备份口令。</p>
     <div v-if="platform.autoPrefs" class="auto-block">
@@ -308,6 +370,11 @@ function onIntervalChange(e: Event): void {
       <span>云端数据较新，已保留本地冲突副本，采用云端将覆盖本地。</span>
       <MdButton danger :disabled="busy" @click="onConfirmAdopt">采用云端</MdButton>
       <MdButton variant="text" :disabled="busy" @click="onCancelAdopt">取消</MdButton>
+    </div>
+    <div v-if="pendingReset" class="confirm-row reset-confirm-row">
+      <span>将用当前备份口令重新加密并覆盖云端 {{ backendLabel(pendingReset) }} 对象，云端旧数据将被替换。确认重置？</span>
+      <MdButton danger :disabled="busy" @click="onConfirmReset">确认重置</MdButton>
+      <MdButton variant="text" :disabled="busy" @click="onCancelReset">取消</MdButton>
     </div>
     <div v-if="msg" :class="msgKind" role="status">{{ msg }}</div>
   </section>

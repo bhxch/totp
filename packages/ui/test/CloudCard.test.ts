@@ -4,7 +4,7 @@ import type { VueWrapper } from '@vue/test-utils'
 
 vi.mock('@totp/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@totp/core')>()
-  return { ...actual, syncMultipleTargets: vi.fn() }
+  return { ...actual, syncMultipleTargets: vi.fn(), pushEnvelope: vi.fn(actual.pushEnvelope) }
 })
 // createCloudBackend 由 CloudCard 从 ui 本地 cloudPlatform 导入：包为 vi.fn 且默认委托真实现，供 ⑯ 注入 fake 后端
 vi.mock('../src/components/cloudPlatform', async (importOriginal) => {
@@ -12,12 +12,13 @@ vi.mock('../src/components/cloudPlatform', async (importOriginal) => {
   return { ...actual, createCloudBackend: vi.fn(actual.createCloudBackend) }
 })
 
-import { syncMultipleTargets, type CloudBackend } from '@totp/core'
+import { pushEnvelope, syncMultipleTargets, type CloudBackend } from '@totp/core'
 import { createCloudBackend } from '../src/components/cloudPlatform'
 import CloudCard from '../src/components/CloudCard.vue'
 import type { CloudPlatform, CloudTarget } from '../src/components/cloudPlatform'
 
 const mockedSync = vi.mocked(syncMultipleTargets)
+const mockedPush = vi.mocked(pushEnvelope)
 
 const VALID_VAULT = JSON.stringify({ version: 1, entries: [], groups: [], updatedAt: 0 })
 const EMPTY_RESULT = { results: [], finalVaultJson: VALID_VAULT, adopted: false, hashes: {} }
@@ -351,5 +352,55 @@ describe('CloudCard（多目标）', () => {
     await clickSync(w)
     expect(w.text()).toContain('编排崩溃')
     expect(p.saveTargetHash).not.toHaveBeenCalled()
+  })
+
+  const PW_MISMATCH_ERROR = '云端备份口令不匹配，无法合并——请确认口令或手动下载处理'
+
+  it('⑱口令不匹配救济：状态显示+行内重置按钮，两步确认后 pushEnvelope 以当前口令重推并落基线', async () => {
+    mockedSync.mockResolvedValue({
+      results: [{ key: 'webdav', outcome: null, error: PW_MISMATCH_ERROR }],
+      finalVaultJson: VALID_VAULT,
+      adopted: false,
+      hashes: {},
+    })
+    mockedPush.mockResolvedValue({ hash: 'rh1', envelopeJson: '{"enc":1}' })
+    const p = makePlatform({ loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET]) })
+    const w = await mountCard(p)
+    await clickSync(w)
+    expect(w.text()).toContain('失败：口令不匹配')
+    expect(w.find('button.cloud-reset').exists()).toBe(true)
+    await w.find('button.cloud-reset').trigger('click')
+    expect(w.text()).toContain('将用当前备份口令重新加密并覆盖云端 WebDAV 对象，云端旧数据将被替换。确认重置？')
+    await w.findAll('button').find((b) => b.text() === '确认重置')!.trigger('click')
+    await flushPromises()
+    expect(vi.mocked(createCloudBackend)).toHaveBeenCalledWith(WEBDAV_TARGET.cred)
+    expect(mockedPush).toHaveBeenCalledTimes(1)
+    expect(mockedPush.mock.calls[0]![0]).toMatchObject({
+      path: 'totp-backup.totpbackup',
+      vaultJson: VALID_VAULT,
+      password: 'pw',
+    })
+    expect(p.saveTargetHash).toHaveBeenLastCalledWith('webdav', 'rh1')
+    expect(w.text()).toContain('已重置')
+    expect(w.find('button.cloud-reset').exists()).toBe(false) // 重置完成清出可重置集合
+  })
+
+  it('⑲重置确认挂起：立即同步按钮禁用；取消后不调用 pushEnvelope 且确认行消失', async () => {
+    mockedSync.mockResolvedValue({
+      results: [{ key: 'webdav', outcome: null, error: PW_MISMATCH_ERROR }],
+      finalVaultJson: VALID_VAULT,
+      adopted: false,
+      hashes: {},
+    })
+    const p = makePlatform({ loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET]) })
+    const w = await mountCard(p)
+    await clickSync(w)
+    await w.find('button.cloud-reset').trigger('click')
+    expect(w.find('.reset-confirm-row').exists()).toBe(true)
+    expect((w.find('button.cloud-sync').element as HTMLButtonElement).disabled).toBe(true)
+    await w.findAll('button').find((b) => b.text() === '取消')!.trigger('click')
+    expect(mockedPush).not.toHaveBeenCalled()
+    expect(w.find('.reset-confirm-row').exists()).toBe(false)
+    expect((w.find('button.cloud-sync').element as HTMLButtonElement).disabled).toBe(false)
   })
 })
