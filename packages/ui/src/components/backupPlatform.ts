@@ -3,6 +3,13 @@ import type { Vault } from '@totp/core'
 /** 备份模式：keep=滚动保留最近 N 份；overwrite=覆盖单一固定文件 */
 export type BackupMode = { type: 'keep'; n: number } | { type: 'overwrite' }
 
+/** 自动备份偏好（D2）：onChange=变更后自动备份；onInterval=定时自动备份；intervalMinutes=定时间隔（分钟） */
+export interface BackupAutoPrefs {
+  onChange: boolean
+  onInterval: boolean
+  intervalMinutes: number
+}
+
 /**
  * 备份平台能力（由宿主注入：desktop=Tauri 备份目录/系统对话框；extension=Blob 下载/input file）。
  * BackupCard 只依赖此接口，platform 为 null 时整卡不渲染（popup 零影响）。
@@ -35,4 +42,14 @@ export interface BackupPlatform {
   readImportFileBytes?(): Promise<{ bytes: Uint8Array; name: string } | null>
   /** [可选] WinAuth DPAPI 层解密（base64 密文 → UTF-8 明文），仅桌面端提供（ImportCard 用） */
   decryptDpapi?(b64: string): Promise<string>
+  /** [可选] 读取自动备份偏好（D2；宿主不提供则卡内隐藏自动区）。可能同步返回 */
+  getAutoPrefs?(): BackupAutoPrefs
+  /** [可选] 回写自动备份偏好（宿主负责持久化；卡内每次传完整对象） */
+  setAutoPrefs?(p: BackupAutoPrefs): void | Promise<void>
+  /** [可选] 当前备份目录；null=默认（应用数据目录）。宿主不提供则卡内隐藏目录行 */
+  getBackupDir?(): Promise<string | null>
+  /** [可选] 设置备份目录；null=恢复默认 */
+  setBackupDir?(dir: string | null): Promise<void>
+  /** [可选] 弹出目录选择对话框；null=用户取消 */
+  pickBackupDir?(): Promise<string | null>
 }

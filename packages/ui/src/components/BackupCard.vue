@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import type { Vault } from '@totp/core'
 import { onMounted, ref, watch } from 'vue'
-import type { BackupMode, BackupPlatform } from './backupPlatform'
+import type { BackupAutoPrefs, BackupMode, BackupPlatform } from './backupPlatform'
 import { parseVaultJson } from './parseVaultJson'
 import MdButton from './md/MdButton.vue'
+import MdSwitch from './md/MdSwitch.vue'
 import MdTextField from './md/MdTextField.vue'
 
 const props = defineProps<{
@@ -11,10 +12,10 @@ const props = defineProps<{
   platform: BackupPlatform | null
   /** 备份内容=调用方组装的 vault JSON 快照（saveVault 同款） */
   vaultJson: string
+  /** 会话备份口令（D1）：备份加密/导出用；null 时备份导出禁用，恢复走一次性口令回退 */
+  sessionSecret: string | null
 }>()
 
-const password = ref('')
-const confirmPw = ref('')
 const busy = ref(false)
 const msg = ref('')
 const msgKind = ref<'ok' | 'err' | 'hint'>('ok')
@@ -23,25 +24,27 @@ const backups = ref<Array<{ name: string }>>([])
 /** 已解密待确认覆盖的 vault（两步确认防误覆盖） */
 const pending = ref<Vault | null>(null)
 
+/** 恢复回退态：会话口令不可用/解密失败 → 记住来源并展开一次性口令输入 */
+const showFallback = ref(false)
+const fallbackPw = ref('')
+const restoreReq = ref<{ kind: 'picker' | 'name'; name?: string } | null>(null)
+
+/** 自动备份偏好（D2）：卡内编辑副本，挂载时从平台读初值；每次变更整体回写 */
+const autoPrefs = ref<BackupAutoPrefs>({ onChange: false, onInterval: false, intervalMinutes: 60 })
+/** 当前备份目录；null=默认（应用数据目录） */
+const backupDir = ref<string | null>(null)
+
 function fail(e: unknown): void {
   msg.value = e instanceof Error ? e.message : String(e)
   msgKind.value = 'err'
 }
 
-/** 备份/导出口令校验：非空且两次一致 */
-function validatePw(): string | null {
-  if (!password.value) return '请输入口令'
-  if (password.value !== confirmPw.value) return '两次输入的口令不一致'
-  return null
-}
-
 async function onBackup(): Promise<void> {
-  const err = validatePw()
-  if (err) return fail(new Error(err))
+  if (!props.sessionSecret) return // 按钮已禁用，防御兜底
   busy.value = true
   msg.value = ''
   try {
-    const r = await props.platform!.createBackup(props.vaultJson, password.value)
+    const r = await props.platform!.createBackup(props.vaultJson, props.sessionSecret)
     msg.value = r === 'overwritten' ? '备份成功（覆盖）' : '备份成功（新文件）'
     msgKind.value = 'ok'
     if (props.platform?.listBackups) await refreshList()
@@ -53,12 +56,11 @@ async function onBackup(): Promise<void> {
 }
 
 async function onExport(): Promise<void> {
-  const err = validatePw()
-  if (err) return fail(new Error(err))
+  if (!props.sessionSecret) return
   busy.value = true
   msg.value = ''
   try {
-    const saved = await props.platform!.exportToFile!(props.vaultJson, password.value)
+    const saved = await props.platform!.exportToFile!(props.vaultJson, props.sessionSecret)
     if (saved === false) {
       msg.value = '已取消'
       msgKind.value = 'hint'
@@ -100,27 +102,68 @@ async function refreshList(): Promise<void> {
   }
 }
 onMounted(() => {
-  if (props.platform?.listBackups) void refreshList()
-})
-
-/** 恢复第 1 步：取备份并解密（口令复用输入框），成功后进入两步确认 */
-async function startRestore(kind: 'picker' | 'name', name?: string): Promise<void> {
   const p = props.platform
   if (!p) return
-  if (!password.value) return fail(new Error('请先在上方输入口令用于解密备份'))
+  if (p.listBackups) void refreshList()
+  // getAutoPrefs 可能同步返回：onMounted 直接读初值（无则保留默认）
+  if (p.getAutoPrefs) {
+    const v = p.getAutoPrefs()
+    if (v) autoPrefs.value = { ...v }
+  }
+  if (p.getBackupDir) void p.getBackupDir().then((d) => { backupDir.value = d })
+})
+
+/** 恢复统一尝试：pw=会话口令（首发）或一次性回退口令（重试）。
+ *  无口令可用或解密抛错 → 记住来源并展开回退区；用户取消（null）静默返回；
+ *  解密成功但内容无效 → 显示错误不进回退（内容问题不该误导为口令问题） */
+async function attemptRestore(req: { kind: 'picker' | 'name'; name?: string }, pw: string | null): Promise<void> {
+  const p = props.platform
+  if (!p) return
   busy.value = true
   msg.value = ''
+  let r: { json: string } | null = null
+  let needFallback = false
   try {
-    const r = kind === 'picker'
-      ? await p.restoreFromPicker!(password.value)
-      : await p.restoreByName!(name!, password.value)
-    if (!r) return // 用户取消了文件选择
-    pending.value = parseVaultJson(r.json)
-  } catch (e) {
-    fail(e)
+    if (pw) {
+      r = req.kind === 'picker' ? await p.restoreFromPicker!(pw) : await p.restoreByName!(req.name!, pw)
+    } else {
+      needFallback = true
+    }
+  } catch {
+    needFallback = true
   } finally {
     busy.value = false
   }
+  if (needFallback) {
+    restoreReq.value = req
+    showFallback.value = true
+    msg.value = ''
+    return
+  }
+  if (!r) return // 用户取消了文件选择
+  try {
+    pending.value = parseVaultJson(r.json)
+  } catch (e) {
+    return fail(e)
+  }
+  showFallback.value = false
+  fallbackPw.value = ''
+  restoreReq.value = null
+}
+
+function startRestore(kind: 'picker' | 'name', name?: string): void {
+  void attemptRestore({ kind, name }, props.sessionSecret)
+}
+
+/** 回退重试：用一次性输入的口令对同一来源再解一次 */
+function retryRestore(): void {
+  const req = restoreReq.value
+  if (!req) {
+    showFallback.value = false
+    return
+  }
+  if (!fallbackPw.value) return fail(new Error('请输入口令'))
+  void attemptRestore(req, fallbackPw.value)
 }
 
 /** 恢复第 2 步：确认覆盖 → replaceAllOp */
@@ -139,15 +182,44 @@ async function confirmRestore(): Promise<void> {
     busy.value = false
   }
 }
+
+/** 以卡内最新偏好整体回写平台（每次展开完整对象，连续切换不丢字段） */
+async function syncAutoPrefs(): Promise<void> {
+  await props.platform?.setAutoPrefs?.({ ...autoPrefs.value })
+}
+function onAutoOnChange(v: boolean): void {
+  autoPrefs.value = { ...autoPrefs.value, onChange: v }
+  void syncAutoPrefs()
+}
+function onAutoIntervalToggle(v: boolean): void {
+  autoPrefs.value = { ...autoPrefs.value, onInterval: v }
+  void syncAutoPrefs()
+}
+function onIntervalChange(e: Event): void {
+  autoPrefs.value = { ...autoPrefs.value, intervalMinutes: Number((e.target as HTMLSelectElement).value) }
+  void syncAutoPrefs()
+}
+
+async function onChangeDir(): Promise<void> {
+  const p = props.platform
+  if (!p?.pickBackupDir) return
+  const dir = await p.pickBackupDir()
+  if (dir === null) return // 用户取消
+  await p.setBackupDir!(dir)
+  backupDir.value = dir
+}
+
+async function onResetDir(): Promise<void> {
+  const p = props.platform
+  if (!p?.setBackupDir) return
+  await p.setBackupDir(null)
+  backupDir.value = null
+}
 </script>
 
 <template>
   <section v-if="platform" class="card backup">
     <h2>备份</h2>
-    <div class="pw-row">
-      <MdTextField v-model="password" type="password" label="备份口令" placeholder="备份口令" autocomplete="new-password" />
-      <MdTextField v-model="confirmPw" type="password" label="确认口令" placeholder="确认口令" autocomplete="new-password" />
-    </div>
     <div class="modes">
       <label>
         <input
@@ -170,9 +242,14 @@ async function confirmRestore(): Promise<void> {
       </label>
     </div>
     <div class="actions">
-      <MdButton class="backup-now" :disabled="busy" @click="onBackup">立即备份</MdButton>
-      <MdButton v-if="platform.exportToFile" variant="tonal" :disabled="busy" @click="onExport">导出到文件</MdButton>
+      <MdButton class="backup-now" :disabled="busy || !sessionSecret" @click="onBackup">立即备份</MdButton>
+      <MdButton v-if="platform.exportToFile" variant="tonal" :disabled="busy || !sessionSecret" @click="onExport">导出到文件</MdButton>
       <MdButton v-if="platform.restoreFromPicker" variant="tonal" :disabled="busy" @click="startRestore('picker')">从文件恢复</MdButton>
+    </div>
+    <p v-if="!sessionSecret" class="hint">先在上方设置备份口令。</p>
+    <div v-if="showFallback" class="fallback-row">
+      <MdTextField v-model="fallbackPw" class="fallback-pw" type="password" label="恢复口令" placeholder="输入该备份的口令" autocomplete="off" />
+      <MdButton :disabled="busy" @click="retryRestore">重试</MdButton>
     </div>
     <ul v-if="backups.length" class="backup-list">
       <li v-for="b in backups" :key="b.name">
@@ -185,6 +262,36 @@ async function confirmRestore(): Promise<void> {
       <MdButton danger :disabled="busy" @click="confirmRestore">确认覆盖</MdButton>
       <MdButton variant="text" :disabled="busy" @click="pending = null">取消</MdButton>
     </div>
+    <div v-if="platform.getAutoPrefs" class="auto-block">
+      <p class="hint">自动执行前会与上次内容比对，无变化则跳过写入。</p>
+      <div class="auto-row">
+        <div class="auto-item">
+          <MdSwitch :model-value="autoPrefs.onChange" aria-label="变更后自动备份" @update:model-value="onAutoOnChange" />
+          <span>变更后自动备份</span>
+        </div>
+        <div class="auto-item">
+          <MdSwitch :model-value="autoPrefs.onInterval" aria-label="定时自动备份" @update:model-value="onAutoIntervalToggle" />
+          <span>定时自动备份</span>
+        </div>
+        <div class="auto-item">
+          <span>间隔</span>
+          <select
+            class="interval" :value="autoPrefs.intervalMinutes" aria-label="自动备份间隔"
+            @change="onIntervalChange"
+          >
+            <option :value="15">15 分钟</option>
+            <option :value="60">1 小时</option>
+            <option :value="360">6 小时</option>
+            <option :value="1440">每天</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div v-if="platform.getBackupDir" class="dir-row">
+      <span class="dir-value">备份目录：{{ backupDir ?? '默认（应用数据目录）' }}</span>
+      <MdButton variant="tonal" :disabled="busy" @click="onChangeDir">更改…</MdButton>
+      <MdButton variant="text" :disabled="busy" @click="onResetDir">恢复默认</MdButton>
+    </div>
     <div v-if="msg" :class="msgKind" role="status">{{ msg }}</div>
   </section>
 </template>
@@ -192,18 +299,24 @@ async function confirmRestore(): Promise<void> {
 <style scoped>
 .card { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
 h2 { font-size: 15px; margin: 0; }
-.pw-row { display: flex; gap: 8px; }
-.pw-row .md-text-field { flex: 1; }
 .modes { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; font-size: 13px; }
 .modes label { display: flex; align-items: center; gap: 4px; }
 .keep-n { width: 90px; }
 .unit { font-size: 13px; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.fallback-row { display: flex; gap: 8px; align-items: center; }
+.fallback-pw { flex: 1; max-width: 240px; }
 .backup-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 160px; overflow: auto; }
 .backup-list li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .bname { flex: 1; opacity: .8; }
 .confirm-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.auto-block { display: flex; flex-direction: column; gap: 4px; }
+.auto-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.auto-item { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.interval { height: 32px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline); background: transparent; color: inherit; font: inherit; font-size: 13px; padding: 0 6px; }
+.dir-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dir-value { font-size: 13px; opacity: .85; }
 .ok { color: var(--md-sys-color-primary); font-size: 13px; }
 .err { color: var(--md-sys-color-error); font-size: 13px; }
-.hint { opacity: .65; font-size: 13px; }
+.hint { opacity: .65; font-size: 13px; margin: 0; }
 </style>

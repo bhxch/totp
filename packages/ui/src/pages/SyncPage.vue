@@ -23,6 +23,8 @@ const props = withDefaults(defineProps<{
 
 /** 备份内容快照（saveVault 同款 JSON）：序列化 reactive 代理以保持 computed 依赖追踪（与 旧单页 一致） */
 const vaultJson = computed(() => JSON.stringify(props.store.vault))
+/** 会话备份口令（D1）：store.backupSecret 是 ComputedRef，在 setup computed 内 .value 解包保持依赖追踪 */
+const sessionSecret = computed(() => props.store.backupSecret.value)
 </script>
 
 <template>
@@ -33,7 +35,7 @@ const vaultJson = computed(() => JSON.stringify(props.store.vault))
     </MdCard>
     <MdCard v-if="platform" class="block">
       <template #header>本地备份</template>
-      <BackupCard :platform="platform" :vault-json="vaultJson" />
+      <BackupCard :platform="platform" :vault-json="vaultJson" :session-secret="sessionSecret" />
     </MdCard>
     <MdCard v-if="cloudPlatform" class="block">
       <template #header>云同步</template>
