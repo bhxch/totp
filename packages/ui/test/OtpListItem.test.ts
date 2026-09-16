@@ -37,7 +37,7 @@ describe('OtpListItem 图标渲染', () => {
 describe('OtpListItem 揭示与右键菜单（C16）', () => {
   it('reveal 按钮 emit reveal，且不冒泡触发 copy', async () => {
     const w = mount(OtpListItem, { props: { entry, ...base } })
-    await w.find('button.reveal').trigger('click')
+    await w.find('.md-icon-btn').trigger('click')
     expect(w.emitted('reveal')).toHaveLength(1)
     // @click.stop 已阻止冒泡，copy 不应被触发
     expect(w.emitted('copy')).toBeUndefined()

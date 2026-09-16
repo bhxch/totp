@@ -1,9 +1,9 @@
 <script setup lang="ts">
-withDefaults(defineProps<{ variant?: 'filled' | 'tonal' | 'outlined' | 'text' | 'elevated'; disabled?: boolean; type?: 'button' | 'submit' }>(), { variant: 'filled', disabled: false, type: 'button' })
+withDefaults(defineProps<{ variant?: 'filled' | 'tonal' | 'outlined' | 'text' | 'elevated'; disabled?: boolean; type?: 'button' | 'submit'; danger?: boolean }>(), { variant: 'filled', disabled: false, type: 'button', danger: false })
 const emit = defineEmits<{ click: [event: MouseEvent] }>()
 </script>
 <template>
-  <button class="md-btn" :class="`md-btn--${variant}`" :type="type" :disabled="disabled" @click="emit('click', $event)"><slot /></button>
+  <button class="md-btn" :class="danger ? 'md-btn--danger' : `md-btn--${variant}`" :type="type" :disabled="disabled" @click="emit('click', $event)"><slot /></button>
 </template>
 <style scoped>
 .md-btn { border: none; cursor: pointer; border-radius: 100px; padding: 0 24px; height: 40px;
@@ -17,5 +17,9 @@ const emit = defineEmits<{ click: [event: MouseEvent] }>()
 .md-btn--outlined { background: transparent; color: var(--md-sys-color-primary); box-shadow: inset 0 0 0 1px var(--md-sys-color-outline); }
 .md-btn--text { background: transparent; color: var(--md-sys-color-primary); padding: 0 12px; }
 .md-btn--elevated { background: var(--md-sys-color-surface-container-low); color: var(--md-sys-color-primary); box-shadow: 0 1px 3px var(--md-sys-color-shadow); }
+/* danger:text 形 + error 色(危险动作);hover 的 8% 叠色走通用 currentColor 规则,即 error 8% */
+.md-btn--danger { background: transparent; color: var(--md-sys-color-error); padding: 0 12px; }
+.md-btn--danger:not(:disabled):hover::after { background: color-mix(in srgb, var(--md-sys-color-error) 8%, transparent); }
 .md-btn:not(:disabled):focus-visible { outline: 3px solid var(--md-sys-color-primary); outline-offset: 2px; }
+.md-btn--danger:not(:disabled):focus-visible { outline-color: var(--md-sys-color-error); }
 </style>

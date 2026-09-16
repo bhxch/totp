@@ -45,7 +45,7 @@ describe('GroupManagerDialog', () => {
     const gid = s.vault.groups[0]!.id
     const w = mount(GroupManagerDialog, { props: { open: true, store: s } })
     const row = w.findAll('.group-list li').find((li) => li.text().includes('工作'))!
-    await row.findAll('button.icon')[0]!.trigger('click') // 编辑按钮 → 进入行内编辑
+    await row.findAll('button').find((b) => b.text() === '编辑')!.trigger('click') // 编辑按钮 → 进入行内编辑
     const input = w.find('.group-list input')
     expect((input.element as HTMLInputElement).value).toBe('工作')
     await input.setValue('上班族')
@@ -58,7 +58,7 @@ describe('GroupManagerDialog', () => {
     const gid = s.vault.groups[0]!.id
     const w = mount(GroupManagerDialog, { props: { open: true, store: s } })
     const row = w.findAll('.group-list li').find((li) => li.text().includes('工作'))!
-    await row.findAll('button.icon')[0]!.trigger('click')
+    await row.findAll('button').find((b) => b.text() === '编辑')!.trigger('click')
     await w.find('.group-list input').setValue('改动')
     const cancel = w.findAll('.group-list button').find((b) => b.text() === '取消')!
     await cancel.trigger('click')
@@ -69,7 +69,7 @@ describe('GroupManagerDialog', () => {
     const s = await readyStore()
     const w = mount(GroupManagerDialog, { props: { open: true, store: s } })
     const row = w.findAll('.group-list li').find((li) => li.text().includes('工作'))!
-    await row.findAll('button.icon')[0]!.trigger('click') // 进入行内编辑
+    await row.findAll('button').find((b) => b.text() === '编辑')!.trigger('click') // 进入行内编辑
     expect(w.find('.group-list input').exists()).toBe(true)
     await w.find('.group-add input').setValue('待清空')
     await w.setProps({ open: false })
@@ -83,7 +83,7 @@ describe('GroupManagerDialog', () => {
     const gid = s.vault.groups[0]!.id
     const w = mount(GroupManagerDialog, { props: { open: true, store: s } })
     const row = w.findAll('.group-list li').find((li) => li.text().includes('工作'))!
-    await row.findAll('button.icon')[1]!.trigger('click') // 删除按钮
+    await row.findAll('button').find((b) => b.text() === '删除')!.trigger('click') // 删除按钮
     await vi.waitFor(() => expect(s.vault.groups.find((g) => g.id === gid)).toBeUndefined())
   })
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { OtpEntry } from '@totp/core'
 import { computed } from 'vue'
+import MdIconButton from './md/MdIconButton.vue'
 
 const props = defineProps<{
   entry: OtpEntry
@@ -58,7 +59,7 @@ function onContextMenu(e: MouseEvent): void {
         :class="['code', { invalid: code === 'INVALID' }]"
         :title="code === 'INVALID' ? `密钥非法：${error ?? ''}` : undefined"
       >{{ code === 'INVALID' ? '密钥非法' : grouped(code) }}</span>
-      <button type="button" class="reveal" title="显示密钥" @click.stop="emit('reveal')">🔑</button>
+      <MdIconButton class="reveal" :title="'显示密钥'" aria-label="显示密钥" @click.stop="emit('reveal')">🔑</MdIconButton>
       <svg viewBox="0 0 36 36" class="ring" aria-hidden="true">
         <circle cx="18" cy="18" r="16" class="ring-bg" />
         <circle
@@ -85,8 +86,7 @@ function onContextMenu(e: MouseEvent): void {
 .right { display: flex; align-items: center; gap: 8px; }
 .code { font-family: ui-monospace, monospace; font-size: 18px; letter-spacing: 1px; }
 .code.invalid { color: var(--md-sys-color-error); font-size: 13px; cursor: help; }
-.reveal { border: none; background: none; cursor: pointer; padding: 4px; font-size: 14px; opacity: 0.5; }
-.reveal:hover { opacity: 1; }
+.reveal { font-size: 14px; }
 .ring { width: 32px; height: 32px; transform: rotate(-90deg); }
 .ring-bg { fill: none; stroke: var(--md-sys-color-outline-variant); stroke-width: 3; }
 .ring-fg { fill: none; stroke: var(--md-sys-color-primary); stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset 1s linear; }

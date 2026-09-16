@@ -6,8 +6,10 @@ import { iconView, type IconStore } from '../iconStore'
 import type { VueStore } from '../store'
 import EntryFormDialog from '../components/EntryFormDialog.vue'
 import GroupManagerDialog from '../components/GroupManagerDialog.vue'
+import MdButton from '../components/md/MdButton.vue'
 import MdChip from '../components/md/MdChip.vue'
 import MdFab from '../components/md/MdFab.vue'
+import MdIconButton from '../components/md/MdIconButton.vue'
 import MdMenu from '../components/md/MdMenu.vue'
 import OtpListItem from '../components/OtpListItem.vue'
 import RevealDialog from '../components/RevealDialog.vue'
@@ -183,11 +185,11 @@ async function contextTogglePin(entry: OtpEntry) {
         />
         <div class="ops">
           <template v-if="confirmingDelete === e.uuid">
-            <button class="danger" @click.stop="askRemove(e.uuid)">确认删除？</button>
+            <MdButton danger @click.stop="askRemove(e.uuid)">确认删除？</MdButton>
           </template>
           <template v-else>
-            <button class="icon" :title="'编辑 ' + e.label" :aria-label="'编辑 ' + e.label" @click.stop="editing = e; creating = false">编辑</button>
-            <button class="icon" :title="'删除 ' + e.label" :aria-label="'删除 ' + e.label" @click.stop="askRemove(e.uuid)">删除</button>
+            <MdIconButton :title="'编辑 ' + e.label" :aria-label="'编辑 ' + e.label" @click.stop="editing = e; creating = false">编辑</MdIconButton>
+            <MdIconButton :title="'删除 ' + e.label" :aria-label="'删除 ' + e.label" @click.stop="askRemove(e.uuid)">删除</MdIconButton>
           </template>
         </div>
       </div>
@@ -216,9 +218,9 @@ async function contextTogglePin(entry: OtpEntry) {
     <!-- 右键菜单：MdMenu 负责定位/越界钳制/Esc 关闭；点别处关闭（绑定在 .row @click） -->
     <MdMenu :x="contextMenu?.x ?? 0" :y="contextMenu?.y ?? 0" :open="contextMenu !== null" @close="closeContextMenu">
       <template v-if="contextMenu">
-        <button class="ctx-item" @click="contextEdit(contextMenu.entry)">编辑</button>
-        <button class="ctx-item" @click="contextCopyUri(contextMenu.entry)">复制 URI</button>
-        <button class="ctx-item" @click="contextTogglePin(contextMenu.entry)">{{ contextMenu.entry.pinned ? '取消置顶' : '置顶' }}</button>
+        <MdButton variant="text" class="ctx-item" @click="contextEdit(contextMenu.entry)">编辑</MdButton>
+        <MdButton variant="text" class="ctx-item" @click="contextCopyUri(contextMenu.entry)">复制 URI</MdButton>
+        <MdButton variant="text" class="ctx-item" @click="contextTogglePin(contextMenu.entry)">{{ contextMenu.entry.pinned ? '取消置顶' : '置顶' }}</MdButton>
       </template>
     </MdMenu>
   </section>
@@ -233,12 +235,9 @@ h2 { margin: 0; font-size: 15px; }
 .row :deep(.otp-item) { flex: 1; }
 .ops { display: flex; gap: 4px; opacity: 0; transition: opacity .15s; }
 .row:hover .ops, .ops:focus-within { opacity: 1; }
-.icon, .danger { border: none; background: none; cursor: pointer; padding: 4px; }
-.danger { color: var(--md-sys-color-error); font-size: 12px; }
 .empty { text-align: center; opacity: .6; padding: 16px 0; }
 /* 新建 FAB：悬浮于页面右下 */
 .page-fab { position: fixed; right: 24px; bottom: 24px; }
-/* 右键菜单项（MdMenu 容器自带定位与外观；slot 内容归本组件作用域） */
-.ctx-item { display: block; width: 100%; padding: 6px 14px; border: none; background: none; text-align: left; cursor: pointer; font-size: 13px; color: inherit; }
-.ctx-item:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
+/* 右键菜单项（MdMenu 容器自带定位与外观；MdButton text 形收紧为菜单项排版,槽内容归本组件作用域） */
+.ctx-item { display: block; width: 100%; height: 36px; justify-content: flex-start; border-radius: 0; font-size: 13px; text-align: left; padding: 0 14px; }
 </style>

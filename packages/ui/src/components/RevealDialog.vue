@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { OtpEntry } from '@totp/core'
+import MdButton from './md/MdButton.vue'
 import MdDialog from './md/MdDialog.vue'
 
 defineProps<{
@@ -23,7 +24,7 @@ function maskSecret(secret: string): string {
     <code v-if="entry" class="reveal-secret">{{ maskSecret(entry.secret) }}</code>
     <p class="reveal-hint">出于安全考虑，仅显示密钥前后各 4 位；如需完整密钥请使用编辑功能。</p>
     <template #actions>
-      <button data-md-close>关闭</button>
+      <MdButton variant="text" data-md-close>关闭</MdButton>
     </template>
   </MdDialog>
 </template>

@@ -2,7 +2,10 @@
 import type { Group } from '@totp/core'
 import { ref, watch } from 'vue'
 import type { VueStore } from '../store'
+import MdButton from './md/MdButton.vue'
 import MdDialog from './md/MdDialog.vue'
+import MdIconButton from './md/MdIconButton.vue'
+import MdTextField from './md/MdTextField.vue'
 
 const props = defineProps<{
   open: boolean
@@ -40,21 +43,21 @@ async function saveRename(g: Group) {
 <template>
   <MdDialog :open="open" headline="分组管理" @close="emit('close')">
     <form class="group-add" @submit.prevent="addGroup">
-      <input v-model="newGroupName" placeholder="新分组名称" />
-      <button type="submit">创建分组</button>
+      <MdTextField v-model="newGroupName" class="grow" label="新分组名称" aria-label="新分组名称" />
+      <MdButton type="submit">创建分组</MdButton>
     </form>
     <ul class="group-list">
       <li v-for="g in store.vault.groups" :key="g.id">
         <template v-if="renaming === g.id">
-          <input v-model="renameValue" @keydown.enter="saveRename(g)" />
-          <button @click="saveRename(g)">保存</button>
-          <button @click="renaming = null">取消</button>
+          <MdTextField v-model="renameValue" class="grow" label="分组名称" aria-label="分组名称" @keydown.enter="saveRename(g)" />
+          <MdButton @click="saveRename(g)">保存</MdButton>
+          <MdButton variant="text" @click="renaming = null">取消</MdButton>
         </template>
         <template v-else>
           <span class="gname">{{ g.name }}</span>
           <span class="gcount">{{ store.vault.entries.filter((e) => e.groupIds.includes(g.id)).length }} 条</span>
-          <button class="icon" :title="'编辑分组 ' + g.name" :aria-label="'编辑分组 ' + g.name" @click="renaming = g.id; renameValue = g.name">编辑</button>
-          <button class="icon" :title="'删除分组 ' + g.name" :aria-label="'删除分组 ' + g.name" @click="store.removeGroupOp(g.id)">删除</button>
+          <MdIconButton :title="'编辑分组 ' + g.name" :aria-label="'编辑分组 ' + g.name" @click="renaming = g.id; renameValue = g.name">编辑</MdIconButton>
+          <MdIconButton :title="'删除分组 ' + g.name" :aria-label="'删除分组 ' + g.name" @click="store.removeGroupOp(g.id)">删除</MdIconButton>
         </template>
       </li>
       <li v-if="store.vault.groups.length === 0" class="empty">暂无分组</li>
@@ -63,13 +66,11 @@ async function saveRename(g: Group) {
 </template>
 
 <style scoped>
-.group-add { display: flex; gap: 8px; }
-.group-add input { flex: 1; }
+.group-add { display: flex; gap: 8px; align-items: start; }
+.grow { flex: 1; }
 .group-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .group-list li { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
-.group-list input { flex: 1; }
 .gname { font-weight: 600; }
 .gcount { opacity: .6; font-size: 12px; flex: 1; }
-.icon { border: none; background: none; cursor: pointer; padding: 4px; }
 .empty { text-align: center; opacity: .6; padding: 8px 0; }
 </style>

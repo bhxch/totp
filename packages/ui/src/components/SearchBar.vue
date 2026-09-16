@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import MdCheckbox from './md/MdCheckbox.vue'
+import MdTextField from './md/MdTextField.vue'
+
 defineProps<{
   modelValue: string
   /** I49：开启后搜索会匹配 secret（密钥 base32），默认关闭（避免明文密钥常驻列表 DOM/UI 状态） */
@@ -8,37 +11,33 @@ const emit = defineEmits<{
   'update:modelValue': [string]
   'update:searchSecret': [boolean]
 }>()
-function onSecretToggle(e: Event): void {
-  emit('update:searchSecret', (e.target as HTMLInputElement).checked)
-}
 </script>
 
 <template>
   <div class="search-row">
-    <input
-      class="search"
+    <MdTextField
+      class="grow"
       type="search"
+      label="搜索"
       placeholder="搜索服务名或账户…"
-      :value="modelValue"
-      @input="$emit('update:modelValue', ($event.target as HTMLInputElement).value)"
+      aria-label="搜索服务名或账户"
+      :model-value="modelValue"
+      @update:model-value="emit('update:modelValue', $event)"
     />
     <!-- I49：搜 secret 默认关闭，开启时密钥会进入可见的过滤路径，列表 DOM 不写明文但匹配结果会显示条目 -->
-    <label class="secret-toggle" :title="searchSecret ? '关闭密钥匹配（当前开启）' : '开启后会用密钥 base32 串匹配（默认关闭）'">
-      <input
-        class="secret-toggle-input"
-        type="checkbox"
-        :checked="searchSecret"
-        @change="onSecretToggle"
-      />
-      搜 secret
-    </label>
+    <MdCheckbox
+      class="secret-toggle"
+      :model-value="!!searchSecret"
+      label="搜 secret"
+      aria-label="搜 secret"
+      :title="searchSecret ? '关闭密钥匹配（当前开启）' : '开启后会用密钥 base32 串匹配（默认关闭）'"
+      @update:model-value="emit('update:searchSecret', $event)"
+    />
   </div>
 </template>
 
 <style scoped>
 .search-row { display: flex; gap: 8px; align-items: center; }
-.search { flex: 1; box-sizing: border-box; padding: 7px 10px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: 8px; background: transparent; color: inherit; }
-.search:focus { outline: none; border-color: var(--md-sys-color-primary); }
-.secret-toggle { font-size: 12px; opacity: .75; display: flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap; }
-.secret-toggle-input { margin: 0; }
+.grow { flex: 1; }
+.secret-toggle { font-size: 12px; opacity: .75; white-space: nowrap; }
 </style>

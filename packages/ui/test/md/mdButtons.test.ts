@@ -24,6 +24,13 @@ describe('MdButton', () => {
     expect(w.attributes('disabled')).toBeDefined()
     expect(w.attributes('type')).toBe('submit')
   })
+  it('danger 形态:danger 类优先于 variant(text 形+error 色),未传时不加', () => {
+    const w = mount(MdButton, { props: { variant: 'filled', danger: true }, slots: { default: '确认删除？' } })
+    expect(w.classes()).toContain('md-btn--danger')
+    expect(w.classes()).not.toContain('md-btn--filled')
+    expect(w.text()).toBe('确认删除？')
+    expect(mount(MdButton, { slots: { default: '普通' } }).classes()).not.toContain('md-btn--danger')
+  })
 })
 
 describe('MdIconButton', () => {

@@ -49,7 +49,7 @@ describe('CodesPage 列表与搜索（自 旧单页 迁移）', () => {
     const del = w.findAll('.ops button').find((b) => b.text() === '删除')!
     await del.trigger('click')
     // 第一次点击进入确认态，条目仍在
-    const confirmBtn = w.find('button.danger')
+    const confirmBtn = w.find('.md-btn--danger')
     expect(confirmBtn.exists()).toBe(true)
     expect(confirmBtn.text()).toBe('确认删除？')
     expect(s.vault.entries).toHaveLength(1)
@@ -68,11 +68,11 @@ describe('CodesPage I49 搜 secret 开关（自 旧单页 迁移）', () => {
     await input.setValue('JBSWY') // 密钥片段
     // 默认 searchSecret=false → 不显示
     expect(w.text()).not.toContain('GitHub')
-    // 开启后
-    await w.find('input.secret-toggle-input').setValue(true)
+    // 开启后（MdCheckbox 内部 checkbox 经 v-model:search-secret 上抛）
+    await w.find('input[type="checkbox"]').setValue(true)
     expect(w.text()).toContain('GitHub')
     // 关掉
-    await w.find('input.secret-toggle-input').setValue(false)
+    await w.find('input[type="checkbox"]').setValue(false)
     expect(w.text()).not.toContain('GitHub')
   })
 })
@@ -189,7 +189,7 @@ describe('CodesPage reveal / 右键菜单 / pinned（自 旧单页 C16 迁移）
   it('点击 reveal 按钮弹 RevealDialog 显示前 4 + 后 4 形态密钥，不在页面 DOM 留明文', async () => {
     const s = await storeWithTwo()
     const w = mount(CodesPage, { props: { store: s } })
-    await w.find('button.reveal').trigger('click')
+    await w.find('button[title="显示密钥"]').trigger('click')
     await vi.waitFor(() => expect(w.find('.md-dialog').exists()).toBe(true))
     expect(w.find('.md-dialog__headline').text()).toBe('A — 密钥')
     expect(w.find('.reveal-secret').text()).toMatch(/^[A-Z2-7]{4}…[A-Z2-7]{4}$/)
