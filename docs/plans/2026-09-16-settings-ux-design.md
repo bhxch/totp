@@ -204,3 +204,15 @@ CloudCard 各后端动态字段新增「目标文件路径」，默认均为现�
 5. 导入/口令文案
 6. 字阶 token 化与视觉修正（依审查报告）
 - 每步 TDD、独立 commit；core 变更（变更检测、多目标编排、路径解析、settings 字段）配单测；UI 配既有组件测试模式；终局跑既有 E2E 与构建
+
+## 实施勘误（2026-09-16，plan15 落地后回写）
+
+以下为实现与本文档设计的偏差/澄清，均已核对代码后记录：
+
+1. **§4.1 扩展端定时触发**：原定「扩展 `chrome.alarms`」不可行——Service Worker 后台不持有解锁 DEK 与会话备份口令，alarm 触发的同步无法读取口令完成加密。改为 options 页存活期运行 core `createAutoRunScheduler`（`setInterval` 30s tick 判断定时到点）+ store 写提交钩子（`onCommittedExtra`）接入防抖 10s 的 change 通道，页面卸载即停；`chrome.alarms` 零新增。代价如实：扩展自动云同步依赖 options 页存活。
+2. **§3.3/§6.1 CloudCard 接口收口**：CloudPlatform 旧单目标四成员（loadCred/saveCred/loadHash/saveHash）与 getPassword（旧口令输入的取值通道）随口令框一并删除（无消费方），接口定型为 loadCreds/saveCreds/loadTargetHash/saveTargetHash + autoPrefs/loadAutoStatus。
+3. **§5.2/§6 目标路径落地口径**：ui `CLOUD_BACKUP_PATH` 常量保留导出但零消费（deprecated，仅为兼容引用），路径统一走 core `resolveObjectPath(cred.objectPath)`——trim 后空值回落默认 `totp-backup.totpbackup`，拒绝 `\0` 与 `.`/`..` 相对段，多段统一 `/` 分隔。
+4. **§4.2 手动语义确认**：本地备份手动始终写入已实现（`decideAutoRun` 仅约束自动路径，手动不经此函数）；云同步手动经多目标编排对 in-sync 目标跳过（与原设计一致），且下载/冲突采纳目标的基线延后至「采用云端」两步确认成功才落盘，取消则保持旧基线下轮重比。
+5. **§8.2 字阶落地细节**：label-medium(12) 已定义零引用（预留档）；MdDialog headline 保留 20px 硬编码（M3 headline-small 24 不适用弹窗，审查裁定例外）；MiniApp 验证码/密文统一走 code-large(18)（项目自定义档，`OtpListItem`/`RevealDialog`）。
+6. **§8.1 M3 审查落点与结论**：报告为 `docs/review/2026-09-16-m3-audit.md`；「复选框底色偏深」根因裁定为 popup 原生 checkbox + `color-scheme: dark` 的 UA 深色填充（已换 MdCheckbox 修正）。挂账不在本轮：BackupCard 原生 radio（候选 MdSegmentedButton/MdRadio）、interval 原生 select、MdSwitch 未选中拇指 16dp、Rail/Tabs label 档位（title-small 14 档 tokens 层裁定）、after 证据图未入库（仅存 `.temp/m3-audit/after/`）。
+7. **§3.2 osAutoUnlock 三平台边界**：统一通道落地（Windows 委托 DPAPI / macOS Keychain / Linux Secret Service 经 keyring crate）；mac/Linux 分支在 Windows 构建上仅编译门控（cfg 不编译不下载依赖），运行时行为登记 backlog 待真机验证——Windows 委托路径已由真实 CryptProtectData roundtrip 单测实跑。

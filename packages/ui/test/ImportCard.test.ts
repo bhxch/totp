@@ -23,6 +23,7 @@ describe('ImportCard', () => {
     const w = mount(ImportCard, { props: { platform: mkPlatform(store) } })
     expect(w.text()).toContain('自动识别')
     expect(w.text()).toContain('冲突条目可选跳过/替换/合并')
+    // details/summary 展开交互 jsdom 不支持，不做点击展开断言（内容存在性已断言）
     const details = w.find('details.formats')
     expect(details.exists()).toBe(true)
     expect(details.find('summary').text()).toBe('支持的导入格式')
