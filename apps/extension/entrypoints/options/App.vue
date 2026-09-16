@@ -398,5 +398,5 @@ const cloudPlatform: CloudPlatform = {
 
 <style scoped>
 body { font-family: system-ui, sans-serif; margin: 0; }
-.error { color: var(--md-sys-color-error); font-size: 12px; padding: 16px; }
+.error { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); padding: 16px; }
 </style>

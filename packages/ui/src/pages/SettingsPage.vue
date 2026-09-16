@@ -115,13 +115,13 @@ const hasGeneralItems = computed(() => props.showDesktop || props.showExtension 
 <style scoped>
 .page { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-.row-label { font-size: 14px; }
+.row-label { font-size: var(--md-sys-typescale-body-medium); }
 .dots { display: flex; gap: 10px; flex-wrap: wrap; }
 .theme-dot { width: 30px; height: 30px; border-radius: 50%; border: none; cursor: pointer; padding: 0;
   display: inline-flex; align-items: center; justify-content: center; transition: transform .15s; }
 .theme-dot:hover { transform: scale(1.1); }
 .theme-dot--selected { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
-.theme-dot__check { color: #fff; font-size: 13px; line-height: 1; text-shadow: 0 0 2px rgba(0, 0, 0, .6); }
-.theme-resolved { font-size: 12px; opacity: .65; margin: 0; }
+.theme-dot__check { color: #fff; font-size: var(--md-sys-typescale-body-medium); line-height: 1; text-shadow: 0 0 2px rgba(0, 0, 0, .6); }
+.theme-resolved { font-size: var(--md-sys-typescale-body-small); opacity: .65; margin: 0; }
 .set-popup-delay { max-width: 220px; }
 </style>

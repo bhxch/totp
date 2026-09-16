@@ -104,7 +104,7 @@ const pageProps = computed<Record<string, unknown>>(() => {
 .nav-shell--narrow { flex-direction: column; }
 .nav-shell__main { flex: 1; min-width: 0; }
 .nav-shell__rail-action { border: none; background: transparent; cursor: pointer; font: inherit;
-  font-size: 12px; color: var(--md-sys-color-on-surface-variant); padding: 8px 4px; border-radius: 8px;
+  font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-on-surface-variant); padding: 8px 4px; border-radius: 8px;
   transition: background-color .15s; }
 .nav-shell__rail-action:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
 .nav-shell__rail-action:focus-visible { outline: 3px solid var(--md-sys-color-primary); outline-offset: 2px; }

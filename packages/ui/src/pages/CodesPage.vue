@@ -229,7 +229,7 @@ async function contextTogglePin(entry: OtpEntry) {
 <style scoped>
 .page { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .card { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
-h2 { margin: 0; font-size: 15px; }
+h2 { margin: 0; font-size: var(--md-sys-typescale-title-medium); }
 .chips-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .row { position: relative; display: flex; align-items: center; }
 .row :deep(.otp-item) { flex: 1; }
@@ -239,5 +239,5 @@ h2 { margin: 0; font-size: 15px; }
 /* 新建 FAB：悬浮于页面右下 */
 .page-fab { position: fixed; right: 24px; bottom: 24px; }
 /* 右键菜单项（MdMenu 容器自带定位与外观；MdButton text 形收紧为菜单项排版,槽内容归本组件作用域） */
-.ctx-item { display: block; width: 100%; height: 36px; justify-content: flex-start; border-radius: 0; font-size: 13px; text-align: left; padding: 0 14px; }
+.ctx-item { display: block; width: 100%; height: 36px; justify-content: flex-start; border-radius: 0; font-size: var(--md-sys-typescale-body-medium); text-align: left; padding: 0 14px; }
 </style>
