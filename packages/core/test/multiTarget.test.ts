@@ -260,4 +260,28 @@ describe('syncMultipleTargets', () => {
     expect(r.results).toEqual([])
     expect(r.hashes).toEqual({})
   })
+
+  it('收敛回推失败：convergeError 记录原因、outcome 保持 null 且 pass1 error 保留', async () => {
+    // 云端不存在 → pass1 走上传分支；put/回读均坏 → pass1 error；收敛回推 pushEnvelope 再次 put 抛错
+    const bad = fakeBackend()
+    bad.put = async () => {
+      throw new Error('put坏')
+    }
+    const newer = fakeBackend(await envelopeBytesOf(B, PW))
+    const r = await syncMultipleTargets({
+      targets: [
+        { key: 'bad', backend: bad, path: PATH, hash: null },
+        { key: 'newer', backend: newer, path: PATH, hash: null },
+      ],
+      vaultJson: A,
+      password: PW,
+    })
+    expect(r.adopted).toBe(true)
+    expect(r.finalVaultJson).toBe(B)
+    expect(r.results[0]!.outcome).toBeNull()
+    expect(r.results[0]!.error).toContain('put坏')
+    expect(r.results[0]!.convergeError).toContain('put坏')
+    expect(r.hashes['newer']).toBeDefined()
+    expect(r.hashes['bad']).toBeUndefined()
+  })
 })

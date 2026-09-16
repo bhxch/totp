@@ -6,8 +6,14 @@ vi.mock('@totp/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@totp/core')>()
   return { ...actual, syncMultipleTargets: vi.fn() }
 })
+// createCloudBackend 由 CloudCard 从 ui 本地 cloudPlatform 导入：包为 vi.fn 且默认委托真实现，供 ⑯ 注入 fake 后端
+vi.mock('../src/components/cloudPlatform', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/components/cloudPlatform')>()
+  return { ...actual, createCloudBackend: vi.fn(actual.createCloudBackend) }
+})
 
-import { syncMultipleTargets } from '@totp/core'
+import { syncMultipleTargets, type CloudBackend } from '@totp/core'
+import { createCloudBackend } from '../src/components/cloudPlatform'
 import CloudCard from '../src/components/CloudCard.vue'
 import type { CloudPlatform, CloudTarget } from '../src/components/cloudPlatform'
 
@@ -272,5 +278,78 @@ describe('CloudCard（多目标）', () => {
       loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET]),
     }))
     expect(w2.find('.auto-status').exists()).toBe(false)
+  })
+
+  it('⑭添加目标：点「添加目标：S3」push 空白凭据（enabled 开）并展开其配置', async () => {
+    const p = makePlatform({ loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET]) })
+    const w = await mountCard(p)
+    expect(w.findAll('.target')).toHaveLength(1)
+    const addBtn = w.find('button.target-add')
+    expect(addBtn.text()).toBe('添加目标：S3')
+    await addBtn.trigger('click')
+    expect(w.findAll('.target')).toHaveLength(2)
+    // 新目标展开态：S3 字段可见且为空白凭据
+    expect(w.find('input[placeholder="Region（如 us-east-1）"]').exists()).toBe(true)
+    expect((w.find('input[placeholder="Region（如 us-east-1）"]').element as HTMLInputElement).value).toBe('')
+    expect(w.find('input[aria-label="S3启用"]').exists()).toBe(true)
+    // 保存：整列表含新空白目标
+    await w.find('button.creds-save').trigger('click')
+    await flushPromises()
+    expect(p.saveCreds).toHaveBeenCalledWith([WEBDAV_TARGET, { cred: { backend: 's3', region: '', bucket: '', accessKeyId: '', secretAccessKey: '' }, enabled: true }])
+  })
+
+  it('⑮定时自动同步开关：onInterval 切换以最新完整对象回写 set', async () => {
+    const set = vi.fn(async () => {})
+    const p = makePlatform({
+      autoPrefs: { get: () => ({ onChange: false, onInterval: false, intervalMinutes: 60 }), set },
+      loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET]),
+    })
+    const w = await mountCard(p)
+    await w.find('input[aria-label="定时自动同步"]').setValue(true)
+    await vi.waitFor(() => expect(set).toHaveBeenLastCalledWith({ onChange: false, onInterval: true, intervalMinutes: 60 }))
+  })
+
+  it('⑯gdrive 首推回存：后端 onChange 携新凭据（fileId）更新内存目标并 saveCreds 持久化', async () => {
+    const GDRIVE: CloudTarget = { cred: { backend: 'gdrive', accessToken: 'tok' }, enabled: true }
+    const p = makePlatform({
+      loadCreds: vi.fn().mockResolvedValue([GDRIVE]),
+      loadAutoStatus: vi.fn(async () => '2026-09-16 12:00 成功：gdrive: uploaded'),
+    })
+    // fake 后端：构造时立即触发 onChange 回存 fileId（编排已被 mock，链路断言聚焦 onChange 回写）
+    vi.mocked(createCloudBackend).mockImplementationOnce((cred, onChange) => {
+      onChange!({ backend: 'gdrive', accessToken: (cred as { accessToken: string }).accessToken, fileId: 'fid-new' })
+      return { id: cred.backend, put: async () => {}, get: async () => null, delete: async () => {}, exists: async () => false } as CloudBackend
+    })
+    mockedSync.mockResolvedValue({
+      results: [{ key: 'gdrive', outcome: { action: 'uploaded', hash: 'h1' } }],
+      finalVaultJson: VALID_VAULT,
+      adopted: false,
+      hashes: { gdrive: 'h1' },
+    })
+    const w = await mountCard(p)
+    await clickSync(w)
+    // onChange 已把 fileId 回写进内存目标并持久化
+    expect(p.saveCreds).toHaveBeenCalledWith([{ cred: { backend: 'gdrive', accessToken: 'tok', fileId: 'fid-new' }, enabled: true }])
+    expect(w.text()).toContain('已上传')
+    // 手动完成后刷新「上次自动同步」状态行
+    expect(w.find('.auto-status').text()).toContain('2026-09-16 12:00 成功：gdrive: uploaded')
+  })
+
+  it('⑰防御路径：loadCreds 回填失败按未存凭据处理；getAutoStatus 失败显示「暂无」；编排抛错提示且不写基线', async () => {
+    // 挂载段：loadCreds 拒绝 → 空列表；getAutoStatus 拒绝 → 状态行「暂无」
+    const p1 = makePlatform({
+      loadCreds: vi.fn().mockRejectedValue(new Error('存储坏')),
+      loadAutoStatus: vi.fn(async () => { throw new Error('读状态失败') }),
+    })
+    const w1 = await mountCard(p1)
+    expect(w1.findAll('.target')).toHaveLength(0) // 回填失败按未存凭据处理
+    await vi.waitFor(() => expect(w1.find('.auto-status').text()).toContain('暂无'))
+    // 同步段：正常回填一目标，编排意外抛错 → 错误提示、不写任何基线
+    const p = makePlatform({ loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET]) })
+    const w = await mountCard(p)
+    mockedSync.mockRejectedValue(new Error('编排崩溃'))
+    await clickSync(w)
+    expect(w.text()).toContain('编排崩溃')
+    expect(p.saveTargetHash).not.toHaveBeenCalled()
   })
 })

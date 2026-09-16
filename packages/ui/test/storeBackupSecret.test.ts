@@ -160,4 +160,19 @@ describe('store backupSecret（D1）', () => {
     expect(s.locked.value).toBe(false)
     expect(s.backupSecret.value).toBe('pw')
   })
+
+  it('initStore 重建（同窗口已持 DEK，如刷新/重建 store）：直接解密填充并装载会话口令', async () => {
+    const adapter = createMemoryStorage()
+    const s = createVueStore(adapter)
+    await s.initStore()
+    await s.enableEncryption('masterpw')
+    await s.setBackupSecret('pw', true)
+    // 重建 store（同盘）：先经 unlockWithDek 持 DEK（initStore 未跑），再 initStore 走「已持 DEK」分支
+    const b = createVueStore(adapter)
+    await b.unlockWithDek(s.getCurrentDek()!)
+    await b.initStore()
+    expect(b.locked.value).toBe(false)
+    expect(b.backupSecret.value).toBe('pw') // 解密填充时同步装载库内口令
+    expect(b.vault.groups).toEqual(s.vault.groups)
+  })
 })

@@ -529,4 +529,33 @@ describe('DPAPI 解锁来源（plan11 Task3）', () => {
     expect(kekSourcesOf(await diskSecurity(adapter))).toEqual([{ kind: 'password' }])
     expect(s.dpapiSource.value).toBeNull()
   })
+
+  it('防御路径：vault 坏 JSON 报 corrupted；security 坏 JSON 按未加密处理；enableEncryption 写盘失败回滚', async () => {
+    // 盘上 vault 坏 JSON → 明确报错不静默
+    const a1 = createMemoryStorage()
+    await a1.set('vault', '{bad json')
+    await expect(createVueStore(a1).initStore()).rejects.toThrow('vault corrupted')
+    // 盘上 security 坏 JSON → 保守视为未启用加密（回到明文模型），不抛
+    const a2 = createMemoryStorage()
+    await a2.set('vault', JSON.stringify({ version: 1, entries: [], groups: [], updatedAt: 1 }))
+    await a2.set(SECURITY_KEY, '{bad')
+    const s2 = createVueStore(a2)
+    await s2.initStore()
+    expect(s2.hasEncryption.value).toBe(false)
+    expect(s2.locked.value).toBe(false)
+    // enableEncryption 写盘失败：回滚内存加密态（security/DEK 置空）并原样抛出
+    const a3 = createMemoryStorage()
+    const s3 = createVueStore(a3)
+    await s3.initStore()
+    const origSet = a3.set.bind(a3)
+    let failSecurity = true
+    ;(a3 as { set: unknown }).set = async (k: string, v: string) => {
+      if (failSecurity && k === SECURITY_KEY) throw new Error('disk full')
+      return origSet(k, v)
+    }
+    await expect(s3.enableEncryption('pw123')).rejects.toThrow('disk full')
+    failSecurity = false
+    expect(s3.hasEncryption.value).toBe(false)
+    expect(s3.getCurrentDek()).toBeNull()
+  })
 })

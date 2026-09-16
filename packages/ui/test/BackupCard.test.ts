@@ -214,4 +214,54 @@ describe('BackupCard', () => {
       if (mode.type === 'keep') expect(mode.n).toBe(7)
     })
   })
+
+  it('导出到文件：exportToFile 成功显示「已导出到文件」，取消（false）显示「已取消」', async () => {
+    const p = makePlatform({ exportToFile: vi.fn(async () => true) })
+    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
+    await w.findAll('button').find((b) => b.text() === '导出到文件')!.trigger('click')
+    await vi.waitFor(() => expect(p.exportToFile).toHaveBeenCalledWith('{}', 'sec'))
+    expect(w.text()).toContain('已导出到文件')
+    // 用户在系统对话框取消：saved=false → 提示「已取消」
+    const p2 = makePlatform({ exportToFile: vi.fn(async () => false) })
+    const w2 = mount(BackupCard, { props: { platform: p2, vaultJson: '{}', sessionSecret: 'sec' } })
+    await w2.findAll('button').find((b) => b.text() === '导出到文件')!.trigger('click')
+    await vi.waitFor(() => expect(w2.text()).toContain('已取消'))
+  })
+
+  it('keep 模式份数修改：keep-n input 变更以 (keep, n) 调 setMode（下取整且最小 1）', async () => {
+    const p = makePlatform()
+    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
+    await w.find('.keep-n input').setValue('3')
+    await vi.waitFor(() => expect(p.setMode).toHaveBeenCalledWith({ type: 'keep', n: 3 }))
+    // 非法输入（0/NaN）：回落最小值 1
+    await w.find('.keep-n input').setValue('0')
+    await vi.waitFor(() => expect(p.setMode).toHaveBeenLastCalledWith({ type: 'keep', n: 1 }))
+  })
+
+  it('恢复第 2 步：确认覆盖调 replaceAllOp(pending) 并显示「恢复成功」；失败显示错误', async () => {
+    const p = makePlatform({
+      listBackups: vi.fn(async () => [{ name: 'b1.json' }]),
+      restoreByName: vi.fn(async () => ({ json: VALID_VAULT })),
+      replaceAllOp: vi.fn(async () => {}),
+    })
+    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 's1' } })
+    await vi.waitFor(() => expect(w.findAll('button').some((b) => b.text() === '恢复')).toBe(true))
+    await w.findAll('button').find((b) => b.text() === '恢复')!.trigger('click')
+    await vi.waitFor(() => expect(w.find('.confirm-row').exists()).toBe(true))
+    await w.findAll('button').find((b) => b.text() === '确认覆盖')!.trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('恢复成功'))
+    expect(p.replaceAllOp).toHaveBeenCalledTimes(1)
+    // 失败路径：replaceAllOp 拒绝 → 错误提示
+    const p2 = makePlatform({
+      listBackups: vi.fn(async () => [{ name: 'b1.json' }]),
+      restoreByName: vi.fn(async () => ({ json: VALID_VAULT })),
+      replaceAllOp: vi.fn(async () => { throw new Error('replace failed') }),
+    })
+    const w2 = mount(BackupCard, { props: { platform: p2, vaultJson: '{}', sessionSecret: 's1' } })
+    await vi.waitFor(() => expect(w2.findAll('button').some((b) => b.text() === '恢复')).toBe(true))
+    await w2.findAll('button').find((b) => b.text() === '恢复')!.trigger('click')
+    await vi.waitFor(() => expect(w2.find('.confirm-row').exists()).toBe(true))
+    await w2.findAll('button').find((b) => b.text() === '确认覆盖')!.trigger('click')
+    await vi.waitFor(() => expect(w2.text()).toContain('replace failed'))
+  })
 })
