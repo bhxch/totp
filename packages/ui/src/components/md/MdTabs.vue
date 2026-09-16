@@ -27,5 +27,5 @@ const emit = defineEmits<{ select: [name: string] }>()
 .md-tabs__item--active { color: var(--md-sys-color-primary); }
 .md-tabs__item--active::after { content: ''; position: absolute; left: 16px; right: 16px; bottom: 0;
   height: 3px; border-radius: 3px 3px 0 0; background: var(--md-sys-color-primary); }
-.md-tabs__label { font-size: 12px; line-height: 16px; font-weight: 500; }
+.md-tabs__label { font-size: var(--md-sys-typescale-body-small); line-height: 16px; font-weight: 500; }
 </style>

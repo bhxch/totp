@@ -18,7 +18,7 @@ function onChange(e: Event) {
 </template>
 <style scoped>
 .md-checkbox { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font: inherit;
-  font-size: 14px; color: var(--md-sys-color-on-surface); vertical-align: middle; }
+  font-size: var(--md-sys-typescale-body-medium); color: var(--md-sys-color-on-surface); vertical-align: middle; }
 .md-checkbox--disabled { cursor: default; opacity: .38; }
 .md-checkbox__input { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }

@@ -7,7 +7,7 @@ const emit = defineEmits<{ click: [event: MouseEvent] }>()
 </template>
 <style scoped>
 .md-btn { border: none; cursor: pointer; border-radius: 100px; padding: 0 24px; height: 40px;
-  font: inherit; font-size: 14px; font-weight: 500; display: inline-flex; align-items: center; gap: 8px;
+  font: inherit; font-size: var(--md-sys-typescale-body-medium); font-weight: 500; display: inline-flex; align-items: center; gap: 8px;
   transition: box-shadow .15s; position: relative; }
 .md-btn:disabled { opacity: .38; cursor: default; }
 .md-btn::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: transparent; transition: background-color .15s; }

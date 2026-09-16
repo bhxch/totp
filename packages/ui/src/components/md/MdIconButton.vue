@@ -6,7 +6,7 @@ withDefaults(defineProps<{ variant?: 'standard' | 'filled' | 'tonal' | 'outlined
 </template>
 <style scoped>
 .md-icon-btn { border: none; cursor: pointer; border-radius: 100px; width: 40px; height: 40px; padding: 0;
-  font: inherit; font-size: 14px; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  font: inherit; font-size: var(--md-sys-typescale-body-medium); font-weight: 500; display: inline-flex; align-items: center; justify-content: center; gap: 4px;
   transition: box-shadow .15s; position: relative; }
 .md-icon-btn:disabled { opacity: .38; cursor: default; }
 .md-icon-btn::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: transparent; transition: background-color .15s; }

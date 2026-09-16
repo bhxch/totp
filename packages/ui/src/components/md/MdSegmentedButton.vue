@@ -26,7 +26,7 @@ function onKeydown(e: KeyboardEvent) {
 <style scoped>
 .md-seg { display: inline-flex; font: inherit; vertical-align: middle; }
 .md-seg__item { border: none; cursor: pointer; background: transparent; color: var(--md-sys-color-on-surface);
-  height: 40px; padding: 0 16px; font: inherit; font-size: 14px; font-weight: 500;
+  height: 40px; padding: 0 16px; font: inherit; font-size: var(--md-sys-typescale-body-medium); font-weight: 500;
   display: inline-flex; align-items: center; gap: 6px; position: relative;
   transition: background-color .15s; }
 .md-seg__item + .md-seg__item { box-shadow: inset 1px 0 0 var(--md-sys-color-outline); }

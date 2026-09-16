@@ -83,7 +83,7 @@ onBeforeUnmount(() => {
   background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface);
   box-shadow: 0 4px 12px var(--md-sys-color-shadow); }
 .md-dialog:focus-visible { outline: none; }
-.md-dialog__headline { margin: 0 0 12px; font-size: 20px; font-weight: 500; }
-.md-dialog__body { font-size: 14px; }
+.md-dialog__headline { margin: 0 0 12px; font-size: 20px; /* headline 尺寸，M3 headline-small 24 不适用弹窗 */ font-weight: 500; }
+.md-dialog__body { font-size: var(--md-sys-typescale-body-medium); }
 .md-dialog__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 </style>

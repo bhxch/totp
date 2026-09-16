@@ -12,5 +12,5 @@ withDefaults(defineProps<{ variant?: 'outlined' | 'elevated'; padding?: 'compact
 .md-card--compact { padding: 8px; }
 .md-card--outlined { background: var(--md-sys-color-surface); box-shadow: inset 0 0 0 1px var(--md-sys-color-outline); }
 .md-card--elevated { background: var(--md-sys-color-surface-container-low); box-shadow: 0 1px 3px var(--md-sys-color-shadow); }
-.md-card__header { font-size: 14px; font-weight: 500; margin-bottom: 8px; }
+.md-card__header { font-size: var(--md-sys-typescale-body-medium); font-weight: 500; margin-bottom: 8px; }
 </style>

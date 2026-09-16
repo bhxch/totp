@@ -37,7 +37,7 @@ const emit = defineEmits<{ select: [name: string] }>()
 .md-rail__item--active { color: var(--md-sys-color-on-surface); }
 .md-rail__item--active .md-rail__pill { background: var(--md-sys-color-secondary-container);
   color: var(--md-sys-color-on-secondary-container); }
-.md-rail__label { font-size: 12px; line-height: 16px; }
+.md-rail__label { font-size: var(--md-sys-typescale-body-small); line-height: 16px; }
 .md-rail__actions { margin-top: auto; display: flex; flex-direction: column; align-items: center;
   gap: 4px; padding: 8px 12px 0; }
 </style>

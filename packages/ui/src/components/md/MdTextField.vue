@@ -45,14 +45,14 @@ const inputAttrs = computed(() => {
 .md-text-field--disabled { opacity: .38; cursor: default; }
 .md-text-field--disabled .md-text-field__input { cursor: default; }
 .md-text-field__label { position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
-  font-size: 16px; color: var(--md-sys-color-on-surface-variant); pointer-events: none; transition: all .15s; }
+  font-size: var(--md-sys-typescale-body-large); color: var(--md-sys-color-on-surface-variant); pointer-events: none; transition: all .15s; }
 .md-text-field__label--floated,
-.md-text-field__box:focus-within .md-text-field__label { top: 8px; transform: none; font-size: 12px; }
+.md-text-field__box:focus-within .md-text-field__label { top: 8px; transform: none; font-size: var(--md-sys-typescale-body-small); }
 .md-text-field__box:focus-within .md-text-field__label { color: var(--md-sys-color-primary); }
 .md-text-field--error .md-text-field__box:focus-within .md-text-field__label,
 .md-text-field--error .md-text-field__label { color: var(--md-sys-color-error); }
 .md-text-field__input { width: 100%; box-sizing: border-box; border: none; outline: none; background: transparent;
-  padding: 22px 16px 6px; font: inherit; font-size: 16px; color: var(--md-sys-color-on-surface); }
+  padding: 22px 16px 6px; font: inherit; font-size: var(--md-sys-typescale-body-large); color: var(--md-sys-color-on-surface); }
 .md-text-field__input::placeholder { color: var(--md-sys-color-on-surface-variant); }
-.md-text-field__error { margin: 0; padding: 0 16px; font-size: 12px; color: var(--md-sys-color-error); }
+.md-text-field__error { margin: 0; padding: 0 16px; font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-error); }
 </style>
