@@ -185,6 +185,21 @@ describe('createDesktopCloudSync', () => {
     expect(recordStatus).toHaveBeenCalledWith(false, '凭据读取失败')
   })
 
+  it('⑧badopt 落盘失败 → 基线不回写（下轮自动重试下载），onError 与 recordStatus(false) 收到', async () => {
+    const b = fakeBackend(await envelopeBytesOf(B, PW))
+    const { deps, saveTargetHash, onError, recordStatus } = makeDeps({
+      loadCreds: vi.fn(async () => [{ cred: WEBDAV_CRED, enabled: true }]),
+      makeBackend: () => b,
+      persistAdopted: vi.fn(async () => {
+        throw new Error('落盘失败')
+      }),
+    })
+    await expect(createDesktopCloudSync(deps).run()).resolves.toBeUndefined()
+    expect(saveTargetHash).not.toHaveBeenCalled() // 先采纳后回写：落盘失败本轮 hashes 一并不落盘
+    expect(onError).toHaveBeenCalledWith(expect.any(Error))
+    expect(recordStatus).toHaveBeenCalledWith(false, '落盘失败')
+  })
+
   it('⑨busy 重入：run 在途时第二次 run 直接跳过', async () => {
     let release!: () => void
     const gate = new Promise<void>((r) => {

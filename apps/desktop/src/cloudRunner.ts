@@ -64,9 +64,12 @@ export function createDesktopCloudSync(deps: CloudRunnerDeps): { run(): Promise<
           deps.saveConflictBackup?.(key, bytes)
         },
       })
+      // 采纳先于基线回写（审查裁定）：persistAdopted 失败则本轮 hashes 一并不落盘，下轮基线
+      // 缺失/为旧值 → 自动重试下载；若先写基线，失败会使下轮全线 in-sync，云端较新版本永远
+      // 不再被自动下载（静默僵持无自愈）
+      if (r.adopted) await deps.persistAdopted(r.finalVaultJson)
       // 回写各目标基线：成功目标=新 hash；失败目标（hashes 无键）=null 即删除基线（下轮全量重比）
       for (const t of inputs) await deps.saveTargetHash(t.key, r.hashes[t.key] ?? null)
-      if (r.adopted) await deps.persistAdopted(r.finalVaultJson)
       deps.recordStatus?.(true, r.results.map((x) => `${x.key}: ${x.outcome?.action ?? 'failed'}`).join('; '))
     } catch (err) {
       deps.onError?.(err)
