@@ -5,6 +5,7 @@ import { open, save } from '@tauri-apps/plugin-dialog'
 import { backupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, randomBytes, SCHEMES_KEY, sha256Hex, type CloudCred, type ImportScheme, type StorageAdapter, type Vault } from '@totp/core'
 import { createPrfCredential, createClipboardClearer, createIconStore, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupMode, type BackupPlatform, type CloudPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref } from 'vue'
+import { createDesktopAutoRunner } from './autoBackup'
 import { createBackupToDir, listBackups, readBackupByName, readBackupFileOs, saveConflictBackupToDir, writeBackupFileOs } from './backupService'
 import { decryptDpapiOs, readImportFileBytesOs, readImportFileOs } from './importService'
 import { createTauriFs } from './tauriFs'
@@ -182,6 +183,31 @@ const backupPlatform: BackupPlatform = {
   decryptDpapi: (b64) => decryptDpapiOs(b64),
 }
 
+/** 自动备份 runner（D2）：backup/cloud 双通道。deps 闭包实时读 store/platform/localStorage，
+ *  store 未就绪时 isLocked 兜底 true → decideAutoRun skip，保证锁定态/未初始化永不自动写 */
+const auto = createDesktopAutoRunner({
+  isLocked: () => store.value?.locked.value ?? true,
+  getSecret: () => store.value?.backupSecret.value ?? null,
+  getVaultJson: () => JSON.stringify(store.value?.vault ?? null),
+  backupPrefs: () => loadBackupPrefs(),
+  // desktop 云多目标编排 Task 11 接入；接入前恒 null（自动云同步不启用）
+  cloudPrefs: () => null,
+  getLastBackupHash: () => localStorage.getItem(LAST_BACKUP_HASH_KEY),
+  setLastBackupHash: (h) => {
+    try {
+      localStorage.setItem(LAST_BACKUP_HASH_KEY, h)
+    } catch { /* hash 持久化失败仅影响去重，不阻塞 */ }
+  },
+  doBackup: async (json, secret) => {
+    await createBackupToDir(json, secret, backupMode.value, await getBackupDir())
+  },
+  // Task 11 接入多目标编排；cloudPrefs 恒 null 不会触达，仍给 no-op 满足接口
+  doCloudSync: async () => {},
+  // core sha256Hex 接收字节：vault JSON → UTF-8 编码后摘要
+  sha256Hex: (s) => sha256Hex(new TextEncoder().encode(s)),
+  onError: (err, channel) => console.warn(`[autoBackup:${channel}]`, err),
+})
+
 /**
  * 云同步平台实现：凭据与 cloudRev 存 AppData 本地 JSON（cloudCred/cloudRev 键，不做系统级加密）；
  * 冲突副本写 backups/conflict-{ts}.totpbackup；采用云端数据经 store.replaceAllOp 整体替换。
@@ -294,10 +320,12 @@ onMounted(async () => {
   try {
     const adapter = await createTauriFs()
     fsAdapter = adapter
-    // spec §7 末尾：主窗口独立解锁——windowId='main' 与 mini 隔离 DEK
-    const s = createVueStore(adapter, { windowId: 'main' })
+    // spec §7 末尾：主窗口独立解锁——windowId='main' 与 mini 隔离 DEK；
+    // onCommitted：任何经队列的写 op 成功后触发自动备份变更检测（锁定态由 runner 内 decideAutoRun 挡下）
+    const s = createVueStore(adapter, { windowId: 'main', onCommitted: () => auto.notifyChanged() })
     await s.initStore()
     store.value = s
+    auto.start()
     // 主题接线:initStore 成功后挂 useTheme(设置已加载为真实值;首帧属性由 html 内联脚本负责)
     useTheme(s)
     const iconStore = createIconStore(adapter)
@@ -308,7 +336,10 @@ onMounted(async () => {
   }
 })
 
-onScopeDispose(() => unlistenFocus?.())
+onScopeDispose(() => {
+  auto.stop()
+  unlistenFocus?.()
+})
 
 /** 30s 清剪贴板：settings.clipboardClearEnabled 开启时复制后定时清空（重复复制重置计时；setup 作用域销毁自动 dispose；store 未就绪时读不到开关视为关闭） */
 const clearer = createClipboardClearer(
