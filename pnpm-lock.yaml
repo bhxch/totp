@@ -60,6 +60,9 @@ importers:
       vite-plugin-vue:
         specifier: npm:@vitejs/plugin-vue@^5.1.0
         version: '@vitejs/plugin-vue@5.2.4(vite@5.4.21(@types/node@22.20.2))(vue@3.5.42(typescript@5.9.3))'
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.20.2)(jsdom@25.0.1)
       vue-tsc:
         specifier: ^2.1.0
         version: 2.2.12(typescript@5.9.3)

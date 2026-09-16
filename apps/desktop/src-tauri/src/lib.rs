@@ -129,6 +129,37 @@ fn remove_backup_file(app: tauri::AppHandle, name: String) -> Result<(), String>
     std::fs::remove_file(dir.join(name)).map_err(|e| e.to_string())
 }
 
+/// 用户自选备份目录的删除命令（D4）：与 remove_backup_file 同守护（白名单名 + ensure_within），
+/// 只是 allowed_dir 从「AppData/backups 固定值」改为「前端对话框返回并持久化的目录」
+#[tauri::command]
+fn remove_backup_file_os(path: String, allowed_dir: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    let name = p
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if !valid_backup_name(&name) {
+        return Err("invalid backup name".into());
+    }
+    ensure_within(p, &allowed_dir)?;
+    std::fs::remove_file(p).map_err(|e| e.to_string())
+}
+
+/// 用户自选备份目录的列举命令（D4）：不做 ensure_within——dir 本身即用户显式授权目标
+/// （与写/读命令的 allowed_dir 同源，均来自系统对话框），列举仅返回白名单名
+/// （vault-*.totpbackup 与 conflict-*.totpbackup），不泄露目录内其他文件
+#[tauri::command]
+fn list_backup_files_os(dir: String) -> Result<Vec<String>, String> {
+    let rd = std::fs::read_dir(&dir).map_err(|e| e.to_string())?;
+    let mut names: Vec<String> = rd
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| valid_backup_name(n) || n.starts_with("conflict-"))
+        .collect();
+    names.sort();
+    Ok(names)
+}
+
 #[tauri::command]
 fn read_text_file_os(path: String, allowed_dir: String) -> Result<String, String> {
     // 扩展名白名单：与写侧对齐；本命令唯一用途是读取备份文件，
@@ -440,6 +471,8 @@ pub fn run() {
             read_import_file_os,
             read_import_file_bytes_os,
             remove_backup_file,
+            remove_backup_file_os,
+            list_backup_files_os,
             decrypt_dpapi,
             dpapi_protect,
             dpapi_unprotect,
@@ -447,4 +480,76 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+// repo 首批 Rust 单测：覆盖备份 os 命令的纯守护逻辑（白名单/目录边界），
+// 文件系统用 std::env::temp_dir 隔离，不依赖 Tauri runtime
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn valid_backup_name_accepts_vault_prefixed() {
+        assert!(valid_backup_name("vault-20260916-120000.totpbackup"));
+    }
+
+    #[test]
+    fn valid_backup_name_rejects_traversal_and_conflict() {
+        // 白名单仅 vault- 前缀：路径穿越与 conflict- 副本均不可经删除命令触达
+        assert!(!valid_backup_name("../x.totpbackup"));
+        assert!(!valid_backup_name("conflict-1.totpbackup"));
+    }
+
+    #[test]
+    fn ensure_within_rejects_path_outside_allowed_dir() {
+        let base = std::env::temp_dir().join("totp_ensure_within_test");
+        let allowed = base.join("allowed");
+        let other = base.join("other");
+        std::fs::create_dir_all(&allowed).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        let outside = other.join("vault-20260916-120000.totpbackup");
+        std::fs::write(&outside, "x").unwrap();
+        assert!(ensure_within(&outside, allowed.to_str().unwrap()).is_err());
+        let inside = allowed.join("vault-20260916-120000.totpbackup");
+        std::fs::write(&inside, "x").unwrap();
+        assert!(ensure_within(&inside, allowed.to_str().unwrap()).is_ok());
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn remove_backup_file_os_deletes_within_allowed_dir_only() {
+        let base = std::env::temp_dir().join("totp_rm_os_test");
+        let allowed = base.join("allowed");
+        std::fs::create_dir_all(&allowed).unwrap();
+        let name = "vault-20260916-120000.totpbackup";
+        let target = allowed.join(name);
+        std::fs::write(&target, "x").unwrap();
+        remove_backup_file_os(target.to_str().unwrap().into(), allowed.to_str().unwrap().into()).unwrap();
+        assert!(!target.exists());
+        // allowed_dir 之外的同名文件：白名单名也必须拒绝删除
+        let outside = base.join(name);
+        std::fs::write(&outside, "x").unwrap();
+        assert!(remove_backup_file_os(outside.to_str().unwrap().into(), allowed.to_str().unwrap().into()).is_err());
+        assert!(outside.exists());
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn list_backup_files_os_returns_sorted_vault_and_conflict_only() {
+        let base = std::env::temp_dir().join("totp_list_os_test");
+        std::fs::create_dir_all(&base).unwrap();
+        for n in ["vault-20260916-120001.totpbackup", "vault-20260916-120000.totpbackup", "conflict-20260916-120000.totpbackup", "secret.txt"] {
+            std::fs::write(base.join(n), "x").unwrap();
+        }
+        let names = list_backup_files_os(base.to_str().unwrap().into()).unwrap();
+        assert_eq!(
+            names,
+            vec![
+                "conflict-20260916-120000.totpbackup".to_string(),
+                "vault-20260916-120000.totpbackup".to_string(),
+                "vault-20260916-120001.totpbackup".to_string(),
+            ]
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
 }

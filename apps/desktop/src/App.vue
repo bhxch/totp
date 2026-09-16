@@ -2,8 +2,8 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { open, save } from '@tauri-apps/plugin-dialog'
-import { backupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, randomBytes, SCHEMES_KEY, type CloudCred, type ImportScheme, type StorageAdapter, type Vault } from '@totp/core'
-import { createPrfCredential, createClipboardClearer, createIconStore, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupMode, type BackupPlatform, type CloudPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type SecurityPlatform, type VueStore } from '@totp/ui'
+import { backupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, randomBytes, SCHEMES_KEY, sha256Hex, type CloudCred, type ImportScheme, type StorageAdapter, type Vault } from '@totp/core'
+import { createPrfCredential, createClipboardClearer, createIconStore, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupMode, type BackupPlatform, type CloudPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref } from 'vue'
 import { createBackupToDir, listBackups, readBackupByName, readBackupFileOs, saveConflictBackupToDir, writeBackupFileOs } from './backupService'
 import { decryptDpapiOs, readImportFileBytesOs, readImportFileOs } from './importService'
@@ -61,6 +61,52 @@ function persistBackupMode(m: BackupMode): void {
 
 const backupMode = ref<BackupMode>(loadBackupMode())
 
+// ---------- 自动备份偏好与自选备份目录（D2/D4）----------
+// 两者均为本地偏好：autoPrefs 存桌面 localStorage（ui BackupCard 读写经 platform 同一对函数）；目录存 AppData JSON（fsAdapter）
+const BACKUP_AUTO_PREFS_KEY = 'backupAutoPrefs'
+const BACKUP_DIR_KEY = 'backupDir'
+const LAST_BACKUP_HASH_KEY = 'lastBackupHash'
+const DEFAULT_AUTO_PREFS: BackupAutoPrefs = { onChange: false, onInterval: false, intervalMinutes: 60 }
+
+/** Task 7（BackupCard）与 Task 10（自动备份 runner deps）共用的唯一读写实现，避免两处漂移 */
+function loadBackupPrefs(): BackupAutoPrefs {
+  try {
+    const raw = localStorage.getItem(BACKUP_AUTO_PREFS_KEY)
+    if (!raw) return { ...DEFAULT_AUTO_PREFS }
+    const p = JSON.parse(raw) as Partial<BackupAutoPrefs>
+    const minutes = Number(p.intervalMinutes)
+    return {
+      onChange: p.onChange === true,
+      onInterval: p.onInterval === true,
+      // 兜底最小 15 分钟：与 core 调度器 30s tick 粒度匹配，防误配置出低于 tick 语义的间隔
+      intervalMinutes: Number.isInteger(minutes) && minutes >= 15 ? minutes : DEFAULT_AUTO_PREFS.intervalMinutes,
+    }
+  } catch {
+    return { ...DEFAULT_AUTO_PREFS }
+  }
+}
+
+function persistBackupPrefs(p: BackupAutoPrefs): void {
+  try {
+    localStorage.setItem(BACKUP_AUTO_PREFS_KEY, JSON.stringify(p))
+  } catch { /* 偏好持久化失败不影响功能 */ }
+}
+
+async function getBackupDir(): Promise<string | null> {
+  if (!fsAdapter) return null
+  try {
+    return await fsAdapter.get(BACKUP_DIR_KEY)
+  } catch {
+    return null
+  }
+}
+
+async function setBackupDir(d: string | null): Promise<void> {
+  if (!fsAdapter) throw new Error('数据尚未就绪')
+  if (d === null) await fsAdapter.delete(BACKUP_DIR_KEY)
+  else await fsAdapter.set(BACKUP_DIR_KEY, d)
+}
+
 // 最后一次导入选择的路径（模块级缓存）：SQLite 字节入口复用，避免同一文件二次弹窗
 let lastImportPath: string | null = null
 
@@ -82,7 +128,15 @@ const backupPlatform: BackupPlatform = {
     backupMode.value = m
     persistBackupMode(m)
   },
-  createBackup: (vaultJson, password) => createBackupToDir(vaultJson, password, backupMode.value),
+  createBackup: async (vaultJson, password) => {
+    const dirOverride = await getBackupDir()
+    const r = await createBackupToDir(vaultJson, password, backupMode.value, dirOverride)
+    // 手动备份同样记录 lastBackupHash：自动备份的 unchanged 去重以最新落盘内容为基线
+    try {
+      localStorage.setItem(LAST_BACKUP_HASH_KEY, await sha256Hex(new TextEncoder().encode(vaultJson)))
+    } catch { /* hash 记录失败不影响备份本身 */ }
+    return r
+  },
   async exportToFile(vaultJson, password) {
     // 先出 save 对话框拿路径（取消则直接 false），再做 Argon2id 加密写文件，省一次白跑的 KDF
     const path = await save({ defaultPath: backupFileName(new Date()), filters: BACKUP_FILE_FILTERS })
@@ -96,10 +150,18 @@ const backupPlatform: BackupPlatform = {
     if (typeof path !== 'string') return null
     return { json: await openBackupText(await readBackupFileOs(path), password) }
   },
-  listBackups: () => listBackups(),
+  listBackups: async () => listBackups(await getBackupDir()),
   async restoreByName(name, password) {
-    return { json: await openBackupText(await readBackupByName(name), password) }
+    return { json: await openBackupText(await readBackupByName(name, await getBackupDir()), password) }
   },
+  getAutoPrefs: () => loadBackupPrefs(),
+  setAutoPrefs: (p) => persistBackupPrefs(p),
+  pickBackupDir: async () => {
+    const path = await open({ directory: true, multiple: false })
+    return typeof path === 'string' ? path : null
+  },
+  getBackupDir,
+  setBackupDir,
   async replaceAllOp(v) {
     const s = store.value
     if (!s) throw new Error('数据尚未就绪')
@@ -151,7 +213,7 @@ const cloudPlatform: CloudPlatform = {
     if (!s) throw new Error('数据尚未就绪')
     await s.replaceAllOp(JSON.parse(json) as Vault)
   },
-  saveConflictBackup: (bytes) => saveConflictBackupToDir(bytes),
+  saveConflictBackup: async (bytes) => saveConflictBackupToDir(bytes, await getBackupDir()),
   async loadHash() {
     if (!fsAdapter) return null
     try {
