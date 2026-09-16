@@ -12,6 +12,9 @@ const emit = defineEmits<{ click: [event: MouseEvent] }>()
 .md-btn:disabled { opacity: .38; cursor: default; }
 .md-btn::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: transparent; transition: background-color .15s; }
 .md-btn:not(:disabled):hover::after { background: color-mix(in srgb, currentColor 8%, transparent); }
+/* M3 状态层:pressed 12% / focus 12%(danger 的 currentColor=error 自动同色);focus 同时保留 3px focus ring */
+.md-btn:not(:disabled):active::after,
+.md-btn:not(:disabled):focus-visible::after { background: color-mix(in srgb, currentColor 12%, transparent); }
 .md-btn--filled { background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
 .md-btn--tonal { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
 .md-btn--outlined { background: transparent; color: var(--md-sys-color-primary); box-shadow: inset 0 0 0 1px var(--md-sys-color-outline); }

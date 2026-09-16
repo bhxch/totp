@@ -33,10 +33,15 @@ const emit = defineEmits<{ select: [name: string] }>()
   display: flex; align-items: center; justify-content: center;
   transition: background-color .15s, color .15s; }
 .md-rail__item:hover .md-rail__pill { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
+.md-rail__item:active .md-rail__pill { background: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent); }
 .md-rail__item:focus-visible { outline: 3px solid var(--md-sys-color-primary); outline-offset: 2px; }
 .md-rail__item--active { color: var(--md-sys-color-on-surface); }
 .md-rail__item--active .md-rail__pill { background: var(--md-sys-color-secondary-container);
   color: var(--md-sys-color-on-secondary-container); }
+/* 活动项交互态:容器色之上叠 on-secondary-container 状态层(审查 X6——通用 hover/active 特异度更高,
+ * 不加复合规则会让活动 pill 在悬停时被纯灰替换而「消失」) */
+.md-rail__item--active:hover .md-rail__pill { background: color-mix(in srgb, var(--md-sys-color-on-secondary-container) 8%, var(--md-sys-color-secondary-container)); }
+.md-rail__item--active:active .md-rail__pill { background: color-mix(in srgb, var(--md-sys-color-on-secondary-container) 12%, var(--md-sys-color-secondary-container)); }
 .md-rail__label { font-size: var(--md-sys-typescale-body-small); line-height: 16px; }
 .md-rail__actions { margin-top: auto; display: flex; flex-direction: column; align-items: center;
   gap: 4px; padding: 8px 12px 0; }

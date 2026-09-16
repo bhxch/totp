@@ -20,10 +20,18 @@ function onChange(e: Event) {
 .md-switch--disabled { opacity: .38; cursor: default; }
 .md-switch__input { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-.md-switch__track { width: 52px; height: 32px; border-radius: 16px; box-sizing: border-box;
+.md-switch__track { position: relative; width: 52px; height: 32px; border-radius: 16px; box-sizing: border-box;
   background: var(--md-sys-color-surface-container-highest); box-shadow: inset 0 0 0 2px var(--md-sys-color-outline);
   display: inline-flex; align-items: center; padding: 4px; transition: background-color .15s, box-shadow .15s; }
-.md-switch__thumb { width: 24px; height: 24px; border-radius: 50%; background: var(--md-sys-color-outline);
+/* M3 状态层 hover 8% / pressed 12%(审查 X7;M3 定义于拇指触达区,本组件以轨道面近似叠加;
+ * 未选中叠 on-surface,选中在 primary 轨道上叠 on-primary)::before 置于拇指之下 */
+.md-switch__track::before { content: ''; position: absolute; inset: 0; border-radius: inherit;
+  background: transparent; transition: background-color .15s; }
+.md-switch:hover .md-switch__track::before { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
+.md-switch:active .md-switch__track::before { background: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent); }
+.md-switch--checked:hover .md-switch__track::before { background: color-mix(in srgb, var(--md-sys-color-on-primary) 8%, transparent); }
+.md-switch--checked:active .md-switch__track::before { background: color-mix(in srgb, var(--md-sys-color-on-primary) 12%, transparent); }
+.md-switch__thumb { position: relative; width: 24px; height: 24px; border-radius: 50%; background: var(--md-sys-color-outline);
   transition: transform .15s, background-color .15s; }
 .md-switch--checked .md-switch__track { background: var(--md-sys-color-primary); box-shadow: none; }
 .md-switch--checked .md-switch__thumb { background: var(--md-sys-color-on-primary); transform: translateX(20px); }

@@ -24,7 +24,10 @@ function onKeydown(e: KeyboardEvent) {
   </div>
 </template>
 <style scoped>
-.md-seg { display: inline-flex; font: inherit; vertical-align: middle; }
+.md-seg { display: inline-flex; font: inherit; vertical-align: middle; position: relative; border-radius: 100px; }
+/* M3 outlined 分段按钮:整组 1px outline + 全圆端(审查 X8);::after 置于段背景之上,保证选中段填充不吃掉描边 */
+.md-seg::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  box-shadow: inset 0 0 0 1px var(--md-sys-color-outline); }
 .md-seg__item { border: none; cursor: pointer; background: transparent; color: var(--md-sys-color-on-surface);
   height: 40px; padding: 0 16px; font: inherit; font-size: var(--md-sys-typescale-body-medium); font-weight: 500;
   display: inline-flex; align-items: center; gap: 6px; position: relative;
@@ -33,6 +36,9 @@ function onKeydown(e: KeyboardEvent) {
 .md-seg__item::after { content: ''; position: absolute; inset: 0; pointer-events: none;
   background: transparent; transition: background-color .15s; }
 .md-seg__item:hover::after { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
+/* M3 状态层:pressed 12% / focus 12%(focus 同时保留 3px focus ring) */
+.md-seg__item:active::after,
+.md-seg__item:focus-visible::after { background: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent); }
 .md-seg__item:focus-visible { outline: 3px solid var(--md-sys-color-primary); outline-offset: 2px; }
 .md-seg__item--selected { background: var(--md-sys-color-secondary-container);
   color: var(--md-sys-color-on-secondary-container); box-shadow: none; }

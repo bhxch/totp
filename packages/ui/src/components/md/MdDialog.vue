@@ -79,7 +79,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .md-dialog__scrim { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center;
   background: color-mix(in srgb, var(--md-sys-color-scrim) 55%, transparent); }
-.md-dialog { width: 90%; max-width: 560px; padding: 24px; border-radius: 12px;
+.md-dialog { width: 90%; max-width: 560px; padding: 24px; border-radius: 28px; /* M3 dialog=extra-large 28dp(审查 X9) */
   background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface);
   box-shadow: 0 4px 12px var(--md-sys-color-shadow); }
 .md-dialog:focus-visible { outline: none; }

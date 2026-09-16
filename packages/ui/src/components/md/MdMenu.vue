@@ -35,7 +35,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   <div v-if="open" class="md-menu" role="menu" :style="`left: ${pos.left}px; top: ${pos.top}px;`"><slot /></div>
 </template>
 <style scoped>
-.md-menu { position: fixed; z-index: 1100; min-width: 120px; padding: 6px 0; border-radius: 12px;
+.md-menu { position: fixed; z-index: 1100; min-width: 120px; padding: 6px 0; border-radius: 4px; /* M3 menu=extra-small 4dp(审查 X9) */
   background: var(--md-sys-color-surface-container-high);
   box-shadow: inset 0 0 0 1px var(--md-sys-color-outline-variant), 0 2px 8px var(--md-sys-color-shadow); }
 </style>

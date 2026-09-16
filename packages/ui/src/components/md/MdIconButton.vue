@@ -11,6 +11,9 @@ withDefaults(defineProps<{ variant?: 'standard' | 'filled' | 'tonal' | 'outlined
 .md-icon-btn:disabled { opacity: .38; cursor: default; }
 .md-icon-btn::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: transparent; transition: background-color .15s; }
 .md-icon-btn:not(:disabled):hover::after { background: color-mix(in srgb, currentColor 8%, transparent); }
+/* M3 状态层:pressed 12% / focus 12%(focus 同时保留 3px focus ring) */
+.md-icon-btn:not(:disabled):active::after,
+.md-icon-btn:not(:disabled):focus-visible::after { background: color-mix(in srgb, currentColor 12%, transparent); }
 .md-icon-btn--standard { background: transparent; color: var(--md-sys-color-primary); }
 .md-icon-btn--filled { background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
 .md-icon-btn--tonal { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }

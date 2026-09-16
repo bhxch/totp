@@ -13,5 +13,8 @@ const emit = defineEmits<{ click: [event: MouseEvent] }>()
 .md-chip--selected { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); box-shadow: none; }
 .md-chip::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: transparent; transition: background-color .15s; }
 .md-chip:not(:disabled):hover::after { background: color-mix(in srgb, currentColor 8%, transparent); }
+/* M3 状态层:pressed 12% / focus 12%(focus 同时保留 3px focus ring) */
+.md-chip:not(:disabled):active::after,
+.md-chip:not(:disabled):focus-visible::after { background: color-mix(in srgb, currentColor 12%, transparent); }
 .md-chip:focus-visible { outline: 3px solid var(--md-sys-color-primary); outline-offset: 2px; }
 </style>

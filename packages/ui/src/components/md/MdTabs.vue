@@ -23,6 +23,7 @@ const emit = defineEmits<{ select: [name: string] }>()
   height: 56px; padding: 8px 8px 4px; color: var(--md-sys-color-on-surface-variant);
   transition: color .15s, background-color .15s; }
 .md-tabs__item:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
+.md-tabs__item:active { background: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent); }
 .md-tabs__item:focus-visible { outline: 3px solid var(--md-sys-color-primary); outline-offset: -1px; }
 .md-tabs__item--active { color: var(--md-sys-color-primary); }
 .md-tabs__item--active::after { content: ''; position: absolute; left: 16px; right: 16px; bottom: 0;

@@ -25,6 +25,14 @@ function onChange(e: Event) {
 .md-checkbox__box { position: relative; width: 18px; height: 18px; border-radius: 2px; box-sizing: border-box;
   background: transparent; box-shadow: inset 0 0 0 2px var(--md-sys-color-on-surface-variant);
   transition: background-color .15s, box-shadow .15s; flex: none; }
+/* M3 状态层 hover 8% / pressed 12%(审查 X7;M3 定义于 40dp 触达区,本组件以盒面近似叠加;
+ * 未选中叠 on-surface,选中在 primary 底上叠 on-primary)::before 置于勾选标 ::after 之下 */
+.md-checkbox__box::before { content: ''; position: absolute; inset: 0; border-radius: inherit;
+  background: transparent; transition: background-color .15s; }
+.md-checkbox:hover .md-checkbox__box::before { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
+.md-checkbox:active .md-checkbox__box::before { background: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent); }
+.md-checkbox--checked:hover .md-checkbox__box::before { background: color-mix(in srgb, var(--md-sys-color-on-primary) 8%, transparent); }
+.md-checkbox--checked:active .md-checkbox__box::before { background: color-mix(in srgb, var(--md-sys-color-on-primary) 12%, transparent); }
 .md-checkbox--checked .md-checkbox__box { background: var(--md-sys-color-primary); box-shadow: none; }
 .md-checkbox--checked .md-checkbox__box::after { content: ''; position: absolute; left: 5px; top: 1px;
   width: 5px; height: 10px; border-right: 2px solid var(--md-sys-color-on-primary);
