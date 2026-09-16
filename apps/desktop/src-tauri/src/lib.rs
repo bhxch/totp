@@ -324,9 +324,9 @@ fn base64_encode(data: &[u8]) -> String {
     out
 }
 
+// DPAPI 核心：从宏命令函数提取为 inner，供命令与 os_auto_*（Windows 委托分支）共用
 #[cfg(windows)]
-#[tauri::command]
-fn dpapi_protect(data_b64: String) -> Result<String, String> {
+fn dpapi_protect_inner(data_b64: String) -> Result<String, String> {
     use windows::Win32::Foundation::{HLOCAL, LocalFree};
     use windows::Win32::Security::Cryptography::{
         CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB, CryptProtectData,
@@ -350,6 +350,12 @@ fn dpapi_protect(data_b64: String) -> Result<String, String> {
     }
 }
 
+#[cfg(windows)]
+#[tauri::command]
+fn dpapi_protect(data_b64: String) -> Result<String, String> {
+    dpapi_protect_inner(data_b64)
+}
+
 #[cfg(not(windows))]
 #[tauri::command]
 fn dpapi_protect(_data_b64: String) -> Result<String, String> {
@@ -357,8 +363,7 @@ fn dpapi_protect(_data_b64: String) -> Result<String, String> {
 }
 
 #[cfg(windows)]
-#[tauri::command]
-fn dpapi_unprotect(wrapped_b64: String) -> Result<String, String> {
+fn dpapi_unprotect_inner(wrapped_b64: String) -> Result<String, String> {
     use windows::Win32::Foundation::{HLOCAL, LocalFree};
     use windows::Win32::Security::Cryptography::{
         CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB, CryptUnprotectData,
@@ -383,10 +388,62 @@ fn dpapi_unprotect(wrapped_b64: String) -> Result<String, String> {
     }
 }
 
+#[cfg(windows)]
+#[tauri::command]
+fn dpapi_unprotect(wrapped_b64: String) -> Result<String, String> {
+    dpapi_unprotect_inner(wrapped_b64)
+}
+
 #[cfg(not(windows))]
 #[tauri::command]
 fn dpapi_unprotect(_wrapped_b64: String) -> Result<String, String> {
     Err("仅 Windows 支持 DPAPI".into())
+}
+
+// osAutoUnlock 三平台统一通道（计划 15 T14）：Windows 委托 DPAPI；macOS Keychain / Linux
+// Secret Service 经 keyring。语义与 DPAPI 对齐：OS 保护 DEK 本体（base64 进出），解锁时静默取回。
+// D（诚实边界）：macOS/Linux keyring 分支在 Windows 构建上仅编译门控（cfg 不编译不下载依赖），
+// keyring 运行时行为登记 backlog 待真机验证；Windows 委托路径经 roundtrip 单测实跑。
+#[cfg(windows)]
+#[tauri::command]
+fn os_auto_protect(data_b64: String) -> Result<String, String> {
+    dpapi_protect_inner(data_b64)
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn os_auto_unprotect(wrapped_b64: String) -> Result<String, String> {
+    dpapi_unprotect_inner(wrapped_b64)
+}
+
+// keyring 条目存 base64(DEK)：Keychain/Secret Service 条目本身由 OS 加密，与 DPAPI 语义对齐
+//（wrapped 参数为与 dpapi/os_auto Windows 分支对齐的形态占位，取回恒读同一 service/account 条目）
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tauri::command]
+fn os_auto_protect(data_b64: String) -> Result<String, String> {
+    let entry = keyring::Entry::new("totp-desktop", "dek").map_err(|e| e.to_string())?;
+    entry.set_password(&data_b64).map_err(|e| e.to_string())?;
+    Ok(data_b64)
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tauri::command]
+fn os_auto_unprotect(_wrapped_b64: String) -> Result<String, String> {
+    let entry = keyring::Entry::new("totp-desktop", "dek").map_err(|e| e.to_string())?;
+    entry.get_password().map_err(|e| e.to_string())
+}
+
+// 其余平台报错桩（同 dpapi 桩风格）
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+#[tauri::command]
+fn os_auto_protect(_data_b64: String) -> Result<String, String> {
+    Err("当前平台不支持 OS 自动解锁".into())
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+#[tauri::command]
+fn os_auto_unprotect(_wrapped_b64: String) -> Result<String, String> {
+    Err("当前平台不支持 OS 自动解锁".into())
 }
 
 pub fn run() {
@@ -476,6 +533,8 @@ pub fn run() {
             decrypt_dpapi,
             dpapi_protect,
             dpapi_unprotect,
+            os_auto_protect,
+            os_auto_unprotect,
             set_global_shortcut
         ])
         .run(tauri::generate_context!())
@@ -551,5 +610,18 @@ mod tests {
             ]
         );
         std::fs::remove_dir_all(&base).ok();
+    }
+
+    // osAutoUnlock 统一通道（Windows 分支委托 DPAPI）：真实 CryptProtectData roundtrip，
+    // 断言 base64 进出一致（DEK 是任意字节，32B XChaCha20 key 形态）。仅 Windows 编译；
+    // macOS/Linux keyring 分支 cfg 不参与本机构建，运行时行为登记 backlog 真机验证。
+    #[cfg(windows)]
+    #[test]
+    fn os_auto_roundtrip_via_dpapi() {
+        let data = base64_encode(&[42u8; 32]);
+        let wrapped = os_auto_protect(data.clone()).expect("os_auto_protect");
+        assert_ne!(wrapped, data, "DPAPI 密文必须不同于明文 base64");
+        let unwrapped = os_auto_unprotect(wrapped).expect("os_auto_unprotect");
+        assert_eq!(data, unwrapped);
     }
 }

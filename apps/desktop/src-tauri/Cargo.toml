@@ -22,3 +22,9 @@ serde_json = "1"
 # DPAPI 解密（WinAuth 导入）：仅 Windows 目标编译
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+
+# osAutoUnlock 统一通道（mac Keychain / linux Secret Service）：仅对应目标编译，Windows 构建不下载不编译
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = "3"
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service"] }
