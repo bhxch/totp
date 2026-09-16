@@ -18,6 +18,8 @@ export interface WebdavCred {
   serverUrl: string
   username: string
   password: string
+  /** 云端目标对象路径，缺省 DEFAULT_OBJECT_PATH（见 targetPath.ts）。 */
+  objectPath?: string
 }
 
 export interface GistCred {
@@ -26,6 +28,8 @@ export interface GistCred {
   gistId: string
   /** 远端 gist 是否为 public；后端在 fetchGist 时探测并通过 onCredChange 回写，UI 据此给一次性提示。 */
   public?: boolean
+  /** 云端目标对象路径，缺省 DEFAULT_OBJECT_PATH（见 targetPath.ts）。 */
+  objectPath?: string
 }
 
 export interface S3Cred {
@@ -42,6 +46,8 @@ export interface S3Cred {
   sessionToken?: string
   /** 老 bucket（2020-03 之前创建，区域未迁移 virtual-host）强制 path-style；与 endpoint 任一为真即生效。 */
   forcePathStyle?: boolean
+  /** 云端目标对象路径，缺省 DEFAULT_OBJECT_PATH（见 targetPath.ts）。 */
+  objectPath?: string
 }
 
 export interface GDriveCred {
@@ -49,11 +55,15 @@ export interface GDriveCred {
   accessToken: string
   /** 目标文件 id；缺省时首推自动创建并经 onCredChange 回存。 */
   fileId?: string
+  /** 云端目标对象路径，缺省 DEFAULT_OBJECT_PATH（见 targetPath.ts）。 */
+  objectPath?: string
 }
 
 export interface OneDriveCred {
   backend: 'onedrive'
   accessToken: string
+  /** 云端目标对象路径，缺省 DEFAULT_OBJECT_PATH（见 targetPath.ts）。 */
+  objectPath?: string
 }
 
 /** 云后端凭据判别联合。 */
