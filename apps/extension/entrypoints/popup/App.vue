@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { entryMatchesUrl, getBuiltinIcons, type OtpEntry } from '@totp/core'
-import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, MdIconButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, parseUriToEntryData, SearchBar, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
+import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, MdCheckbox, MdIconButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, parseUriToEntryData, SearchBar, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
 import { PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
 import { storageAdapter } from '../../src/store'
@@ -268,7 +268,8 @@ async function copy(entry: OtpEntry) {
     <SearchBar v-model="query" />
 
     <div class="filter-row" v-if="tabUrl">
-      <label><input type="checkbox" :checked="filterOn" @change="toggleFilter" /> 按当前站点过滤</label>
+      <!-- M3 MdCheckbox(审查 X10):原 UA 原生 checkbox 深色 scheme 下未选中即深灰填充,即「复选框底色偏深」根因 -->
+      <MdCheckbox :model-value="filterOn" label="按当前站点过滤" @update:model-value="toggleFilter" />
       <span v-if="filterFallback" class="hint">当前站点无匹配，显示全部</span>
       <span v-else-if="filterOn" class="hint">匹配 {{ matched.length }} 条</span>
     </div>

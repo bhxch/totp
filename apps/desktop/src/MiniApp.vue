@@ -91,7 +91,8 @@ body { font-family: system-ui, sans-serif; margin: 0; }
 .reveal-mask { position: fixed; inset: 0; background: color-mix(in srgb, var(--md-sys-color-scrim) 55%, transparent); display: grid; place-items: center; z-index: 1000; }
 .reveal-card { background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); padding: 16px 18px; border-radius: 10px; max-width: 280px; width: 86%; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 4px 24px color-mix(in srgb, var(--md-sys-color-shadow) 25%, transparent); }
 .reveal-card h3 { font-size: var(--md-sys-typescale-body-medium); margin: 0; }
-.reveal-secret { font-family: ui-monospace, monospace; font-size: var(--md-sys-typescale-body-large); letter-spacing: 1px; background: var(--md-sys-color-surface-container-highest); padding: 8px; border-radius: 6px; text-align: center; word-break: break-all; }
+/* 揭示密文与列表验证码同档 code-large(审查 X11:同屏双端一致,Task 15 挂账裁定,不再用 body-large) */
+.reveal-secret { font-family: ui-monospace, monospace; font-size: var(--md-sys-typescale-code-large); letter-spacing: 1px; background: var(--md-sys-color-surface-container-highest); padding: 8px; border-radius: 6px; text-align: center; word-break: break-all; }
 .reveal-hint { font-size: var(--md-sys-typescale-label-small); opacity: .65; margin: 0; }
 .reveal-close { align-self: flex-end; }
 </style>
