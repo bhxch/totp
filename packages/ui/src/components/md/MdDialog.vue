@@ -8,7 +8,37 @@ const dialogRef = ref<HTMLElement | null>(null)
 let prevFocus: Element | null = null
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') emit('close')
+  if (e.key === 'Escape') {
+    emit('close')
+    return
+  }
+  if (e.key !== 'Tab') return
+  const root = dialogRef.value
+  if (!root) return
+  const focusables = Array.from(root.querySelectorAll<HTMLElement>('button, input, select, textarea, [tabindex]')).filter(
+    (el) => el.tabIndex >= 0 && !el.hasAttribute('disabled'),
+  )
+  if (focusables.length === 0) {
+    e.preventDefault()
+    root.focus()
+    return
+  }
+  const first = focusables[0]!
+  const last = focusables[focusables.length - 1]!
+  const active = document.activeElement
+  const inside = active === root || (active instanceof HTMLElement && root.contains(active))
+  if (!inside) {
+    e.preventDefault()
+    root.focus()
+  } else if (e.shiftKey) {
+    if (active === first || active === root) {
+      e.preventDefault()
+      last.focus()
+    }
+  } else if (active === last || active === root) {
+    e.preventDefault()
+    first.focus()
+  }
 }
 function onDialogClick(e: MouseEvent) {
   if ((e.target as HTMLElement | null)?.closest?.('[data-md-close]')) emit('close')

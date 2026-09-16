@@ -32,7 +32,7 @@ watch(
 onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
 <template>
-  <div v-if="open" class="md-menu" :style="`left: ${pos.left}px; top: ${pos.top}px;`"><slot /></div>
+  <div v-if="open" class="md-menu" role="menu" :style="`left: ${pos.left}px; top: ${pos.top}px;`"><slot /></div>
 </template>
 <style scoped>
 .md-menu { position: fixed; z-index: 1100; min-width: 120px; padding: 6px 0; border-radius: 12px;

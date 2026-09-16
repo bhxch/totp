@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-const props = withDefaults(defineProps<{ modelValue: boolean; disabled?: boolean }>(), { modelValue: false, disabled: false })
+const props = withDefaults(defineProps<{ modelValue: boolean; disabled?: boolean; ariaLabel?: string }>(), { modelValue: false, disabled: false })
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
 const checked = ref(props.modelValue)
 watch(() => props.modelValue, v => { checked.value = v })
@@ -11,7 +11,7 @@ function onChange(e: Event) {
 </script>
 <template>
   <label class="md-switch" :class="{ 'md-switch--checked': checked, 'md-switch--disabled': disabled }">
-    <input type="checkbox" class="md-switch__input" :checked="checked" :disabled="disabled" @change="onChange" />
+    <input type="checkbox" class="md-switch__input" role="switch" :aria-label="ariaLabel" :checked="checked" :disabled="disabled" @change="onChange" />
     <span class="md-switch__track"><span class="md-switch__thumb" /></span>
   </label>
 </template>

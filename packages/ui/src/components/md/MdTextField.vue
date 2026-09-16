@@ -1,15 +1,21 @@
+<script lang="ts">
+// 模块级计数器:跨实例唯一(测试中每次 mount 为独立 app,useId() 会重置)
+let errorIdCounter = 0
+</script>
 <script setup lang="ts">
-withDefaults(defineProps<{ modelValue: string; label: string; type?: string; error?: string; placeholder?: string }>(), { type: 'text', error: '', placeholder: '' })
+withDefaults(defineProps<{ modelValue: string; label: string; type?: string; error?: string; placeholder?: string; ariaLabel?: string }>(), { type: 'text', error: '', placeholder: '' })
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
+const errorId = `md-text-field-error-${++errorIdCounter}`
 </script>
 <template>
   <div class="md-text-field" :class="{ 'md-text-field--error': !!error }">
     <label class="md-text-field__box">
       <span class="md-text-field__label" :class="{ 'md-text-field__label--floated': !!modelValue || !!placeholder }">{{ label }}</span>
       <input class="md-text-field__input" :type="type" :value="modelValue" :placeholder="placeholder"
+        :aria-label="ariaLabel" :aria-invalid="error ? 'true' : undefined" :aria-describedby="error ? errorId : undefined"
         @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)" />
     </label>
-    <p v-if="error" class="md-text-field__error">{{ error }}</p>
+    <p v-if="error" :id="errorId" class="md-text-field__error">{{ error }}</p>
   </div>
 </template>
 <style scoped>

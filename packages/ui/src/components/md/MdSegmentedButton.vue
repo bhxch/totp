@@ -1,11 +1,23 @@
 <script setup lang="ts">
-defineProps<{ options: { value: string; label: string }[]; modelValue: string }>()
+import { ref } from 'vue'
+const props = defineProps<{ options: { value: string; label: string }[]; modelValue: string }>()
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
+const rootRef = ref<HTMLElement | null>(null)
+function onKeydown(e: KeyboardEvent) {
+  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return
+  const idx = props.options.findIndex(o => o.value === props.modelValue)
+  const next = Math.min(props.options.length - 1, Math.max(0, idx + (e.key === 'ArrowRight' ? 1 : -1)))
+  if (next === idx) return
+  emit('update:modelValue', props.options[next]!.value)
+  // 焦点跟随选中项(roving tabindex)
+  rootRef.value?.querySelectorAll<HTMLButtonElement>('.md-seg__item')[next]?.focus()
+}
 </script>
 <template>
-  <div class="md-seg" role="radiogroup">
+  <div ref="rootRef" class="md-seg" role="radiogroup" @keydown="onKeydown">
     <button v-for="o in options" :key="o.value" type="button" class="md-seg__item" role="radio"
-      :aria-checked="o.value === modelValue" :class="{ 'md-seg__item--selected': o.value === modelValue }"
+      :tabindex="o.value === modelValue ? 0 : -1" :aria-checked="o.value === modelValue"
+      :class="{ 'md-seg__item--selected': o.value === modelValue }"
       @click="emit('update:modelValue', o.value)">
       <span v-if="o.value === modelValue" class="md-seg__check" aria-hidden="true" />{{ o.label }}
     </button>
