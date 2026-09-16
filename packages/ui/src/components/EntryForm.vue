@@ -3,9 +3,20 @@ import { base32Decode, getBuiltinIcons, recommendBuiltinIcon, type BuiltinIcon, 
 import { computed, onScopeDispose, reactive, ref, watch } from 'vue'
 import { fileToScaledDataUrl, importIconPackZip } from '../iconImport'
 import type { IconStore } from '../iconStore'
+import MdButton from './md/MdButton.vue'
+import MdCheckbox from './md/MdCheckbox.vue'
+import MdIconButton from './md/MdIconButton.vue'
+import MdTextField from './md/MdTextField.vue'
 import { type EntryFormData, validateRegex } from './entryForm'
 
 export type { EntryFormData }
+
+/** 与 vue 原生 v-model.number 同语义的宽松转数字（parseFloat 失败回退原串，如清空输入时的 ''）；
+ *  MdTextField 无 modelModifiers 机制，digits/period/counter 的数字绑定经此转换 */
+function looseToNumber(v: string): number {
+  const n = Number.parseFloat(v)
+  return Number.isNaN(n) ? (v as unknown as number) : n
+}
 
 const props = defineProps<{
   initial?: OtpEntry | null
@@ -49,6 +60,15 @@ const showSecret = ref(false)
 
 function cleanSecret(): string {
   return form.secret.replace(/\s+/g, '').toUpperCase()
+}
+
+/** 分组勾选（MdCheckbox 替代数组 v-model checkbox）：勾上加 id，取消勾移除 */
+function toggleGroup(id: string, checked: boolean): void {
+  if (checked) {
+    if (!form.groupIds.includes(id)) form.groupIds.push(id)
+  } else {
+    form.groupIds = form.groupIds.filter((g) => g !== id)
+  }
 }
 
 /** I68：base32 实时校验——非 hotp 类型（不需 secret）+ secret 非空时按 [A-Z2-7]+=* 判定；用于输入框实时反馈。
@@ -247,61 +267,60 @@ function submit() {
 
 <template>
   <form class="entry-form" @submit.prevent="submit">
-    <select v-model="form.type">
+    <select v-model="form.type" aria-label="类型">
       <option value="totp">TOTP</option>
       <option value="hotp">HOTP（计数器）</option>
       <option value="steam">Steam</option>
     </select>
-    <input v-model="form.issuer" placeholder="服务名（如 GitHub）" />
+    <MdTextField v-model="form.issuer" label="服务名" placeholder="服务名（如 GitHub）" aria-label="服务名" />
     <div v-if="recommendVisible && recommended" class="icon-recommend">
       检测到图标：
       <svg viewBox="0 0 24 24" class="icon-preview" aria-hidden="true" v-html="builtinHtml(recommended.path)" />
-      <button type="button" class="use-recommend-icon" @click="useRecommended">使用</button>
+      <MdButton variant="text" class="use-recommend-icon" @click="useRecommended">使用</MdButton>
     </div>
-    <input v-model="form.label" placeholder="账户名" />
+    <MdTextField v-model="form.label" label="账户名" aria-label="账户名" />
     <div class="secret-row">
-      <input
-        v-model="form.secret"
-        :type="showSecret ? 'text' : 'password'"
+      <MdTextField
+        v-model="form.secret" class="secret-field" :type="showSecret ? 'text' : 'password'"
+        label="密钥" placeholder="密钥 base32" aria-label="密钥 base32"
         :class="{ invalid: !isValidBase32 }"
-        placeholder="密钥 base32"
-        required
-        autocomplete="off"
       />
-      <button type="button" class="secret-toggle" @click="showSecret = !showSecret">{{ showSecret ? '隐藏' : '显示' }}</button>
+      <MdButton variant="text" class="secret-toggle" @click="showSecret = !showSecret">{{ showSecret ? '隐藏' : '显示' }}</MdButton>
     </div>
     <!-- I68：base32 实时校验的视觉反馈（不阻塞输入，submit 仍把关） -->
     <p v-if="base32Hint" class="base32-hint" role="status">{{ base32Hint }}</p>
     <div class="advanced-row">
       <label class="field">
         算法
-        <select v-model="form.algorithm" class="algorithm">
+        <select v-model="form.algorithm" class="algorithm" aria-label="算法">
           <option value="SHA1">SHA1</option>
           <option value="SHA256">SHA256</option>
           <option value="SHA512">SHA512</option>
         </select>
       </label>
-      <label class="field">
-        位数
-        <input v-model.number="form.digits" type="number" class="digits" min="5" max="8" />
-      </label>
-      <label v-if="form.type !== 'hotp'" class="field">
-        周期（秒）
-        <input v-model.number="form.period" type="number" class="period" min="1" />
-      </label>
+      <MdTextField
+        class="digits" type="number" label="位数" aria-label="位数"
+        :model-value="String(form.digits)" @update:model-value="form.digits = looseToNumber($event)"
+      />
+      <MdTextField
+        v-if="form.type !== 'hotp'" class="period" type="number" label="周期（秒）" aria-label="周期（秒）"
+        :model-value="String(form.period)" @update:model-value="form.period = looseToNumber($event)"
+      />
       <!-- steam 强制 5 位提示 -->
       <p v-if="form.type === 'steam'" class="steam-hint">Steam 类型位数固定为 5</p>
-      <label v-if="form.type === 'hotp'" class="field">
-        计数器
-        <input v-model.number="form.counter" type="number" class="counter" min="0" />
-      </label>
+      <MdTextField
+        v-if="form.type === 'hotp'" class="counter" type="number" label="计数器" aria-label="计数器"
+        :model-value="String(form.counter)" @update:model-value="form.counter = looseToNumber($event)"
+      />
     </div>
-    <textarea v-model="form.note" placeholder="备注（可选）" rows="2" />
+    <textarea v-model="form.note" placeholder="备注（可选）" rows="2" aria-label="备注" />
     <fieldset v-if="(groups ?? []).length > 0">
       <legend>分组</legend>
-      <label v-for="g in groups" :key="g.id" class="group-check">
-        <input type="checkbox" :value="g.id" v-model="form.groupIds" /> {{ g.name }}
-      </label>
+      <MdCheckbox
+        v-for="g in groups" :key="g.id" class="group-check"
+        :model-value="form.groupIds.includes(g.id)" :label="g.name" :aria-label="g.name"
+        @update:model-value="toggleGroup(g.id, $event)"
+      />
     </fieldset>
     <!-- 图标选择区：默认收起 -->
     <details v-if="icons" class="icon-picker">
@@ -312,15 +331,17 @@ function submit() {
         <span v-else class="icon-none">未设置（列表显示首字母）</span>
       </div>
       <div class="icon-actions">
-        <button v-if="iconStore" type="button" class="upload-icon" @click="fileInput?.click()">上传</button>
+        <MdButton v-if="iconStore" variant="text" class="upload-icon" @click="fileInput?.click()">上传</MdButton>
         <input ref="fileInput" type="file" accept="image/*" class="icon-file" @change="onIconFile" />
-        <button v-if="iconStore" type="button" class="import-pack" :disabled="packBusy" @click="packInput?.click()">导入图标包（zip）</button>
+        <MdButton v-if="iconStore" variant="text" class="import-pack" :disabled="packBusy" @click="packInput?.click()">导入图标包（zip）</MdButton>
         <input ref="packInput" type="file" accept=".zip" class="pack-file" @change="onPackFile" />
         <template v-if="iconStore">
-          <input v-model="iconUrlInput" type="url" class="icon-url" placeholder="图标图片 URL" />
-          <button type="button" class="fetch-icon" @click="onFetchIcon">拉取</button>
+          <MdTextField
+            v-model="iconUrlInput" class="icon-url" label="图标 URL" placeholder="图标图片 URL" aria-label="图标图片 URL"
+          />
+          <MdButton variant="text" class="fetch-icon" @click="onFetchIcon">拉取</MdButton>
         </template>
-        <button v-if="form.icon" type="button" class="clear-icon" @click="clearIcon">清除</button>
+        <MdButton v-if="form.icon" variant="text" class="clear-icon" @click="clearIcon">清除</MdButton>
       </div>
       <div v-if="packMessage" class="pack-message">{{ packMessage }}</div>
       <div v-if="iconError" class="error">{{ iconError }}</div>
@@ -329,20 +350,18 @@ function submit() {
     <fieldset>
       <legend>URL 匹配规则（浏览器插件按当前页过滤用）</legend>
       <div v-for="(r, i) in form.matchRules" :key="i" class="rule-row">
-        <select class="rule-strategy" v-model="r.strategy">
+        <select class="rule-strategy" v-model="r.strategy" aria-label="匹配策略">
           <option value="baseDomain">基础域名</option>
           <option value="host">主机</option>
           <option value="exact">精确</option>
           <option value="startsWith">前缀</option>
           <option value="regex">正则</option>
         </select>
-        <input
-          class="rule-pattern"
+        <MdTextField
+          v-model="r.pattern" class="rule-pattern" label="模式" placeholder="如 github.com 或 ^https://" aria-label="匹配模式"
           :class="{ invalid: r.strategy === 'regex' && r.pattern.trim() !== '' && validateRegex(r.pattern) !== null }"
-          v-model="r.pattern"
-          placeholder="如 github.com 或 ^https://"
         />
-        <button type="button" class="rm-rule" @click="form.matchRules.splice(i, 1)">✕</button>
+        <MdIconButton class="rm-rule" title="删除规则" aria-label="删除规则" @click="form.matchRules.splice(i, 1)">✕</MdIconButton>
         <!-- I51：regex 策略且 pattern 非空但非法 → 行内错误提示 -->
         <span
           v-if="r.strategy === 'regex' && r.pattern.trim() !== '' && validateRegex(r.pattern) !== null"
@@ -352,35 +371,38 @@ function submit() {
           {{ validateRegex(r.pattern) }}
         </span>
       </div>
-      <button type="button" class="add-rule" @click="form.matchRules.push({ strategy: 'baseDomain', pattern: '' })">＋ 添加匹配规则</button>
+      <MdButton variant="text" class="add-rule" @click="form.matchRules.push({ strategy: 'baseDomain', pattern: '' })">＋ 添加匹配规则</MdButton>
     </fieldset>
     <div v-if="error" class="error">{{ error }}</div>
     <div class="row">
-      <button type="submit">{{ isNew ? '添加' : '保存' }}</button>
-      <button type="button" @click="emit('cancel')">取消</button>
+      <MdButton type="submit">{{ isNew ? '添加' : '保存' }}</MdButton>
+      <MdButton variant="text" @click="emit('cancel')">取消</MdButton>
     </div>
   </form>
 </template>
 
 <style scoped>
 .entry-form { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: 8px; }
-.entry-form input, .entry-form select, .entry-form textarea, .entry-form button { padding: 6px 8px; box-sizing: border-box; }
+/* 仅存的原生控件（select/textarea/file）保留紧凑样式；其余输入/按钮由 md 组件自带样式 */
+.entry-form select, .entry-form textarea { padding: 6px 8px; box-sizing: border-box; }
 .entry-form textarea { resize: vertical; font-family: inherit; }
-.secret-row { display: flex; gap: 6px; }
-.secret-row input { flex: 1; }
+.secret-row { display: flex; gap: 6px; align-items: center; }
+.secret-row .secret-field { flex: 1; }
 .secret-toggle { white-space: nowrap; }
 .base32-hint { font-size: 12px; color: var(--md-sys-color-tertiary); margin: 0; }
-.entry-form input.invalid { border-color: var(--md-sys-color-error); }
-.advanced-row { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+/* invalid 类在 MdTextField 根 div 上，经 :deep 传到输入框底边 */
+.entry-form .secret-field.invalid :deep(.md-text-field__box) { border-bottom-color: var(--md-sys-color-error); }
+.advanced-row { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; align-items: flex-start; }
 .advanced-row .field { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 80px; }
-.advanced-row .algorithm, .advanced-row .digits, .advanced-row .period, .advanced-row .counter { width: 100%; box-sizing: border-box; }
+.advanced-row .algorithm { width: 100%; box-sizing: border-box; }
+.advanced-row .digits, .advanced-row .period, .advanced-row .counter { flex: 1; min-width: 80px; }
 .steam-hint { font-size: 11px; opacity: .65; margin: 0; width: 100%; }
 fieldset { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 6px; display: flex; gap: 10px; flex-wrap: wrap; }
-.group-check { font-size: 13px; display: flex; align-items: center; gap: 4px; }
-.rule-row { display: flex; gap: 6px; }
+.group-check { font-size: 13px; }
+.rule-row { display: flex; gap: 6px; align-items: center; }
 .rule-strategy { width: 110px; }
-.rule-pattern { flex: 1; }
-.rule-pattern.invalid { border-color: var(--md-sys-color-error); }
+.rule-row .rule-pattern { flex: 1; }
+.rule-row .rule-pattern.invalid :deep(.md-text-field__box) { border-bottom-color: var(--md-sys-color-error); }
 .rule-error { font-size: 11px; color: var(--md-sys-color-error); flex-basis: 100%; }
 .icon-recommend { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px 8px; background: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent); border-radius: 6px; }
 .icon-preview { width: 20px; height: 20px; fill: currentColor; flex: none; }

@@ -4,6 +4,9 @@ import { computed, onMounted, ref } from 'vue'
 import type { DpapiUnlockOps } from './securityPlatform'
 import { getPrfOutput, prfSupported } from '../prf'
 import type { VueStore } from '../store'
+import MdButton from './md/MdButton.vue'
+import MdIconButton from './md/MdIconButton.vue'
+import MdTextField from './md/MdTextField.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -23,6 +26,8 @@ const emit = defineEmits<{ (e: 'unlocked'): void }>()
 const password = ref('')
 const busy = ref(false)
 const msg = ref('')
+/** 口令明/密文显示切换（MdTextField 经 type prop 切 password/text） */
+const showPassword = ref(false)
 /** PRF 能力探测（基于 UA + getClientCapabilities）；unknown=探测中；false=浏览器不支持，passkey 入口即便已绑定也应禁用 */
 const prfCap = ref<'unknown' | boolean>('unknown')
 /** Passkey 按钮显隐：已绑定 prf 来源（kekSources 含条目）且入口未被禁用 */
@@ -71,8 +76,10 @@ async function onRetryDpapi(): Promise<void> {
   }
 }
 
-/** 解锁：成功清空口令与错误并 emit unlocked（父级可凭 locked 变化自行切换视图）；失败展示错误消息 */
+/** 解锁：成功清空口令与错误并 emit unlocked（父级可凭 locked 变化自行切换视图）；失败展示错误消息。
+ *  busy 守卫：MdTextField 无 disabled 态，防重复提交（原由输入框 disabled 承担）由函数承担 */
 async function onUnlock(): Promise<void> {
+  if (busy.value) return
   if (!password.value) {
     msg.value = '请输入口令'
     return
@@ -119,33 +126,39 @@ async function onPasskeyUnlock(): Promise<void> {
   <section class="lockscreen">
     <h2>已锁定</h2>
     <p class="hint">输入口令解锁本地数据</p>
-    <form class="row" @submit.prevent="onUnlock">
-      <input
-        v-model="password" type="password" placeholder="口令" autocomplete="current-password"
-        :disabled="busy" aria-label="解锁口令"
-      />
-      <button type="submit" :disabled="busy">解锁</button>
+    <form class="unlock-form" @submit.prevent="onUnlock">
+      <div class="pw-row">
+        <MdTextField
+          v-model="password" class="grow" label="口令" placeholder="口令"
+          :type="showPassword ? 'text' : 'password'" aria-label="解锁口令"
+        />
+        <MdIconButton
+          :title="showPassword ? '隐藏口令' : '显示口令'" :aria-label="showPassword ? '隐藏口令' : '显示口令'"
+          @click="showPassword = !showPassword"
+        >{{ showPassword ? '🙈' : '👁' }}</MdIconButton>
+      </div>
+      <MdButton class="unlock" type="submit" :disabled="busy">解锁</MdButton>
     </form>
-    <button
+    <MdButton
       v-if="showPasskey"
-      type="button"
+      variant="tonal"
       class="passkey"
       :disabled="busy || !passkeySupported"
       :title="passkeySupported ? undefined : '当前浏览器不支持 Passkey 解锁'"
       @click="onPasskeyUnlock"
     >
       使用 Passkey 解锁
-    </button>
+    </MdButton>
     <!-- I44：DPAPI 已绑定但静默解锁失败 1s 后仍锁定 → 显示重试入口 -->
-    <button
+    <MdButton
       v-if="dpapi?.source.value && dpapiFailed"
-      type="button"
+      variant="tonal"
       class="dpapi-retry"
       :disabled="dpapiRetrying || busy"
       @click="onRetryDpapi"
     >
       重试 Windows 自动解锁
-    </button>
+    </MdButton>
     <div v-if="msg" class="err" role="alert">{{ msg }}</div>
   </section>
 </template>
@@ -154,7 +167,9 @@ async function onPasskeyUnlock(): Promise<void> {
 .lockscreen { display: flex; flex-direction: column; gap: 8px; padding: 32px 16px; max-width: 360px; margin: 0 auto; }
 h2 { font-size: 16px; margin: 0; text-align: center; }
 .hint { font-size: 13px; opacity: .65; margin: 0; text-align: center; }
-.row { display: flex; gap: 8px; }
-.row input { flex: 1; }
+.unlock-form { display: flex; flex-direction: column; gap: 8px; }
+.pw-row { display: flex; gap: 4px; align-items: center; }
+.pw-row .grow { flex: 1; }
+.unlock { width: 100%; }
 .err { color: var(--md-sys-color-error); font-size: 13px; }
 </style>

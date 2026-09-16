@@ -88,6 +88,16 @@ describe('LockScreen', () => {
     expect(w.emitted('unlocked')).toBeUndefined()
   })
 
+  it('口令明/密文切换：初始遮蔽，点切换钮变明文，再点恢复遮蔽', async () => {
+    const w = mount(LockScreen, { props: { store: plainStore(vi.fn()) } })
+    expect(w.find('input[type="password"]').exists()).toBe(true)
+    await w.find('button[aria-label="显示口令"]').trigger('click')
+    expect(w.find('input[type="password"]').exists()).toBe(false)
+    expect(w.find('input[type="text"]').exists()).toBe(true)
+    await w.find('button[aria-label="隐藏口令"]').trigger('click')
+    expect(w.find('input[type="password"]').exists()).toBe(true)
+  })
+
   it('无 prf 绑定：不渲染「使用 Passkey 解锁」按钮', () => {
     const w = mount(LockScreen, { props: { store: plainStore(vi.fn()) } })
     expect(w.find('button.passkey').exists()).toBe(false)

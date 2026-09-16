@@ -56,19 +56,19 @@ describe('EntryForm', () => {
     const w = mount(EntryForm, { props: { initial: null, groups: [] } })
     const select = w.find('select')
     await select.setValue('steam')
-    expect((w.find('input.digits').element as HTMLInputElement).value).toBe('5')
+    expect((w.find('.digits input').element as HTMLInputElement).value).toBe('5')
     // steam 状态下 save 携带 digits 5
     await w.find('input[placeholder="密钥 base32"]').setValue('JBSWY3DPEHPK3PXP')
     await w.find('form').trigger('submit')
     expect(w.emitted('save')![0]![0]).toMatchObject({ type: 'steam', digits: 5 })
     // 切回 totp：digits 回落 6
     await select.setValue('totp')
-    expect((w.find('input.digits').element as HTMLInputElement).value).toBe('6')
+    expect((w.find('.digits input').element as HTMLInputElement).value).toBe('6')
   })
   it('F2：编辑 8 位 totp 切 steam 再提交，save 携带 digits 5', async () => {
     const w = mount(EntryForm, { props: { initial: { ...entry, digits: 8 }, groups: [] } })
     await w.find('select').setValue('steam')
-    expect((w.find('input.digits').element as HTMLInputElement).value).toBe('5')
+    expect((w.find('.digits input').element as HTMLInputElement).value).toBe('5')
     await w.find('form').trigger('submit')
     expect(w.emitted('save')![0]![0]).toMatchObject({ type: 'steam', digits: 5 })
   })
@@ -76,18 +76,18 @@ describe('EntryForm', () => {
     const hotpEntry = { ...entry, type: 'hotp' as const, counter: 3, digits: 6, algorithm: 'SHA256' as const }
     const w = mount(EntryForm, { props: { initial: hotpEntry, groups: [] } })
     expect(w.find('select.algorithm').exists()).toBe(true)
-    expect(w.find('input.digits').exists()).toBe(true)
+    expect(w.find('.digits input').exists()).toBe(true)
     // hotp 类型显示计数器；不显示周期
-    expect(w.find('input.counter').exists()).toBe(true)
-    expect(w.find('input.period').exists()).toBe(false)
+    expect(w.find('.counter input').exists()).toBe(true)
+    expect(w.find('.period input').exists()).toBe(false)
     await w.find('form').trigger('submit')
     const payload = w.emitted('save')![0]![0]
     expect(payload).toMatchObject({ algorithm: 'SHA256', digits: 6, counter: 3, type: 'hotp' })
   })
   it('表单 totp：周期输入可见且默认 30；save 携带 period 与 algorithm，不带 counter', async () => {
     const w = mount(EntryForm, { props: { initial: entry, groups: [] } })
-    expect(w.find('input.period').exists()).toBe(true)
-    expect(w.find('input.counter').exists()).toBe(false) // 非 hotp 不显示 counter
+    expect(w.find('.period input').exists()).toBe(true)
+    expect(w.find('.counter input').exists()).toBe(false) // 非 hotp 不显示 counter
     await w.find('form').trigger('submit')
     const payload = w.emitted('save')![0]![0] as EntryFormData
     expect(payload).toMatchObject({ algorithm: 'SHA1', digits: 6, period: 30 })
@@ -98,10 +98,10 @@ describe('EntryForm', () => {
     await w.find('select').setValue('steam')
     await w.find('input[placeholder="密钥 base32"]').setValue('JBSWY3DPEHPK3PXP')
     // steam 显示周期与位数；不显示 counter
-    expect(w.find('input.period').exists()).toBe(true)
-    expect(w.find('input.counter').exists()).toBe(false)
+    expect(w.find('.period input').exists()).toBe(true)
+    expect(w.find('.counter input').exists()).toBe(false)
     expect(w.text()).toContain('Steam 类型位数固定为 5')
-    await w.find('input.digits').setValue(6)
+    await w.find('.digits input').setValue(6)
     await w.find('form').trigger('submit')
     expect(w.emitted('save')).toBeUndefined()
     expect(w.text()).toContain('Steam')
@@ -112,7 +112,7 @@ describe('EntryForm', () => {
     const selects = w.findAll('select.rule-strategy')
     expect(selects).toHaveLength(1)
     await selects[0]!.setValue('baseDomain')
-    await w.find('input.rule-pattern').setValue('github.com')
+    await w.find('.rule-pattern input').setValue('github.com')
     await w.find('form').trigger('submit')
     expect(w.emitted('save')![0]![0]).toMatchObject({ matchRules: [{ strategy: 'baseDomain', pattern: 'github.com' }] })
     await w.find('button.rm-rule').trigger('click')
@@ -124,7 +124,7 @@ describe('EntryForm', () => {
     const w = mount(EntryForm, { props: { initial: entry, groups: [] } })
     await w.find('button.add-rule').trigger('click')
     await w.findAll('select.rule-strategy')[0]!.setValue('regex')
-    await w.find('input.rule-pattern').setValue('[unbalanced') // 非法正则
+    await w.find('.rule-pattern input').setValue('[unbalanced') // 非法正则
     // 行内错误展示 + class.invalid
     expect(w.find('.rule-pattern.invalid').exists()).toBe(true)
     expect(w.find('.rule-error').exists()).toBe(true)
@@ -134,7 +134,7 @@ describe('EntryForm', () => {
     expect(w.emitted('save')).toBeUndefined()
     expect(w.find('.error').text()).toMatch(/匹配规则正则非法/)
     // 修正为合法正则后可提交
-    await w.find('input.rule-pattern').setValue('^https://github\\.com/.*')
+    await w.find('.rule-pattern input').setValue('^https://github\\.com/.*')
     await w.find('form').trigger('submit')
     expect(w.emitted('save')![0]![0]).toMatchObject({ matchRules: [{ strategy: 'regex', pattern: '^https://github\\.com/.*' }] })
   })
@@ -159,16 +159,17 @@ describe('EntryForm', () => {
   it('I68：base32 实时校验——输入非法字符立即触发 class.invalid 与 inline hint（不阻塞输入）', async () => {
     const w = mount(EntryForm, { props: { initial: null, groups: [] } })
     const secret = () => w.find('input[placeholder="密钥 base32"]')
+    const secretField = () => w.find('.secret-field') // invalid 类在 MdTextField 根 div
     // 初始空串 → 合法（无错误）
-    expect(secret().classes()).not.toContain('invalid')
+    expect(secretField().classes()).not.toContain('invalid')
     expect(w.find('.base32-hint').exists()).toBe(false)
     // 输入含 0/1 等非法字符 → 标记 invalid + 显示 hint
     await secret().setValue('AB01')
-    expect(secret().classes()).toContain('invalid')
+    expect(secretField().classes()).toContain('invalid')
     expect(w.text()).toContain('密钥字符仅允许 A–Z 与 2–7')
     // 修正为合法 base32 → 错误消失
     await secret().setValue('JBSWY3DPEHPK3PXP')
-    expect(secret().classes()).not.toContain('invalid')
+    expect(secretField().classes()).not.toContain('invalid')
     expect(w.find('.base32-hint').exists()).toBe(false)
   })
 
@@ -236,7 +237,7 @@ describe('EntryForm 图标推荐与选择', () => {
       const store = createIconStore(createMemoryStorage())
       const w = mount(EntryForm, { props: { initial: null, groups: [], icons: { builtin: getBuiltinIcons(), stored: store.icons }, iconStore: store } })
       await w.find('details.icon-picker summary').trigger('click')
-      await w.find('input.icon-url').setValue('https://example.com/a.png')
+      await w.find('.icon-url input').setValue('https://example.com/a.png')
       await w.find('button.fetch-icon').trigger('click')
       await vi.waitFor(() => expect(w.find('img.icon-current-img').attributes('src')).toMatch(/^data:image\/png;base64,/))
       await w.find('form').trigger('submit')
@@ -254,7 +255,7 @@ describe('EntryForm 图标推荐与选择', () => {
       const store = createIconStore(createMemoryStorage())
       const w = mount(EntryForm, { props: { initial: null, groups: [], icons: { builtin: getBuiltinIcons(), stored: store.icons }, iconStore: store } })
       await w.find('details.icon-picker summary').trigger('click')
-      await w.find('input.icon-url').setValue('https://example.com/a.png')
+      await w.find('.icon-url input').setValue('https://example.com/a.png')
       await w.find('button.fetch-icon').trigger('click')
       await vi.waitFor(() => expect(w.text()).toContain('图标拉取失败'))
       await w.find('form').trigger('submit')
@@ -317,7 +318,7 @@ describe('EntryForm 预填哑值 uuid（URI 导入）边界', () => {
         props: { initial: { ...entry, uuid: '' }, groups: [], icons: { builtin: getBuiltinIcons(), stored: store.icons }, iconStore: store },
       })
       await w.find('details.icon-picker summary').trigger('click')
-      await w.find('input.icon-url').setValue('https://example.com/a.png')
+      await w.find('.icon-url input').setValue('https://example.com/a.png')
       await w.find('button.fetch-icon').trigger('click')
       await vi.waitFor(() => expect(w.find('img.icon-current-img').attributes('src')).toMatch(/^data:image\/png;base64,/))
       const keys = Object.keys(store.icons)
