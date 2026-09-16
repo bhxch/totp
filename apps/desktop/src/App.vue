@@ -3,10 +3,9 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { backupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, randomBytes, SCHEMES_KEY, sha256Hex, type CloudCred, type ImportScheme, type StorageAdapter, type Vault } from '@totp/core'
-import { createClipboardClearer, createCloudBackend, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupMode, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type CloudTarget, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type SecurityPlatform, type VueStore } from '@totp/ui'
+import { createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupMode, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type CloudTarget, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref } from 'vue'
 import { createDesktopAutoRunner } from './autoBackup'
-import { createDesktopCloudSync } from './cloudRunner'
 import { createBackupToDir, listBackups, readBackupByName, readBackupFileOs, saveConflictBackupToDir, writeBackupFileOs } from './backupService'
 import { decryptDpapiOs, readImportFileBytesOs, readImportFileOs } from './importService'
 import { createTauriFs } from './tauriFs'
@@ -370,10 +369,10 @@ const cloudPlatform: CloudPlatform = {
   },
 }
 
-/** 自动云同步 runner（D6）：多目标编排收敛于 core syncMultipleTargets；冲突副本已由
- *  onConflictBackup 落盘，故 adopt 分支自动执行、不弹确认——裁定来源=设计 §4「自动执行结果不打扰」
- *  （区别于 CloudCard 手动同步的两步确认） */
-const cloudSync = createDesktopCloudSync({
+/** 自动云同步 runner（D6）：多目标编排收敛于 core syncMultipleTargets（runner 实现自本文件上提至
+ *  ui 共享，desktop/extension 同一实现）；冲突副本已由 onConflictBackup 落盘，故 adopt 分支自动执行、
+ *  不弹确认——裁定来源=设计 §4「自动执行结果不打扰」（区别于 CloudCard 手动同步的两步确认） */
+const cloudSync = createCloudSyncRunner({
   isLocked: () => store.value?.locked.value ?? true,
   getSecret: () => store.value?.backupSecret.value ?? null,
   getVaultJson: () => JSON.stringify(store.value?.vault ?? null),

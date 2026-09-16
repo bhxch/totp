@@ -1,7 +1,8 @@
+/** 自 apps/desktop/src/cloudRunner.test.ts 原样迁移（runner 上提为双端共享，同用例保语义） */
 import { describe, expect, it, vi } from 'vitest'
 import { createBackupEnvelope, sha256Hex, type CloudBackend, type CloudCred } from '@totp/core'
-import type { CloudTarget } from '@totp/ui'
-import { createDesktopCloudSync, type CloudRunnerDeps } from './cloudRunner'
+import type { CloudTarget } from '../src/components/cloudPlatform'
+import { createCloudSyncRunner, type CloudRunnerDeps } from '../src/components/cloudRunner'
 
 const PW = 'pw'
 const PATH = 'totp-backup.totpbackup'
@@ -84,23 +85,23 @@ function makeDeps(over: Partial<CloudRunnerDeps> = {}) {
   }
 }
 
-describe('createDesktopCloudSync', () => {
+describe('createCloudSyncRunner', () => {
   it('①锁定 → 直接 return（不读凭据、不建 backend、不记状态）', async () => {
     const { deps, loadCreds } = makeDeps({ isLocked: () => true })
-    await createDesktopCloudSync(deps).run()
+    await createCloudSyncRunner(deps).run()
     expect(loadCreds).not.toHaveBeenCalled()
     expect(deps.recordStatus).not.toHaveBeenCalled()
   })
 
   it('②无 secret → 直接 return', async () => {
     const { deps, loadCreds } = makeDeps({ getSecret: () => null })
-    await createDesktopCloudSync(deps).run()
+    await createCloudSyncRunner(deps).run()
     expect(loadCreds).not.toHaveBeenCalled()
   })
 
   it('③空目标 → return（不建 backend、不回写 hash）', async () => {
     const { deps, backends, saveTargetHash } = makeDeps()
-    await createDesktopCloudSync(deps).run()
+    await createCloudSyncRunner(deps).run()
     expect(backends).toHaveLength(0)
     expect(saveTargetHash).not.toHaveBeenCalled()
   })
@@ -112,7 +113,7 @@ describe('createDesktopCloudSync', () => {
         { cred: GIST_CRED, enabled: false },
       ]),
     })
-    await createDesktopCloudSync(deps).run()
+    await createCloudSyncRunner(deps).run()
     expect(backends).toHaveLength(1)
     expect(saveTargetHash).toHaveBeenCalledTimes(1)
     expect(saveTargetHash).toHaveBeenCalledWith('webdav', expect.any(String))
@@ -124,7 +125,7 @@ describe('createDesktopCloudSync', () => {
       loadCreds: vi.fn(async () => [{ cred: { ...WEBDAV_CRED, objectPath: 'custom/dir\\bk.json' }, enabled: true }]),
       makeBackend: () => b,
     })
-    await createDesktopCloudSync(deps).run()
+    await createCloudSyncRunner(deps).run()
     expect([...b.store.keys()]).toEqual(['custom/dir/bk.json'])
   })
 
@@ -136,7 +137,7 @@ describe('createDesktopCloudSync', () => {
       loadTargetHash: vi.fn(async (backend: string) => (backend === 'webdav' ? aHash : null)),
       makeBackend: () => b,
     })
-    await createDesktopCloudSync(deps).run()
+    await createCloudSyncRunner(deps).run()
     expect(loadTargetHash).toHaveBeenCalledWith('webdav')
     expect(b.putCount).toBe(0) // hash 透传生效 → in-sync 不重推
     expect(saveTargetHash).toHaveBeenCalledWith('webdav', aHash)
@@ -155,7 +156,7 @@ describe('createDesktopCloudSync', () => {
       ]),
       makeBackend: (cred) => (cred.backend === 'gist' ? bad : good),
     })
-    await createDesktopCloudSync(deps).run()
+    await createCloudSyncRunner(deps).run()
     expect(saveTargetHash).toHaveBeenCalledWith('gist', null)
     expect(saveTargetHash).toHaveBeenCalledWith('webdav', expect.any(String))
     expect(deps.onError).not.toHaveBeenCalled() // 单目标失败不视为整体失败
@@ -167,7 +168,7 @@ describe('createDesktopCloudSync', () => {
       loadCreds: vi.fn(async () => [{ cred: WEBDAV_CRED, enabled: true }]),
       makeBackend: () => b,
     })
-    await createDesktopCloudSync(deps).run()
+    await createCloudSyncRunner(deps).run()
     expect(persistAdopted).toHaveBeenCalledTimes(1)
     expect(persistAdopted).toHaveBeenCalledWith(B)
     expect(recordStatus).toHaveBeenCalledWith(true, 'webdav: downloaded')
@@ -179,7 +180,7 @@ describe('createDesktopCloudSync', () => {
         throw new Error('凭据读取失败')
       }),
     })
-    await expect(createDesktopCloudSync(deps).run()).resolves.toBeUndefined()
+    await expect(createCloudSyncRunner(deps).run()).resolves.toBeUndefined()
     expect(onError).toHaveBeenCalledTimes(1)
     expect(onError).toHaveBeenCalledWith(expect.any(Error))
     expect(recordStatus).toHaveBeenCalledWith(false, '凭据读取失败')
@@ -194,7 +195,7 @@ describe('createDesktopCloudSync', () => {
         throw new Error('落盘失败')
       }),
     })
-    await expect(createDesktopCloudSync(deps).run()).resolves.toBeUndefined()
+    await expect(createCloudSyncRunner(deps).run()).resolves.toBeUndefined()
     expect(saveTargetHash).not.toHaveBeenCalled() // 先采纳后回写：落盘失败本轮 hashes 一并不落盘
     expect(onError).toHaveBeenCalledWith(expect.any(Error))
     expect(recordStatus).toHaveBeenCalledWith(false, '落盘失败')
@@ -215,7 +216,7 @@ describe('createDesktopCloudSync', () => {
       loadCreds: vi.fn(async () => [{ cred: WEBDAV_CRED, enabled: true }]),
       makeBackend: () => b,
     })
-    const runner = createDesktopCloudSync(deps)
+    const runner = createCloudSyncRunner(deps)
     const p1 = runner.run() // 同步执行到首个 await（loadCreds 已调用，get 挂起在 gate）
     const p2 = runner.run() // busy → 直接 return
     await p2
@@ -233,9 +234,14 @@ describe('createDesktopCloudSync', () => {
       loadTargetHash: vi.fn(async () => 'stale'),
       makeBackend: () => b,
     })
-    await createDesktopCloudSync(deps).run()
+    await createCloudSyncRunner(deps).run()
     expect(recordStatus).toHaveBeenCalledWith(true, 'webdav: conflict-resolved')
-    expect(saveConflictBackup).toHaveBeenCalledWith('webdav', expect.any(Uint8Array))
+    // jsdom 环境 runner/测试分属不同 realm，expect.any(Uint8Array) 的 instanceof 判定失效 →
+    // 改查内部 slot（ArrayBuffer.isView 跨 realm 可靠），字节视图契约不变
+    expect(saveConflictBackup).toHaveBeenCalledTimes(1)
+    const [conflictKey, conflictBytes] = saveConflictBackup.mock.calls[0]!
+    expect(conflictKey).toBe('webdav')
+    expect(ArrayBuffer.isView(conflictBytes)).toBe(true)
   })
 
   it('⑩b错误消息截断 100 字符后写状态', async () => {
@@ -245,7 +251,7 @@ describe('createDesktopCloudSync', () => {
         throw new Error(long)
       }),
     })
-    await createDesktopCloudSync(deps).run()
+    await createCloudSyncRunner(deps).run()
     expect(recordStatus).toHaveBeenCalledWith(false, 'x'.repeat(100))
   })
 })

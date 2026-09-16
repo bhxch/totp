@@ -1,6 +1,6 @@
 /**
- * desktop 自动云同步 runner（D6 宿主侧编排）：把启用的多目标凭据组装为 core
- * syncMultipleTargets 输入并执行。守护与裁定：
+ * 云自动同步 runner（D6 宿主侧编排，desktop/extension 双端共享；原 desktop cloudRunner 上提）：
+ * 把启用的多目标凭据组装为 core syncMultipleTargets 输入并执行。守护与裁定：
  * - 仅解锁会话内执行（锁定/无 secret 直接 return），与自动备份 runner 同口径；
  * - 冲突副本经 onConflictBackup 落盘（宿主 saveConflictBackup），adopt 分支自动执行、
  *   不弹确认——设计 §4「自动执行结果不打扰」（区别于 CloudCard 手动同步的两步确认）；
@@ -9,7 +9,7 @@
  *   由两边各自的 hash 回写顺序兜底（后完成者覆盖基线），不引入跨实例锁。
  */
 import { resolveObjectPath, syncMultipleTargets, type CloudBackend, type CloudCred } from '@totp/core'
-import type { CloudTarget } from '@totp/ui'
+import type { CloudTarget } from './cloudPlatform'
 
 export interface CloudRunnerDeps {
   /** 锁定态：锁定或无 secret 时自动触发直接跳过 */
@@ -27,7 +27,7 @@ export interface CloudRunnerDeps {
   persistAdopted(json: string): Promise<void>
   /** 冲突副本落盘（key=目标 backend 键）；缺省则丢弃副本提示 */
   saveConflictBackup?(key: string, bytes: Uint8Array): void
-  /** 「上次自动同步」状态记录（design §4.1：App.vue 写 localStorage cloudAutoStatus） */
+  /** 「上次自动同步」状态记录（design §4.1：desktop 写 localStorage / extension 写 storage.local 的 cloudAutoStatus） */
   recordStatus?(ok: boolean, summary: string): void
   onError?(err: unknown): void
 }
@@ -39,7 +39,7 @@ function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
-export function createDesktopCloudSync(deps: CloudRunnerDeps): { run(): Promise<void> } {
+export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(): Promise<void> } {
   async function run(): Promise<void> {
     if (busy) return
     const secret = deps.getSecret()
