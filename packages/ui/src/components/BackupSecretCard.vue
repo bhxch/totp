@@ -96,7 +96,8 @@ async function onClear(): Promise<void> {
 </template>
 
 <style scoped>
-.card { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+/* 卡片边界由外层 MdCard outlined 统一提供(M3 双描边裁定,2026-09-16 审查 X1);本组件只负责内容排版 */
+.card { display: flex; flex-direction: column; gap: 8px; }
 h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .pw-row { display: flex; gap: 8px; }
 .pw-row .md-text-field { flex: 1; }

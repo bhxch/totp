@@ -31,8 +31,8 @@ const importPlatform = computed<ImportPlatform | null>(() => {
 
 <template>
   <section class="page">
+    <!-- ImportCard 自带 h2 标题(审查 F2 去重);卡片边界由 MdCard outlined 统一 -->
     <MdCard class="block">
-      <template #header>导入</template>
       <ImportCard :platform="importPlatform" :schemes-api="schemesApi" />
     </MdCard>
   </section>
@@ -40,5 +40,4 @@ const importPlatform = computed<ImportPlatform | null>(() => {
 
 <style scoped>
 .page { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-.block :deep(.card) { border: none; padding: 0; }
 </style>

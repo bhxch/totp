@@ -7,6 +7,7 @@ import type { VueStore } from '../store'
 import EntryFormDialog from '../components/EntryFormDialog.vue'
 import GroupManagerDialog from '../components/GroupManagerDialog.vue'
 import MdButton from '../components/md/MdButton.vue'
+import MdCard from '../components/md/MdCard.vue'
 import MdChip from '../components/md/MdChip.vue'
 import MdFab from '../components/md/MdFab.vue'
 import MdIconButton from '../components/md/MdIconButton.vue'
@@ -157,7 +158,8 @@ async function contextTogglePin(entry: OtpEntry) {
 
 <template>
   <section class="page">
-    <section class="card">
+    <!-- 条目卡走 MdCard outlined(审查 F3:独立 .card 的 outline-variant/10px 与 M3 标尺双标) -->
+    <MdCard class="codes-card">
       <h2>条目（{{ store.vault.entries.length }}）</h2>
       <SearchBar v-model="query" v-model:search-secret="searchSecret" />
       <!-- 分组筛选 chips：全部 / 各分组（按 vault.groups 顺序）/ 管理分组（打开 GroupManagerDialog 并 emit open-groups） -->
@@ -193,7 +195,7 @@ async function contextTogglePin(entry: OtpEntry) {
           </template>
         </div>
       </div>
-    </section>
+    </MdCard>
 
     <!-- 新建入口：MdFab 替代原「＋ 添加」text button，触发同一 creating 态 -->
     <MdFab class="page-fab" aria-label="添加条目" title="添加条目" @click="creating = true; editing = null">＋</MdFab>
@@ -228,7 +230,7 @@ async function contextTogglePin(entry: OtpEntry) {
 
 <style scoped>
 .page { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-.card { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+.codes-card { display: flex; flex-direction: column; gap: 8px; }
 h2 { margin: 0; font-size: var(--md-sys-typescale-title-medium); }
 .chips-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .row { position: relative; display: flex; align-items: center; }

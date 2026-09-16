@@ -29,20 +29,17 @@ const sessionSecret = computed(() => props.store.backupSecret.value)
 
 <template>
   <section class="page">
+    <!-- 功能卡自带 h2 标题(MdCard #header 会与之重复,审查 F2 去重);卡片边界由 MdCard outlined 统一 -->
     <MdCard class="block">
-      <template #header>备份口令</template>
       <BackupSecretCard :store="store" />
     </MdCard>
     <MdCard v-if="platform" class="block">
-      <template #header>本地备份</template>
       <BackupCard :platform="platform" :vault-json="vaultJson" :session-secret="sessionSecret" />
     </MdCard>
     <MdCard v-if="cloudPlatform" class="block">
-      <template #header>云同步</template>
       <CloudCard :platform="cloudPlatform" :session-secret="sessionSecret" />
     </MdCard>
     <MdCard v-if="syncPlatform" class="block">
-      <template #header>浏览器同步</template>
       <SyncCard :platform="syncPlatform" />
     </MdCard>
   </section>
@@ -50,5 +47,4 @@ const sessionSecret = computed(() => props.store.backupSecret.value)
 
 <style scoped>
 .page { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-.block :deep(.card) { border: none; padding: 0; }
 </style>

@@ -11,8 +11,8 @@ withDefaults(defineProps<{
 
 <template>
   <section class="page">
+    <!-- SecurityCard 自带 h2 标题(审查 F2 去重);卡片边界由 MdCard outlined 统一 -->
     <MdCard class="block">
-      <template #header>安全</template>
       <SecurityCard :platform="securityPlatform" />
     </MdCard>
   </section>
@@ -20,5 +20,4 @@ withDefaults(defineProps<{
 
 <style scoped>
 .page { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-.block :deep(.card) { border: none; padding: 0; }
 </style>
