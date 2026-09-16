@@ -403,9 +403,11 @@ const unlockNaming = isMac
 /** OS 自动解锁通道（三平台统一，见 lib.rs os_auto_protect/unprotect）：Windows 下委托同一
  *  DPAPI（运行时行为与旧 dpapi_* 命令等价），macOS/Linux 经 keyring。Rust os_auto_* 与
  *  dpapi_* 命令并存，dpapi_* 保留供语义兼容（kekSources kind 仍 'dpapi'）。
- *  SecurityCard（启用/移除）与 LockScreen（挂载静默解锁）共用同一对象；label 注入按端显示名 */
+ *  SecurityCard（启用/移除）与 LockScreen（挂载静默解锁）共用同一对象；label 注入按端显示名
+ *  （?? 回退防未来分支 osAutoLabel 变 null 时静默 undefined），techSuffix 为已绑定行技术标注 */
 const dpapiOps: DpapiUnlockOps = {
-  label: unlockNaming.osAutoLabel!,
+  label: unlockNaming.osAutoLabel ?? 'Windows 自动解锁',
+  techSuffix: isWin ? '（DPAPI）' : isMac ? '（Keychain）' : '（Secret Service）',
   source: computed(() => store.value?.dpapiSource.value ?? null),
   getCurrentDek: () => store.value?.getCurrentDek() ?? null,
   protect: (dek) => osAutoProtectOs(dek),

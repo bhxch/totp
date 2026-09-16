@@ -20,6 +20,9 @@ export interface DpapiUnlockOps {
   /** 本通道按端显示名（宿主注入：「Windows 自动解锁」/「钥匙串自动解锁」/「密钥环自动解锁」）；
    *  SecurityCard 行/按钮/成功消息与 LockScreen 重试按钮统一取用，UI 内不再硬编码平台名 */
   label: string
+  /** [可选] 已绑定行的技术标注（宿主按端注入：Windows「（DPAPI）」/mac「（Keychain）」/linux「（Secret Service）」）；
+   *  未注入时 SecurityCard 回退「（DPAPI）」与 Windows 现状逐字一致 */
+  techSuffix?: string
   /** 当前已绑定的 DPAPI 来源（null=未启用；LockScreen 静默解锁与 SecurityCard 渲染判定用） */
   source: ComputedRef<{ wrappedDekD: string } | null>
   /** 当前解锁态持有的 DEK（启用包装用；锁定/未启用返回 null） */

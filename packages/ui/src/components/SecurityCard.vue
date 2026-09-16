@@ -182,7 +182,7 @@ async function onDelayChange(value: string): Promise<void> {
         <div class="actions">
           <MdButton class="enable-enc" :disabled="busy" @click="onEnable">启用加密</MdButton>
         </div>
-        <p class="hint">启用后本地数据以口令加密存储。启用后可绑定{{ naming?.prfLabel ?? 'Passkey' }}{{ naming?.osAutoLabel ? ` 或 ${naming.osAutoLabel}` : '' }}，免输口令解锁。</p>
+        <p class="hint">启用后本地数据以口令加密存储。启用后可绑定{{ prfLabel }}{{ naming?.osAutoLabel ? ` 或 ${naming.osAutoLabel}` : '' }}，免输口令解锁。</p>
         <p class="hint">启用后浏览器同步的数据也将是密文。</p>
       </template>
       <!-- 已启用且解锁：解锁方式 + 换口令 + 关闭加密 -->
@@ -191,7 +191,7 @@ async function onDelayChange(value: string): Promise<void> {
         <div v-if="passkeyOps || dpapiOps" class="unlock-methods">
           <h3>解锁方式</h3>
           <template v-if="passkeyOps">
-            <p v-if="prfCap === false" class="hint">当前浏览器不支持 {{ naming?.prfLabel ?? 'Passkey' }} 解锁（PRF）</p>
+            <p v-if="prfCap === false" class="hint">当前浏览器不支持 {{ prfLabel }} 解锁（PRF）</p>
             <template v-else>
               <div class="method-row">
                 <span class="method">口令</span>
@@ -204,13 +204,13 @@ async function onDelayChange(value: string): Promise<void> {
                 </li>
               </ul>
               <div class="actions">
-                <MdButton variant="tonal" class="add-passkey" :disabled="busy || prfCap !== true" @click="onAddPasskey">添加 {{ naming?.prfLabel ?? 'Passkey' }} 解锁</MdButton>
+                <MdButton variant="tonal" class="add-passkey" :disabled="busy || prfCap !== true" @click="onAddPasskey">添加 {{ prfLabel }} 解锁</MdButton>
               </div>
             </template>
           </template>
           <template v-if="dpapiOps">
             <div v-if="dpapiSource" class="dpapi-row">
-              <span class="method">{{ dpapiOps.label }}（DPAPI）</span>
+              <span class="method">{{ dpapiOps.label }}{{ dpapiOps.techSuffix ?? '（DPAPI）' }}</span>
               <MdButton variant="text" danger class="remove-dpapi" :disabled="busy" @click="onRemoveDpapi">移除</MdButton>
             </div>
             <div v-else class="actions">

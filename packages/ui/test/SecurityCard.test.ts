@@ -357,15 +357,16 @@ describe('SecurityCard', () => {
     expect(w.text()).not.toContain('Windows')
   })
 
-  it('D14：mac 形态注入已绑定行显示 dpapi.label（钥匙串自动解锁（DPAPI））', () => {
-    const dpapi = makeDpapi({ source: computed(() => ({ wrappedDekD: 'W' })), label: '钥匙串自动解锁' })
+  it('D14：mac 形态注入已绑定行显示 dpapi.label+techSuffix（钥匙串自动解锁（Keychain））', () => {
+    const dpapi = makeDpapi({ source: computed(() => ({ wrappedDekD: 'W' })), label: '钥匙串自动解锁', techSuffix: '（Keychain）' })
     const p = makePlatform({
       security: unlockedSecurity(),
       dpapi,
       unlockNaming: { prfLabel: 'Touch ID (Passkey)', osAutoLabel: '钥匙串自动解锁' },
     })
     const w = mount(SecurityCard, { props: { platform: p } })
-    expect(w.text()).toContain('钥匙串自动解锁（DPAPI）')
+    expect(w.text()).toContain('钥匙串自动解锁（Keychain）')
+    expect(w.text()).not.toContain('（DPAPI）')
     expect(w.text()).not.toContain('Windows')
   })
 

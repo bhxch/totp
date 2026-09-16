@@ -8,7 +8,8 @@ import { base64ToBytes, bytesToBase64 } from '@totp/core'
 // SecurityCard（启用/移除）与 LockScreen（静默解锁）经 ui DpapiUnlockOps 通道使用。
 
 // C8：DEK 长度强校验（XChaCha20-Poly1305 key = 32 字节）。Rust 侧不隐式接受任意
-// 长度字节，前端先拒可避免无效调用打到 OS 加密边界上才报错。
+// 长度字节，前端先拒可避免无效调用打到 OS 加密边界上才报错；解包路径 Rust 返回后
+// 仍由前端 osAutoUnprotectOs 后置兜底校验 32B，双层防御。
 const DEK_LENGTH = 32
 
 /** DEK 字节 → base64(DPAPI(DEK))（wrappedDekD；Windows DPAPI 直连，语义保留兼容） */
