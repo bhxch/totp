@@ -58,7 +58,11 @@
   - 新设备首次：手动输入备份口令打开云端 envelope → 恢复库 → 口令已在库内 → 此后免输
   - 旧口令备份恢复：当前口令解不开时回退弹一次性口令输入（信封格式 v1 不变，旧备份始终可开）
   - 云同步换口令：提供「用新口令重置云端」显式操作（重加密上传覆盖远端，两步确认；符合 spec §6「更换后重加密重传」）
-- 原生托管覆盖（如实）：Windows 有 DPAPI + PRF(Hello)；macOS/Linux 桌面端依赖 PRF 支持面；macOS Keychain / Linux Secret Service 原生托管登记 backlog。
+- 原生托管覆盖（按端补齐，能力探测驱动）：
+  - 桌面端统一 `osAutoUnlock` 通道（语义一致：OS 安全存储包裹随机 KEK → 解锁时取回静默解锁）：Windows = DPAPI（已实现，`apps/desktop/src/tauriSecurity.ts`）；**macOS = Keychain、Linux = Secret Service（GNOME Keyring/KWallet）——本次新增实施项**，Rust 侧经 keyring/原生 API，与 DPAPI 同构对接 `DpapiUnlockOps`（泛化为 `OsAutoUnlockOps`）
+  - Linux 无 keyring 服务的环境 / macOS WKWebView 的 PRF 受限场景：能力探测失败 → 对应选项不渲染（与现有 `prfCap` 探测同模式），不出现「显示了却不可用」
+  - 扩展端仅 PRF；文案按认证器探测结果渲染，不写死 Windows
+  - UI 选项与全部相关文案按 OS + 能力探测动态生成（见 6.3），macOS/Linux 不再缺位
 
 ### 3.3 数据与会话
 
@@ -128,11 +132,22 @@ CloudCard 各后端动态字段新增「目标文件路径」，默认均为现�
 - 备份口令卡：「用于加密本地备份文件与云端同步对象，两者共用；开启记住后随库存放，解锁库即可用」
 - 换口令/重置云端等两步确认处补影响说明
 
-### 6.3 解锁方式入口的发现性（用户评审发现）
+### 6.3 解锁方式入口的发现性与按端适配（用户评审发现）
 
 现状核实：解锁方式选项**已实现且双端已接线**——「安全」页安全卡内「解锁方式」区（`SecurityCard.vue:182`，添加 Passkey 解锁 / Windows 自动解锁的启用与移除）；桌面宿主注入 prf+dpapi（`apps/desktop/src/App.vue:200,216`），扩展仅 prf（dpapi 桌面限定）。但该区仅在「已启用加密且当前解锁」时渲染，未启用加密时提示文案（`SecurityCard.vue:176-177`）完全未提及存在 Passkey/DPAPI，用户找不到入口。
 
-修正：未启用加密态的提示补一句「启用后可绑定 Passkey（Windows Hello）或 Windows 自动解锁，免输口令」；锁定态 LockScreen 对已绑定来源展示对应按钮（现状已有），对未绑定来源不引流。
+修正（选项与文案一律由「端 + 能力探测」驱动，不写死 Windows）：
+
+- 未启用加密态提示按端生成：「启用后可绑定{平台解锁名}或{原生自动解锁名}，免输口令」，其中平台解锁名/原生自动解锁名按下表；宿主未提供对应能力（如 Linux 无 keyring 服务）时该名词不出现
+- 解锁方式区标签、LockScreen 按钮、引导文案同源取名，统一由 platform 注入的通道描述（`osAutoUnlock.label`、PRF 认证器描述）渲染
+- 锁定态 LockScreen 对已绑定来源展示对应按钮（现状已有），对未绑定来源不引流
+
+| 端 | 平台解锁（PRF 认证器名） | 原生自动解锁名 |
+|----|------------------------|----------------|
+| Windows 桌面 | Windows Hello | Windows 自动解锁（DPAPI） |
+| macOS 桌面 | Touch ID（受 WKWebView 能力探测约束） | 钥匙串自动解锁（Keychain） |
+| Linux 桌面 | Passkey（安全密钥，按探测） | 密钥环自动解锁（Secret Service） |
+| 浏览器扩展 | Passkey（浏览器认证器，按探测） | ——（无原生通道） |
 
 ## 7. M3 视觉审查与修正（D3）
 
@@ -157,7 +172,7 @@ CloudCard 各后端动态字段新增「目标文件路径」，默认均为现�
 ## 9. 实施顺序与测试
 
 1. M3 审查报告（独立产出，不阻塞 2-5）
-2. 口令聚合 + 备份口令入库（store/卡片/守护规则）
+2. 口令聚合 + 备份口令入库（store/卡片/守护规则）+ 桌面 `osAutoUnlock` 通道补齐（macOS Keychain / Linux Secret Service，Rust 侧）与通道文案按端注入
 3. 触发器（变更检测 core 模块 + 两端接线）
 4. 路径设置（桌面目录 + 云端各后端路径）
 5. 导入/口令文案
