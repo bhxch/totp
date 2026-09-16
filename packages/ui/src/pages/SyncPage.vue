@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import BackupCard from '../components/BackupCard.vue'
+import BackupSecretCard from '../components/BackupSecretCard.vue'
 import CloudCard from '../components/CloudCard.vue'
 import SyncCard from '../components/SyncCard.vue'
 import type { BackupPlatform } from '../components/backupPlatform'
@@ -26,6 +27,10 @@ const vaultJson = computed(() => JSON.stringify(props.store.vault))
 
 <template>
   <section class="page">
+    <MdCard class="block">
+      <template #header>备份口令</template>
+      <BackupSecretCard :store="store" />
+    </MdCard>
     <MdCard v-if="platform" class="block">
       <template #header>本地备份</template>
       <BackupCard :platform="platform" :vault-json="vaultJson" />

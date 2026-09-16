@@ -15,6 +15,7 @@ export { default as GroupManagerDialog } from './components/GroupManagerDialog.v
 export { default as RevealDialog } from './components/RevealDialog.vue'
 export { default as LockScreen } from './components/LockScreen.vue'
 export { default as BackupCard } from './components/BackupCard.vue'
+export { default as BackupSecretCard } from './components/BackupSecretCard.vue'
 export { default as CloudCard } from './components/CloudCard.vue'
 export { default as ImportCard } from './components/ImportCard.vue'
 export { default as SecurityCard } from './components/SecurityCard.vue'
