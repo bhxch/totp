@@ -3,11 +3,11 @@
  * syncWithCloud；任一目标采纳到较新的云端版本后，终局把该版本收敛回推到所有基线不一致的
  * 目标（含本轮失败过的）。单目标失败不阻断其余目标。
  *
- * 基线口径：pushEnvelope 返回的 hash 为 vaultJson 明文内容摘要，收敛比较与 hashes 回填均用该口径；
- * TargetResult.outcome.hash 则保持 syncWithCloud 原语义（in-sync/downloaded 为远端字节摘要，
- * 收敛改写后为赢家明文内容摘要），供宿主按需取用。
+ * 基线口径：全程「云端远端字节摘要」，与既有 cloudRev 语义一致——outcome.hash（in-sync/downloaded/
+ * conflict-resolved 为远端 get 字节 sha256，uploaded 为本次上传信封字节 sha256）与 pushEnvelope 返回的
+ * hash 同一口径；宿主可把 hashes 原样持久化并在下轮作 localHash 使用。
  */
-import { pushEnvelope, sha256Hex, syncWithCloud } from './syncOrchestrator'
+import { pushEnvelope, syncWithCloud } from './syncOrchestrator'
 import type { CloudBackend } from './backend'
 
 /** 供测试与其他调用方直接复用单目标加密推送（re-export 自 syncOrchestrator）。 */
@@ -41,10 +41,11 @@ export interface MultiTargetSyncResult {
 
 /**
  * 多目标顺序同步 + 收敛：
- * 1. 逐目标 syncWithCloud（独立基线）；downloaded / conflict-resolved 且有 envelopeJson 时采纳为当前内容。
- * 2. 若发生过采纳：赢家内容 hash = sha256(vault 明文)；凡基线 ≠ 赢家 hash 的目标（含本轮失败过的）
- *    一律 pushEnvelope 回推赢家内容——成功则基线更新、outcome 就地改写为 uploaded（类型完整，其余字段置 undefined）；
- *    失败则记 convergeError，outcome 保持原值。
+ * 1. 逐目标 syncWithCloud（独立基线）；downloaded / conflict-resolved 且有 envelopeJson 时采纳为当前内容，
+ *    赢家基线 = 该目标 outcome.hash（远端字节摘要，见 syncOrchestrator 冲突分支返回值）。
+ * 2. 收敛终局：凡基线 ≠ 赢家 hash 的目标（含本轮失败过的）一律 pushEnvelope 回推赢家内容——成功则
+ *    基线更新为新信封字节摘要、outcome 就地改写为 uploaded（类型完整，其余字段置 undefined）；
+ *    失败则记 convergeError，outcome 保持原值。基线已等于赢家（如采纳源自身）跳过不重推。
  */
 export async function syncMultipleTargets(opts: {
   targets: CloudTargetInput[]
@@ -55,6 +56,7 @@ export async function syncMultipleTargets(opts: {
   const { targets, vaultJson, password, onConflictBackup } = opts
   let current = vaultJson
   let adopted = false
+  let winnerHash: string | undefined
   const results: TargetResult[] = []
   const hashes: Record<string, string> = {}
 
@@ -72,6 +74,8 @@ export async function syncMultipleTargets(opts: {
       if ((outcome.action === 'downloaded' || outcome.action === 'conflict-resolved') && outcome.envelopeJson !== undefined) {
         current = outcome.envelopeJson
         adopted = true
+        // downloaded/conflict-resolved 的 outcome.hash 即远端 get 字节的 sha256，直接作赢家基线
+        winnerHash = outcome.hash
       }
       results.push({ key: t.key, outcome })
     } catch (err) {
@@ -79,8 +83,7 @@ export async function syncMultipleTargets(opts: {
     }
   }
 
-  if (adopted) {
-    const winnerHash = await sha256Hex(new TextEncoder().encode(current))
+  if (winnerHash !== undefined) {
     for (let i = 0; i < targets.length; i++) {
       const t = targets[i]!
       if (hashes[t.key] === winnerHash) continue

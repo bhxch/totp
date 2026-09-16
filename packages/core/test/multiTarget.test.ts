@@ -10,14 +10,16 @@ const A = JSON.stringify({ version: 1, entries: [{ label: 'A' }], groups: [], up
 const B = JSON.stringify({ version: 1, entries: [{ label: 'B' }], groups: [], updatedAt: 2 })
 const bytesOf = (s: string) => new TextEncoder().encode(s)
 
-/** 内存 fake 后端：多目标各持独立 store，可预置初始内容 */
-function fakeBackend(initial?: Uint8Array): CloudBackend & { store: Map<string, Uint8Array> } {
+/** 内存 fake 后端：多目标各持独立 store，可预置初始内容；putCount 供断言收敛轮是否重推 */
+function fakeBackend(initial?: Uint8Array): CloudBackend & { store: Map<string, Uint8Array>; putCount: number } {
   const store = new Map<string, Uint8Array>()
   if (initial) store.set(PATH, initial)
-  return {
+  const backend: CloudBackend & { store: Map<string, Uint8Array>; putCount: number } = {
     store,
     id: 'webdav',
+    putCount: 0,
     async put(path, data) {
+      backend.putCount++
       store.set(path, data)
     },
     async get(path) {
@@ -30,6 +32,7 @@ function fakeBackend(initial?: Uint8Array): CloudBackend & { store: Map<string, 
       return store.has(path)
     },
   }
+  return backend
 }
 
 /** 预置远端 envelope：vaultJson 加密后的 JSON 字节 */
@@ -44,12 +47,12 @@ async function expectOpensTo(bytes: Uint8Array, password: string, expected: stri
 }
 
 describe('pushEnvelope', () => {
-  it('上传并回读校验：hash 为 vault 明文内容摘要，store 有对象且可解开为原文', async () => {
+  it('上传并回读校验：hash 为上传信封字节的摘要（cloudRev 口径），store 有对象且可解开为原文', async () => {
     const backend = fakeBackend()
     const pushed = await pushEnvelope({ backend, path: PATH, vaultJson: A, password: PW })
-    expect(pushed.hash).toBe(await sha256Hex(bytesOf(A)))
     const stored = backend.store.get(PATH)!
     expect(stored).toBeDefined()
+    expect(pushed.hash).toBe(await sha256Hex(stored))
     // 回读校验已内建于 pushEnvelope：存储内容可同口令解开为 A
     await expectOpensTo(stored, PW, A)
     // envelopeJson 与存储字节一致
@@ -91,10 +94,13 @@ describe('syncMultipleTargets', () => {
     })
     expect(r.adopted).toBe(true)
     expect(r.finalVaultJson).toBe(B)
-    // 目标1（原空）被回推 B
+    // 目标1（原空）被回推 B，基线为回推后服务器现字节的摘要
     await expectOpensTo(b1.store.get(PATH)!, PW, B)
     expect(r.results[0]!.outcome!.action).toBe('uploaded')
-    expect(r.hashes['fake1']).toBe(await sha256Hex(bytesOf(B)))
+    expect(r.hashes['fake1']).toBe(await sha256Hex(b1.store.get(PATH)!))
+    // 采纳源 t2 基线已等于赢家（downloaded 的 hash 即远端字节摘要）→ 收敛轮跳过，不被重推
+    expect(b2.putCount).toBe(0)
+    expect(r.hashes['fake2']).toBe(await sha256Hex(b2.store.get(PATH)!))
   })
 
   it('全部 in-sync → 不重写（in-sync 需远端字节即本地明文内容）', async () => {
@@ -213,9 +219,9 @@ describe('syncMultipleTargets', () => {
     })
     expect(r.adopted).toBe(true)
     expect(r.finalVaultJson).toBe(B)
-    // t1 原为 in-sync（持旧 A），基线 ≠ 赢家 → 回推 B 且 outcome 改写 uploaded
+    // t1 原为 in-sync（持旧 A），基线 ≠ 赢家 → 回推 B 且 outcome 改写 uploaded，基线为回推后现字节摘要
     expect(r.results[0]!.outcome!.action).toBe('uploaded')
-    expect(r.hashes['t1']).toBe(await sha256Hex(bytesOf(B)))
+    expect(r.hashes['t1']).toBe(await sha256Hex(b1.store.get(PATH)!))
     await expectOpensTo(b1.store.get(PATH)!, PW, B)
   })
 
