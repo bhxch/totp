@@ -9,7 +9,7 @@ import { createDesktopAutoRunner } from './autoBackup'
 import { createBackupToDir, listBackups, readBackupByName, readBackupFileOs, saveConflictBackupToDir, writeBackupFileOs } from './backupService'
 import { decryptDpapiOs, readImportFileBytesOs, readImportFileOs } from './importService'
 import { createTauriFs } from './tauriFs'
-import { dpapiProtectOs, dpapiUnprotectOs } from './tauriSecurity'
+import { osAutoProtectOs, osAutoUnprotectOs } from './tauriSecurity'
 
 const store = ref<VueStore | null>(null)
 const icons = ref<IconStore | null>(null)
@@ -387,13 +387,29 @@ const cloudSync = createCloudSyncRunner({
   onError: (err) => console.warn('[cloudAutoSync]', err),
 })
 
-/** DPAPI(Windows) 自动解锁通道：Rust dpapi_protect/unprotect + store dpapi 源 op。
- *  SecurityCard（启用/移除）与 LockScreen（挂载静默解锁）共用同一对象 */
+/** 解锁方式按端命名：UA 平台标识判定宿主端。
+ *  依据（自审声明）：desktop 桌面壳 UA 形态——Windows WebView2 恒含 "Windows NT"；
+ *  macOS WKWebView/Safari 恒含 "Mac OS X"（"Macintosh" 平台段）；Linux 桌面浏览器 UA
+ *  恒含 "X11; Linux"。桌面端不存在 iPhone/iPad 形态，排除规则仅作防御（防 UA 伪造/异常）。 */
+const ua = navigator.userAgent
+const isMac = /Mac/i.test(ua) && !/iPhone|iPad/i.test(ua)
+const isWin = /Windows/i.test(ua)
+const unlockNaming = isMac
+  ? { prfLabel: 'Touch ID (Passkey)', osAutoLabel: '钥匙串自动解锁' }
+  : isWin
+    ? { prfLabel: 'Windows Hello (Passkey)', osAutoLabel: 'Windows 自动解锁' }
+    : { prfLabel: 'Passkey', osAutoLabel: '密钥环自动解锁' }
+
+/** OS 自动解锁通道（三平台统一，见 lib.rs os_auto_protect/unprotect）：Windows 下委托同一
+ *  DPAPI（运行时行为与旧 dpapi_* 命令等价），macOS/Linux 经 keyring。Rust os_auto_* 与
+ *  dpapi_* 命令并存，dpapi_* 保留供语义兼容（kekSources kind 仍 'dpapi'）。
+ *  SecurityCard（启用/移除）与 LockScreen（挂载静默解锁）共用同一对象；label 注入按端显示名 */
 const dpapiOps: DpapiUnlockOps = {
+  label: unlockNaming.osAutoLabel!,
   source: computed(() => store.value?.dpapiSource.value ?? null),
   getCurrentDek: () => store.value?.getCurrentDek() ?? null,
-  protect: (dek) => dpapiProtectOs(dek),
-  unprotect: (wrapped) => dpapiUnprotectOs(wrapped),
+  protect: (dek) => osAutoProtectOs(dek),
+  unprotect: (wrapped) => osAutoUnprotectOs(wrapped),
   async add(wrappedDekD) {
     const s = store.value
     if (!s) throw new Error('数据尚未就绪')
@@ -435,6 +451,7 @@ const securityPlatform = computed<SecurityPlatform | null>(() => {
       },
     },
     dpapi: dpapiOps,
+    unlockNaming,
     clipboardClearEnabled: computed(() => s.settings.clipboardClearEnabled),
     async setClipboardClear(v) {
       s.settings.clipboardClearEnabled = v

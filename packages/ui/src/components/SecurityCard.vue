@@ -24,8 +24,11 @@ const hasEnc = computed(() => props.platform?.security?.hasEncryption.value ?? f
 const isLocked = computed(() => props.platform?.security?.locked.value ?? false)
 const clipboardOn = computed(() => props.platform?.clipboardClearEnabled.value ?? true)
 
-/** 解锁方式按端命名（宿主经 unlockNaming 注入；null=回退 Passkey / Windows 自动解锁） */
+/** 解锁方式按端命名（宿主经 unlockNaming 注入 prfLabel；OS 自动解锁显示名经 DpapiUnlockOps.label
+ *  由宿主注入，UI 内不硬编码平台名，仅 prfLabel 未注入时回退 'Passkey'） */
 const naming = computed(() => props.platform?.unlockNaming ?? null)
+/** Passkey 显示名（msg 拼接与模板共用；未注入回退 'Passkey'） */
+const prfLabel = computed(() => naming.value?.prfLabel ?? 'Passkey')
 
 /** Passkey(PRF) 能力探测结果：unknown=探测中/宿主未提供；false 时显示不支持提示 */
 const prfCap = ref<'unknown' | boolean>('unknown')
@@ -101,9 +104,11 @@ async function onChangePw(): Promise<void> {
   if (!p) return
   const err = validatePw(newPw.value, newPwConfirm.value)
   if (err) return fail(new Error(err))
-  // I53：成功后消息补充说明 Passkey/DPAPI 来源不受换口令影响（DEK 不变，仅重包裹）
+  // I53：成功后消息补充说明 Passkey/OS 自动解锁来源不受换口令影响（DEK 不变，仅重包裹）；
+  // osAuto 显示名取 dpapi.label（宿主注入，按端动态化）；extension 无 dpapi ops 时仅提示 Passkey
   const keepHint = passkeySources.value.length > 0 || dpapiSource.value !== null
-    ? '；Passkey/Windows 自动解锁保持不变' : ''
+    ? (dpapiOps.value ? `；Passkey/${dpapiOps.value.label}保持不变` : '；Passkey保持不变')
+    : ''
   if (await run(() => p.changePassphrase(newPw.value), `口令已更换${keepHint}`)) {
     newPw.value = ''
     newPwConfirm.value = ''
@@ -125,18 +130,19 @@ async function onDisable(): Promise<void> {
 async function onAddPasskey(): Promise<void> {
   const pk = passkeyOps.value
   if (!pk) return
+  const prf = prfLabel.value
   await run(async () => {
-    if (!(await pk.add())) throw new Error('Passkey 创建未完成（已取消或认证器不支持 PRF）')
-  }, 'Passkey 已绑定，下次锁定后可使用 Passkey 解锁')
+    if (!(await pk.add())) throw new Error(`${prf} 创建未完成（已取消或认证器不支持 PRF）`)
+  }, `${prf} 已绑定，下次锁定后可使用 ${prf} 解锁`)
 }
 
 async function onRemovePasskey(credentialId: string): Promise<void> {
   const pk = passkeyOps.value
   if (!pk) return
-  await run(() => pk.remove(credentialId), 'Passkey 已移除')
+  await run(() => pk.remove(credentialId), `${prfLabel.value} 已移除`)
 }
 
-/** 启用 DPAPI 自动解锁：取当前 DEK → DPAPI 包裹 → 绑定来源落盘 */
+/** 启用 OS 自动解锁：取当前 DEK → OS 包裹（Windows=DPAPI / mac=Keychain / linux=Secret Service）→ 绑定来源落盘 */
 async function onEnableDpapi(): Promise<void> {
   const ops = dpapiOps.value
   if (!ops) return
@@ -144,13 +150,13 @@ async function onEnableDpapi(): Promise<void> {
     const dek = ops.getCurrentDek()
     if (!dek) throw new Error('当前无可用 DEK（需先解锁）')
     await ops.add(await ops.protect(dek))
-  }, 'Windows 自动解锁已启用')
+  }, `${ops.label}已启用`)
 }
 
 async function onRemoveDpapi(): Promise<void> {
   const ops = dpapiOps.value
   if (!ops) return
-  await run(() => ops.remove(), 'Windows 自动解锁已移除')
+  await run(() => ops.remove(), `${ops.label}已移除`)
 }
 
 async function onClipboardChange(checked: boolean): Promise<void> {
@@ -204,11 +210,11 @@ async function onDelayChange(value: string): Promise<void> {
           </template>
           <template v-if="dpapiOps">
             <div v-if="dpapiSource" class="dpapi-row">
-              <span class="method">{{ naming?.osAutoLabel ?? 'Windows 自动解锁' }}（DPAPI）</span>
+              <span class="method">{{ dpapiOps.label }}（DPAPI）</span>
               <MdButton variant="text" danger class="remove-dpapi" :disabled="busy" @click="onRemoveDpapi">移除</MdButton>
             </div>
             <div v-else class="actions">
-              <MdButton variant="tonal" class="enable-dpapi" :disabled="busy" @click="onEnableDpapi">启用 {{ naming?.osAutoLabel ?? 'Windows 自动解锁' }}</MdButton>
+              <MdButton variant="tonal" class="enable-dpapi" :disabled="busy" @click="onEnableDpapi">启用 {{ dpapiOps.label }}</MdButton>
             </div>
           </template>
         </div>

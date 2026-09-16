@@ -50,7 +50,7 @@ function mockWebAuthnGet(first: Uint8Array[]): void {
   }
 }
 
-/** DPAPI(Windows) 解锁通道 mock（默认已绑定来源、unprotect 解出指定 DEK） */
+/** DPAPI(Windows) 解锁通道 mock（默认已绑定来源、unprotect 解出指定 DEK；label 回退「Windows 自动解锁」保既有文案断言） */
 function makeDpapi(over: Partial<DpapiUnlockOps> = {}): DpapiUnlockOps {
   return {
     source: computed(() => ({ wrappedDekD: 'WRAPPED-DEK' })),
@@ -59,6 +59,7 @@ function makeDpapi(over: Partial<DpapiUnlockOps> = {}): DpapiUnlockOps {
     unprotect: vi.fn().mockResolvedValue(randomBytes(32)),
     add: vi.fn(),
     remove: vi.fn(),
+    label: 'Windows 自动解锁',
     ...over,
   }
 }
@@ -225,6 +226,21 @@ describe('LockScreen', () => {
       await vi.advanceTimersByTimeAsync(10)
       expect(unprotect.mock.calls.length).toBe(before + 1)
       expect(store.unlockWithDek).not.toHaveBeenCalled() // 重试同样失败 → 仍不调用 unlockWithDek
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('D14：重试按钮文案用 dpapi.label（mac 形态显示「重试 钥匙串自动解锁」）', async () => {
+    vi.useFakeTimers()
+    try {
+      const unprotect = vi.fn().mockRejectedValue(new Error('Keychain 取回失败'))
+      const store = mockStore({ locked: computed(() => true), prfSources: computed(() => []), securitySettings: ref(null) })
+      const w = mount(LockScreen, { props: { store, dpapi: makeDpapi({ unprotect, label: '钥匙串自动解锁' }) } })
+      await vi.advanceTimersByTimeAsync(1100)
+      expect(w.find('button.dpapi-retry').exists()).toBe(true)
+      expect(w.text()).toContain('重试 钥匙串自动解锁')
+      expect(w.text()).not.toContain('Windows')
     } finally {
       vi.useRealTimers()
     }

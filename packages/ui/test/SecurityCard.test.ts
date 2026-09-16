@@ -29,7 +29,7 @@ function unlockedSecurity(over: Partial<SecurityOps> = {}): SecurityOps {
   return makeSecurity({ hasEncryption: computed(() => true), ...over })
 }
 
-/** DPAPI(Windows) 解锁能力 mock（默认未绑定来源） */
+/** DPAPI(Windows) 解锁能力 mock（默认未绑定来源；label 回退「Windows 自动解锁」保既有文案断言） */
 function makeDpapi(over: Partial<DpapiUnlockOps> = {}): DpapiUnlockOps {
   return {
     source: computed(() => null),
@@ -38,6 +38,7 @@ function makeDpapi(over: Partial<DpapiUnlockOps> = {}): DpapiUnlockOps {
     unprotect: vi.fn().mockResolvedValue(new Uint8Array(32)),
     add: vi.fn().mockResolvedValue(undefined),
     remove: vi.fn().mockResolvedValue(undefined),
+    label: 'Windows 自动解锁',
     ...over,
   }
 }
@@ -197,7 +198,19 @@ describe('SecurityCard', () => {
     expect(dpapi.add).not.toHaveBeenCalled()
   })
 
-  it('I53：换口令成功且存在 Passkey 绑定 → 提示中包含「Passkey/Windows 自动解锁保持不变」', async () => {
+  it('I53：换口令成功且存在 Passkey 绑定 → 提示中包含「Passkey/Windows 自动解锁保持不变」（回退形态）', async () => {
+    const passkey = { sources: computed(() => [{ credentialId: 'Y3JlZC0x' }]), prfSupported: vi.fn().mockResolvedValue(true), add: vi.fn(), remove: vi.fn() }
+    // 无 naming 注入 + dpapi.label 默认回退「Windows 自动解锁」→ 文案与旧实现逐字一致
+    const p = makePlatform({ security: unlockedSecurity({ passkey }), dpapi: makeDpapi() })
+    const w = mount(SecurityCard, { props: { platform: p } })
+    const inputs = w.findAll('input[type="password"]')
+    await inputs[0]!.setValue('new')
+    await inputs[1]!.setValue('new')
+    await w.find('button.change-pw').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('Passkey/Windows 自动解锁保持不变'))
+  })
+
+  it('I53：换口令成功仅 Passkey 绑定且无 dpapi ops（extension）→ 提示仅含「Passkey保持不变」', async () => {
     const passkey = { sources: computed(() => [{ credentialId: 'Y3JlZC0x' }]), prfSupported: vi.fn().mockResolvedValue(true), add: vi.fn(), remove: vi.fn() }
     const p = makePlatform({ security: unlockedSecurity({ passkey }) })
     const w = mount(SecurityCard, { props: { platform: p } })
@@ -205,7 +218,8 @@ describe('SecurityCard', () => {
     await inputs[0]!.setValue('new')
     await inputs[1]!.setValue('new')
     await w.find('button.change-pw').trigger('click')
-    await vi.waitFor(() => expect(w.text()).toContain('Passkey/Windows 自动解锁保持不变'))
+    await vi.waitFor(() => expect(w.text()).toContain('Passkey保持不变'))
+    expect(w.text()).not.toContain('Windows')
   })
 
   it('I53：换口令成功且无其他解锁方式 → 提示中不包含保持不变文案', async () => {
@@ -314,7 +328,7 @@ describe('SecurityCard', () => {
   })
 
   it('D5：dpapi 行使用注入的 osAutoLabel（未注入回退 Windows 自动解锁由既有用例覆盖）', () => {
-    const dpapi = makeDpapi({ source: computed(() => ({ wrappedDekD: 'W' })) })
+    const dpapi = makeDpapi({ source: computed(() => ({ wrappedDekD: 'W' })), label: 'Touch ID 自动解锁' })
     const p = makePlatform({
       security: unlockedSecurity(),
       dpapi,
@@ -323,5 +337,90 @@ describe('SecurityCard', () => {
     const w = mount(SecurityCard, { props: { platform: p } })
     expect(w.text()).toContain('Touch ID 自动解锁（DPAPI）')
     expect(w.text()).not.toContain('Windows 自动解锁（DPAPI）')
+  })
+
+  // ---- D14：dpapi.label 宿主注入 + msg 按端动态化（§7.3 挂账收口） ----
+
+  it('D14：mac 形态注入（dpapi.label=钥匙串自动解锁）→ 启用按钮/成功消息用注入 label 且不含 Windows', async () => {
+    const dpapi = makeDpapi({ label: '钥匙串自动解锁' })
+    const p = makePlatform({
+      security: unlockedSecurity(),
+      dpapi,
+      unlockNaming: { prfLabel: 'Touch ID (Passkey)', osAutoLabel: '钥匙串自动解锁' },
+    })
+    const w = mount(SecurityCard, { props: { platform: p } })
+    const btn = w.find('button.enable-dpapi')
+    expect(btn.text()).toBe('启用 钥匙串自动解锁')
+    await btn.trigger('click')
+    await vi.waitFor(() => expect(dpapi.add).toHaveBeenCalledWith('WRAPPED-DEK'))
+    expect(w.text()).toContain('钥匙串自动解锁已启用')
+    expect(w.text()).not.toContain('Windows')
+  })
+
+  it('D14：mac 形态注入已绑定行显示 dpapi.label（钥匙串自动解锁（DPAPI））', () => {
+    const dpapi = makeDpapi({ source: computed(() => ({ wrappedDekD: 'W' })), label: '钥匙串自动解锁' })
+    const p = makePlatform({
+      security: unlockedSecurity(),
+      dpapi,
+      unlockNaming: { prfLabel: 'Touch ID (Passkey)', osAutoLabel: '钥匙串自动解锁' },
+    })
+    const w = mount(SecurityCard, { props: { platform: p } })
+    expect(w.text()).toContain('钥匙串自动解锁（DPAPI）')
+    expect(w.text()).not.toContain('Windows')
+  })
+
+  it('D14：换口令成功且 dpapi 注入 mac label → 提示 Passkey/钥匙串自动解锁保持不变（不含 Windows）', async () => {
+    // 绑定 source 使 keepHint 条件（存在非口令来源）触发
+    const dpapi = makeDpapi({ label: '钥匙串自动解锁', source: computed(() => ({ wrappedDekD: 'W' })) })
+    const p = makePlatform({
+      security: unlockedSecurity(),
+      dpapi,
+      unlockNaming: { prfLabel: 'Touch ID (Passkey)', osAutoLabel: '钥匙串自动解锁' },
+    })
+    const w = mount(SecurityCard, { props: { platform: p } })
+    const inputs = w.findAll('input[type="password"]')
+    await inputs[0]!.setValue('new')
+    await inputs[1]!.setValue('new')
+    await w.find('button.change-pw').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('口令已更换'))
+    expect(w.text()).toContain('Passkey/钥匙串自动解锁保持不变')
+    expect(w.text()).not.toContain('Windows')
+  })
+
+  it('D14：移除成功消息用注入 label（钥匙串自动解锁已移除）', async () => {
+    const dpapi = makeDpapi({ source: computed(() => ({ wrappedDekD: 'W' })), label: '钥匙串自动解锁' })
+    const w = mount(SecurityCard, {
+      props: { platform: makePlatform({ security: unlockedSecurity(), dpapi }) },
+    })
+    await w.find('button.remove-dpapi').trigger('click')
+    await vi.waitFor(() => expect(dpapi.remove).toHaveBeenCalled())
+    expect(w.text()).toContain('钥匙串自动解锁已移除')
+    expect(w.text()).not.toContain('Windows')
+  })
+
+  it('D14：添加 Passkey 成功/失败消息用注入的 prfLabel（Touch ID (Passkey)）', async () => {
+    const passkey = { sources: computed(() => []), prfSupported: vi.fn().mockResolvedValue(true), add: vi.fn().mockResolvedValue(true), remove: vi.fn() }
+    const p = makePlatform({
+      security: unlockedSecurity({ passkey }),
+      unlockNaming: { prfLabel: 'Touch ID (Passkey)', osAutoLabel: null },
+    })
+    const w = mount(SecurityCard, { props: { platform: p } })
+    // 按钮在 prfCap 探测完成（异步 resolve true）前 disabled
+    const btn = w.find('button.add-passkey')
+    await vi.waitFor(() => expect(btn.attributes('disabled')).toBeUndefined())
+    await btn.trigger('click')
+    await vi.waitFor(() => expect(passkey.add).toHaveBeenCalled())
+    expect(w.text()).toContain('Touch ID (Passkey) 已绑定，下次锁定后可使用 Touch ID (Passkey) 解锁')
+
+    const failPk = { sources: computed(() => []), prfSupported: vi.fn().mockResolvedValue(true), add: vi.fn().mockResolvedValue(false), remove: vi.fn() }
+    const p2 = makePlatform({
+      security: unlockedSecurity({ passkey: failPk }),
+      unlockNaming: { prfLabel: 'Touch ID (Passkey)', osAutoLabel: null },
+    })
+    const w2 = mount(SecurityCard, { props: { platform: p2 } })
+    const btn2 = w2.find('button.add-passkey')
+    await vi.waitFor(() => expect(btn2.attributes('disabled')).toBeUndefined())
+    await btn2.trigger('click')
+    await vi.waitFor(() => expect(w2.text()).toContain('Touch ID (Passkey) 创建未完成（已取消或认证器不支持 PRF）'))
   })
 })

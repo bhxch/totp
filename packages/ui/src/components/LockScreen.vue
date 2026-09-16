@@ -150,7 +150,7 @@ async function onPasskeyUnlock(): Promise<void> {
     >
       使用 Passkey 解锁
     </MdButton>
-    <!-- I44：DPAPI 已绑定但静默解锁失败 1s 后仍锁定 → 显示重试入口 -->
+    <!-- I44：DPAPI 已绑定但静默解锁失败 1s 后仍锁定 → 显示重试入口（文案取 dpapi.label 按端动态化） -->
     <MdButton
       v-if="dpapi?.source.value && dpapiFailed"
       variant="tonal"
@@ -158,7 +158,7 @@ async function onPasskeyUnlock(): Promise<void> {
       :disabled="dpapiRetrying || busy"
       @click="onRetryDpapi"
     >
-      重试 Windows 自动解锁
+      重试 {{ dpapi?.label }}
     </MdButton>
     <div v-if="msg" class="err" role="alert">{{ msg }}</div>
   </section>

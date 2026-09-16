@@ -12,16 +12,21 @@ export interface PasskeyUnlockOps {
   remove(credentialId: string): Promise<void>
 }
 
-/** DPAPI(Windows) 自动解锁（仅 desktop 宿主提供；extension 无此能力 → 相关 UI 隐藏）。
- *  wrappedDekD 语义（计划 11 T1 裁定）：CryptProtectData 直接包裹 DEK 本体，base64 进出 */
+/** OS 自动解锁（计划 15 T14 三平台统一通道，Windows=DPAPI / macOS=Keychain / Linux=Secret Service；
+ *  仅 desktop 宿主提供；extension 无此能力 → 相关 UI 隐藏）。
+ *  wrappedDekD 语义（计划 11 T1 裁定）：OS 保护直接包裹 DEK 本体，base64 进出；
+ *  kekSources kind 仍为 'dpapi'（存储兼容） */
 export interface DpapiUnlockOps {
+  /** 本通道按端显示名（宿主注入：「Windows 自动解锁」/「钥匙串自动解锁」/「密钥环自动解锁」）；
+   *  SecurityCard 行/按钮/成功消息与 LockScreen 重试按钮统一取用，UI 内不再硬编码平台名 */
+  label: string
   /** 当前已绑定的 DPAPI 来源（null=未启用；LockScreen 静默解锁与 SecurityCard 渲染判定用） */
   source: ComputedRef<{ wrappedDekD: string } | null>
   /** 当前解锁态持有的 DEK（启用包装用；锁定/未启用返回 null） */
   getCurrentDek(): Uint8Array | null
-  /** DPAPI 包裹：DEK 字节 → base64(wrappedDekD)（desktop 经 Rust dpapi_protect） */
+  /** OS 包裹：DEK 字节 → base64(wrappedDekD)（desktop 经 Rust os_auto_protect，Windows 下即 DPAPI） */
   protect(dek: Uint8Array): Promise<string>
-  /** DPAPI 解包：base64(wrappedDekD) → DEK 字节（desktop 经 Rust dpapi_unprotect；跨机器/跨用户失败由调用方静默处理） */
+  /** OS 解包：base64(wrappedDekD) → DEK 字节（desktop 经 Rust os_auto_unprotect；跨机器/跨用户失败由调用方静默处理） */
   unprotect(wrapped: string): Promise<Uint8Array>
   /** 绑定来源（store addDpapiSourceOp：withDpapiSource + security 落盘） */
   add(wrappedDekD: string): Promise<void>
@@ -53,7 +58,7 @@ export interface SecurityOps {
 export interface SecurityPlatform {
   /** 加密状态与操作；popup 等不暴露安全管理的端传 null */
   security: SecurityOps | null
-  /** [可选] DPAPI(Windows) 自动解锁；仅 desktop 提供，未提供时 SecurityCard/LockScreen 隐藏该能力（extension 无） */
+  /** [可选] OS 自动解锁（Windows=DPAPI / macOS=Keychain / Linux=Secret Service）；仅 desktop 提供，未提供时 SecurityCard/LockScreen 隐藏该能力（extension 无） */
   dpapi?: DpapiUnlockOps
   /** 解锁方式按端命名（宿主注入；缺省 Passkey，osAutoLabel null=该端无原生自动解锁） */
   unlockNaming?: { prfLabel: string; osAutoLabel: string | null }
