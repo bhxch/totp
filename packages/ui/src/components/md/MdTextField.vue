@@ -3,15 +3,26 @@
 let errorIdCounter = 0
 </script>
 <script setup lang="ts">
+import { computed, useAttrs } from 'vue'
+// inheritAttrs:false + $attrs 透传内部 input：autocomplete/min/max/disabled/onKeydown/data-* 等直达原生 input；
+// class/style 例外——关闭自动继承后 Vue 不再落根，须显式绑回根元素（消费方布局 class 依赖根元素）
+defineOptions({ inheritAttrs: false })
 withDefaults(defineProps<{ modelValue: string; label: string; type?: string; error?: string; placeholder?: string; ariaLabel?: string }>(), { type: 'text', error: '', placeholder: '' })
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 const errorId = `md-text-field-error-${++errorIdCounter}`
+const attrs = useAttrs()
+const inputAttrs = computed(() => {
+  const rest: Record<string, unknown> = { ...attrs }
+  delete rest.class
+  delete rest.style
+  return rest
+})
 </script>
 <template>
-  <div class="md-text-field" :class="{ 'md-text-field--error': !!error }">
+  <div class="md-text-field" :class="[attrs.class, { 'md-text-field--error': !!error }]" :style="attrs.style">
     <label class="md-text-field__box">
       <span class="md-text-field__label" :class="{ 'md-text-field__label--floated': !!modelValue || !!placeholder }">{{ label }}</span>
-      <input class="md-text-field__input" :type="type" :value="modelValue" :placeholder="placeholder"
+      <input v-bind="inputAttrs" class="md-text-field__input" :type="type" :value="modelValue" :placeholder="placeholder"
         :aria-label="ariaLabel" :aria-invalid="error ? 'true' : undefined" :aria-describedby="error ? errorId : undefined"
         @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)" />
     </label>

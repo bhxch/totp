@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import MdTextField from '../../src/components/md/MdTextField.vue'
 import MdSwitch from '../../src/components/md/MdSwitch.vue'
@@ -53,6 +53,35 @@ describe('MdTextField', () => {
     const withoutLabel = mount(MdTextField, { props: { modelValue: '', label: 'x' } })
     expect(withoutLabel.find('input').attributes('aria-label')).toBeUndefined()
   })
+  it('非 class/style 属性透传内部 input（autocomplete/min/max/disabled/data-*）', () => {
+    const w = mount(MdTextField, {
+      props: { modelValue: '3', label: '位数', type: 'number' },
+      attrs: { autocomplete: 'off', min: '1', max: '8', disabled: true, 'data-field': 'digits' },
+    })
+    const input = w.find('input')
+    expect(input.attributes('autocomplete')).toBe('off')
+    expect(input.attributes('min')).toBe('1')
+    expect(input.attributes('max')).toBe('8')
+    expect(input.attributes('disabled')).toBeDefined()
+    expect(input.attributes('data-field')).toBe('digits')
+  })
+  it('class/style 落根元素（消费方布局依赖），不进内部 input', () => {
+    const w = mount(MdTextField, {
+      props: { modelValue: '', label: 'x' },
+      attrs: { class: 'grow', style: 'flex: 1' },
+    })
+    expect(w.find('.md-text-field').classes()).toContain('grow')
+    expect(w.find('input').classes()).not.toContain('grow')
+  })
+  it('onKeydown 监听透传内部 input（回车提交等键盘交互依赖）', async () => {
+    const onKeydown = vi.fn()
+    const w = mount(MdTextField, {
+      props: { modelValue: '', label: 'x' },
+      attrs: { onKeydown },
+    })
+    await w.find('input').trigger('keydown', { key: 'Enter' })
+    expect(onKeydown).toHaveBeenCalled()
+  })
 })
 describe('MdSwitch', () => {
   it('点击翻转并发 update', async () => {
@@ -93,6 +122,13 @@ describe('MdCheckbox', () => {
     expect(withLabel.find('input').attributes('aria-label')).toBe('搜索密钥')
     const withoutLabel = mount(MdCheckbox, { props: { modelValue: false } })
     expect(withoutLabel.find('input').attributes('aria-label')).toBeUndefined()
+  })
+  it('disabled 时 input 带 disabled 且不触发 update', async () => {
+    const w = mount(MdCheckbox, { props: { modelValue: false, disabled: true } })
+    expect(w.find('input').attributes('disabled')).toBeDefined()
+    expect(w.classes()).toContain('md-checkbox--disabled')
+    await w.find('input[type=checkbox]').setValue(true)
+    expect(w.emitted('update:modelValue')).toBeUndefined()
   })
 })
 describe('MdSegmentedButton', () => {

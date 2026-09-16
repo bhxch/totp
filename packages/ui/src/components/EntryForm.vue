@@ -299,17 +299,17 @@ function submit() {
         </select>
       </label>
       <MdTextField
-        class="digits" type="number" label="位数" aria-label="位数"
+        class="digits" type="number" label="位数" aria-label="位数" min="5" max="8"
         :model-value="String(form.digits)" @update:model-value="form.digits = looseToNumber($event)"
       />
       <MdTextField
-        v-if="form.type !== 'hotp'" class="period" type="number" label="周期（秒）" aria-label="周期（秒）"
+        v-if="form.type !== 'hotp'" class="period" type="number" label="周期（秒）" aria-label="周期（秒）" min="1"
         :model-value="String(form.period)" @update:model-value="form.period = looseToNumber($event)"
       />
       <!-- steam 强制 5 位提示 -->
       <p v-if="form.type === 'steam'" class="steam-hint">Steam 类型位数固定为 5</p>
       <MdTextField
-        v-if="form.type === 'hotp'" class="counter" type="number" label="计数器" aria-label="计数器"
+        v-if="form.type === 'hotp'" class="counter" type="number" label="计数器" aria-label="计数器" min="0"
         :model-value="String(form.counter)" @update:model-value="form.counter = looseToNumber($event)"
       />
     </div>

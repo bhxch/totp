@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-const props = withDefaults(defineProps<{ modelValue: boolean; label?: string; ariaLabel?: string }>(), { modelValue: false, label: '' })
+const props = withDefaults(defineProps<{ modelValue: boolean; label?: string; ariaLabel?: string; disabled?: boolean }>(), { modelValue: false, label: '', disabled: false })
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
 const checked = ref(props.modelValue)
 watch(() => props.modelValue, v => { checked.value = v })
@@ -10,8 +10,8 @@ function onChange(e: Event) {
 }
 </script>
 <template>
-  <label class="md-checkbox" :class="{ 'md-checkbox--checked': checked }">
-    <input type="checkbox" class="md-checkbox__input" :aria-label="ariaLabel" :checked="checked" @change="onChange" />
+  <label class="md-checkbox" :class="{ 'md-checkbox--checked': checked, 'md-checkbox--disabled': disabled }">
+    <input type="checkbox" class="md-checkbox__input" :aria-label="ariaLabel" :checked="checked" :disabled="disabled" @change="onChange" />
     <span class="md-checkbox__box" aria-hidden="true" />
     <span v-if="label" class="md-checkbox__label">{{ label }}</span>
   </label>
@@ -19,6 +19,7 @@ function onChange(e: Event) {
 <style scoped>
 .md-checkbox { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font: inherit;
   font-size: 14px; color: var(--md-sys-color-on-surface); vertical-align: middle; }
+.md-checkbox--disabled { cursor: default; opacity: .38; }
 .md-checkbox__input { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .md-checkbox__box { position: relative; width: 18px; height: 18px; border-radius: 2px; box-sizing: border-box;

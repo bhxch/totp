@@ -77,7 +77,7 @@ async function onRetryDpapi(): Promise<void> {
 }
 
 /** 解锁：成功清空口令与错误并 emit unlocked（父级可凭 locked 变化自行切换视图）；失败展示错误消息。
- *  busy 守卫：MdTextField 无 disabled 态，防重复提交（原由输入框 disabled 承担）由函数承担 */
+ *  busy 守卫防重复提交；busy 期口令输入框经 attrs 透传 disabled 同步禁用 */
 async function onUnlock(): Promise<void> {
   if (busy.value) return
   if (!password.value) {
@@ -131,6 +131,7 @@ async function onPasskeyUnlock(): Promise<void> {
         <MdTextField
           v-model="password" class="grow" label="口令" placeholder="口令"
           :type="showPassword ? 'text' : 'password'" aria-label="解锁口令"
+          autocomplete="current-password" :disabled="busy"
         />
         <MdIconButton
           :title="showPassword ? '隐藏口令' : '显示口令'" :aria-label="showPassword ? '隐藏口令' : '显示口令'"

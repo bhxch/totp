@@ -88,13 +88,19 @@ describe('LockScreen', () => {
     expect(w.emitted('unlocked')).toBeUndefined()
   })
 
-  it('口令明/密文切换：初始遮蔽，点切换钮变明文，再点恢复遮蔽', async () => {
+  it('口令明/密文切换：初始遮蔽，点切换钮变明文，再点恢复遮蔽（title/aria-label 随态翻转）', async () => {
     const w = mount(LockScreen, { props: { store: plainStore(vi.fn()) } })
     expect(w.find('input[type="password"]').exists()).toBe(true)
-    await w.find('button[aria-label="显示口令"]').trigger('click')
+    const show = w.find('button[aria-label="显示口令"]')
+    expect(show.exists()).toBe(true)
+    expect(show.attributes('title')).toBe('显示口令')
+    await show.trigger('click')
     expect(w.find('input[type="password"]').exists()).toBe(false)
     expect(w.find('input[type="text"]').exists()).toBe(true)
-    await w.find('button[aria-label="隐藏口令"]').trigger('click')
+    const hide = w.find('button[aria-label="隐藏口令"]')
+    expect(hide.exists()).toBe(true)
+    expect(hide.attributes('title')).toBe('隐藏口令')
+    await hide.trigger('click')
     expect(w.find('input[type="password"]').exists()).toBe(true)
   })
 
