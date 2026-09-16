@@ -79,6 +79,13 @@ describe('SecurityCard', () => {
     expect(enabled.text()).not.toContain('浏览器同步的数据也将是密文')
   })
 
+  it('未启用态：口令说明含「与备份口令相互独立」（§7.2 定稿）；已启用态不显示', () => {
+    const disabled = mount(SecurityCard, { props: { platform: makePlatform() } })
+    expect(disabled.text()).toContain('此口令用于加密本机存储的验证库数据，与备份口令相互独立')
+    const enabled = mount(SecurityCard, { props: { platform: makePlatform({ security: unlockedSecurity() }) } })
+    expect(enabled.text()).not.toContain('与备份口令相互独立')
+  })
+
   it('已启用解锁态：渲染换口令与关闭加密按钮；换口令一致后调用 changePassphrase', async () => {
     const p = makePlatform({ security: unlockedSecurity() })
     const w = mount(SecurityCard, { props: { platform: p } })

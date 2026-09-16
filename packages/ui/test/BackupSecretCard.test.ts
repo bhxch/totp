@@ -42,6 +42,12 @@ describe('BackupSecretCard', () => {
     expect(w.find('button.secret-clear').exists()).toBe(false)
   })
 
+  it('说明文案按 §7.2/§7.3 定稿：desc 融合随库存放语义；remember-hint 不写死平台例举', () => {
+    const w = mountCard(makeStore())
+    expect(w.find('.hint.desc').text()).toBe('用于加密本地备份文件与云端同步对象，两者共用；开启记住后随库存放，解锁库即可用；未记住则锁定或关闭页面后需重新输入。')
+    expect(w.find('.remember-hint').text()).toBe('开启后随本库存放（需已启用加密），解锁库即可用，系统原生解锁方式同样生效。')
+  })
+
   it('输入不一致点启用：不调用 setBackupSecret，显示错误', async () => {
     const s = makeStore()
     const w = mountCard(s)

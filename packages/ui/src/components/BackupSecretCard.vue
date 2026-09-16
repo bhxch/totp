@@ -76,7 +76,7 @@ async function onClear(): Promise<void> {
 <template>
   <section class="card backup-secret">
     <h2>备份口令</h2>
-    <div class="hint desc">用于加密本地备份文件与云端同步对象，两者共用；不落盘，锁定或关闭页面后需重新输入。</div>
+    <div class="hint desc">用于加密本地备份文件与云端同步对象，两者共用；开启记住后随库存放，解锁库即可用；未记住则锁定或关闭页面后需重新输入。</div>
     <div class="pw-row">
       <MdTextField v-model="password" type="password" label="备份口令" placeholder="备份口令" autocomplete="new-password" />
       <MdTextField v-model="confirmPw" type="password" label="确认口令" placeholder="确认口令" autocomplete="new-password" />
@@ -85,7 +85,7 @@ async function onClear(): Promise<void> {
       <MdSwitch v-model="remember" aria-label="记住到本库" :disabled="!hasEnc" />
       <span>记住到本库</span>
     </div>
-    <div class="hint remember-hint">开启后随本库存放（需已启用加密），解锁库即可用，原生解锁（如 Windows Hello）同样生效。</div>
+    <div class="hint remember-hint">开启后随本库存放（需已启用加密），解锁库即可用，系统原生解锁方式同样生效。</div>
     <div class="actions">
       <MdButton class="secret-save" :disabled="busy" @click="onEnable">启用会话</MdButton>
       <MdButton v-if="sessionSecret" class="secret-clear" variant="tonal" :disabled="busy" @click="onClear">清除</MdButton>

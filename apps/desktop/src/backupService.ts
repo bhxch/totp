@@ -4,10 +4,11 @@ import { backupFileName, conflictBackupFileName, selectBackupsToKeep, READABLE_B
 
 const dir = 'backups'
 
-/** 用户自选备份目录（D4）的路径拼接：dir 以 / 或 \ 结尾直接拼，否则补 \。
- *  目录选择对话框返回本地分隔符路径，desktop 主目标为 Windows */
+/** 用户自选备份目录（D4）的路径拼接：分隔符按 dir 自身风格判定——含 \ 用 \ 连接
+ *  （Windows 目录选择器返回 C:\... 天然含反斜杠）；否则（POSIX 含 / 或无分隔符的相对名）用 / 连接 */
 export function joinBackupPath(dirPath: string, name: string): string {
-  return dirPath.endsWith('/') || dirPath.endsWith('\\') ? `${dirPath}${name}` : `${dirPath}\\${name}`
+  const sep = dirPath.includes('\\') ? '\\' : '/'
+  return dirPath.endsWith(sep) ? `${dirPath}${name}` : `${dirPath}${sep}${name}`
 }
 
 async function writeDirFile(name: string, contents: string): Promise<void> {

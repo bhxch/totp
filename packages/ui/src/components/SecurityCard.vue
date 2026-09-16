@@ -175,6 +175,7 @@ async function onDelayChange(value: string): Promise<void> {
     <template v-if="platform.security">
       <!-- 未启用：口令+确认 → 启用加密 -->
       <template v-if="!hasEnc">
+        <p class="hint">此口令用于加密本机存储的验证库数据，与备份口令相互独立。</p>
         <div class="pw-row">
           <MdTextField v-model="password" type="password" label="加密口令" placeholder="加密口令" autocomplete="new-password" :disabled="busy" />
           <MdTextField v-model="confirmPw" type="password" label="确认口令" placeholder="确认口令" autocomplete="new-password" :disabled="busy" />

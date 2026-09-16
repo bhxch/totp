@@ -38,13 +38,14 @@ beforeEach(() => {
 })
 
 describe('joinBackupPath', () => {
-  it('dir 无分隔符结尾时补反斜杠', () => {
-    expect(joinBackupPath('C:\\backups', 'vault-1.totpbackup')).toBe('C:\\backups\\vault-1.totpbackup')
-    expect(joinBackupPath('/home/u/bk', 'vault-1.totpbackup')).toBe('/home/u/bk\\vault-1.totpbackup')
+  it('dir 含反斜杠（Windows 目录选择器）：以反斜杠连接', () => {
+    expect(joinBackupPath('C:\\dir', 'vault-20260916-120000.totpbackup')).toBe('C:\\dir\\vault-20260916-120000.totpbackup')
+    expect(joinBackupPath('C:\\dir\\', 'vault-20260916-120000.totpbackup')).toBe('C:\\dir\\vault-20260916-120000.totpbackup')
   })
-  it('dir 以 / 或 \\ 结尾时直接拼接', () => {
-    expect(joinBackupPath('C:\\backups\\', 'vault-1.totpbackup')).toBe('C:\\backups\\vault-1.totpbackup')
-    expect(joinBackupPath('/home/u/bk/', 'vault-1.totpbackup')).toBe('/home/u/bk/vault-1.totpbackup')
+  it('dir 含正斜杠或相对名（POSIX/相对目录）：以正斜杠连接', () => {
+    expect(joinBackupPath('/home/u/bk', 'vault-20260916-120000.totpbackup')).toBe('/home/u/bk/vault-20260916-120000.totpbackup')
+    expect(joinBackupPath('/home/u/bk/', 'vault-20260916-120000.totpbackup')).toBe('/home/u/bk/vault-20260916-120000.totpbackup')
+    expect(joinBackupPath('dir/sub', 'vault-20260916-120000.totpbackup')).toBe('dir/sub/vault-20260916-120000.totpbackup')
   })
 })
 
