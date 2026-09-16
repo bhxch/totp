@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { backupFileName, conflictBackupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, OVERWRITE_NAME, randomBytes, SCHEMES_KEY, type BackupEnvelopeV1, type CloudCred, type ImportScheme, type Vault } from '@totp/core'
-import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, createPrfCredential, LockScreen, NavigationShell, prfSupported, useTheme, type BackupMode, type BackupPlatform, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
-import { computed, onMounted, ref } from 'vue'
+import { backupFileName, conflictBackupFileName, createAutoRunScheduler, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, OVERWRITE_NAME, randomBytes, SCHEMES_KEY, type BackupEnvelopeV1, type CloudCred, type ImportScheme, type Vault } from '@totp/core'
+import { CLIPBOARD_CLEAR_DELAY_MS, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, LockScreen, NavigationShell, prfSupported, useTheme, type BackupMode, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { createCloudCredStore } from '../../src/cloudCredStore'
 import { createExtensionStore, storageAdapter } from '../../src/store'
 import { markSyncOff, SYNC_STATUS_KEY } from '../../src/syncEngine'
 
-// spec §7 末尾：options 窗口独立解锁——windowId='options' 与 popup 隔离，各持各的 DEK
-const store = createExtensionStore('options')
+// spec §7 末尾：options 窗口独立解锁——windowId='options' 与 popup 隔离，各持各的 DEK。
+// onCommittedExtra：写提交 → 存活期自动云同步的变更通知（scheduler 在下方定义；写提交只会
+// 发生在挂载后的异步时点，闭包引用无 TDZ 问题）
+const store = createExtensionStore('options', { onCommittedExtra: () => scheduler.notifyChanged() })
 const {
   vault, initStore, registerStorageSync,
   locked, hasEncryption, unlock, lock, enableEncryption, disableEncryption, changePassphrase,
@@ -43,10 +46,16 @@ onMounted(async () => {
     useTheme(store)
     registerStorageSync()
     await icons.init()
+    // 自动云同步（页面存活期，勘误 §4.1）：读偏好填充缓存后启动调度器；initStore 失败（页面不可用）则不启动
+    await refreshCloudAutoPrefs()
+    scheduler.start()
   } catch (e) {
     loadError.value = '本地数据读取失败：' + (e instanceof Error ? e.message : String(e))
   }
 })
+
+// 页面卸载即停：清防抖与定时器，stop 后在途 run 不再补跑（彻底静默）
+onUnmounted(() => scheduler.stop())
 
 /**
  * 30s 清剪贴板：统一走 background(alarms+offscreen) 承载（与 popup 一致，重复复制由同名 alarm 覆盖重置）；
@@ -244,11 +253,101 @@ const backupPlatform: BackupPlatform = {
 }
 
 /**
- * 云同步平台实现：凭据与 cloudRev 存 local 区（cloudCred/cloudRev 键，不进浏览器同步）；
- * 冲突副本与备份同通道 Blob 下载 conflict-{ts}.totpbackup；采用云端数据经 replaceAllOp 整体替换。
+ * 云同步平台实现：凭据与基线存 local 区（storage.local 键，不进浏览器同步）。
+ * 多目标迁移约定（Task 8，见 ui cloudPlatform.ts 注释块）：多目标读写委托 cloudCredStore
+ * （新键 cloudCreds/cloudRevs，旧键 cloudCred/cloudRev 只读回退、保存后删除，绝不回写新键）；
+ * 冲突副本经既有 Blob 下载通道；采用云端数据经 replaceAllOp 整体替换。
  */
 const CLOUD_CRED_KEY = 'cloudCred'
 const CLOUD_REV_KEY = 'cloudRev'
+
+const cloudCredStore = createCloudCredStore(storageAdapter)
+
+// ---------- 自动云同步偏好（cloudAutoPrefs 键，storage.local 异步读写）----------
+const CLOUD_AUTO_PREFS_KEY = 'cloudAutoPrefs'
+const DEFAULT_CLOUD_AUTO_PREFS: CloudAutoPrefs = { onChange: false, onInterval: false, intervalMinutes: 60 }
+
+/** 归一化（与 desktop loadCloudPrefs 同口径）：缺失位 false；间隔非法/<15 回退 60（匹配调度器 30s tick 粒度） */
+function normalizeCloudAutoPrefs(parsed: unknown): CloudAutoPrefs {
+  const p = (parsed ?? {}) as Partial<CloudAutoPrefs>
+  const minutes = Number(p.intervalMinutes)
+  return {
+    onChange: p.onChange === true,
+    onInterval: p.onInterval === true,
+    intervalMinutes: Number.isInteger(minutes) && minutes >= 15 ? minutes : DEFAULT_CLOUD_AUTO_PREFS.intervalMinutes,
+  }
+}
+
+/** 偏好进程内缓存：storage.local 异步读进不了同步 get()/intervalMs 回调——挂载时读一次、
+ *  set 时双写；页面打开期间他端/跨页对 storage 的直改需待下次挂载才可见（容忍滞后，已知边界） */
+let cloudAutoPrefs: CloudAutoPrefs = { ...DEFAULT_CLOUD_AUTO_PREFS }
+
+async function refreshCloudAutoPrefs(): Promise<void> {
+  try {
+    const raw = await storageAdapter.get(CLOUD_AUTO_PREFS_KEY)
+    if (raw) cloudAutoPrefs = normalizeCloudAutoPrefs(JSON.parse(raw))
+  } catch { /* 坏 JSON/读取失败保持缓存现值 */ }
+}
+
+async function persistCloudAutoPrefs(p: CloudAutoPrefs): Promise<void> {
+  cloudAutoPrefs = p // 先更缓存再异步落盘：guard/intervalMs 立即按新值生效
+  await storageAdapter.set(CLOUD_AUTO_PREFS_KEY, JSON.stringify(p))
+}
+
+/** 冲突副本 Blob 下载：带 backendKey → conflict-{backendKey}-{ts}.totpbackup；缺省名不变 */
+async function downloadConflictBackup(bytes: Uint8Array, backendKey?: string): Promise<string> {
+  const name = backendKey ? `conflict-${backendKey}-${Date.now()}.totpbackup` : conflictBackupFileName(new Date())
+  const blob = new Blob([bytes as BlobPart], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  return name
+}
+
+/** 存活期自动云同步 runner（D6，ui 共享实现，与 desktop 同一编排）：
+ *  onCredChange（GDrive 首推回存 fileId 等）以新凭据替换同 backend 项后回存；
+ *  loadCreds 返回空（IO/坏 JSON 瞬时失败）时跳过回写，防把空列表固化为凭据存储（同 desktop 审查 M-1） */
+const cloudSync = createCloudSyncRunner({
+  isLocked: () => store.locked.value,
+  getSecret: () => store.backupSecret.value,
+  getVaultJson: () => JSON.stringify(store.vault),
+  loadCreds: () => cloudCredStore.loadCreds(),
+  loadTargetHash: (b) => cloudCredStore.loadTargetHash(b),
+  saveTargetHash: (b, h) => cloudCredStore.saveTargetHash(b, h),
+  makeBackend: (cred) => createCloudBackend(cred, (next) => {
+    void cloudCredStore.loadCreds()
+      .then((targets) => {
+        if (targets.length === 0) return
+        return cloudCredStore.saveCreds(targets.map((t) => (t.cred.backend === next.backend ? { ...t, cred: next } : t)))
+      })
+      .catch((e) => console.warn('[cloudAutoSync] 凭据回存失败', e))
+  }),
+  persistAdopted: (json) => replaceAllOp(JSON.parse(json) as Vault),
+  saveConflictBackup: (key, bytes) => {
+    void downloadConflictBackup(bytes, key).catch(() => {})
+  },
+  // 状态记录不 await：storage 写失败不影响同步主流程
+  recordStatus: (ok, summary) => {
+    void storageAdapter.set('cloudAutoStatus', JSON.stringify({ at: Date.now(), ok, summary })).catch(() => {})
+  },
+  onError: (err) => console.warn('[cloudAutoSync]', err),
+})
+
+/** core 调度器（勘误 §4.1：不用 chrome.alarms——SW 后台无解锁 DEK、读不到会话备份口令，
+ *  alarms 触发的同步无法加密；改为 options 页存活期运行，页面卸载即停）。
+ *  guard 按 reason 双开关过滤；开关与间隔读进程内缓存（异步读进不了同步回调，滞后见上注释） */
+const scheduler = createAutoRunScheduler({
+  debounceMs: 10_000,
+  intervalMs: () => (cloudAutoPrefs.onInterval ? cloudAutoPrefs.intervalMinutes * 60_000 : null),
+  run: async (reason) => {
+    if (reason === 'change' && !cloudAutoPrefs.onChange) return
+    if (reason === 'interval' && !cloudAutoPrefs.onInterval) return
+    await cloudSync.run()
+  },
+})
 
 const cloudPlatform: CloudPlatform = {
   async loadCred() {
@@ -267,15 +366,7 @@ const cloudPlatform: CloudPlatform = {
     await replaceAllOp(JSON.parse(json) as Vault)
   },
   async saveConflictBackup(bytes) {
-    const name = conflictBackupFileName(new Date())
-    const blob = new Blob([bytes as BlobPart], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = name
-    a.click()
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
-    return name
+    return downloadConflictBackup(bytes)
   },
   async loadHash() {
     try {
@@ -286,6 +377,15 @@ const cloudPlatform: CloudPlatform = {
   },
   async saveHash(hash) {
     await storageAdapter.set(CLOUD_REV_KEY, hash)
+  },
+  // ---- 多目标新成员（Task 12；旧四成员 Task 13 才删）----
+  loadCreds: () => cloudCredStore.loadCreds(),
+  saveCreds: (t) => cloudCredStore.saveCreds(t),
+  loadTargetHash: (b) => cloudCredStore.loadTargetHash(b),
+  saveTargetHash: (b, h) => cloudCredStore.saveTargetHash(b, h),
+  autoPrefs: {
+    get: () => cloudAutoPrefs,
+    set: (p) => persistCloudAutoPrefs(p),
   },
 }
 </script>

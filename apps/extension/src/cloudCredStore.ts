@@ -1,0 +1,79 @@
+/**
+ * 云多目标凭据/基线存取（extension 宿主实现，纯逻辑可测）：作用于 StorageAdapter
+ * （storage.local JSON 键），语义与 desktop App.vue 的 *Impl 一致（Task 8 迁移约定，
+ * 见 ui cloudPlatform.ts 注释块）：
+ * - 新键 cloudCreds（JSON CloudTarget[]）/ cloudRevs（JSON Record<backend,string>）；
+ *   旧键 cloudCred / cloudRev 只在读取时回退、保存后删除，绝不把旧值写入新键。
+ * - 坏 JSON 一律安全默认（凭据→[]、基线→无）。
+ * - 与 desktop 的差异：不维护 cloudRevs 进程内缓存——storage.local 读取廉价，且
+ *   options/popup 双上下文并发写（CloudCard 手动同步与自动 runner）下直读更不易陈旧。
+ */
+import type { CloudCred, StorageAdapter } from '@totp/core'
+import type { CloudTarget } from '@totp/ui'
+
+const CLOUD_CRED_KEY = 'cloudCred'
+const CLOUD_CREDS_KEY = 'cloudCreds'
+const CLOUD_REV_KEY = 'cloudRev'
+const CLOUD_REVS_KEY = 'cloudRevs'
+
+export function createCloudCredStore(adapter: StorageAdapter): {
+  loadCreds(): Promise<CloudTarget[]>
+  saveCreds(t: CloudTarget[]): Promise<void>
+  loadTargetHash(backend: string): Promise<string | null>
+  saveTargetHash(backend: string, hash: string | null): Promise<void>
+} {
+  /** cloudCreds 缺失而旧 cloudCred 存在 → 视为唯一启用目标（只读回退，不回写新键） */
+  async function loadCreds(): Promise<CloudTarget[]> {
+    try {
+      const raw = await adapter.get(CLOUD_CREDS_KEY)
+      if (raw) return JSON.parse(raw) as CloudTarget[]
+      const legacy = await adapter.get(CLOUD_CRED_KEY)
+      return legacy ? [{ cred: JSON.parse(legacy) as CloudCred, enabled: true }] : []
+    } catch {
+      return [] // 坏 JSON/读取失败 → 安全默认（与 desktop 同口径：新键损坏不回退旧键）
+    }
+  }
+
+  /** 只写新键并删除旧键（旧键已无时删除幂等） */
+  async function saveCreds(targets: CloudTarget[]): Promise<void> {
+    await adapter.set(CLOUD_CREDS_KEY, JSON.stringify(targets))
+    await adapter.delete(CLOUD_CRED_KEY)
+  }
+
+  async function loadTargetHash(backend: string): Promise<string | null> {
+    let revs: Record<string, string> | null
+    try {
+      const raw = await adapter.get(CLOUD_REVS_KEY)
+      revs = raw ? (JSON.parse(raw) as Record<string, string>) : null
+    } catch {
+      revs = null // 坏 JSON 按无新键处理
+    }
+    if (revs && revs[backend] !== undefined) return revs[backend] ?? null
+    if (revs !== null) return null // 新键存在但无该 backend → 无基线（不吃旧键）
+    // 迁移回退：cloudRevs 缺失且旧 cloudRev 存在 → 仅首个目标（targets[0]）继承旧基线；不回写新键
+    try {
+      const legacy = await adapter.get(CLOUD_REV_KEY)
+      if (!legacy) return null
+      const targets = await loadCreds()
+      return targets[0]?.cred.backend === backend ? legacy : null
+    } catch {
+      return null
+    }
+  }
+
+  async function saveTargetHash(backend: string, hash: string | null): Promise<void> {
+    let revs: Record<string, string> = {}
+    try {
+      const raw = await adapter.get(CLOUD_REVS_KEY)
+      if (raw) revs = JSON.parse(raw) as Record<string, string>
+    } catch {
+      revs = {} // 坏 JSON → 视为空基线重建
+    }
+    if (hash === null) delete revs[backend] // null 语义=删除该 backend 的基线键（非写入 null 值）
+    else revs[backend] = hash
+    await adapter.set(CLOUD_REVS_KEY, JSON.stringify(revs))
+    await adapter.delete(CLOUD_REV_KEY) // 迁移约定：保存只写新键并删除旧键（幂等）
+  }
+
+  return { loadCreds, saveCreds, loadTargetHash, saveTargetHash }
+}

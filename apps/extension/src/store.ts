@@ -16,8 +16,11 @@ function scheduleSyncPush(s: VueStore): void {
 }
 
 /** 扩展创建独立 store 的工厂：spec §7 末尾要求窗口独立解锁，popup/options 各持各的 locked/dek；
- *  windowId 决定闭包内的 Map 索引——同进程多 store 实例互不泄漏 */
-export function createExtensionStore(windowId: string): VueStore {
+ *  windowId 决定闭包内的 Map 索引——同进程多 store 实例互不泄漏。
+ *  onCommittedExtra（纯增量，Task 12）：经队列的全部写路径（commit/commitSettings/加解密 op 等）
+ *  成功后在既有 sync-push 调度之后调用——options 页存活期自动云同步的变更通知由此接入；
+ *  具名 commit/commitSettings 包装（下方）是 popup 单例路径，popup 无自动云同步 runner，不接 extra */
+export function createExtensionStore(windowId: string, opts: { onCommittedExtra?: () => void } = {}): VueStore {
   const s = createVueStore(storageAdapter, {
     windowId,
     registerSync: (cb) =>
@@ -25,7 +28,10 @@ export function createExtensionStore(windowId: string): VueStore {
         if (area !== 'local') return
         cb({ vault: !!changes['vault'], settings: !!changes['settings'] })
       }),
-    onCommitted: () => scheduleSyncPush(s),
+    onCommitted: () => {
+      scheduleSyncPush(s)
+      opts.onCommittedExtra?.()
+    },
   })
   return s
 }
