@@ -23,6 +23,23 @@ export function createCloudBackend(cred: CloudCred, onCredChange?: (cred: CloudC
 }
 
 /**
+ * 存储键约定（desktop=AppData JSON 键 / extension=storage.local 键，实现一致），
+ * 两端宿主实现共同遵守（Task 11/12/13 依据）：
+ * - 新键 cloudCreds：JSON 数组 CloudTarget[]；旧键 cloudCred：单对象。
+ * - 读取：cloudCreds 缺失而 cloudCred 存在 → [{ cred: 旧值, enabled: true }]；两者皆缺 → []。
+ * - 保存：只写 cloudCreds 并删除旧键 cloudCred。
+ * - 基线：新键 cloudRevs：Record<backend, string>；旧键 cloudRev 单串。
+ * - 读取：cloudRevs 缺失而 cloudRev 存在 → 首个目标继承该值；保存只写 cloudRevs 并删除旧键 cloudRev。
+ * - backend 键取 cred.backend（同后端仅一份凭据）。
+ * - 云端对象路径不落键：由 core resolveObjectPath(cred) 从 cred.objectPath 解析。
+ */
+
+/** 多目标云同步单个目标：凭据 + 启用态 */
+export interface CloudTarget { cred: CloudCred; enabled: boolean }
+/** 云同步自动触发偏好（变更触发/间隔触发及间隔分钟数） */
+export interface CloudAutoPrefs { onChange: boolean; onInterval: boolean; intervalMinutes: number }
+
+/**
  * 云同步平台能力（宿主注入：desktop=Tauri fs；extension=chrome.storage.local+Blob 下载）。
  * CloudCard 只依赖此接口，platform 为 null 时整卡不渲染（popup 零影响）。
  *
@@ -33,9 +50,13 @@ export function createCloudBackend(cred: CloudCred, onCredChange?: (cred: CloudC
  *   缺省时退化为会话内基线（重启后首次同步按 downloaded 语义处理）。
  */
 export interface CloudPlatform {
-  /** 读取已存凭据（local 键 cloudCred）；未存/读取失败 → null */
+  /** 读取已存凭据（local 键 cloudCred）；未存/读取失败 → null
+   *  @deprecated Task13 移除——改用 loadCreds/saveCreds/loadTargetHash/saveTargetHash
+   */
   loadCred(): Promise<CloudCred | null>
-  /** 持久化凭据（含 GDrive onCredChange 回存 fileId 的回写） */
+  /** 持久化凭据（含 GDrive onCredChange 回存 fileId 的回写）
+   *  @deprecated Task13 移除——改用 loadCreds/saveCreds/loadTargetHash/saveTargetHash
+   */
   saveCred(c: CloudCred): Promise<void>
   /** 当前本地明文 vault 快照（saveVault 同款 JSON） */
   readVaultJson(): string
@@ -43,10 +64,22 @@ export interface CloudPlatform {
   persistDownloaded(json: string): Promise<void>
   /** [可选] 冲突副本落盘（desktop=AppData/backups；extension=Blob 下载），返回副本名回填提示 */
   saveConflictBackup?(bytes: Uint8Array): Promise<string | null>
-  /** [可选] 读取 cloudRev（上次已知云端内容 hash）；从未记录 → null */
+  /** [可选] 读取 cloudRev（上次已知云端内容 hash）；从未记录 → null
+   *  @deprecated Task13 移除——改用 loadCreds/saveCreds/loadTargetHash/saveTargetHash
+   */
   loadHash?(): Promise<string | null>
-  /** [可选] 持久化 cloudRev（uploaded/成功采用云端后调用） */
+  /** [可选] 持久化 cloudRev（uploaded/成功采用云端后调用）
+   *  @deprecated Task13 移除——改用 loadCreds/saveCreds/loadTargetHash/saveTargetHash
+   */
   saveHash?(hash: string): Promise<void>
+  /** 多目标凭据列表（启用态随项）。宿主实现须按迁移约定回退读取旧键 */
+  loadCreds?(): Promise<CloudTarget[]>
+  saveCreds?(targets: CloudTarget[]): Promise<void>
+  /** 按 backend 键读写该目标的远端字节摘要基线（迁移约定见上） */
+  loadTargetHash?(backend: string): Promise<string | null>
+  saveTargetHash?(backend: string, hash: string | null): Promise<void>
+  /** 云同步自动触发偏好（desktop/extension 均提供；缺省则卡片不渲染自动区） */
+  autoPrefs?: { get(): CloudAutoPrefs; set(p: CloudAutoPrefs): void | Promise<void> }
   /** [可选] 会话口令缓存（简报原接口；裁定 CloudCard 自带口令输入，故不消费） */
   getPassword?(): string | null
 }
