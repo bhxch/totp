@@ -1,8 +1,8 @@
 import {
   DEFAULT_SETTINGS, SECURITY_KEY, VAULT_KEY, addEntry, addGroup, addPrfSource, bytesToBase64, changeVaultPassphrase,
   createVault, decryptVaultWithDek, encryptVaultWithDek, isEncryptedVault, kekSourcesOf, loadSettings, loadVault,
-  removeEntry, removeGroup, removeKekSource, renameGroup, reorderEntries, saveSettings, saveVault,
-  setupVaultEncryption, unlockVaultEncryption, updateEntry, withDpapiSource,
+  readVaultBackupSecret, removeEntry, removeGroup, removeKekSource, renameGroup, reorderEntries, saveSettings, saveVault,
+  setupVaultEncryption, unlockVaultEncryption, updateEntry, withDpapiSource, withVaultBackupSecret,
   type AppSettings, type KekSource, type OtpEntry, type SecuritySettings, type StorageAdapter, type Vault,
 } from '@totp/core'
 import { computed, reactive, ref, toRaw } from 'vue'
@@ -34,11 +34,16 @@ export function createVueStore(
   const dekByWin = new Map<string, Uint8Array | null>()
   const lockedByWin = new Map<string, boolean>()
   const lockedByWinRef = new Map<string, ReturnType<typeof ref<boolean>>>()
+  // 会话备份口令（设计 D1）：与 dek 同级、同生命周期——按 windowId 隔离，lock 清空、解锁自动装载
+  const backupSecretByWin = new Map<string, string | null>()
+  const backupSecretRefByWin = new Map<string, ReturnType<typeof ref<string | null>>>()
   // 初始 unlocked（与原 ref(false) 语义对齐）：明文 vault/未启用加密场景下默认解锁；
   // 加密态在 initStore 阶段根据 vault 密文判定 locked=true
   dekByWin.set(windowId, null)
   lockedByWin.set(windowId, false)
   lockedByWinRef.set(windowId, ref(false))
+  backupSecretByWin.set(windowId, null)
+  backupSecretRefByWin.set(windowId, ref<string | null>(null))
   function currentLockedRef() {
     let r = lockedByWinRef.get(windowId)
     if (!r) {
@@ -47,15 +52,34 @@ export function createVueStore(
     }
     return r
   }
+  function currentBackupSecretRef() {
+    let r = backupSecretRefByWin.get(windowId)
+    if (!r) {
+      r = ref(backupSecretByWin.get(windowId) ?? null)
+      backupSecretRefByWin.set(windowId, r)
+    }
+    return r
+  }
   const security = ref<SecuritySettings | null>(null)
   const locked = computed(() => currentLockedRef().value)
   const hasEncryption = computed(() => security.value !== null)
+  /** 会话备份口令只读视图（存取走 setBackupSecret/forgetBackupSecret） */
+  const backupSecret = computed(() => currentBackupSecretRef().value)
 
   function replaceVault(v: Vault): void {
     vault.version = v.version
     vault.updatedAt = v.updatedAt
     vault.entries.splice(0, vault.entries.length, ...v.entries)
     vault.groups.splice(0, vault.groups.length, ...v.groups)
+    // 顶层可选字段逐一对齐：源无字段必须 delete，否则写盘（JSON.stringify(vault)）会把残留字段持久化
+    if (v.backupSecret === undefined) delete vault.backupSecret
+    else vault.backupSecret = v.backupSecret
+  }
+
+  /** 置/清会话备份口令（Map + ref 双写，两条解锁/锁定路径共用的唯一入口） */
+  function setSessionBackupSecret(secret: string | null): void {
+    backupSecretByWin.set(windowId, secret)
+    currentBackupSecretRef().value = secret
   }
 
   function readRawVault(): Promise<unknown> {
@@ -87,7 +111,9 @@ export function createVueStore(
     if (isEncryptedVault(parsed)) {
       if (dekByWin.get(windowId)) {
         // 同进程本窗口已持有 DEK（如 unlock 后重建 store / 刷新场景）：直接解密填充
-        replaceVault(JSON.parse(await decryptVaultWithDek(dekByWin.get(windowId)!, parsed)) as Vault)
+        const loaded = JSON.parse(await decryptVaultWithDek(dekByWin.get(windowId)!, parsed)) as Vault
+        replaceVault(loaded)
+        setSessionBackupSecret(readVaultBackupSecret(loaded)) // 解锁恢复同步装载会话口令
         lockedByWin.set(windowId, false)
         currentLockedRef().value = false
       } else {
@@ -265,6 +291,9 @@ export function createVueStore(
     return enqueue(async () => {
       if (lockedByWin.get(windowId)) throw new Error('vault locked')
       if (!security.value || !dekByWin.get(windowId)) throw new Error('encryption not enabled')
+      // 明文库禁存备份口令（D1）：落盘前剥除（覆盖「先记住后关加密」），并清会话（覆盖「库无字段但会话有值」）
+      replaceVault(withVaultBackupSecret(toRaw(vault) as Vault, null))
+      setSessionBackupSecret(null)
       lastSelfWrite.vault = Date.now()
       await saveVault(adapter, toRaw(vault) as Vault)
       await adapter.delete(SECURITY_KEY)
@@ -298,11 +327,15 @@ export function createVueStore(
   /** unlock(password) 共享的后置逻辑：本窗口读盘解密/明文填充 → 本窗口持有 DEK → 退出锁定 */
   async function applyDekAndUnlock(key: Uint8Array): Promise<void> {
     const parsed = await readRawVault()
+    let loaded: Vault
     if (isEncryptedVault(parsed)) {
-      replaceVault(JSON.parse(await decryptVaultWithDek(key, parsed)) as Vault)
+      loaded = JSON.parse(await decryptVaultWithDek(key, parsed)) as Vault
     } else {
-      replaceVault(parsed !== null ? (parsed as Vault) : createVault())
+      loaded = parsed !== null ? (parsed as Vault) : createVault()
     }
+    replaceVault(loaded)
+    // 解锁自动装载会话备份口令（password 与 unlockWithDek/PRF 两条路径均汇于此）
+    setSessionBackupSecret(readVaultBackupSecret(loaded))
     dekByWin.set(windowId, key)
     lockedByWin.set(windowId, false)
     currentLockedRef().value = false
@@ -375,6 +408,27 @@ export function createVueStore(
     return dekByWin.get(windowId) ?? null
   }
 
+  /** 设置备份口令（D1）：trim 后先置会话（无论 remember）；
+   *  remember=true 入库前守护：未启用加密/锁定均给中文错误且不写 vault（会话已置），通过则经 commit 随密文落盘 */
+  async function setBackupSecret(secret: string, remember: boolean): Promise<void> {
+    const trimmed = secret.trim()
+    if (!trimmed) throw new Error('备份口令不能为空')
+    setSessionBackupSecret(trimmed)
+    if (remember) {
+      if (!security.value) throw new Error('需先启用加密才能记住备份口令')
+      if (lockedByWin.get(windowId)) throw new Error('解锁后才能记住备份口令')
+      await commit((v) => withVaultBackupSecret(v, trimmed))
+    }
+  }
+
+  /** 清除备份口令：会话必清；已启用加密且解锁时同步清库内字段（未启用/锁定态 vault 本就不该有，只清会话不报错） */
+  async function forgetBackupSecret(): Promise<void> {
+    setSessionBackupSecret(null)
+    if (security.value && !lockedByWin.get(windowId)) {
+      await commit((v) => withVaultBackupSecret(v, null))
+    }
+  }
+
   /** 锁定：本窗口丢弃 DEK、清空内存 vault（防内存残留读取）
    *  注意：security.value 不在此清空 — 锁定态下 LockScreen 仍需枚举 kekSources 渲染
    *  解锁按钮（passkey/DPAPI 静默解锁），security 本身不包含敏感运行时数据。 */
@@ -382,6 +436,7 @@ export function createVueStore(
     dekByWin.set(windowId, null)
     lockedByWin.set(windowId, true)
     currentLockedRef().value = true
+    setSessionBackupSecret(null) // 会话口令与 DEK 同生命周期：锁定即清
     replaceVault(createVault())
   }
 
@@ -417,6 +472,9 @@ export function createVueStore(
     dpapiSource,
     /** 是否已绑定 DPAPI 来源（boolean 视图，M5 提供以替代 dpapiSource.value !== null 比较） */
     hasDpapiSource,
+    /** 会话备份口令只读视图（D1；随 DEK 密文落盘，明文库禁存；锁定清空、解锁自动装载） */
+    backupSecret,
+    setBackupSecret, forgetBackupSecret,
     /** 当前解锁态持有的 DEK（DPAPI 启用包装用；锁定/未启用为 null） */
     getCurrentDek,
     unlockWithDek, addPrfSourceOp, removePrfSourceOp, addDpapiSourceOp, removeDpapiSourceOp,
