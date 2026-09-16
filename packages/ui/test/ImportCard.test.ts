@@ -136,7 +136,7 @@ describe('ImportCard', () => {
     await w.find('select.format-select').setValue('totpAuthenticator')
     await w.find('button.import-next').trigger('click') // 非 '[' 开头 → 口令页（不走直接解析）
     await vi.waitFor(() => expect(w.text()).toContain('输入该分享文件的口令'))
-    await w.find('input.import-password').setValue('Testtest1')
+    await w.find('.import-password input').setValue('Testtest1')
     await w.find('button.import-next').trigger('click') // 口令随分派传入 → 解密成功进确认页
     await vi.waitFor(() => expect(w.text()).toContain('冲突'))
     await w.find('button.import-commit').trigger('click')
@@ -170,7 +170,7 @@ describe('ImportCard', () => {
     await w.find('button.import-next').trigger('click') // 进入映射页
     await vi.waitFor(() => expect(w.text()).toContain('字段映射'))
     expect(schemesApi.load).toHaveBeenCalledTimes(1)
-    await w.find('input.scheme-name').setValue('我的方案')
+    await w.find('.scheme-name input').setValue('我的方案')
     await w.find('button.scheme-save').trigger('click')
     await vi.waitFor(() => expect(schemesApi.save).toHaveBeenCalledTimes(1))
     const saved = schemesApi.save.mock.calls[0]![0] as ImportScheme[]

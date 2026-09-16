@@ -10,6 +10,8 @@ import {
 import { computed, ref } from 'vue'
 import { openSqlite } from '../sqliteLoader'
 import type { VueStore } from '../store'
+import MdButton from './md/MdButton.vue'
+import MdTextField from './md/MdTextField.vue'
 import type { ImportPlatform, ImportSchemesApi } from './importPlatform'
 
 const props = defineProps<{
@@ -521,7 +523,7 @@ function failureLabel(f: { index: number; message: string }): string {
 
     <template v-if="step === 'idle'">
       <div class="actions">
-        <button class="import-start" :disabled="busy" @click="start">导入</button>
+        <MdButton class="import-start" :disabled="busy" @click="start">导入</MdButton>
       </div>
     </template>
 
@@ -533,25 +535,26 @@ function failureLabel(f: { index: number; message: string }): string {
           <option value="auto">自动（{{ format ?? '未识别' }}）</option>
           <option v-for="o in MANUAL_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
         </select>
-        <button class="import-next" :disabled="busy" @click="nextFromPicked">下一步</button>
-        <button :disabled="busy" @click="reset">取消</button>
+        <MdButton class="import-next" :disabled="busy" @click="nextFromPicked">下一步</MdButton>
+        <MdButton variant="text" :disabled="busy" @click="reset">取消</MdButton>
       </div>
     </template>
 
     <template v-else-if="step === 'mapping'">
       <p class="meta">字段映射（点路径，如 otp.params.secret）· 共 {{ rows.length }} 行（{{ rowsKind }}）</p>
       <div v-if="rowsKind === 'jsonObjectArray'" class="map-row">
-        <label>行数组路径</label>
-        <input v-model="rowsPath" data-field="rowsPath" placeholder="留空自动" />
+        <MdTextField v-model="rowsPath" class="map-field" data-field="rowsPath" label="行数组路径" placeholder="留空自动" />
       </div>
       <div v-for="f in FIELDS" :key="f.key" class="map-row">
-        <label>{{ f.label }}<span v-if="f.required" class="req">必填</span></label>
-        <input v-model="paths[f.key]" :data-field="f.key" :placeholder="f.required ? '必填' : '留空使用默认值'" />
+        <MdTextField
+          v-model="paths[f.key]" class="map-field" :data-field="f.key" :label="f.label"
+          :placeholder="f.required ? '必填' : '留空使用默认值'"
+        />
       </div>
       <div v-if="schemesApi" class="schemes">
         <div class="scheme-row">
-          <input v-model="schemeName" class="scheme-name" placeholder="方案名称（保存当前映射）" @keydown.enter.prevent="saveScheme" />
-          <button class="scheme-save" :disabled="busy" @click="saveScheme">保存方案</button>
+          <MdTextField v-model="schemeName" class="scheme-name" label="方案名称" placeholder="方案名称（保存当前映射）" @keydown.enter.prevent="saveScheme" />
+          <MdButton variant="tonal" class="scheme-save" :disabled="busy" @click="saveScheme">保存方案</MdButton>
         </div>
         <div v-if="schemes.length" class="scheme-row">
           <select v-model="schemeSel" class="scheme-select">
@@ -563,23 +566,26 @@ function failureLabel(f: { index: number; message: string }): string {
               <option v-for="s in otherSchemes" :key="s.id" :value="s.id">{{ s.name }}</option>
             </optgroup>
           </select>
-          <button class="scheme-apply" :disabled="!schemeSel" @click="applyScheme">应用</button>
-          <button class="scheme-delete" :disabled="!schemeSel || busy" @click="deleteScheme">删除</button>
+          <MdButton variant="tonal" class="scheme-apply" :disabled="!schemeSel" @click="applyScheme">应用</MdButton>
+          <MdButton danger class="scheme-delete" :disabled="!schemeSel || busy" @click="deleteScheme">删除</MdButton>
         </div>
       </div>
       <div class="actions">
-        <button class="prefill" :disabled="busy" @click="guessPaths">使用预填</button>
-        <button class="import-next" :disabled="busy" @click="nextFromMapping">下一步</button>
-        <button :disabled="busy" @click="reset">取消</button>
+        <MdButton variant="text" class="prefill" :disabled="busy" @click="guessPaths">使用预填</MdButton>
+        <MdButton class="import-next" :disabled="busy" @click="nextFromMapping">下一步</MdButton>
+        <MdButton variant="text" :disabled="busy" @click="reset">取消</MdButton>
       </div>
     </template>
 
     <template v-else-if="step === 'password'">
       <p class="meta">{{ passwordHint }}</p>
-      <input v-model="password" type="password" class="import-password" placeholder="文件口令" autocomplete="off" @keydown.enter="nextFromPassword" />
+      <MdTextField
+        v-model="password" type="password" class="import-password" label="文件口令" placeholder="文件口令"
+        autocomplete="off" @keydown.enter="nextFromPassword"
+      />
       <div class="actions">
-        <button class="import-next" :disabled="busy" @click="nextFromPassword">下一步</button>
-        <button :disabled="busy" @click="reset">取消</button>
+        <MdButton class="import-next" :disabled="busy" @click="nextFromPassword">下一步</MdButton>
+        <MdButton variant="text" :disabled="busy" @click="reset">取消</MdButton>
       </div>
     </template>
 
@@ -592,8 +598,8 @@ function failureLabel(f: { index: number; message: string }): string {
         <label><input v-model="policy" type="radio" name="import-policy" value="merge" /> 保留两者（并存）</label>
       </div>
       <div class="actions">
-        <button class="import-commit" :disabled="busy" @click="commitImport">确认导入</button>
-        <button :disabled="busy" @click="reset">取消</button>
+        <MdButton class="import-commit" :disabled="busy" @click="commitImport">确认导入</MdButton>
+        <MdButton variant="text" :disabled="busy" @click="reset">取消</MdButton>
       </div>
     </template>
 
@@ -608,7 +614,7 @@ function failureLabel(f: { index: number; message: string }): string {
         </ul>
       </div>
       <div class="actions">
-        <button class="import-done" :disabled="busy" @click="reset">完成</button>
+        <MdButton class="import-done" :disabled="busy" @click="reset">完成</MdButton>
       </div>
     </template>
 
@@ -621,15 +627,13 @@ function failureLabel(f: { index: number; message: string }): string {
 h2 { font-size: 15px; margin: 0; }
 .meta { font-size: 13px; margin: 0; }
 .hint { font-size: 12px; opacity: .65; margin: 0; }
-.req { margin-left: 4px; font-size: 11px; color: var(--md-sys-color-error); }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .actions .format-select { min-width: 0; flex: 1; max-width: 320px; }
 .map-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-.map-row label { width: 90px; flex: none; }
-.map-row input { flex: 1; }
+.map-row .map-field { flex: 1; }
 .schemes { display: flex; flex-direction: column; gap: 6px; border-top: 1px dashed var(--md-sys-color-outline-variant); padding-top: 8px; }
-.scheme-row { display: flex; gap: 8px; }
-.scheme-row input, .scheme-row select { flex: 1; min-width: 0; }
+.scheme-row { display: flex; gap: 8px; align-items: center; }
+.scheme-row .md-text-field, .scheme-row select { flex: 1; min-width: 0; }
 .policies { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; }
 .policies label { display: flex; align-items: center; gap: 4px; }
 .failures { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 160px; overflow: auto; font-size: 12px; color: var(--md-sys-color-error); }
