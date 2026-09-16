@@ -25,6 +25,15 @@ describe('READABLE_BACKUP_RE', () => {
     expect(READABLE_BACKUP_RE.test('conflict-20260913-150405.totpbackup')).toBe(true)
     expect(READABLE_BACKUP_RE.test('conflict-backup.totpbackup')).toBe(false)
   })
+  it('冲突副本允许中间 backend 段（conflict-{backend}-{ts}）；旧名仍可读', () => {
+    expect(READABLE_BACKUP_RE.test('conflict-webdav-20260916-120000.totpbackup')).toBe(true)
+    expect(READABLE_BACKUP_RE.test('conflict-20260916-120000.totpbackup')).toBe(true)
+  })
+  it('冲突副本中间段只允许一段小写字母数字：双段拒绝、大写拒绝、非法段拒绝', () => {
+    expect(READABLE_BACKUP_RE.test('conflict-x-y-20260916-120000.totpbackup')).toBe(false)
+    expect(READABLE_BACKUP_RE.test('conflict-WebDav-20260916-120000.totpbackup')).toBe(false)
+    expect(READABLE_BACKUP_RE.test('conflict-web_dav-20260916-120000.totpbackup')).toBe(false)
+  })
 })
 
 describe('selectBackupsToKeep', () => {

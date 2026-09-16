@@ -106,4 +106,15 @@ describe('backupService dirOverride 分支', () => {
     await expect(readBackupByName('../evil.totpbackup', 'C:\\bk')).rejects.toThrow('invalid backup name')
     expect(invokeMock).not.toHaveBeenCalled()
   })
+
+  it('readBackupByName：多目标冲突副本名（conflict-{backend}-{ts}）通过 RE 校验可读', async () => {
+    invokeMock.mockResolvedValue('envelope-text')
+    const text = await readBackupByName('conflict-webdav-20260916-120000.totpbackup', 'C:\\bk')
+    expect(text).toBe('envelope-text')
+    expect(invokeMock).toHaveBeenCalledWith('read_text_file_os', {
+      path: 'C:\\bk\\conflict-webdav-20260916-120000.totpbackup',
+      allowedDir: 'C:\\bk',
+    })
+    await expect(readBackupByName('conflict-x-y-20260916-120000.totpbackup', 'C:\\bk')).rejects.toThrow('invalid backup name')
+  })
 })

@@ -17,8 +17,10 @@ export function conflictBackupFileName(now: Date): string {
 
 export const BACKUP_NAME_RE = /^vault-\d{8}-\d{6}\.totpbackup$/
 // 可读（恢复）范围：时间戳名或 overwrite 名均可 + 云同步冲突副本名（备份列表可恢复）；
+// 冲突副本允许可选的中间 backend 段（conflict-{backendKey}-{ts}，backendKey 取自 cred.backend，
+// 均为小写字母数字，故无需 i 标志且 vault- 分支大小写语义不变）；只允许一段（双段拒绝）。
 // 滚动删除仍仅认 BACKUP_NAME_RE（overwrite 名与 conflict 名永不滚动删除）
-export const READABLE_BACKUP_RE = /^(vault-(\d{8}-\d{6}|backup)|conflict-\d{8}-\d{6})\.totpbackup$/
+export const READABLE_BACKUP_RE = /^(vault-(\d{8}-\d{6}|backup)|conflict-(?:[a-z0-9]+-)?\d{8}-\d{6})\.totpbackup$/
 
 export function selectBackupsToKeep(names: string[], keep: number): string[] {
   const valid = names.filter((n) => BACKUP_NAME_RE.test(n)).sort() // 字典序=时间序
