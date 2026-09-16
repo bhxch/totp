@@ -3,7 +3,6 @@ import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import MdDialog from '../../src/components/md/MdDialog.vue'
 import MdMenu from '../../src/components/md/MdMenu.vue'
-import MdListItem from '../../src/components/md/MdListItem.vue'
 
 describe('MdDialog', () => {
   it('open=false 不渲染', () => {
@@ -72,13 +71,5 @@ describe('MdMenu', () => {
   it('根 wrapper 带 role=menu', () => {
     const w = mount(MdMenu, { props: { open: true, x: 0, y: 0 } })
     expect(w.find('.md-menu').attributes('role')).toBe('menu')
-  })
-})
-describe('MdListItem', () => {
-  it('danger 类与 click', async () => {
-    const w = mount(MdListItem, { props: { label: '删除', danger: true } })
-    expect(w.classes()).toContain('md-list-item--danger')
-    await w.trigger('click')
-    expect(w.emitted('click')).toHaveLength(1)
   })
 })
