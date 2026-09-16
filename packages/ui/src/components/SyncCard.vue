@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import type { SyncPlatform } from './syncPlatform'
+import MdButton from './md/MdButton.vue'
+import MdCheckbox from './md/MdCheckbox.vue'
 
 const props = defineProps<{
   /** 同步平台实现；null 时整卡不渲染（desktop/popup 不受影响） */
@@ -30,11 +32,11 @@ async function refreshStatus(): Promise<void> {
 }
 
 /** 开关变更：成功后立即刷新状态（关闭→「未启用」/开启→最近一次推送结果） */
-async function onToggle(e: Event): Promise<void> {
+async function onToggle(enabled: boolean): Promise<void> {
   busy.value = true
   msg.value = ''
   try {
-    await props.platform!.setSyncEnabled((e.target as HTMLInputElement).checked)
+    await props.platform!.setSyncEnabled(enabled)
     await refreshStatus()
   } catch (err) {
     fail(err)
@@ -86,13 +88,11 @@ onUnmounted(() => {
 <template>
   <section v-if="platform" class="card sync">
     <h2>浏览器同步</h2>
-    <label class="opt">
-      <input
-        class="sync-toggle" type="checkbox" :checked="platform.syncEnabled"
-        :disabled="busy || !platform.canSync" @change="onToggle"
-      />
-      启用浏览器同步（Chrome/Edge）
-    </label>
+    <MdCheckbox
+      class="sync-toggle" :model-value="platform.syncEnabled" :disabled="busy || !platform.canSync"
+      label="启用浏览器同步（Chrome/Edge）" aria-label="启用浏览器同步（Chrome/Edge）"
+      @update:model-value="onToggle"
+    />
     <p v-if="!platform.canSync" class="hint">当前环境不支持浏览器同步</p>
     <!-- I55：per-device 同步开关明示，避免用户误解为他机关闭会影响本端 -->
     <p class="per-device-hint">同步开关按设备独立，他机不会改写本端</p>
@@ -103,7 +103,7 @@ onUnmounted(() => {
     <div class="status-row">
       <span v-if="statusText" :class="['status', stateClass]" role="status">{{ statusText }}</span>
       <span v-if="usageText" class="usage" role="status">{{ usageText }}</span>
-      <button class="refresh" :disabled="busy" @click="refreshStatus">刷新状态</button>
+      <MdButton variant="text" class="refresh" :disabled="busy" @click="refreshStatus">刷新状态</MdButton>
     </div>
     <div v-if="msg" :class="msgKind" role="alert">{{ msg }}</div>
   </section>
@@ -112,7 +112,6 @@ onUnmounted(() => {
 <style scoped>
 .card { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
 h2 { font-size: 15px; margin: 0; }
-.opt { font-size: 13px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .status-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .status.sync-ok { color: var(--md-sys-color-primary); }
 .status.sync-quota { color: var(--md-sys-color-tertiary); }

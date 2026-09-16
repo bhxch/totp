@@ -63,12 +63,12 @@ describe('BackupCard', () => {
     }
     const w = mount(BackupCard, { props: { platform, vaultJson: '{}' } })
     // 初始 keep n=7：keep-n input 可见
-    expect(w.find('input.keep-n').exists()).toBe(true)
+    expect(w.find('.keep-n input').exists()).toBe(true)
     // 切到 overwrite
     const overwriteRadio = w.findAll('input[type="radio"]')[1]!
     await overwriteRadio.setValue(true)
     await vi.waitFor(() => expect(mode.type).toBe('overwrite'))
-    expect(w.find('input.keep-n').exists()).toBe(false)
+    expect(w.find('.keep-n input').exists()).toBe(false)
     // 切回 keep：应使用本地 keepN（即用户配置的 7），不会变成默认 3
     const keepRadio = w.findAll('input[type="radio"]')[0]!
     await keepRadio.setValue(true)

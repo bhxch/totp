@@ -5,6 +5,9 @@ import { CLOUD_BACKUP_PATH, createCloudBackend } from './cloudPlatform'
 import type { CloudPlatform } from './cloudPlatform'
 import { parseVaultJson } from './parseVaultJson'
 import { syncWithCloud } from '@totp/core'
+import MdButton from './md/MdButton.vue'
+import MdCheckbox from './md/MdCheckbox.vue'
+import MdTextField from './md/MdTextField.vue'
 
 const props = defineProps<{
   /** 云同步平台实现；null 时整卡不渲染（popup 不受影响） */
@@ -235,41 +238,44 @@ async function onConfirmAdopt(): Promise<void> {
       <option value="gist">GitHub Gist</option>
     </select>
     <div v-if="backendSel === 'webdav'" class="fields">
-      <input v-model.trim="f.serverUrl" placeholder="服务器地址（https://dav.example.com）" autocomplete="off" />
-      <input v-model.trim="f.username" placeholder="用户名" autocomplete="off" />
-      <input v-model="f.password" type="password" placeholder="应用密码" autocomplete="new-password" />
+      <MdTextField :model-value="f.serverUrl" label="服务器地址" placeholder="服务器地址（https://dav.example.com）" autocomplete="off" @update:model-value="f.serverUrl = $event.trim()" />
+      <MdTextField :model-value="f.username" label="用户名" placeholder="用户名" autocomplete="off" @update:model-value="f.username = $event.trim()" />
+      <MdTextField v-model="f.password" type="password" label="应用密码" placeholder="应用密码" autocomplete="new-password" />
     </div>
     <div v-else-if="backendSel === 's3'" class="fields">
-      <input v-model.trim="f.region" placeholder="Region（如 us-east-1）" autocomplete="off" />
-      <input v-model.trim="f.bucket" placeholder="Bucket" autocomplete="off" />
-      <input v-model.trim="f.accessKeyId" placeholder="AccessKeyId" autocomplete="off" />
-      <input v-model="f.secretAccessKey" type="password" placeholder="SecretAccessKey" autocomplete="new-password" />
-      <input v-model="f.sessionToken" type="password" placeholder="STS SessionToken（可选）" autocomplete="new-password" />
-      <input v-model.trim="f.endpoint" placeholder="Endpoint（可选，如 http://localhost:9000）" autocomplete="off" />
-      <input v-model.trim="f.prefix" placeholder="Key 前缀（可选）" autocomplete="off" />
-      <label class="opt"><input type="checkbox" v-model="f.forcePathStyle" :disabled="busy" /> 强制 path-style（兼容老 bucket / 自建 S3）</label>
+      <MdTextField :model-value="f.region" label="Region" placeholder="Region（如 us-east-1）" autocomplete="off" @update:model-value="f.region = $event.trim()" />
+      <MdTextField :model-value="f.bucket" label="Bucket" placeholder="Bucket" autocomplete="off" @update:model-value="f.bucket = $event.trim()" />
+      <MdTextField :model-value="f.accessKeyId" label="AccessKeyId" placeholder="AccessKeyId" autocomplete="off" @update:model-value="f.accessKeyId = $event.trim()" />
+      <MdTextField v-model="f.secretAccessKey" type="password" label="SecretAccessKey" placeholder="SecretAccessKey" autocomplete="new-password" />
+      <MdTextField v-model="f.sessionToken" type="password" label="STS SessionToken（可选）" placeholder="STS SessionToken（可选）" autocomplete="new-password" />
+      <MdTextField :model-value="f.endpoint" label="Endpoint" placeholder="Endpoint（可选，如 http://localhost:9000）" autocomplete="off" @update:model-value="f.endpoint = $event.trim()" />
+      <MdTextField :model-value="f.prefix" label="Key 前缀（可选）" placeholder="Key 前缀（可选）" autocomplete="off" @update:model-value="f.prefix = $event.trim()" />
+      <MdCheckbox
+        :model-value="f.forcePathStyle" :disabled="busy" label="强制 path-style（兼容老 bucket / 自建 S3）"
+        aria-label="强制 path-style（兼容老 bucket / 自建 S3）" @update:model-value="f.forcePathStyle = $event"
+      />
     </div>
     <div v-else-if="backendSel === 'gdrive'" class="fields">
-      <input v-model.trim="f.accessToken" type="password" placeholder="Access Token（Google OAuth）" autocomplete="new-password" />
+      <MdTextField :model-value="f.accessToken" type="password" label="Access Token（Google OAuth）" placeholder="Access Token（Google OAuth）" autocomplete="new-password" @update:model-value="f.accessToken = $event.trim()" />
     </div>
     <div v-else-if="backendSel === 'onedrive'" class="fields">
-      <input v-model.trim="f.accessToken" type="password" placeholder="Access Token（Microsoft Graph）" autocomplete="new-password" />
+      <MdTextField :model-value="f.accessToken" type="password" label="Access Token（Microsoft Graph）" placeholder="Access Token（Microsoft Graph）" autocomplete="new-password" @update:model-value="f.accessToken = $event.trim()" />
     </div>
     <div v-else class="fields">
-      <input v-model.trim="f.token" type="password" placeholder="GitHub Token" autocomplete="new-password" />
-      <input v-model.trim="f.gistId" placeholder="Gist ID" autocomplete="off" />
+      <MdTextField :model-value="f.token" type="password" label="GitHub Token" placeholder="GitHub Token" autocomplete="new-password" @update:model-value="f.token = $event.trim()" />
+      <MdTextField :model-value="f.gistId" label="Gist ID" placeholder="Gist ID" autocomplete="off" @update:model-value="f.gistId = $event.trim()" />
     </div>
     <p v-if="gistPublic" class="warn" role="alert">当前 gist 为 public，备份内容会暴露在公开页，建议改为 secret gist</p>
     <div class="actions">
-      <button class="save-cred" :disabled="busy" @click="onSaveCred">保存凭据</button>
-      <input v-model="password" type="password" class="cloud-pw" placeholder="同步口令" autocomplete="new-password" :disabled="busy" />
-      <button class="sync-now" :disabled="busy || pending !== null" @click="onSync">立即同步</button>
+      <MdButton class="save-cred" :disabled="busy" @click="onSaveCred">保存凭据</MdButton>
+      <MdTextField v-model="password" class="cloud-pw" type="password" label="同步口令" placeholder="同步口令" autocomplete="new-password" :disabled="busy" />
+      <MdButton class="sync-now" :disabled="busy || pending !== null" @click="onSync">立即同步</MdButton>
     </div>
     <p class="hint">同步口令即备份加密口令，云端对象为加密 envelope；口令不保存。</p>
     <div v-if="pending" class="confirm-row">
       <span>{{ pendingText }}</span>
-      <button class="danger" :disabled="busy" @click="onConfirmAdopt">确认覆盖</button>
-      <button :disabled="busy" @click="pending = null">取消</button>
+      <MdButton danger :disabled="busy" @click="onConfirmAdopt">确认覆盖</MdButton>
+      <MdButton variant="text" :disabled="busy" @click="pending = null">取消</MdButton>
     </div>
     <div v-if="msg" :class="msgKind" role="status">{{ msg }}</div>
   </section>
@@ -283,7 +289,6 @@ h2 { font-size: 15px; margin: 0; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .cloud-pw { flex: 1; min-width: 120px; }
 .confirm-row { display: flex; align-items: center; gap: 8px; font-size: 13px; flex-wrap: wrap; }
-.danger { color: var(--md-sys-color-error); }
 .hint { font-size: 12px; opacity: .65; margin: 0; }
 .ok { color: var(--md-sys-color-primary); font-size: 13px; }
 .err { color: var(--md-sys-color-error); font-size: 13px; }

@@ -123,18 +123,18 @@ describe('SecurityCard', () => {
   it('剪贴板 checkbox 触发 setClipboardClear', async () => {
     const p = makePlatform()
     const w = mount(SecurityCard, { props: { platform: p } })
-    await w.find('input.clipboard-clear').setValue(false)
+    await w.find('.clipboard-clear input').setValue(false)
     expect(p.setClipboardClear).toHaveBeenCalledWith(false)
   })
 
   it('popupCloseDelayMs：platform 提供时渲染数字输入并触发 setPopupCloseDelay；未提供时不渲染', async () => {
     const without = mount(SecurityCard, { props: { platform: makePlatform() } })
-    expect(without.find('input.delay-ms').exists()).toBe(false)
+    expect(without.find('.delay-ms input').exists()).toBe(false)
 
     const setPopupCloseDelay = vi.fn().mockResolvedValue(undefined)
     const p = makePlatform({ popupCloseDelayMs: computed(() => 2000), setPopupCloseDelay })
     const w = mount(SecurityCard, { props: { platform: p } })
-    const input = w.find('input.delay-ms')
+    const input = w.find('.delay-ms input')
     expect(input.exists()).toBe(true)
     expect((input.element as HTMLInputElement).value).toBe('2000')
     await input.setValue(3500)
@@ -243,9 +243,9 @@ describe('SecurityCard', () => {
       setPopupCloseDelay: vi.fn(),
     })
     const w = mount(SecurityCard, { props: { platform: p } })
-    const clipboard = w.find('input.clipboard-clear')
+    const clipboard = w.find('.clipboard-clear input')
     expect(clipboard.attributes('disabled')).toBeDefined()
-    expect(w.find('input.delay-ms').attributes('disabled')).toBeDefined()
+    expect(w.find('.delay-ms input').attributes('disabled')).toBeDefined()
     expect(w.text()).toContain('解锁后可调整')
   })
 

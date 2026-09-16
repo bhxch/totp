@@ -19,9 +19,9 @@ describe('SyncCard', () => {
   it('开关切换调用 setSyncEnabled', async () => {
     const platform = mkPlatform()
     const w = mount(SyncCard, { props: { platform } })
-    await w.find('input.sync-toggle').setValue(true)
+    await w.find('.sync-toggle input').setValue(true)
     expect(platform.setSyncEnabled).toHaveBeenCalledWith(true)
-    await w.find('input.sync-toggle').setValue(false)
+    await w.find('.sync-toggle input').setValue(false)
     expect(platform.setSyncEnabled).toHaveBeenCalledWith(false)
   })
 

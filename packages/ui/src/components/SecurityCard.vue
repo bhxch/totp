@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import type { SecurityPlatform } from './securityPlatform'
+import MdButton from './md/MdButton.vue'
+import MdCheckbox from './md/MdCheckbox.vue'
+import MdTextField from './md/MdTextField.vue'
 
 const props = defineProps<{
   /** 安全平台能力；null 时整卡不渲染（popup 不受影响） */
@@ -147,12 +150,12 @@ async function onRemoveDpapi(): Promise<void> {
   await run(() => ops.remove(), 'Windows 自动解锁已移除')
 }
 
-async function onClipboardChange(e: Event): Promise<void> {
-  await props.platform?.setClipboardClear((e.target as HTMLInputElement).checked)
+async function onClipboardChange(checked: boolean): Promise<void> {
+  await props.platform?.setClipboardClear(checked)
 }
 
-async function onDelayChange(e: Event): Promise<void> {
-  const ms = Math.max(0, Math.floor(Number((e.target as HTMLInputElement).value) || 0))
+async function onDelayChange(value: string): Promise<void> {
+  const ms = Math.max(0, Math.floor(Number(value) || 0))
   await props.platform?.setPopupCloseDelay?.(ms)
 }
 </script>
@@ -164,11 +167,11 @@ async function onDelayChange(e: Event): Promise<void> {
       <!-- 未启用：口令+确认 → 启用加密 -->
       <template v-if="!hasEnc">
         <div class="pw-row">
-          <input v-model="password" type="password" placeholder="加密口令" autocomplete="new-password" :disabled="busy" />
-          <input v-model="confirmPw" type="password" placeholder="确认口令" autocomplete="new-password" :disabled="busy" />
+          <MdTextField v-model="password" type="password" label="加密口令" placeholder="加密口令" autocomplete="new-password" :disabled="busy" />
+          <MdTextField v-model="confirmPw" type="password" label="确认口令" placeholder="确认口令" autocomplete="new-password" :disabled="busy" />
         </div>
         <div class="actions">
-          <button class="enable-enc" :disabled="busy" @click="onEnable">启用加密</button>
+          <MdButton class="enable-enc" :disabled="busy" @click="onEnable">启用加密</MdButton>
         </div>
         <p class="hint">启用后本地数据以口令加密存储，每次打开需输入口令解锁。</p>
         <p class="hint">启用后浏览器同步的数据也将是密文。</p>
@@ -188,53 +191,57 @@ async function onDelayChange(e: Event): Promise<void> {
               <ul v-if="passkeySources.length" class="passkey-list">
                 <li v-for="c in passkeySources" :key="c.credentialId">
                   <code>Passkey {{ shortId(c.credentialId) }}</code>
-                  <button class="remove-passkey" :disabled="busy" @click="onRemovePasskey(c.credentialId)">移除</button>
+                  <MdButton variant="text" danger class="remove-passkey" :disabled="busy" @click="onRemovePasskey(c.credentialId)">移除</MdButton>
                 </li>
               </ul>
               <div class="actions">
-                <button class="add-passkey" :disabled="busy || prfCap !== true" @click="onAddPasskey">添加 Passkey 解锁</button>
+                <MdButton variant="tonal" class="add-passkey" :disabled="busy || prfCap !== true" @click="onAddPasskey">添加 Passkey 解锁</MdButton>
               </div>
             </template>
           </template>
           <template v-if="dpapiOps">
             <div v-if="dpapiSource" class="dpapi-row">
               <span class="method">Windows 自动解锁（DPAPI）</span>
-              <button class="remove-dpapi" :disabled="busy" @click="onRemoveDpapi">移除</button>
+              <MdButton variant="text" danger class="remove-dpapi" :disabled="busy" @click="onRemoveDpapi">移除</MdButton>
             </div>
             <div v-else class="actions">
-              <button class="enable-dpapi" :disabled="busy" @click="onEnableDpapi">启用 Windows 自动解锁</button>
+              <MdButton variant="tonal" class="enable-dpapi" :disabled="busy" @click="onEnableDpapi">启用 Windows 自动解锁</MdButton>
             </div>
           </template>
         </div>
         <div class="pw-row">
-          <input v-model="newPw" type="password" placeholder="新口令" autocomplete="new-password" :disabled="busy" />
-          <input v-model="newPwConfirm" type="password" placeholder="确认新口令" autocomplete="new-password" :disabled="busy" />
+          <MdTextField v-model="newPw" type="password" label="新口令" placeholder="新口令" autocomplete="new-password" :disabled="busy" />
+          <MdTextField v-model="newPwConfirm" type="password" label="确认新口令" placeholder="确认新口令" autocomplete="new-password" :disabled="busy" />
         </div>
         <div class="actions">
-          <button class="change-pw" :disabled="busy" @click="onChangePw">更换口令</button>
-          <button v-if="!confirmDisable" class="disable-enc" :disabled="busy" @click="confirmDisable = true">关闭加密</button>
+          <MdButton class="change-pw" :disabled="busy" @click="onChangePw">更换口令</MdButton>
+          <MdButton v-if="!confirmDisable" danger class="disable-enc" :disabled="busy" @click="confirmDisable = true">关闭加密</MdButton>
         </div>
         <div v-if="confirmDisable" class="confirm-row">
           <span>关闭加密将把全部条目以明文存储，确定？</span>
-          <button class="danger" :disabled="busy" @click="onDisable">确认关闭</button>
-          <button @click="confirmDisable = false">取消</button>
+          <MdButton danger :disabled="busy" @click="onDisable">确认关闭</MdButton>
+          <MdButton variant="text" :disabled="busy" @click="confirmDisable = false">取消</MdButton>
         </div>
       </template>
       <!-- 锁定：仅提示（解锁入口由主 LockScreen 处理） -->
       <p v-else class="locked-hint">已锁定——解锁后可管理加密设置</p>
     </template>
     <!-- 通用设置区 -->
-    <label class="opt">
-      <input class="clipboard-clear" type="checkbox" :checked="clipboardOn" :disabled="isLocked" @change="onClipboardChange" />
-      复制后 30 秒自动清空剪贴板<span class="opt-hint">（剪贴板自动清空当前仅在 Chrome/Edge 生效）</span>
-    </label>
-    <label v-if="platform.popupCloseDelayMs && platform.setPopupCloseDelay" class="opt">
-      复制后弹窗自动关闭延迟（毫秒）
-      <input
-        class="delay-ms" type="number" min="0" :value="platform.popupCloseDelayMs.value"
-        :disabled="busy || isLocked" @change="onDelayChange"
+    <div class="opt">
+      <MdCheckbox
+        class="clipboard-clear" :model-value="clipboardOn" :disabled="isLocked"
+        label="复制后 30 秒自动清空剪贴板" ariaLabel="复制后 30 秒自动清空剪贴板"
+        @update:model-value="onClipboardChange"
       />
-    </label>
+      <span class="opt-hint">（剪贴板自动清空当前仅在 Chrome/Edge 生效）</span>    </div>
+    <div v-if="platform.popupCloseDelayMs && platform.setPopupCloseDelay" class="opt">
+      <span>复制后弹窗自动关闭延迟（毫秒）</span>
+      <MdTextField
+        class="delay-ms" type="number" label="延迟（毫秒）" aria-label="复制后弹窗自动关闭延迟（毫秒）"
+        min="0" :model-value="String(platform.popupCloseDelayMs.value)"
+        :disabled="busy || isLocked" @update:model-value="onDelayChange"
+      />
+    </div>
     <!-- I65：锁定态下两个通用设置均被禁用，提示用户先解锁 -->
     <p v-if="isLocked" class="locked-hint">解锁后可调整</p>
     <!-- I54：双端独立加密提示——仅 password 解锁时提醒跨设备需用同一口令 -->
@@ -255,13 +262,12 @@ h2 { font-size: 15px; margin: 0; }
 .passkey-list code { font-size: 12px; opacity: .75; }
 .dpapi-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .pw-row { display: flex; gap: 8px; }
-.pw-row input { flex: 1; }
+.pw-row .md-text-field { flex: 1; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .confirm-row { display: flex; align-items: center; gap: 8px; font-size: 13px; flex-wrap: wrap; }
-.danger { color: var(--md-sys-color-error); }
-.opt { font-size: 13px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.opt { font-size: 13px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .opt-hint { opacity: .65; font-size: 12px; }
-.delay-ms { width: 80px; }
+.delay-ms { width: 150px; }
 .hint, .locked-hint { font-size: 13px; opacity: .65; margin: 0; }
 .ok { color: var(--md-sys-color-primary); font-size: 13px; }
 .err { color: var(--md-sys-color-error); font-size: 13px; }
