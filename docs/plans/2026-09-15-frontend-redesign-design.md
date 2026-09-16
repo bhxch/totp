@@ -177,7 +177,10 @@ packages/ui/src/
 - 不做 i18n、不改数据层/加密/同步语义。
 - popup / mini 不进 router,不上 Navigation(Rail/Tabs)。
 
-## 11. 实施偏离记录(2026-09-15 终审补记)
+## 11. 实施偏离记录(2026-09-15 终审补记;2026-09-16 计划14 闭环)
 
-- **md 组件接线缺口**:MdButton / MdCheckbox / MdList / MdListItem 建成后暂无业务页消费(存量原生控件未替换,§6 使用处承诺未兑现)。裁定:组件保留、偏离记录在案,「存量控件接线 md 组件」列入 merge 后专项;若届时 MdList/MdListItem 仍无用途则删除。既有页面样式已全部 token 化,视觉一致性不受影响,仅组件层双轨。
-- **popup CSS 体积**:tokens.css(60.6KB,10 种子色全量变量)计入 popup 必载 CSS,popup 引用链 +74.3KB(JS 仅 +4.6KB 达标)。按需加载(默认种子内联+其余延迟注入)列入 backlog。
+- ~~**md 组件接线缺口**~~ → **已闭环(计划14,73d9271..10ad254)**:全业务组件原生 button/checkbox/text input 已平替为 md 组件(MdButton 增 danger 形、MdTextField 增属性透传与禁用降级、MdCheckbox 增 disabled);`MdList/MdListItem` 按预授权删除(业务列表行均含交互子元素,不适用 button 型 list item)。**保留豁免**(均有一裁一):`<select>`/`<textarea>`/radio/file 原生(无 md 对应,YAGNI)、SettingsPage 色板圆点(`md-swatch` 类标注的 swatch 控件)、NavigationShell 内部 rail action。
+- ~~**popup CSS 体积**~~ → **已闭环(计划14)**:tokens 拆分为 base(blue 无色限定兜底)+ 9 种子懒载 chunk(50KB,useTheme 动态加载、失败可重试);popup 首载 393,413B→344,671B(-48.7KB/-12.4%),JS 口径 +2.4KB 不回退。已知取舍:非 blue 种子用户首帧短暂 blue 兜底后换色(锁定设计)。
+- a11y 专项(终审 deferred minors)同步闭环:MdDialog 焦点陷阱、MdTextField 错误 aria + 禁用降级、MdSwitch role=switch、MdSegmentedButton 方向键+roving tabindex、MdMenu role=menu。
+
+终审与验收:计划14 全分支终审 Ready to merge(修复波次 10ad254 重审 2/2 ADDRESSED);扩展侧浏览器复验通过(懒载换色端到端/teal FOUC 回放/焦点陷阱,见 `docs/review/2026-09-16-frontend-redesign-backlog-smoke.md`)。
