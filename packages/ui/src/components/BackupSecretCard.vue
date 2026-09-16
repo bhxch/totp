@@ -97,13 +97,13 @@ async function onClear(): Promise<void> {
 
 <style scoped>
 .card { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
-h2 { font-size: 15px; margin: 0; }
+h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .pw-row { display: flex; gap: 8px; }
 .pw-row .md-text-field { flex: 1; }
-.remember-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.remember-row { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.status { font-size: 13px; }
-.ok { color: var(--md-sys-color-primary); font-size: 13px; }
-.err { color: var(--md-sys-color-error); font-size: 13px; }
-.hint { opacity: .65; font-size: 13px; }
+.status { font-size: var(--md-sys-typescale-body-medium); }
+.ok { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-medium); }
+.err { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-medium); }
+.hint { opacity: .65; font-size: var(--md-sys-typescale-body-medium); }
 </style>

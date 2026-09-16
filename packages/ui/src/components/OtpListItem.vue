@@ -81,14 +81,14 @@ function onContextMenu(e: MouseEvent): void {
 .icon-img { width: 100%; height: 100%; object-fit: cover; }
 .meta { flex: 1; min-width: 0; }
 .issuer { font-weight: 600; display: flex; align-items: center; gap: 4px; }
-.pin { color: var(--md-sys-color-primary); font-size: 14px; }
-.label { font-size: 12px; opacity: 0.7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pin { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-medium); }
+.label { font-size: var(--md-sys-typescale-body-small); opacity: 0.7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .right { display: flex; align-items: center; gap: 8px; }
-.code { font-family: ui-monospace, monospace; font-size: 18px; letter-spacing: 1px; }
-.code.invalid { color: var(--md-sys-color-error); font-size: 13px; cursor: help; }
-.reveal { font-size: 14px; }
+.code { font-family: ui-monospace, monospace; font-size: var(--md-sys-typescale-code-large); letter-spacing: 1px; }
+.code.invalid { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-medium); cursor: help; }
+.reveal { font-size: var(--md-sys-typescale-body-medium); }
 .ring { width: 32px; height: 32px; transform: rotate(-90deg); }
 .ring-bg { fill: none; stroke: var(--md-sys-color-outline-variant); stroke-width: 3; }
 .ring-fg { fill: none; stroke: var(--md-sys-color-primary); stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset 1s linear; }
-.ring-text { transform: rotate(90deg); transform-origin: 18px 18px; font-size: 11px; fill: currentColor; }
+.ring-text { transform: rotate(90deg); transform-origin: 18px 18px; font-size: 11px; /* 豁免:SVG text 字号,按 SVG 视口定位,不接字阶 token */ fill: currentColor; }
 </style>

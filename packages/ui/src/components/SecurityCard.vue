@@ -261,25 +261,25 @@ async function onDelayChange(value: string): Promise<void> {
 
 <style scoped>
 .card { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
-h2 { font-size: 15px; margin: 0; }
-.unlock-methods h3 { font-size: 13px; margin: 0; opacity: .8; }
+h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
+.unlock-methods h3 { font-size: var(--md-sys-typescale-body-medium); margin: 0; opacity: .8; }
 .method-row { display: flex; align-items: baseline; gap: 8px; }
-.method-hint { font-size: 12px; opacity: .65; }
-.method { font-size: 13px; }
+.method-hint { font-size: var(--md-sys-typescale-body-small); opacity: .65; }
+.method { font-size: var(--md-sys-typescale-body-medium); }
 .passkey-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.passkey-list li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-.passkey-list code { font-size: 12px; opacity: .75; }
-.dpapi-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.passkey-list li { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); }
+.passkey-list code { font-size: var(--md-sys-typescale-body-small); opacity: .75; }
+.dpapi-row { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); }
 .pw-row { display: flex; gap: 8px; }
 .pw-row .md-text-field { flex: 1; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.confirm-row { display: flex; align-items: center; gap: 8px; font-size: 13px; flex-wrap: wrap; }
-.opt { font-size: 13px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.opt-hint { opacity: .65; font-size: 12px; }
+.confirm-row { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); flex-wrap: wrap; }
+.opt { font-size: var(--md-sys-typescale-body-medium); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.opt-hint { opacity: .65; font-size: var(--md-sys-typescale-body-small); }
 .delay-ms { width: 150px; }
-.hint, .locked-hint { font-size: 13px; opacity: .65; margin: 0; }
-.ok { color: var(--md-sys-color-primary); font-size: 13px; }
-.err { color: var(--md-sys-color-error); font-size: 13px; }
-.hint { opacity: .65; font-size: 13px; }
-.kek-hint { font-size: 12px; color: var(--md-sys-color-tertiary); margin: 0; }
+.hint, .locked-hint { font-size: var(--md-sys-typescale-body-medium); opacity: .65; margin: 0; }
+.ok { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-medium); }
+.err { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-medium); }
+.hint { opacity: .65; font-size: var(--md-sys-typescale-body-medium); }
+.kek-hint { font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-tertiary); margin: 0; }
 </style>

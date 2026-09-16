@@ -636,22 +636,22 @@ function failureLabel(f: { index: number; message: string }): string {
 
 <style scoped>
 .card { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
-h2 { font-size: 15px; margin: 0; }
-.meta { font-size: 13px; margin: 0; }
-.hint { font-size: 12px; opacity: .65; margin: 0; }
-.formats { font-size: 12px; opacity: .65; }
+h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
+.meta { font-size: var(--md-sys-typescale-body-medium); margin: 0; }
+.hint { font-size: var(--md-sys-typescale-body-small); opacity: .65; margin: 0; }
+.formats { font-size: var(--md-sys-typescale-body-small); opacity: .65; }
 .formats summary { cursor: pointer; }
 .formats ul { margin: 4px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .actions .format-select { min-width: 0; flex: 1; max-width: 320px; }
-.map-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.map-row { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); }
 .map-row .map-field { flex: 1; }
 .schemes { display: flex; flex-direction: column; gap: 6px; border-top: 1px dashed var(--md-sys-color-outline-variant); padding-top: 8px; }
 .scheme-row { display: flex; gap: 8px; align-items: center; }
 .scheme-row .md-text-field, .scheme-row select { flex: 1; min-width: 0; }
-.policies { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; }
+.policies { display: flex; gap: 16px; flex-wrap: wrap; font-size: var(--md-sys-typescale-body-medium); }
 .policies label { display: flex; align-items: center; gap: 4px; }
-.failures { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 160px; overflow: auto; font-size: 12px; color: var(--md-sys-color-error); }
-.ok { color: var(--md-sys-color-primary); font-size: 13px; margin: 0; }
-.err { color: var(--md-sys-color-error); font-size: 13px; }
+.failures { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 160px; overflow: auto; font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-error); }
+.ok { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-medium); margin: 0; }
+.err { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-medium); }
 </style>

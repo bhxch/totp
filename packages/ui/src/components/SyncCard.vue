@@ -111,15 +111,15 @@ onUnmounted(() => {
 
 <style scoped>
 .card { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
-h2 { font-size: 15px; margin: 0; }
-.status-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
+.status-row { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); }
 .status.sync-ok { color: var(--md-sys-color-primary); }
 .status.sync-quota { color: var(--md-sys-color-tertiary); }
 .status.sync-error { color: var(--md-sys-color-error); }
 .status.sync-off { opacity: .65; }
-.warn { color: var(--md-sys-color-tertiary); font-size: 13px; margin: 0; }
-.refresh { font-size: 12px; }
-.hint { font-size: 13px; opacity: .65; margin: 0; }
-.ok { color: var(--md-sys-color-primary); font-size: 13px; }
-.err { color: var(--md-sys-color-error); font-size: 13px; }
+.warn { color: var(--md-sys-color-tertiary); font-size: var(--md-sys-typescale-body-medium); margin: 0; }
+.refresh { font-size: var(--md-sys-typescale-body-small); }
+.hint { font-size: var(--md-sys-typescale-body-medium); opacity: .65; margin: 0; }
+.ok { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-medium); }
+.err { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-medium); }
 </style>

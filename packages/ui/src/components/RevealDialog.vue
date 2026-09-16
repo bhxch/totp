@@ -30,8 +30,8 @@ function maskSecret(secret: string): string {
 </template>
 
 <style scoped>
-.reveal-secret { display: block; font-family: ui-monospace, monospace; font-size: 18px; letter-spacing: 1px;
+.reveal-secret { display: block; font-family: ui-monospace, monospace; font-size: var(--md-sys-typescale-code-large); letter-spacing: 1px;
   background: var(--md-sys-color-surface-container-highest); padding: 10px; border-radius: 6px;
   text-align: center; word-break: break-all; }
-.reveal-hint { font-size: 12px; opacity: .65; margin: 8px 0 0; }
+.reveal-hint { font-size: var(--md-sys-typescale-body-small); opacity: .65; margin: 8px 0 0; }
 </style>

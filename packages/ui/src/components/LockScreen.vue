@@ -166,11 +166,11 @@ async function onPasskeyUnlock(): Promise<void> {
 
 <style scoped>
 .lockscreen { display: flex; flex-direction: column; gap: 8px; padding: 32px 16px; max-width: 360px; margin: 0 auto; }
-h2 { font-size: 16px; margin: 0; text-align: center; }
-.hint { font-size: 13px; opacity: .65; margin: 0; text-align: center; }
+h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; text-align: center; }
+.hint { font-size: var(--md-sys-typescale-body-medium); opacity: .65; margin: 0; text-align: center; }
 .unlock-form { display: flex; flex-direction: column; gap: 8px; }
 .pw-row { display: flex; gap: 4px; align-items: center; }
 .pw-row .grow { flex: 1; }
 .unlock { width: 100%; }
-.err { color: var(--md-sys-color-error); font-size: 13px; }
+.err { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-medium); }
 </style>

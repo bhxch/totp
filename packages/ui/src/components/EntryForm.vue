@@ -389,31 +389,31 @@ function submit() {
 .secret-row { display: flex; gap: 6px; align-items: center; }
 .secret-row .secret-field { flex: 1; }
 .secret-toggle { white-space: nowrap; }
-.base32-hint { font-size: 12px; color: var(--md-sys-color-tertiary); margin: 0; }
+.base32-hint { font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-tertiary); margin: 0; }
 /* invalid 类在 MdTextField 根 div 上，经 :deep 传到输入框底边 */
 .entry-form .secret-field.invalid :deep(.md-text-field__box) { border-bottom-color: var(--md-sys-color-error); }
-.advanced-row { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; align-items: flex-start; }
+.advanced-row { display: flex; gap: 8px; flex-wrap: wrap; font-size: var(--md-sys-typescale-body-small); align-items: flex-start; }
 .advanced-row .field { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 80px; }
 .advanced-row .algorithm { width: 100%; box-sizing: border-box; }
 .advanced-row .digits, .advanced-row .period, .advanced-row .counter { flex: 1; min-width: 80px; }
-.steam-hint { font-size: 11px; opacity: .65; margin: 0; width: 100%; }
+.steam-hint { font-size: var(--md-sys-typescale-label-small); opacity: .65; margin: 0; width: 100%; }
 fieldset { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 6px; display: flex; gap: 10px; flex-wrap: wrap; }
-.group-check { font-size: 13px; }
+.group-check { font-size: var(--md-sys-typescale-body-medium); }
 .rule-row { display: flex; gap: 6px; align-items: center; }
 .rule-strategy { width: 110px; }
 .rule-row .rule-pattern { flex: 1; }
 .rule-row .rule-pattern.invalid :deep(.md-text-field__box) { border-bottom-color: var(--md-sys-color-error); }
-.rule-error { font-size: 11px; color: var(--md-sys-color-error); flex-basis: 100%; }
-.icon-recommend { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px 8px; background: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent); border-radius: 6px; }
+.rule-error { font-size: var(--md-sys-typescale-label-small); color: var(--md-sys-color-error); flex-basis: 100%; }
+.icon-recommend { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); padding: 4px 8px; background: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent); border-radius: 6px; }
 .icon-preview { width: 20px; height: 20px; fill: currentColor; flex: none; }
 .icon-current-img { width: 20px; height: 20px; object-fit: contain; flex: none; }
 .icon-picker summary { cursor: pointer; font-weight: 600; }
-.icon-picker .icon-current { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 6px 0; }
-.icon-picker .icon-none { opacity: 0.6; font-size: 12px; }
+.icon-picker .icon-current { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); margin: 6px 0; }
+.icon-picker .icon-none { opacity: 0.6; font-size: var(--md-sys-typescale-body-small); }
 .icon-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .icon-actions .icon-url { flex: 1; min-width: 120px; }
 .icon-file, .pack-file { display: none; }
-.pack-message { color: var(--md-sys-color-primary); font-size: 12px; }
-.error { color: var(--md-sys-color-error); font-size: 12px; }
+.pack-message { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-small); }
+.error { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); }
 .row { display: flex; gap: 8px; }
 </style>

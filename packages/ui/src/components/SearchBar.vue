@@ -39,5 +39,5 @@ const emit = defineEmits<{
 <style scoped>
 .search-row { display: flex; gap: 8px; align-items: center; }
 .grow { flex: 1; }
-.secret-toggle { font-size: 12px; opacity: .75; white-space: nowrap; }
+.secret-toggle { font-size: var(--md-sys-typescale-body-small); opacity: .75; white-space: nowrap; }
 </style>

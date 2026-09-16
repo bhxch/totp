@@ -71,6 +71,6 @@ async function saveRename(g: Group) {
 .group-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .group-list li { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
 .gname { font-weight: 600; }
-.gcount { opacity: .6; font-size: 12px; flex: 1; }
+.gcount { opacity: .6; font-size: var(--md-sys-typescale-body-small); flex: 1; }
 .empty { text-align: center; opacity: .6; padding: 8px 0; }
 </style>
