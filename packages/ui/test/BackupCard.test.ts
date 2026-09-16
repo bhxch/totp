@@ -71,6 +71,24 @@ describe('BackupCard', () => {
     expect(w.find('.fallback-pw').exists()).toBe(true)
   })
 
+  it('回退区已展开时重试再失败：显示「口令不匹配，请重试」且回退区保持展开', async () => {
+    const p = makePlatform({
+      listBackups: vi.fn(async () => [{ name: 'b1.json' }]),
+      restoreByName: vi.fn().mockRejectedValue(new Error('decrypt failed')),
+    })
+    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 's1' } })
+    await vi.waitFor(() => expect(w.findAll('button').some((b) => b.text() === '恢复')).toBe(true))
+    await w.findAll('button').find((b) => b.text() === '恢复')!.trigger('click')
+    // 首发失败：静默展开回退区，无错误提示
+    await vi.waitFor(() => expect(w.find('.fallback-pw').exists()).toBe(true))
+    expect(w.text()).not.toContain('口令不匹配')
+    // 重试再失败：错误提示出现，回退区保持展开供修改
+    await w.find('.fallback-pw input').setValue('bad')
+    await w.findAll('button').find((b) => b.text() === '重试')!.trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('口令不匹配，请重试'))
+    expect(w.find('.fallback-pw').exists()).toBe(true)
+  })
+
   it('恢复内容缺 groups：不进入确认流程、不调用 replaceAllOp 并显示错误（不误入回退区）', async () => {
     const p = makePlatform({
       restoreFromPicker: vi.fn(async () => ({ json: JSON.stringify({ version: 1, entries: [] }) })),

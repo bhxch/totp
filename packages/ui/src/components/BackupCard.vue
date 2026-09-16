@@ -135,9 +135,16 @@ async function attemptRestore(req: { kind: 'picker' | 'name'; name?: string }, p
     busy.value = false
   }
   if (needFallback) {
+    // 重试失败（回退区已展开）给明确错误；首发失败静默展开回退区即可
+    const isRetry = showFallback.value
     restoreReq.value = req
     showFallback.value = true
-    msg.value = ''
+    if (isRetry) {
+      msg.value = '口令不匹配，请重试'
+      msgKind.value = 'err'
+    } else {
+      msg.value = ''
+    }
     return
   }
   if (!r) return // 用户取消了文件选择
