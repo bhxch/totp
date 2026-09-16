@@ -51,9 +51,22 @@ const header = (purpose, specificity) =>
  * ${purpose}
  * 特异度:${specificity} */`
 
-// base 恒载产物:color-scheme 4 声明 + 无 [data-color] 限定的 light/dark/auto×media 块,值=默认种子 blue(兜底)
+// M3 字阶尺寸档:mode 无关,恒载 :root(不随 data-mode/data-color 变化);code-large 为项目自定义档(验证码/密文等宽)
+const TYPESCALE = [
+  ['title-medium', '16px', ''],
+  ['body-large', '16px', ''],
+  ['body-medium', '14px', ''],
+  ['body-small', '12px', ''],
+  ['label-medium', '12px', ''],
+  ['label-small', '11px', ''],
+  ['code-large', '18px', ' /* 项目自定义档：验证码/密文等宽 */'],
+]
+const typescaleBlock = `:root {\n${TYPESCALE.map(([k, v, note]) => `  --md-sys-typescale-${k}:${v};${note}`).join('\n')}\n}`
+
+// base 恒载产物:typescale :root 块 + color-scheme 4 声明 + 无 [data-color] 限定的 light/dark/auto×media 块,值=默认种子 blue(兜底)
 const base = [
-  header('base 恒载:无 [data-color] 限定的 light/dark/auto 块,值=默认种子 blue(未加载 palettes 时的兜底色)。', '本文件 (0,1,0) 兜底,tokens-palettes.css (0,2,0) 恒胜。'),
+  header('base 恒载:typescale :root 块 + 无 [data-color] 限定的 light/dark/auto 块,色值=默认种子 blue(未加载 palettes 时的兜底色)。', '本文件 (0,1,0) 兜底,tokens-palettes.css (0,2,0) 恒胜。'),
+  typescaleBlock,
   '[data-mode="light"] { color-scheme: light }',
   '[data-mode="dark"] { color-scheme: dark }',
   '@media (prefers-color-scheme: light) { [data-mode="auto"] { color-scheme: light } }',
