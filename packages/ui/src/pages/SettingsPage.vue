@@ -64,8 +64,7 @@ const hasGeneralItems = computed(() => props.showDesktop || props.showExtension 
       <div class="row">
         <span class="row-label">主题色</span>
         <div class="dots" role="group" aria-label="主题色">
-          <button
-            v-for="p in THEME_PALETTES" :key="p.id" type="button" class="theme-dot md-swatch"
+          <button v-for="p in THEME_PALETTES" :key="p.id" type="button" class="theme-dot md-swatch"
             :class="{ 'theme-dot--selected': color === p.id }" :style="{ background: p.hex }"
             :data-color-id="p.id" :title="p.label" :aria-label="p.label" :aria-pressed="color === p.id"
             @click="color = p.id"
