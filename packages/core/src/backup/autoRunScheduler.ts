@@ -72,6 +72,7 @@ export function createAutoRunScheduler(opts: SchedulerOptions): AutoRunScheduler
       }, TICK_MS)
     },
     stop() {
+      pendingChange = false // 在途 run 的 finally 不再补跑，保证 stop 后彻底静默
       if (changeTimer !== undefined) {
         clearTimeout(changeTimer)
         changeTimer = undefined

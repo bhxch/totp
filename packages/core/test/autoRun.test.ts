@@ -65,6 +65,21 @@ describe('createAutoRunScheduler', () => {
     await vi.advanceTimersByTimeAsync(10_000)
     expect(run).not.toHaveBeenCalled()
   })
+  it('stop 清除 pendingChange：在途 run 完成后不再补跑', async () => {
+    vi.useFakeTimers()
+    let resolveRun!: () => void
+    const run = vi.fn().mockImplementation(() => new Promise<void>((r) => { resolveRun = r }))
+    const s = createAutoRunScheduler({ debounceMs: 1_000, intervalMs: () => null, run })
+    s.notifyChanged()
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(run).toHaveBeenCalledTimes(1) // 在途
+    s.notifyChanged()
+    await vi.advanceTimersByTimeAsync(1_000) // 防抖到期被 running 挡下 → pendingChange 置位
+    s.stop() // 此刻无 timer 可清，必须同时清 pendingChange
+    resolveRun()
+    await vi.advanceTimersByTimeAsync(31_000) // debounceMs + TICK_MS，足以暴露 stop 后补跑
+    expect(run).toHaveBeenCalledTimes(1) // 不补跑
+  })
   it('上一次 run 未结束时不重叠触发', async () => {
     vi.useFakeTimers()
     let resolveRun!: () => void
