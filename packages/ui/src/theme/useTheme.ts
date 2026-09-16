@@ -1,6 +1,7 @@
 import { computed, getCurrentScope, onScopeDispose, ref, watchEffect, type ComputedRef, type WritableComputedRef } from 'vue'
 import type { VueStore } from '../store'
 import { DEFAULT_THEME_COLOR, isThemeColor } from './palette'
+import { loadPalettes } from './loadPalettes'
 
 // re-export 供 `@totp/ui` 消费方与测试统一从本模块取 palette 原语
 export { DEFAULT_THEME_COLOR, isThemeColor, THEME_PALETTES } from './palette'
@@ -15,6 +16,14 @@ export function applyThemeAttributes(mode: string, color: string): void {
 
 export function readThemeMirror(): { mode?: string; color?: string } {
   try { return JSON.parse(localStorage.getItem(THEME_PREF_KEY) ?? '{}') } catch { return {} }
+}
+
+// 非默认种子的 palettes chunk 懒加载:模块级 promise 缓存,多次调用只发起一次动态导入。
+// blue(base 兜底)直接跳过;加载完成前以 base 的 blue 值渲染,加载后由更高特异度自动换色(ms 级)。
+let palettesPromise: Promise<unknown> | undefined
+function ensurePalettes(color: string): void {
+  if (color === DEFAULT_THEME_COLOR || palettesPromise) return
+  palettesPromise = loadPalettes().catch(() => { /* 加载失败保持 blue 兜底,不影响功能 */ })
 }
 
 export function useTheme(store: VueStore): { mode: WritableComputedRef<ThemeModeValue>; color: WritableComputedRef<string>; resolvedMode: ComputedRef<'light' | 'dark'> } {
@@ -41,6 +50,7 @@ export function useTheme(store: VueStore): { mode: WritableComputedRef<ThemeMode
     get: () => (isThemeColor(store.settings.themeColor) ? store.settings.themeColor : DEFAULT_THEME_COLOR),
     set(v) {
       if (!isThemeColor(v)) return
+      ensurePalettes(v) // 不 await:兜底为 blue,palettes 加载完成自动换色
       store.settings.themeColor = v
       writeMirror(mode.value, v)
       void store.commitSettings()
@@ -53,6 +63,7 @@ export function useTheme(store: VueStore): { mode: WritableComputedRef<ThemeMode
   watchEffect(() => {
     const m = mode.value
     const c = color.value
+    ensurePalettes(c) // fire-and-forget:覆盖「设置加载即为非默认种子」的首载路径
     applyThemeAttributes(m, c)
     const mirror = readThemeMirror()
     if (mirror.mode !== m || mirror.color !== c) writeMirror(m, c)

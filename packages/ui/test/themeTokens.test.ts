@@ -4,6 +4,7 @@ import { argbFromHex, hexFromArgb, themeFromSourceColor } from '@material/materi
 import { describe, expect, it } from 'vitest'
 
 const css = readFileSync(join(__dirname, '../src/theme/tokens.css'), 'utf8')
+const palettesCss = readFileSync(join(__dirname, '../src/theme/tokens-palettes.css'), 'utf8')
 const palettes = JSON.parse(readFileSync(join(__dirname, '../src/theme/palettes.json'), 'utf8')) as { id: string; hex: string }[]
 
 // 35 角色权威清单(与设计文档 §4.3 一致,kebab-case)
@@ -16,11 +17,56 @@ const ROLES = ['primary','on-primary','primary-container','on-primary-container'
   'surface-container','surface-container-high','surface-container-highest','surface-tint',
   'outline','outline-variant','inverse-surface','inverse-on-surface','inverse-primary','shadow','scrim']
 
-describe('tokens.css 产物', () => {
-  it('每种子 × light/dark × 35 角色齐全', () => {
-    for (const p of palettes) {
+const DEFAULT_ID = 'blue'
+const nonDefault = palettes.filter((p) => p.id !== DEFAULT_ID)
+
+describe('tokens.css 产物(base 恒载,无 [data-color] 限定的兜底块)', () => {
+  it('不含任何 [data-color] 选择器块(默认种子即兜底;仅头注释可提及)', () => {
+    expect(css).not.toMatch(/\[data-color="\w+"\]/)
+  })
+  it('color-scheme 4 声明齐全', () => {
+    expect(css).toMatch(/\[data-mode="light"\]\s*\{\s*color-scheme:\s*light\s*\}/)
+    expect(css).toMatch(/\[data-mode="dark"\]\s*\{\s*color-scheme:\s*dark\s*\}/)
+    expect(css).toMatch(/@media\s*\(prefers-color-scheme:\s*light\)\s*\{\s*\[data-mode="auto"\]\s*\{\s*color-scheme:\s*light\s*\}\s*\}/)
+    expect(css).toMatch(/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{\s*\[data-mode="auto"\]\s*\{\s*color-scheme:\s*dark\s*\}\s*\}/)
+  })
+  it('light/dark 无色限定块 × 35 角色齐全', () => {
+    for (const mode of ['light', 'dark']) {
+      // 以 --md-sys-color 开头锚定变量块,避开同选择器的 color-scheme 单行块
+      const block = css.match(new RegExp(`\\[data-mode="${mode}"\\]\\s*\\{\\s*(--md-sys-color[^}]*)\\}`))
+      expect(block, `${mode} 变量块缺失`).toBeTruthy()
+      for (const role of ROLES) {
+        expect(block![1], `${mode}/${role}`).toMatch(new RegExp(`--md-sys-color-${role}:\\s*#\\w{6}`))
+      }
+    }
+  })
+  it('auto 模式经 prefers-color-scheme 两段 media 覆盖', () => {
+    const m = css.match(/@media\s*\(prefers-color-scheme:\s*light\)\s*\{[^@]*\[data-mode="auto"\]\s*\{\s*--md-sys-color/)
+    expect(m, 'auto-light 变量块缺失').toBeTruthy()
+    const d = css.match(/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{[^@]*\[data-mode="auto"\]\s*\{\s*--md-sys-color/)
+    expect(d, 'auto-dark 变量块缺失').toBeTruthy()
+  })
+  it('兜底块值 = blue 种子重算值(primary 抽查)', () => {
+    const blueHex = palettes.find((p) => p.id === DEFAULT_ID)!.hex
+    const expectPrimary = hexFromArgb(themeFromSourceColor(argbFromHex(blueHex)).schemes.light.primary).toLowerCase()
+    const block = css.match(/\[data-mode="light"\]\s*\{\s*(--md-sys-color[^}]*)\}/)!
+    const got = block![1]!.match(/--md-sys-color-primary:\s*(#\w{6})/)![1]!.toLowerCase()
+    expect(got).toBe(expectPrimary)
+  })
+  it('头注释含特异度说明', () => {
+    expect(css).toMatch(/特异度/)
+  })
+})
+
+describe('tokens-palettes.css 产物(9 非默认种子懒载)', () => {
+  it('不含 blue(blue 由 base 兜底,专属块已删)', () => {
+    expect(palettesCss).not.toMatch(/\[data-color="blue"\]/)
+  })
+  it('9 种子 × light/dark × 35 角色齐全', () => {
+    expect(nonDefault).toHaveLength(9)
+    for (const p of nonDefault) {
       for (const mode of ['light', 'dark']) {
-        const block = css.match(new RegExp(`\\[data-color="${p.id}"\\]\\[data-mode="${mode}"\\]\\s*\\{([^}]*)\\}`))
+        const block = palettesCss.match(new RegExp(`\\[data-color="${p.id}"\\]\\[data-mode="${mode}"\\]\\s*\\{([^}]*)\\}`))
         expect(block, `${p.id}/${mode} 块缺失`).toBeTruthy()
         for (const role of ROLES) {
           expect(block![1], `${p.id}/${mode}/${role}`).toMatch(new RegExp(`--md-sys-color-${role}:\\s*#\\w{6}`))
@@ -29,23 +75,29 @@ describe('tokens.css 产物', () => {
     }
   })
   it('auto 模式经 prefers-color-scheme 两段 media 覆盖每种子', () => {
-    for (const p of palettes) {
-      const m = css.match(new RegExp(`@media\\s*\\(prefers-color-scheme:\\s*light\\)\\s*\\{[^@]*\\[data-color="${p.id}"\\]\\[data-mode="auto"\\]\\s*\\{`))
+    for (const p of nonDefault) {
+      const m = palettesCss.match(new RegExp(`@media\\s*\\(prefers-color-scheme:\\s*light\\)\\s*\\{[^@]*\\[data-color="${p.id}"\\]\\[data-mode="auto"\\]\\s*\\{`))
       expect(m, `${p.id} auto-light 缺失`).toBeTruthy()
-      const d = css.match(new RegExp(`@media\\s*\\(prefers-color-scheme:\\s*dark\\)\\s*\\{[^@]*\\[data-color="${p.id}"\\]\\[data-mode="auto"\\]\\s*\\{`))
+      const d = palettesCss.match(new RegExp(`@media\\s*\\(prefers-color-scheme:\\s*dark\\)\\s*\\{[^@]*\\[data-color="${p.id}"\\]\\[data-mode="auto"\\]\\s*\\{`))
       expect(d, `${p.id} auto-dark 缺失`).toBeTruthy()
     }
   })
-  it('蓝/浅 primary 抽查 = material-color-utilities 重算值;error 全种子一致', () => {
-    const expectPrimary = hexFromArgb(themeFromSourceColor(argbFromHex('#0B57D0')).schemes.light.primary).toLowerCase()
-    const block = css.match(/\[data-color="blue"\]\[data-mode="light"\]\s*\{([^}]*)\}/)!
+  it('teal/light primary 抽查 = material-color-utilities 重算值;error 全种子一致(跨 base+palettes)', () => {
+    const tealHex = palettes.find((p) => p.id === 'teal')!.hex
+    const expectPrimary = hexFromArgb(themeFromSourceColor(argbFromHex(tealHex)).schemes.light.primary).toLowerCase()
+    const block = palettesCss.match(/\[data-color="teal"\]\[data-mode="light"\]\s*\{([^}]*)\}/)!
     const got = block![1]!.match(/--md-sys-color-primary:\s*(#\w{6})/)![1]!.toLowerCase()
     expect(got).toBe(expectPrimary)
-    // error 不随种子变化:同一 mode 下 10 种子的 error 值全一致(明暗两 mode 的 error 本身允许不同)
+    // error 不随种子变化:base 兜底 + 9 种子在同一 mode 下 error 值全一致(明暗两 mode 的 error 本身允许不同)
     for (const mode of ['light', 'dark']) {
-      const errSet = new Set([...css.matchAll(new RegExp(`\\[data-color="\\w+"\\]\\[data-mode="${mode}"\\]\\s*\\{([^}]*)\\}`, 'g'))]
-        .map((b) => b[1]!.match(/--md-sys-color-error:\s*(#\w{6})/)![1]!.toLowerCase()))
+      const errSet = new Set([
+        ...css.matchAll(new RegExp(`\\[data-mode="${mode}"\\]\\s*\\{\\s*(--md-sys-color[^}]*)\\}`, 'g')),
+        ...palettesCss.matchAll(new RegExp(`\\[data-color="\\w+"\\]\\[data-mode="${mode}"\\]\\s*\\{([^}]*)\\}`, 'g')),
+      ].map((b) => b[1]!.match(/--md-sys-color-error:\s*(#\w{6})/)![1]!.toLowerCase()))
       expect(errSet.size, `error 在 ${mode} 下应全种子一致`).toBe(1)
     }
+  })
+  it('头注释含特异度说明', () => {
+    expect(palettesCss).toMatch(/特异度/)
   })
 })

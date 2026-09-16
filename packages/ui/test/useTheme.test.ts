@@ -3,6 +3,12 @@ import { reactive } from 'vue'
 import type { VueStore } from '../src/store'
 import { applyThemeAttributes, isThemeColor, THEME_PALETTES, useTheme } from '../src/theme/useTheme'
 
+// mock 静态依赖链上的加载器:loadPalettes 每次被调用即代表发起一次 palettes chunk 动态导入
+const palettesMock = vi.hoisted(() => ({ loads: 0 }))
+vi.mock('../src/theme/loadPalettes', () => ({
+  loadPalettes: vi.fn(async () => { palettesMock.loads++; return {} }),
+}))
+
 // stub 只提供 useTheme 依赖的 settings/commitSettings 两成员;断言为 VueStore 满足签名(useTheme 不触及其余成员)
 const store = () => ({
   settings: reactive({ themeMode: 'auto', themeColor: 'blue' }),
@@ -52,6 +58,44 @@ describe('useTheme', () => {
     s.settings.themeColor = 'teal'
     useTheme(s)
     expect(JSON.parse(localStorage.getItem('themePref')!)).toEqual({ mode: 'dark', color: 'teal' })
+  })
+})
+
+describe('ensurePalettes 懒加载(tokens-palettes.css 动态导入)', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    palettesMock.loads = 0
+  })
+  it('color 设为非默认种子触发动态导入', async () => {
+    const { useTheme: freshUseTheme } = await import('../src/theme/useTheme')
+    const t = freshUseTheme(store())
+    t.color.value = 'teal'
+    await vi.dynamicImportSettled()
+    expect(palettesMock.loads).toBe(1)
+  })
+  it('color 设为 blue(默认种子)不触发导入', async () => {
+    const { useTheme: freshUseTheme } = await import('../src/theme/useTheme')
+    const t = freshUseTheme(store())
+    t.color.value = 'blue'
+    await Promise.resolve()
+    expect(palettesMock.loads).toBe(0)
+  })
+  it('首载 settings 即非默认种子也触发(watchEffect 路径)', async () => {
+    const { useTheme: freshUseTheme } = await import('../src/theme/useTheme')
+    const s = store()
+    s.settings.themeColor = 'violet'
+    freshUseTheme(s)
+    await vi.dynamicImportSettled()
+    expect(palettesMock.loads).toBe(1)
+  })
+  it('重复 set 非默认种子只导入一次(promise 缓存)', async () => {
+    const { useTheme: freshUseTheme } = await import('../src/theme/useTheme')
+    const t = freshUseTheme(store())
+    t.color.value = 'teal'
+    await vi.dynamicImportSettled()
+    t.color.value = 'pink'
+    await vi.dynamicImportSettled()
+    expect(palettesMock.loads).toBe(1)
   })
 })
 
