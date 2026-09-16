@@ -20,6 +20,34 @@ const ROLES = ['primary','on-primary','primary-container','on-primary-container'
 const DEFAULT_ID = 'blue'
 const nonDefault = palettes.filter((p) => p.id !== DEFAULT_ID)
 
+// 与 generate.mjs 同源的 35 角色期望值重算:经典角色取 scheme.props(camelCase),扩展角色按 M3 surface tone 表派生
+const SURFACE_TONES = {
+  light: { dim: 87, bright: 98, lowest: 100, low: 96, container: 94, high: 92, highest: 90 },
+  dark: { dim: 6, bright: 24, lowest: 4, low: 10, container: 12, high: 17, highest: 22 },
+} as const
+function expectedRoleValues(hex: string, mode: 'light' | 'dark'): Record<string, string> {
+  const theme = themeFromSourceColor(argbFromHex(hex))
+  const props = (theme.schemes[mode] as unknown as { props: Record<string, number> }).props
+  const neutral = theme.palettes.neutral
+  const t = SURFACE_TONES[mode]
+  const derived: Record<string, number> = {
+    'surface-dim': neutral.tone(t.dim),
+    'surface-bright': neutral.tone(t.bright),
+    'surface-container-lowest': neutral.tone(t.lowest),
+    'surface-container-low': neutral.tone(t.low),
+    'surface-container': neutral.tone(t.container),
+    'surface-container-high': neutral.tone(t.high),
+    'surface-container-highest': neutral.tone(t.highest),
+    'surface-tint': theme.palettes.primary.tone(mode === 'light' ? 40 : 80),
+  }
+  const out: Record<string, string> = {}
+  for (const role of ROLES) {
+    const argb = derived[role] ?? props[role.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())]!
+    out[role] = hexFromArgb(argb).toLowerCase()
+  }
+  return out
+}
+
 describe('tokens.css 产物(base 恒载,无 [data-color] 限定的兜底块)', () => {
   it('不含任何 [data-color] 选择器块(默认种子即兜底;仅头注释可提及)', () => {
     expect(css).not.toMatch(/\[data-color="\w+"\]/)
@@ -46,12 +74,17 @@ describe('tokens.css 产物(base 恒载,无 [data-color] 限定的兜底块)', (
     const d = css.match(/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{[^@]*\[data-mode="auto"\]\s*\{\s*--md-sys-color/)
     expect(d, 'auto-dark 变量块缺失').toBeTruthy()
   })
-  it('兜底块值 = blue 种子重算值(primary 抽查)', () => {
+  it('兜底块值 = blue 种子重算值(35 角色逐角色等值,light/dark)', () => {
     const blueHex = palettes.find((p) => p.id === DEFAULT_ID)!.hex
-    const expectPrimary = hexFromArgb(themeFromSourceColor(argbFromHex(blueHex)).schemes.light.primary).toLowerCase()
-    const block = css.match(/\[data-mode="light"\]\s*\{\s*(--md-sys-color[^}]*)\}/)!
-    const got = block![1]!.match(/--md-sys-color-primary:\s*(#\w{6})/)![1]!.toLowerCase()
-    expect(got).toBe(expectPrimary)
+    for (const mode of ['light', 'dark'] as const) {
+      // 以 --md-sys-color 开头锚定变量块,避开同选择器的 color-scheme 单行块
+      const block = css.match(new RegExp(`\\[data-mode="${mode}"\\]\\s*\\{\\s*(--md-sys-color[^}]*)\\}`))
+      expect(block, `${mode} 变量块缺失`).toBeTruthy()
+      for (const [role, expected] of Object.entries(expectedRoleValues(blueHex, mode))) {
+        const got = block![1]!.match(new RegExp(`--md-sys-color-${role}:\\s*(#\\w{6})`))!
+        expect(got[1]!.toLowerCase(), `${mode}/${role}`).toBe(expected)
+      }
+    }
   })
   it('头注释含特异度说明', () => {
     expect(css).toMatch(/特异度/)

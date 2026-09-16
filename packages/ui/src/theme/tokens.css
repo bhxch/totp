@@ -1,6 +1,6 @@
 /* 自动生成:pnpm --filter @totp/ui theme — 勿手改
  * base 恒载:无 [data-color] 限定的 light/dark/auto 块,值=默认种子 blue(未加载 palettes 时的兜底色)。
- * 特异度:本文件选择器为 (0,1,0);tokens-palettes.css 的 [data-color=X][data-mode=Y] 为 (0,2,0),恒胜本文件兜底。 */
+ * 特异度:本文件 (0,1,0) 兜底,tokens-palettes.css (0,2,0) 恒胜。 */
 
 [data-mode="light"] { color-scheme: light }
 

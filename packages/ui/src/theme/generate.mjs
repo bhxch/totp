@@ -45,14 +45,15 @@ function schemeVars(theme, mode) {
 }
 
 const DEFAULT_ID = 'blue'
-const header = (purpose) =>
+// specificity 为各产物自视角的特异度说明,避免两文件头注释自指矛盾(都自称 (0,1,0))
+const header = (purpose, specificity) =>
   `/* 自动生成:pnpm --filter @totp/ui theme — 勿手改
  * ${purpose}
- * 特异度:本文件选择器为 (0,1,0);tokens-palettes.css 的 [data-color=X][data-mode=Y] 为 (0,2,0),恒胜本文件兜底。 */`
+ * 特异度:${specificity} */`
 
 // base 恒载产物:color-scheme 4 声明 + 无 [data-color] 限定的 light/dark/auto×media 块,值=默认种子 blue(兜底)
 const base = [
-  header('base 恒载:无 [data-color] 限定的 light/dark/auto 块,值=默认种子 blue(未加载 palettes 时的兜底色)。'),
+  header('base 恒载:无 [data-color] 限定的 light/dark/auto 块,值=默认种子 blue(未加载 palettes 时的兜底色)。', '本文件 (0,1,0) 兜底,tokens-palettes.css (0,2,0) 恒胜。'),
   '[data-mode="light"] { color-scheme: light }',
   '[data-mode="dark"] { color-scheme: dark }',
   '@media (prefers-color-scheme: light) { [data-mode="auto"] { color-scheme: light } }',
@@ -69,7 +70,7 @@ console.log(`tokens.css 已生成:base 兜底(${DEFAULT_ID})× 明/暗 × auto`)
 // 懒载产物:非默认种子 × light/dark/auto×media,由 useTheme 在 color≠blue 时动态 import
 const rest = palettes.filter((p) => p.id !== DEFAULT_ID)
 const palettesOut = [
-  header('懒载:9 个非默认种子 × light/dark/auto,[data-color=X][data-mode=Y] 限定,由 useTheme 动态 import(tokens-palettes.css)。'),
+  header('懒载:9 个非默认种子 × light/dark/auto,[data-color=X][data-mode=Y] 限定,由 useTheme 动态 import(tokens-palettes.css)。', '本文件 (0,2,0),恒胜 base (0,1,0) 兜底。'),
 ]
 for (const p of rest) {
   const theme = themeFromSourceColor(argbFromHex(p.hex))
