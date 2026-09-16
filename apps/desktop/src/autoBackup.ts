@@ -24,6 +24,8 @@ export interface AutoBackupDeps {
   doCloudSync(): Promise<unknown>
   /** 摘要函数注入：desktop 用 core sha256Hex(TextEncoder(vaultJson))，测试用轻量实现 */
   sha256Hex(s: string): Promise<string>
+  /** 「上次自动备份」状态记录（design §4.1：App.vue 写 localStorage backupAutoStatus）；缺省不记录 */
+  recordStatus?(ok: boolean, summary: string): void
   /** 通道级错误兜底（backup/cloud）；缺省则 console.warn */
   onError?(err: unknown, channel: 'backup' | 'cloud'): void
 }
@@ -60,18 +62,26 @@ export function createDesktopAutoRunner(deps: AutoBackupDeps, opts?: { debounceM
   async function runBackup(reason: AutoRunReason): Promise<void> {
     const prefs = deps.backupPrefs()
     if (!prefsGate(prefs, reason)) return
-    const currentHash = await deps.sha256Hex(deps.getVaultJson())
-    const decision = decideAutoRun({
-      currentHash,
-      lastHash: deps.getLastBackupHash(),
-      locked: deps.isLocked(),
-      hasSecret: deps.getSecret() !== null,
-    })
-    if (decision.action === 'skip') return
-    const secret = deps.getSecret()
-    if (secret === null) return // decideAutoRun 已挡 no-secret；此处窄化满足 TS
-    await deps.doBackup(deps.getVaultJson(), secret)
-    deps.setLastBackupHash(currentHash)
+    try {
+      const currentHash = await deps.sha256Hex(deps.getVaultJson())
+      const decision = decideAutoRun({
+        currentHash,
+        lastHash: deps.getLastBackupHash(),
+        locked: deps.isLocked(),
+        hasSecret: deps.getSecret() !== null,
+      })
+      if (decision.action === 'skip') return
+      const secret = deps.getSecret()
+      if (secret === null) return // decideAutoRun 已挡 no-secret；此处窄化满足 TS
+      const r = await deps.doBackup(deps.getVaultJson(), secret)
+      deps.setLastBackupHash(currentHash)
+      // 状态记录（design §4.1）：summary 取 doBackup 结果（created/overwritten）
+      deps.recordStatus?.(true, `backup: ${typeof r === 'string' ? r : 'done'}`)
+    } catch (err) {
+      // 失败也记状态；rethrow 交调度器 onError 兜底（行为不变）
+      deps.recordStatus?.(false, (err instanceof Error ? err.message : String(err)).slice(0, 100))
+      throw err
+    }
   }
 
   async function runCloud(reason: AutoRunReason): Promise<void> {

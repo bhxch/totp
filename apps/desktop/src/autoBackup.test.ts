@@ -98,6 +98,25 @@ describe('createDesktopAutoRunner（backup 通道）', () => {
     expect(onError).toHaveBeenCalledTimes(1)
     expect(onError).toHaveBeenCalledWith(boom, 'backup')
   })
+
+  it('recordStatus：备份成功写 ok=true（summary 含结果，如 backup: created）', async () => {
+    const recordStatus = vi.fn()
+    const { deps } = makeDeps({ doBackup: vi.fn(async () => 'created'), recordStatus })
+    createDesktopAutoRunner(deps).notifyChanged()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(recordStatus).toHaveBeenCalledTimes(1)
+    expect(recordStatus).toHaveBeenCalledWith(true, 'backup: created')
+  })
+
+  it('recordStatus：备份失败写 ok=false（错误消息截断 100 字符），onError 仍收到', async () => {
+    const recordStatus = vi.fn()
+    const boom = new Error('x'.repeat(150))
+    const { deps, onError } = makeDeps({ doBackup: vi.fn(async () => { throw boom }), recordStatus })
+    createDesktopAutoRunner(deps).notifyChanged()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(recordStatus).toHaveBeenCalledWith(false, 'x'.repeat(100))
+    expect(onError).toHaveBeenCalledWith(boom, 'backup')
+  })
 })
 
 describe('createDesktopAutoRunner（cloud 通道）', () => {

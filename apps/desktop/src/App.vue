@@ -3,9 +3,10 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { backupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, randomBytes, SCHEMES_KEY, sha256Hex, type CloudCred, type ImportScheme, type StorageAdapter, type Vault } from '@totp/core'
-import { createPrfCredential, createClipboardClearer, createIconStore, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupMode, type BackupPlatform, type CloudPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type SecurityPlatform, type VueStore } from '@totp/ui'
+import { createClipboardClearer, createCloudBackend, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupMode, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type CloudTarget, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref } from 'vue'
 import { createDesktopAutoRunner } from './autoBackup'
+import { createDesktopCloudSync } from './cloudRunner'
 import { createBackupToDir, listBackups, readBackupByName, readBackupFileOs, saveConflictBackupToDir, writeBackupFileOs } from './backupService'
 import { decryptDpapiOs, readImportFileBytesOs, readImportFileOs } from './importService'
 import { createTauriFs } from './tauriFs'
@@ -108,6 +109,13 @@ async function setBackupDir(d: string | null): Promise<void> {
   else await fsAdapter.set(BACKUP_DIR_KEY, d)
 }
 
+/** store 整体替换的唯一实现：backupPlatform.replaceAllOp / cloudPlatform.persistDownloaded / 云 runner persistAdopted 共用 */
+async function replaceAllOps(v: Vault): Promise<void> {
+  const s = store.value
+  if (!s) throw new Error('数据尚未就绪')
+  await s.replaceAllOp(v)
+}
+
 // 最后一次导入选择的路径（模块级缓存）：SQLite 字节入口复用，避免同一文件二次弹窗
 let lastImportPath: string | null = null
 
@@ -163,11 +171,7 @@ const backupPlatform: BackupPlatform = {
   },
   getBackupDir,
   setBackupDir,
-  async replaceAllOp(v) {
-    const s = store.value
-    if (!s) throw new Error('数据尚未就绪')
-    await s.replaceAllOp(v)
-  },
+  replaceAllOp: async (v) => replaceAllOps(v),
   async readImportFile() {
     const path = await open({ multiple: false, directory: false, filters: IMPORT_FILE_FILTERS })
     if (typeof path !== 'string') return null
@@ -190,8 +194,8 @@ const auto = createDesktopAutoRunner({
   getSecret: () => store.value?.backupSecret.value ?? null,
   getVaultJson: () => JSON.stringify(store.value?.vault ?? null),
   backupPrefs: () => loadBackupPrefs(),
-  // desktop 云多目标编排 Task 11 接入；接入前恒 null（自动云同步不启用）
-  cloudPrefs: () => null,
+  // 云通道偏好（Task 11 接入）：与 CloudCard autoPrefs 同一读写实现（cloudAutoPrefs 键）
+  cloudPrefs: () => loadCloudPrefs(),
   getLastBackupHash: () => localStorage.getItem(LAST_BACKUP_HASH_KEY),
   setLastBackupHash: (h) => {
     try {
@@ -201,19 +205,126 @@ const auto = createDesktopAutoRunner({
   doBackup: async (json, secret) => {
     await createBackupToDir(json, secret, backupMode.value, await getBackupDir())
   },
-  // Task 11 接入多目标编排；cloudPrefs 恒 null 不会触达，仍给 no-op 满足接口
-  doCloudSync: async () => {},
+  // Task 11：desktop 云多目标编排接入（cloudSync 在下方定义；busy 防重入内建于 runner）
+  doCloudSync: () => cloudSync.run(),
   // core sha256Hex 接收字节：vault JSON → UTF-8 编码后摘要
   sha256Hex: (s) => sha256Hex(new TextEncoder().encode(s)),
+  // 「上次自动备份/同步」状态记录（design §4.1；Task 13 卡片渲染消费）
+  recordStatus: (ok, summary) => recordAutoStatus(BACKUP_AUTO_STATUS_KEY, ok, summary),
   onError: (err, channel) => console.warn(`[autoBackup:${channel}]`, err),
 })
 
 /**
- * 云同步平台实现：凭据与 cloudRev 存 AppData 本地 JSON（cloudCred/cloudRev 键，不做系统级加密）；
- * 冲突副本写 backups/conflict-{ts}.totpbackup；采用云端数据经 store.replaceAllOp 整体替换。
+ * 云同步平台实现：凭据与基线存 AppData 本地 JSON（不做系统级加密）。
+ * 多目标迁移约定（Task 8，见 ui cloudPlatform.ts 注释块）：
+ * - 新键 cloudCreds（JSON CloudTarget[]）/ cloudRevs（JSON Record<backend,string>）；
+ *   旧键 cloudCred / cloudRev 只在读取时回退、保存后删除，绝不把旧值写入新键。
+ * - 冲突副本写 backups/conflict-{backendKey}-{ts}.totpbackup；采用云端数据经 store.replaceAllOp 整体替换。
+ * - 自审（竞态，低概率接受）：自动同步在途期间用户于 CloudCard 改凭据/基线，二者的读-改-写可能
+ *   互相覆盖（cloudRevs/cloudCreds 均为整键覆写）；与 runner busy 的防重入只管自动与自动重叠，
+ *   与手动同步的并发为已知边界，不引入跨实例锁。
  */
 const CLOUD_CRED_KEY = 'cloudCred'
+const CLOUD_CREDS_KEY = 'cloudCreds'
 const CLOUD_REV_KEY = 'cloudRev'
+const CLOUD_REVS_KEY = 'cloudRevs'
+
+/** 多目标凭据列表：cloudCreds 缺失而旧 cloudCred 存在 → 视为唯一启用目标（只读回退，不回写新键） */
+async function loadCredsImpl(): Promise<CloudTarget[]> {
+  if (!fsAdapter) return []
+  try {
+    const raw = await fsAdapter.get(CLOUD_CREDS_KEY)
+    if (raw) return JSON.parse(raw) as CloudTarget[]
+    const legacy = await fsAdapter.get(CLOUD_CRED_KEY)
+    return legacy ? [{ cred: JSON.parse(legacy) as CloudCred, enabled: true }] : []
+  } catch {
+    return []
+  }
+}
+
+async function saveCredsImpl(targets: CloudTarget[]): Promise<void> {
+  if (!fsAdapter) throw new Error('数据尚未就绪')
+  await fsAdapter.set(CLOUD_CREDS_KEY, JSON.stringify(targets))
+  await fsAdapter.delete(CLOUD_CRED_KEY)
+}
+
+/** cloudRevs 进程内缓存（undefined=未读）：避免 runner 每轮对同一键重复读盘 */
+let cloudRevsCache: Record<string, string> | null | undefined
+
+async function readCloudRevs(): Promise<Record<string, string> | null> {
+  if (cloudRevsCache !== undefined) return cloudRevsCache
+  if (fsAdapter) {
+    try {
+      const raw = await fsAdapter.get(CLOUD_REVS_KEY)
+      cloudRevsCache = raw ? (JSON.parse(raw) as Record<string, string>) : null
+      return cloudRevsCache
+    } catch { /* 坏 JSON 按无基线处理 */ }
+  }
+  cloudRevsCache = null
+  return null
+}
+
+async function loadTargetHashImpl(backend: string): Promise<string | null> {
+  const revs = await readCloudRevs()
+  if (revs && revs[backend] !== undefined) return revs[backend] ?? null
+  if (revs !== null || !fsAdapter) return null
+  // 迁移回退：cloudRevs 缺失且旧 cloudRev 存在 → 仅首个目标（targets[0]）继承旧基线；不回写
+  try {
+    const legacy = await fsAdapter.get(CLOUD_REV_KEY)
+    if (!legacy) return null
+    const targets = await loadCredsImpl()
+    return targets[0]?.cred.backend === backend ? legacy : null
+  } catch {
+    return null
+  }
+}
+
+async function saveTargetHashImpl(backend: string, hash: string | null): Promise<void> {
+  if (!fsAdapter) throw new Error('数据尚未就绪')
+  const revs = { ...(await readCloudRevs()) }
+  if (hash === null) delete revs[backend] // null 语义=删除该 backend 的基线键（非写入 null 值）
+  else revs[backend] = hash
+  await fsAdapter.set(CLOUD_REVS_KEY, JSON.stringify(revs))
+  cloudRevsCache = revs
+  await fsAdapter.delete(CLOUD_REV_KEY) // 迁移约定：保存只写新键并删除旧键
+}
+
+/** 云同步自动触发偏好：localStorage 键 cloudAutoPrefs，与 loadBackupPrefs 同风格、独立实现（键不同） */
+const CLOUD_AUTO_PREFS_KEY = 'cloudAutoPrefs'
+const DEFAULT_CLOUD_AUTO_PREFS: CloudAutoPrefs = { onChange: false, onInterval: false, intervalMinutes: 60 }
+
+function loadCloudPrefs(): CloudAutoPrefs {
+  try {
+    const raw = localStorage.getItem(CLOUD_AUTO_PREFS_KEY)
+    if (!raw) return { ...DEFAULT_CLOUD_AUTO_PREFS }
+    const p = JSON.parse(raw) as Partial<CloudAutoPrefs>
+    const minutes = Number(p.intervalMinutes)
+    return {
+      onChange: p.onChange === true,
+      onInterval: p.onInterval === true,
+      // 与 backup 偏好同口径兜底最小 15 分钟：匹配 core 调度器 30s tick 粒度
+      intervalMinutes: Number.isInteger(minutes) && minutes >= 15 ? minutes : DEFAULT_CLOUD_AUTO_PREFS.intervalMinutes,
+    }
+  } catch {
+    return { ...DEFAULT_CLOUD_AUTO_PREFS }
+  }
+}
+
+function persistCloudPrefs(p: CloudAutoPrefs): void {
+  try {
+    localStorage.setItem(CLOUD_AUTO_PREFS_KEY, JSON.stringify(p))
+  } catch { /* 偏好持久化失败不影响功能 */ }
+}
+
+/** 「上次自动备份/同步」状态记录（design §4.1：{at, ok, summary}；Task 13 卡片渲染消费，本任务只写） */
+const BACKUP_AUTO_STATUS_KEY = 'backupAutoStatus'
+const CLOUD_AUTO_STATUS_KEY = 'cloudAutoStatus'
+
+function recordAutoStatus(key: 'backupAutoStatus' | 'cloudAutoStatus', ok: boolean, summary: string): void {
+  try {
+    localStorage.setItem(key, JSON.stringify({ at: Date.now(), ok, summary }))
+  } catch { /* 状态记录失败不影响主流程 */ }
+}
 
 const cloudPlatform: CloudPlatform = {
   async loadCred() {
@@ -234,12 +345,8 @@ const cloudPlatform: CloudPlatform = {
     if (!s) throw new Error('数据尚未就绪')
     return JSON.stringify(s.vault)
   },
-  async persistDownloaded(json) {
-    const s = store.value
-    if (!s) throw new Error('数据尚未就绪')
-    await s.replaceAllOp(JSON.parse(json) as Vault)
-  },
-  saveConflictBackup: async (bytes) => saveConflictBackupToDir(bytes, await getBackupDir()),
+  persistDownloaded: (json) => replaceAllOps(JSON.parse(json) as Vault),
+  saveConflictBackup: async (bytes, backendKey) => saveConflictBackupToDir(bytes, await getBackupDir(), backendKey),
   async loadHash() {
     if (!fsAdapter) return null
     try {
@@ -252,7 +359,40 @@ const cloudPlatform: CloudPlatform = {
     if (!fsAdapter) throw new Error('数据尚未就绪')
     await fsAdapter.set(CLOUD_REV_KEY, hash)
   },
+  // ---- 多目标新成员（Task 11；旧四成员 Task 13 才删） ----
+  loadCreds: loadCredsImpl,
+  saveCreds: saveCredsImpl,
+  loadTargetHash: loadTargetHashImpl,
+  saveTargetHash: saveTargetHashImpl,
+  autoPrefs: {
+    get: () => loadCloudPrefs(),
+    set: (p) => persistCloudPrefs(p),
+  },
 }
+
+/** 自动云同步 runner（D6）：多目标编排收敛于 core syncMultipleTargets；冲突副本已由
+ *  onConflictBackup 落盘，故 adopt 分支自动执行、不弹确认——裁定来源=设计 §4「自动执行结果不打扰」
+ *  （区别于 CloudCard 手动同步的两步确认） */
+const cloudSync = createDesktopCloudSync({
+  isLocked: () => store.value?.locked.value ?? true,
+  getSecret: () => store.value?.backupSecret.value ?? null,
+  getVaultJson: () => JSON.stringify(store.value?.vault ?? null),
+  loadCreds: loadCredsImpl,
+  loadTargetHash: loadTargetHashImpl,
+  saveTargetHash: saveTargetHashImpl,
+  // onCredChange（GDrive 首推回存 fileId / gist public 探测回写）：以新凭据替换同 backend 项后落盘
+  makeBackend: (cred) => createCloudBackend(cred, (next) => {
+    void loadCredsImpl()
+      .then((targets) => saveCredsImpl(targets.map((t) => (t.cred.backend === next.backend ? { ...t, cred: next } : t))))
+      .catch((e) => console.warn('[cloudAutoSync] 凭据回存失败', e))
+  }),
+  persistAdopted: (json) => replaceAllOps(JSON.parse(json) as Vault),
+  saveConflictBackup: async (key, bytes) => {
+    await saveConflictBackupToDir(bytes, await getBackupDir(), key)
+  },
+  recordStatus: (ok, summary) => recordAutoStatus(CLOUD_AUTO_STATUS_KEY, ok, summary),
+  onError: (err) => console.warn('[cloudAutoSync]', err),
+})
 
 /** DPAPI(Windows) 自动解锁通道：Rust dpapi_protect/unprotect + store dpapi 源 op。
  *  SecurityCard（启用/移除）与 LockScreen（挂载静默解锁）共用同一对象 */

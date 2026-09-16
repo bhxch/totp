@@ -61,9 +61,12 @@ export async function createBackupToDir(vaultJson: string, password: string, mod
   return 'created'
 }
 
-/** 云同步冲突副本：本地 vault JSON 字节写 backups/conflict-{ts}.totpbackup（不参与滚动删除），返回文件名 */
-export async function saveConflictBackupToDir(bytes: Uint8Array, dirOverride: string | null = null): Promise<string> {
-  const name = conflictBackupFileName(new Date())
+/** 云同步冲突副本：本地 vault JSON 字节写 backups/conflict-{ts}.totpbackup（不参与滚动删除），返回文件名。
+ *  多目标场景带 backendKey 区分来源（conflict-{backendKey}-{ts}.totpbackup，desktop 侧拼接——
+ *  core conflictBackupFileName(now) 无第二参）；缺省保持历史名。 */
+export async function saveConflictBackupToDir(bytes: Uint8Array, dirOverride: string | null = null, backendKey?: string): Promise<string> {
+  const base = conflictBackupFileName(new Date())
+  const name = backendKey ? `conflict-${backendKey}-${base.slice('conflict-'.length)}` : base
   const contents = new TextDecoder().decode(bytes)
   if (dirOverride) await writeOsFile(dirOverride, name, contents)
   else await writeDirFile(name, contents)
