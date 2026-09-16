@@ -31,6 +31,8 @@ const restoreReq = ref<{ kind: 'picker' | 'name'; name?: string } | null>(null)
 
 /** 自动备份偏好（D2）：卡内编辑副本，挂载时从平台读初值；每次变更整体回写 */
 const autoPrefs = ref<BackupAutoPrefs>({ onChange: false, onInterval: false, intervalMinutes: 60 })
+/** 「上次自动备份」状态文本（design §4.1）：挂载时读；读不到/为空显示「暂无」 */
+const autoStatus = ref<string | null>(null)
 /** 当前备份目录；null=默认（应用数据目录） */
 const backupDir = ref<string | null>(null)
 
@@ -111,6 +113,7 @@ onMounted(() => {
     if (v) autoPrefs.value = { ...v }
   }
   if (p.getBackupDir) void p.getBackupDir().then((d) => { backupDir.value = d })
+  if (p.getAutoStatus) void p.getAutoStatus().then((s) => { autoStatus.value = s }).catch(() => { autoStatus.value = null })
 })
 
 /** 恢复统一尝试：pw=会话口令（首发）或一次性回退口令（重试）。
@@ -293,6 +296,7 @@ async function onResetDir(): Promise<void> {
           </select>
         </div>
       </div>
+      <span v-if="platform.getAutoStatus" class="auto-status">上次自动备份：{{ autoStatus ?? '暂无' }}</span>
     </div>
     <div v-if="platform.getBackupDir" class="dir-row">
       <span class="dir-value">备份目录：{{ backupDir ?? '默认（应用数据目录）' }}</span>
@@ -320,6 +324,7 @@ h2 { font-size: 15px; margin: 0; }
 .auto-block { display: flex; flex-direction: column; gap: 4px; }
 .auto-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
 .auto-item { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.auto-status { font-size: 12px; opacity: .65; }
 .interval { height: 32px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline); background: transparent; color: inherit; font: inherit; font-size: 13px; padding: 0 6px; }
 .dir-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .dir-value { font-size: 13px; opacity: .85; }

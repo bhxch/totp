@@ -39,7 +39,7 @@ const sessionSecret = computed(() => props.store.backupSecret.value)
     </MdCard>
     <MdCard v-if="cloudPlatform" class="block">
       <template #header>云同步</template>
-      <CloudCard :platform="cloudPlatform" />
+      <CloudCard :platform="cloudPlatform" :session-secret="sessionSecret" />
     </MdCard>
     <MdCard v-if="syncPlatform" class="block">
       <template #header>浏览器同步</template>

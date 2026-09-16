@@ -24,9 +24,17 @@ function backupPlatform(): BackupPlatform {
     setMode: vi.fn(async () => {}),
   }
 }
-/** CloudCard 挂载仅调 loadCred；其余成员不被页面路径触达，cast 补全 */
+/** CloudCard 挂载仅读接口做回填；同步链路成员不被页面路径触达，实现按需补全 */
 function cloudPlatform(): CloudPlatform {
-  return { loadCred: vi.fn(async () => null) } as unknown as CloudPlatform
+  return {
+    loadCreds: vi.fn(async () => []),
+    saveCreds: vi.fn(async () => {}),
+    readVaultJson: vi.fn(() => ''),
+    persistDownloaded: vi.fn(async () => {}),
+    loadTargetHash: vi.fn(async () => null),
+    saveTargetHash: vi.fn(async () => {}),
+    autoPrefs: { get: () => ({ onChange: false, onInterval: false, intervalMinutes: 60 }), set: () => {} },
+  }
 }
 function syncPlatform(): SyncPlatform {
   return {

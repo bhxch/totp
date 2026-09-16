@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { reactive } from 'vue'
 import BackupCard from '../src/components/BackupCard.vue'
 import type { BackupAutoPrefs, BackupPlatform } from '../src/components/backupPlatform'
@@ -139,6 +139,26 @@ describe('BackupCard', () => {
     await vi.waitFor(() =>
       expect(p.setAutoPrefs).toHaveBeenLastCalledWith({ onChange: false, onInterval: false, intervalMinutes: 1440 }),
     )
+  })
+
+  it('getAutoStatus：自动区底部渲染「上次自动备份」状态文本；读不到显示「暂无」；未提供则不渲染', async () => {
+    const p = makePlatform({
+      getAutoPrefs: vi.fn(() => ({ onChange: false, onInterval: false, intervalMinutes: 60 })),
+      getAutoStatus: vi.fn(async () => '2026-09-16 12:00 成功：已备份'),
+    })
+    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
+    await vi.waitFor(() => expect(w.find('.auto-status').text()).toBe('上次自动备份：2026-09-16 12:00 成功：已备份'))
+    // 读不到（null）：显示「暂无」
+    const p2 = makePlatform({
+      getAutoPrefs: vi.fn(() => ({ onChange: false, onInterval: false, intervalMinutes: 60 })),
+      getAutoStatus: vi.fn(async () => null),
+    })
+    const w2 = mount(BackupCard, { props: { platform: p2, vaultJson: '{}', sessionSecret: 'sec' } })
+    await vi.waitFor(() => expect(w2.find('.auto-status').text()).toBe('上次自动备份：暂无'))
+    // 平台未提供 getAutoStatus：状态行不渲染
+    const w3 = mount(BackupCard, { props: { platform: makePlatform({ getAutoPrefs: vi.fn(() => ({ onChange: false, onInterval: false, intervalMinutes: 60 })) }), vaultJson: '{}', sessionSecret: 'sec' } })
+    await flushPromises()
+    expect(w3.find('.auto-status').exists()).toBe(false)
   })
 
   it('目录行：显示当前值；恢复默认调 setBackupDir(null)；更改…选完路径调 setBackupDir(路径)', async () => {

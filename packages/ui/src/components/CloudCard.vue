@@ -1,145 +1,107 @@
 <script setup lang="ts">
 import type { CloudCred } from '@totp/core'
-import { computed, onMounted, reactive, ref } from 'vue'
-import { CLOUD_BACKUP_PATH, createCloudBackend } from './cloudPlatform'
-import type { CloudPlatform } from './cloudPlatform'
+import { DEFAULT_OBJECT_PATH, resolveObjectPath, syncMultipleTargets } from '@totp/core'
+import { computed, onMounted, ref } from 'vue'
+import { createCloudBackend } from './cloudPlatform'
+import type { CloudAutoPrefs, CloudPlatform, CloudTarget } from './cloudPlatform'
 import { parseVaultJson } from './parseVaultJson'
-import { syncWithCloud } from '@totp/core'
 import MdButton from './md/MdButton.vue'
 import MdCheckbox from './md/MdCheckbox.vue'
+import MdSwitch from './md/MdSwitch.vue'
 import MdTextField from './md/MdTextField.vue'
 
 const props = defineProps<{
   /** 云同步平台实现；null 时整卡不渲染（popup 不受影响） */
   platform: CloudPlatform | null
+  /** 会话备份口令（D1，即备份加密口令）；null 时同步禁用并提示先设置备份口令 */
+  sessionSecret: string | null
 }>()
 
-const backendSel = ref<CloudCred['backend']>('webdav')
-/** 动态凭据字段（按 backendSel 取用；gdrive/onedrive 共用 accessToken 字段） */
-const f = reactive({
-  serverUrl: '', username: '', password: '',
-  region: '', bucket: '', accessKeyId: '', secretAccessKey: '', endpoint: '', prefix: '', sessionToken: '',
-  forcePathStyle: false,
-  token: '', gistId: '',
-  accessToken: '',
-})
-/** GDrive 首推自动建文件回存的 fileId（无表单字段，随凭据保存/重建） */
-const gdriveFileId = ref('')
-/** 后端探测到的 gist public 标志（true 时显示一次性警告） */
-const gistPublic = ref(false)
+const BACKENDS = ['webdav', 's3', 'gist', 'gdrive', 'onedrive'] as const
+type BackendId = (typeof BACKENDS)[number]
+const BACKEND_LABEL: Record<BackendId, string> = {
+  webdav: 'WebDAV', s3: 'S3', gist: 'GitHub Gist', gdrive: 'Google Drive', onedrive: 'OneDrive',
+}
 
-const password = ref('')
+/** 多目标列表（挂载时 loadCreds 回填；卡内编辑=内存副本，「保存凭据」才落盘） */
+const targets = ref<CloudTarget[]>([])
+/** 当前展开配置的目标索引（-1=全部收起；同时只展开一个） */
+const expanded = ref(-1)
+
 const busy = ref(false)
 const msg = ref('')
-const msgKind = ref<'ok' | 'err'>('ok')
+const msgKind = ref<'ok' | 'err' | 'hint'>('ok')
 
-/** 已解密待确认覆盖的远端 vault JSON（两步确认防误覆盖，复用 BackupCard 恢复语义） */
-const pending = ref<string | null>(null)
-const pendingAction = ref<'downloaded' | 'conflict-resolved'>('downloaded')
-const conflictName = ref('')
-let lastHash = ''
+/** 各目标最近一次手动同步结果文本（键=backend） */
+const statusMap = ref<Record<string, string>>({})
+function statusFor(backend: string): string {
+  return statusMap.value[backend] ?? ''
+}
+
+/** 已解密待确认覆盖的远端 vault JSON（两步确认防误覆盖，沿用旧卡行内确认交互） */
+const pendingAdopt = ref<string | null>(null)
+/** 采纳目标待确认的基线 hash：「采用云端」确认成功后才落盘；取消则不写（下次同步重新下载提示） */
+const pendingHashes = ref<Array<[string, string]>>([])
+
+/** 自动触发偏好（卡内编辑副本，挂载时读初值；每次变更整体回写） */
+const autoPrefs = ref<CloudAutoPrefs>({ onChange: false, onInterval: false, intervalMinutes: 60 })
+/** 「上次自动同步」状态文本（宿主 loadAutoStatus 提供；缺省显示「暂无」） */
+const autoStatus = ref<string | null>(null)
+
+/** 尚未添加的目标后端（同后端仅一份凭据，已存在的不重复添加） */
+const addableBackends = computed(() => BACKENDS.filter((b) => !targets.value.some((t) => t.cred.backend === b)))
+const nextBackend = computed(() => addableBackends.value[0])
+
+/** 空白凭据工厂：按 backend 给最小必选字段空串（可选字段不设键，与保存语义一致） */
+function blankCred(b: BackendId): CloudCred {
+  switch (b) {
+    case 'webdav': return { backend: 'webdav', serverUrl: '', username: '', password: '' }
+    case 's3': return { backend: 's3', region: '', bucket: '', accessKeyId: '', secretAccessKey: '' }
+    case 'gist': return { backend: 'gist', token: '', gistId: '' }
+    case 'gdrive': return { backend: 'gdrive', accessToken: '' }
+    case 'onedrive': return { backend: 'onedrive', accessToken: '' }
+  }
+}
+
+/** 添加目标：push 空白凭据（enabled 默认开）并展开其配置 */
+function addTarget(b: BackendId): void {
+  targets.value.push({ cred: blankCred(b), enabled: true })
+  expanded.value = targets.value.length - 1
+}
 
 function fail(e: unknown): void {
   msg.value = e instanceof Error ? e.message : String(e)
   msgKind.value = 'err'
 }
 
-const pendingText = computed(() => {
-  const copy = conflictName.value ? `（本地冲突副本：${conflictName.value}）` : ''
-  return `云端数据与本地不同，已保留本地冲突副本${copy}——确认后将采用云端数据覆盖当前全部条目`
-})
-
-/** 表单字段 → CloudCred；当前后端必填字段缺失时抛中文错误 */
-function buildCred(): CloudCred {
-  const req = (...vals: string[]) => {
-    if (vals.some((v) => !v)) throw new Error('请完整填写当前后端的凭据字段')
-  }
-  switch (backendSel.value) {
-    case 'webdav':
-      req(f.serverUrl, f.username, f.password)
-      return { backend: 'webdav', serverUrl: f.serverUrl, username: f.username, password: f.password }
-    case 's3':
-      req(f.region, f.bucket, f.accessKeyId, f.secretAccessKey)
-      return {
-        backend: 's3', region: f.region, bucket: f.bucket, accessKeyId: f.accessKeyId, secretAccessKey: f.secretAccessKey,
-        ...(f.endpoint ? { endpoint: f.endpoint } : {}),
-        ...(f.prefix ? { prefix: f.prefix } : {}),
-        ...(f.sessionToken ? { sessionToken: f.sessionToken } : {}),
-        ...(f.forcePathStyle ? { forcePathStyle: true } : {}),
-      }
-    case 'gist':
-      req(f.token, f.gistId)
-      return { backend: 'gist', token: f.token, gistId: f.gistId }
-    case 'gdrive':
-      req(f.accessToken)
-      return { backend: 'gdrive', accessToken: f.accessToken, ...(gdriveFileId.value ? { fileId: gdriveFileId.value } : {}) }
-    case 'onedrive':
-      req(f.accessToken)
-      return { backend: 'onedrive', accessToken: f.accessToken }
-  }
-}
-
-/** 已存凭据 → 表单回填 */
-function applyCred(c: CloudCred): void {
-  backendSel.value = c.backend
-  // M19：先清空所有后端字段，再回填当前后端——避免跨后端敏感字段（WebDAV password / S3 secretAccessKey 等）混淆显示
-  clearBackendFields(c.backend)
-  if (c.backend === 'webdav') {
-    f.serverUrl = c.serverUrl; f.username = c.username; f.password = c.password
-  } else if (c.backend === 's3') {
-    f.region = c.region; f.bucket = c.bucket; f.accessKeyId = c.accessKeyId; f.secretAccessKey = c.secretAccessKey
-    f.endpoint = c.endpoint ?? ''; f.prefix = c.prefix ?? ''
-    f.sessionToken = c.sessionToken ?? ''
-    f.forcePathStyle = !!c.forcePathStyle
-  } else if (c.backend === 'gist') {
-    f.token = c.token; f.gistId = c.gistId
-    gistPublic.value = !!c.public
-  } else if (c.backend === 'gdrive') {
-    f.accessToken = c.accessToken; gdriveFileId.value = c.fileId ?? ''
-  } else {
-    f.accessToken = c.accessToken
-  }
-}
-
-/** 清空指定后端对应的所有表单字段；切换 backend 时由 select change 处理器调用，避免旧字段残留
- *  语义：除目标 backend 外，其余所有后端专属字段都清空；gdrive/onedrive 共享 accessToken，切换时一并清理 */
-function clearBackendFields(backend: CloudCred['backend']): void {
-  if (backend !== 'webdav') { f.serverUrl = ''; f.username = ''; f.password = '' }
-  if (backend !== 's3') {
-    f.region = ''; f.bucket = ''; f.accessKeyId = ''; f.secretAccessKey = ''
-    f.endpoint = ''; f.prefix = ''; f.sessionToken = ''; f.forcePathStyle = false
-  }
-  if (backend !== 'gist') { f.token = ''; f.gistId = '' }
-  // accessToken 是 gdrive/onedrive 共用字段；非这两个后端都清空
-  if (backend !== 'gdrive' && backend !== 'onedrive') f.accessToken = ''
-  // gdrive fileId 单独存储，仅 gdrive 用；其他后端清掉
-  if (backend !== 'gdrive') gdriveFileId.value = ''
-  // gist public 警示标志仅 gist 用；其他后端清掉
-  if (backend !== 'gist') gistPublic.value = false
-}
-
-/** select 切换后端：清空旧后端字段（仅保留密码字段由 buildCred 兜底），但用户尚未点保存时输入是临时的，
- *  这等同于「丢弃当前正在编辑的临时凭据」，与切换语言/类别语义一致 */
-function onBackendChange(ev: Event): void {
-  const next = (ev.target as HTMLSelectElement).value as CloudCred['backend']
-  clearBackendFields(next)
-}
-
-onMounted(() => {
-  props.platform?.loadCred().then((c) => { if (c) applyCred(c) }).catch(() => { /* 回填失败按未存凭据处理 */ })
-})
-
-async function onSaveCred(): Promise<void> {
+onMounted(async () => {
   const p = props.platform
   if (!p) return
-  let cred: CloudCred
   try {
-    cred = buildCred()
-  } catch (e) {
-    return fail(e)
+    targets.value = await p.loadCreds()
+  } catch {
+    targets.value = [] // 回填失败按未存凭据处理
   }
+  if (p.autoPrefs) {
+    try {
+      autoPrefs.value = { ...(await p.autoPrefs.get()) } // await 兼容同步返回（desktop）
+    } catch { /* 读取失败保持默认 */ }
+  }
+  if (p.loadAutoStatus) {
+    try {
+      autoStatus.value = await p.loadAutoStatus()
+    } catch {
+      autoStatus.value = null
+    }
+  }
+})
+
+/** 保存凭据：整列表落盘；未保存的编辑仅存于卡内内存副本 */
+async function onSaveCreds(): Promise<void> {
+  const p = props.platform
+  if (!p) return
   try {
-    await p.saveCred(cred)
+    await p.saveCreds(targets.value)
     msg.value = '凭据已保存'
     msgKind.value = 'ok'
   } catch (e) {
@@ -147,56 +109,68 @@ async function onSaveCred(): Promise<void> {
   }
 }
 
-/** cloudRev 持久化失败不影响本次同步结果 */
-async function storeHash(hash: string): Promise<void> {
-  try {
-    await props.platform?.saveHash?.(hash)
-  } catch { /* 忽略 */ }
+const ACTION_LABEL: Record<string, string> = {
+  uploaded: '已上传', downloaded: '已下载', 'conflict-resolved': '冲突已解决', 'in-sync': '已是最新',
 }
+const trunc = (s: string, n = 60) => (s.length > n ? `${s.slice(0, n)}…` : s)
 
+/**
+ * 手动多目标同步（复用 core syncMultipleTargets）：仅 enabled 目标参与；targets 未保存的编辑
+ * 以内存值直接参与本轮（与旧单后端「未保存即同步用当前表单值」语义一致）。
+ * 基线回写时机（沿用旧卡语义）：非采纳目标立即回写（失败目标 null=删基线，下轮全量重比）；
+ * 下载/冲突采纳目标的基线在「采用云端」确认成功后才写——取消则保持旧基线，下次同步仍会重新
+ * 下载提示，不会出现「基线=云端但本地为旧数据」的静默僵持。
+ */
 async function onSync(): Promise<void> {
   const p = props.platform
   if (!p) return
-  if (!password.value) return fail(new Error('请输入口令'))
-  let cred: CloudCred
-  try {
-    cred = buildCred()
-  } catch (e) {
-    return fail(e)
-  }
+  if (!props.sessionSecret) return fail(new Error('请先设置备份口令')) // 按钮已禁用，防御兜底
+  const enabled = targets.value.filter((t) => t.enabled)
+  if (enabled.length === 0) return fail(new Error('未启用任何云目标'))
   busy.value = true
   msg.value = ''
   try {
-    const localHash = p.loadHash ? await p.loadHash() : null
-    const backend = createCloudBackend(cred, (c) => {
-      // GDrive 首推自动建文件：回存 fileId 到会话状态与持久凭据
-      gdriveFileId.value = c.backend === 'gdrive' ? c.fileId ?? '' : ''
-      // Gist 后端探测到 public 变化时,刷新 UI 警示标志
-      if (c.backend === 'gist') gistPublic.value = !!c.public
-      void p.saveCred(c).catch((e) => console.warn('[CloudCard] 凭据回存失败（fileId 未持久化）:', e))
-    })
-    const out = await syncWithCloud({
-      backend,
-      path: CLOUD_BACKUP_PATH,
+    const inputs = await Promise.all(enabled.map(async (t) => ({
+      key: t.cred.backend,
+      backend: createCloudBackend(t.cred, (next) => {
+        // GDrive 首推自动建文件回存 fileId / 后端探测回写：更新内存同 backend 项并持久化
+        const idx = targets.value.findIndex((x) => x.cred.backend === next.backend)
+        if (idx >= 0) targets.value[idx] = { ...targets.value[idx]!, cred: next }
+        void p.saveCreds(targets.value).catch((e) => console.warn('[CloudCard] 凭据回存失败:', e))
+      }),
+      path: resolveObjectPath(t.cred),
+      hash: await p.loadTargetHash(t.cred.backend),
+    })))
+    const r = await syncMultipleTargets({
+      targets: inputs,
       vaultJson: p.readVaultJson(),
-      password: password.value,
-      localHash,
-      onConflictBackup: p.saveConflictBackup ? (bytes) => p.saveConflictBackup!(bytes) : undefined,
+      password: props.sessionSecret,
+      onConflictBackup: (key, bytes) => p.saveConflictBackup?.(bytes, key),
     })
-    lastHash = out.hash
-    if (out.action === 'uploaded') {
-      await storeHash(out.hash)
-      msg.value = '已上传'
-      msgKind.value = 'ok'
-    } else if (out.action === 'in-sync') {
-      msg.value = '云端已是最新'
-      msgKind.value = 'ok'
-    } else {
-      // downloaded / conflict-resolved：envelopeJson 为远端 vault JSON（明文）
-      parseVaultJson(out.envelopeJson!) // 远端内容先过恢复校验，不合格不进入确认流程
-      pendingAction.value = out.action
-      conflictName.value = out.conflictBackup ?? ''
-      pending.value = out.envelopeJson!
+    statusMap.value = {}
+    pendingHashes.value = []
+    for (const res of r.results) {
+      if (!res.outcome) {
+        statusMap.value[res.key] = `失败：${trunc(res.error ?? '')}`
+        await p.saveTargetHash(res.key, null) // 失败目标删基线，下轮全量重比
+        continue
+      }
+      statusMap.value[res.key] = ACTION_LABEL[res.outcome.action] ?? res.outcome.action
+      if (res.convergeError) statusMap.value[res.key] += `（收敛回推失败：${trunc(res.convergeError)}）`
+      if (res.outcome.action === 'downloaded' || res.outcome.action === 'conflict-resolved') {
+        pendingHashes.value.push([res.key, r.hashes[res.key] ?? '']) // 采纳目标基线延后至确认成功
+      } else {
+        await p.saveTargetHash(res.key, r.hashes[res.key] ?? null)
+      }
+    }
+    if (p.loadAutoStatus) {
+      try {
+        autoStatus.value = await p.loadAutoStatus() // 手动完成后刷新自动状态行
+      } catch { /* 状态读取失败不影响同步 */ }
+    }
+    if (r.adopted) {
+      parseVaultJson(r.finalVaultJson) // 远端内容先过恢复校验，不合格不进入确认流程
+      pendingAdopt.value = r.finalVaultJson
     }
   } catch (e) {
     fail(e)
@@ -205,19 +179,18 @@ async function onSync(): Promise<void> {
   }
 }
 
-/** 确认覆盖：整体替换本地存储（replaceAllOp 链路），成功后记录 cloudRev */
+/** 确认采用云端：整体替换本地存储（replaceAllOp 链路），成功后落采纳目标基线 */
 async function onConfirmAdopt(): Promise<void> {
   const p = props.platform
-  const json = pending.value
+  const json = pendingAdopt.value
   if (!p || !json) return
   busy.value = true
   try {
     await p.persistDownloaded(json)
-    await storeHash(lastHash)
-    pending.value = null
-    msg.value = pendingAction.value === 'conflict-resolved'
-      ? (conflictName.value ? `检测到冲突：已保留本地副本并采用云端（副本：${conflictName.value}）` : '检测到冲突：已保留本地副本并采用云端')
-      : '已应用云端备份'
+    for (const [key, hash] of pendingHashes.value) await p.saveTargetHash(key, hash)
+    pendingAdopt.value = null
+    pendingHashes.value = []
+    msg.value = '已采用云端数据覆盖本地'
     msgKind.value = 'ok'
   } catch (e) {
     fail(e)
@@ -225,57 +198,116 @@ async function onConfirmAdopt(): Promise<void> {
     busy.value = false
   }
 }
+
+/** 取消采用：本地不动、采纳基线不写（下次同步仍会重新下载提示），提示冲突副本已保留 */
+function onCancelAdopt(): void {
+  pendingAdopt.value = null
+  pendingHashes.value = []
+  msg.value = '已保留冲突副本，未改动本地'
+  msgKind.value = 'hint'
+}
+
+/** 以卡内最新偏好整体回写平台（每次展开完整对象，连续切换不丢字段） */
+async function syncAutoPrefs(): Promise<void> {
+  await props.platform?.autoPrefs.set({ ...autoPrefs.value })
+}
+function onAutoOnChange(v: boolean): void {
+  autoPrefs.value = { ...autoPrefs.value, onChange: v }
+  void syncAutoPrefs()
+}
+function onAutoIntervalToggle(v: boolean): void {
+  autoPrefs.value = { ...autoPrefs.value, onInterval: v }
+  void syncAutoPrefs()
+}
+function onIntervalChange(e: Event): void {
+  autoPrefs.value = { ...autoPrefs.value, intervalMinutes: Number((e.target as HTMLSelectElement).value) }
+  void syncAutoPrefs()
+}
 </script>
 
 <template>
   <section v-if="platform" class="card cloud">
     <h2>云同步</h2>
-    <select v-model="backendSel" class="cloud-backend" :disabled="busy" @change="onBackendChange">
-      <option value="webdav">WebDAV</option>
-      <option value="s3">S3</option>
-      <option value="gdrive">Google Drive</option>
-      <option value="onedrive">OneDrive</option>
-      <option value="gist">GitHub Gist</option>
-    </select>
-    <div v-if="backendSel === 'webdav'" class="fields">
-      <MdTextField :model-value="f.serverUrl" label="服务器地址" placeholder="服务器地址（https://dav.example.com）" autocomplete="off" @update:model-value="f.serverUrl = $event.trim()" />
-      <MdTextField :model-value="f.username" label="用户名" placeholder="用户名" autocomplete="off" @update:model-value="f.username = $event.trim()" />
-      <MdTextField v-model="f.password" type="password" label="应用密码" placeholder="应用密码" autocomplete="new-password" />
+    <div v-for="(t, i) in targets" :key="t.cred.backend" class="target">
+      <div class="target-head">
+        <MdSwitch v-model="t.enabled" :aria-label="`${BACKEND_LABEL[t.cred.backend]}启用`" />
+        <strong>{{ BACKEND_LABEL[t.cred.backend] }}</strong>
+        <MdButton variant="text" class="target-toggle" @click="expanded = expanded === i ? -1 : i">{{ expanded === i ? '收起' : '配置' }}</MdButton>
+      </div>
+      <template v-if="expanded === i">
+        <div v-if="t.cred.backend === 'webdav'" class="fields">
+          <MdTextField v-model="t.cred.serverUrl" label="服务器地址" placeholder="服务器地址（https://dav.example.com）" autocomplete="off" />
+          <MdTextField v-model="t.cred.username" label="用户名" placeholder="用户名" autocomplete="off" />
+          <MdTextField v-model="t.cred.password" type="password" label="应用密码" placeholder="应用密码" autocomplete="new-password" />
+        </div>
+        <div v-else-if="t.cred.backend === 's3'" class="fields">
+          <MdTextField v-model="t.cred.region" label="Region" placeholder="Region（如 us-east-1）" autocomplete="off" />
+          <MdTextField v-model="t.cred.bucket" label="Bucket" placeholder="Bucket" autocomplete="off" />
+          <MdTextField v-model="t.cred.accessKeyId" label="AccessKeyId" placeholder="AccessKeyId" autocomplete="off" />
+          <MdTextField v-model="t.cred.secretAccessKey" type="password" label="SecretAccessKey" placeholder="SecretAccessKey" autocomplete="new-password" />
+          <MdTextField v-model="t.cred.sessionToken" type="password" label="STS SessionToken（可选）" placeholder="STS SessionToken（可选）" autocomplete="new-password" />
+          <MdTextField v-model="t.cred.endpoint" label="Endpoint" placeholder="Endpoint（可选，如 http://localhost:9000）" autocomplete="off" />
+          <MdTextField v-model="t.cred.prefix" label="Key 前缀（可选）" placeholder="Key 前缀（可选）" autocomplete="off" />
+          <MdCheckbox
+            :model-value="!!t.cred.forcePathStyle" :disabled="busy" label="强制 path-style（兼容老 bucket / 自建 S3）"
+            aria-label="强制 path-style（兼容老 bucket / 自建 S3）" @update:model-value="t.cred.forcePathStyle = $event"
+          />
+        </div>
+        <div v-else-if="t.cred.backend === 'gist'" class="fields">
+          <MdTextField v-model="t.cred.token" type="password" label="GitHub Token" placeholder="GitHub Token" autocomplete="new-password" />
+          <MdTextField v-model="t.cred.gistId" label="Gist ID" placeholder="Gist ID" autocomplete="off" />
+          <MdCheckbox
+            :model-value="!!t.cred.public" :disabled="busy" label="公开 gist（public）"
+            aria-label="公开 gist（public）" @update:model-value="t.cred.public = $event"
+          />
+          <p v-if="t.cred.public" class="warn" role="alert">当前 gist 为 public，备份内容会暴露在公开页，建议改为 secret gist</p>
+        </div>
+        <div v-else-if="t.cred.backend === 'gdrive'" class="fields">
+          <MdTextField v-model="t.cred.accessToken" type="password" label="Access Token（Google OAuth）" placeholder="Access Token（Google OAuth）" autocomplete="new-password" />
+        </div>
+        <div v-else class="fields">
+          <MdTextField v-model="t.cred.accessToken" type="password" label="Access Token（Microsoft Graph）" placeholder="Access Token（Microsoft Graph）" autocomplete="new-password" />
+        </div>
+        <MdTextField :model-value="t.cred.objectPath ?? ''" label="目标文件路径" :placeholder="DEFAULT_OBJECT_PATH" aria-label="目标文件路径" :disabled="busy" @update:model-value="t.cred.objectPath = $event.trim()" />
+      </template>
+      <span v-if="statusFor(t.cred.backend)" class="target-status">{{ statusFor(t.cred.backend) }}</span>
     </div>
-    <div v-else-if="backendSel === 's3'" class="fields">
-      <MdTextField :model-value="f.region" label="Region" placeholder="Region（如 us-east-1）" autocomplete="off" @update:model-value="f.region = $event.trim()" />
-      <MdTextField :model-value="f.bucket" label="Bucket" placeholder="Bucket" autocomplete="off" @update:model-value="f.bucket = $event.trim()" />
-      <MdTextField :model-value="f.accessKeyId" label="AccessKeyId" placeholder="AccessKeyId" autocomplete="off" @update:model-value="f.accessKeyId = $event.trim()" />
-      <MdTextField v-model="f.secretAccessKey" type="password" label="SecretAccessKey" placeholder="SecretAccessKey" autocomplete="new-password" />
-      <MdTextField v-model="f.sessionToken" type="password" label="STS SessionToken（可选）" placeholder="STS SessionToken（可选）" autocomplete="new-password" />
-      <MdTextField :model-value="f.endpoint" label="Endpoint" placeholder="Endpoint（可选，如 http://localhost:9000）" autocomplete="off" @update:model-value="f.endpoint = $event.trim()" />
-      <MdTextField :model-value="f.prefix" label="Key 前缀（可选）" placeholder="Key 前缀（可选）" autocomplete="off" @update:model-value="f.prefix = $event.trim()" />
-      <MdCheckbox
-        :model-value="f.forcePathStyle" :disabled="busy" label="强制 path-style（兼容老 bucket / 自建 S3）"
-        aria-label="强制 path-style（兼容老 bucket / 自建 S3）" @update:model-value="f.forcePathStyle = $event"
-      />
-    </div>
-    <div v-else-if="backendSel === 'gdrive'" class="fields">
-      <MdTextField :model-value="f.accessToken" type="password" label="Access Token（Google OAuth）" placeholder="Access Token（Google OAuth）" autocomplete="new-password" @update:model-value="f.accessToken = $event.trim()" />
-    </div>
-    <div v-else-if="backendSel === 'onedrive'" class="fields">
-      <MdTextField :model-value="f.accessToken" type="password" label="Access Token（Microsoft Graph）" placeholder="Access Token（Microsoft Graph）" autocomplete="new-password" @update:model-value="f.accessToken = $event.trim()" />
-    </div>
-    <div v-else class="fields">
-      <MdTextField :model-value="f.token" type="password" label="GitHub Token" placeholder="GitHub Token" autocomplete="new-password" @update:model-value="f.token = $event.trim()" />
-      <MdTextField :model-value="f.gistId" label="Gist ID" placeholder="Gist ID" autocomplete="off" @update:model-value="f.gistId = $event.trim()" />
-    </div>
-    <p v-if="gistPublic" class="warn" role="alert">当前 gist 为 public，备份内容会暴露在公开页，建议改为 secret gist</p>
     <div class="actions">
-      <MdButton class="save-cred" :disabled="busy" @click="onSaveCred">保存凭据</MdButton>
-      <MdTextField v-model="password" class="cloud-pw" type="password" label="同步口令" placeholder="同步口令" autocomplete="new-password" :disabled="busy" />
-      <MdButton class="sync-now" :disabled="busy || pending !== null" @click="onSync">立即同步</MdButton>
+      <MdButton v-if="nextBackend" variant="text" class="target-add" @click="addTarget(nextBackend)">添加目标：{{ BACKEND_LABEL[nextBackend] }}</MdButton>
+      <MdButton class="creds-save" :disabled="busy" @click="onSaveCreds">保存凭据</MdButton>
+      <MdButton class="cloud-sync" :disabled="busy || !sessionSecret || pendingAdopt !== null" @click="onSync">立即同步</MdButton>
     </div>
-    <p class="hint">同步口令即备份加密口令，云端对象为加密 envelope；口令不保存。</p>
-    <div v-if="pending" class="confirm-row">
-      <span>{{ pendingText }}</span>
-      <MdButton danger :disabled="busy" @click="onConfirmAdopt">确认覆盖</MdButton>
-      <MdButton variant="text" :disabled="busy" @click="pending = null">取消</MdButton>
+    <p v-if="!sessionSecret" class="hint">先在上方设置备份口令。</p>
+    <div v-if="platform.autoPrefs" class="auto-block">
+      <p class="hint">自动执行前会与上次内容比对，无变化则跳过写入。</p>
+      <div class="auto-row">
+        <div class="auto-item">
+          <MdSwitch :model-value="autoPrefs.onChange" aria-label="变更后自动同步" @update:model-value="onAutoOnChange" />
+          <span>变更后自动同步</span>
+        </div>
+        <div class="auto-item">
+          <MdSwitch :model-value="autoPrefs.onInterval" aria-label="定时自动同步" @update:model-value="onAutoIntervalToggle" />
+          <span>定时自动同步</span>
+        </div>
+        <div class="auto-item">
+          <span>间隔</span>
+          <select
+            class="interval" :value="autoPrefs.intervalMinutes" aria-label="自动同步间隔"
+            @change="onIntervalChange"
+          >
+            <option :value="15">15 分钟</option>
+            <option :value="60">1 小时</option>
+            <option :value="360">6 小时</option>
+            <option :value="1440">每天</option>
+          </select>
+        </div>
+      </div>
+      <span v-if="platform.loadAutoStatus" class="auto-status">上次自动同步：{{ autoStatus ?? '暂无' }}</span>
+    </div>
+    <div v-if="pendingAdopt" class="confirm-row">
+      <span>云端数据较新，已保留本地冲突副本，采用云端将覆盖本地。</span>
+      <MdButton danger :disabled="busy" @click="onConfirmAdopt">采用云端</MdButton>
+      <MdButton variant="text" :disabled="busy" @click="onCancelAdopt">取消</MdButton>
     </div>
     <div v-if="msg" :class="msgKind" role="status">{{ msg }}</div>
   </section>
@@ -284,10 +316,17 @@ async function onConfirmAdopt(): Promise<void> {
 <style scoped>
 .card { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
 h2 { font-size: 15px; margin: 0; }
-.cloud-backend { align-self: flex-start; }
+.target { display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--md-sys-color-outline-variant); padding-bottom: 6px; }
+.target-head { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.target-head strong { flex: 1; }
+.target-status { font-size: 12px; opacity: .8; }
 .fields { display: flex; flex-direction: column; gap: 6px; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.cloud-pw { flex: 1; min-width: 120px; }
+.auto-block { display: flex; flex-direction: column; gap: 4px; }
+.auto-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.auto-item { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.interval { height: 32px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline); background: transparent; color: inherit; font: inherit; font-size: 13px; padding: 0 6px; }
+.auto-status { font-size: 12px; opacity: .65; }
 .confirm-row { display: flex; align-items: center; gap: 8px; font-size: 13px; flex-wrap: wrap; }
 .hint { font-size: 12px; opacity: .65; margin: 0; }
 .ok { color: var(--md-sys-color-primary); font-size: 13px; }

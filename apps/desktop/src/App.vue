@@ -164,6 +164,7 @@ const backupPlatform: BackupPlatform = {
   },
   getAutoPrefs: () => loadBackupPrefs(),
   setAutoPrefs: (p) => persistBackupPrefs(p),
+  getAutoStatus: async () => readAutoStatusText(BACKUP_AUTO_STATUS_KEY),
   pickBackupDir: async () => {
     const path = await open({ directory: true, multiple: false })
     return typeof path === 'string' ? path : null
@@ -223,9 +224,7 @@ const auto = createDesktopAutoRunner({
  *   互相覆盖（cloudRevs/cloudCreds 均为整键覆写）；与 runner busy 的防重入只管自动与自动重叠，
  *   与手动同步的并发为已知边界，不引入跨实例锁。
  */
-const CLOUD_CRED_KEY = 'cloudCred'
 const CLOUD_CREDS_KEY = 'cloudCreds'
-const CLOUD_REV_KEY = 'cloudRev'
 const CLOUD_REVS_KEY = 'cloudRevs'
 
 /** 多目标凭据列表：cloudCreds 缺失而旧 cloudCred 存在 → 视为唯一启用目标（只读回退，不回写新键） */
@@ -234,7 +233,7 @@ async function loadCredsImpl(): Promise<CloudTarget[]> {
   try {
     const raw = await fsAdapter.get(CLOUD_CREDS_KEY)
     if (raw) return JSON.parse(raw) as CloudTarget[]
-    const legacy = await fsAdapter.get(CLOUD_CRED_KEY)
+    const legacy = await fsAdapter.get('cloudCred')
     return legacy ? [{ cred: JSON.parse(legacy) as CloudCred, enabled: true }] : []
   } catch {
     return []
@@ -244,7 +243,7 @@ async function loadCredsImpl(): Promise<CloudTarget[]> {
 async function saveCredsImpl(targets: CloudTarget[]): Promise<void> {
   if (!fsAdapter) throw new Error('数据尚未就绪')
   await fsAdapter.set(CLOUD_CREDS_KEY, JSON.stringify(targets))
-  await fsAdapter.delete(CLOUD_CRED_KEY)
+  await fsAdapter.delete('cloudCred')
 }
 
 /** cloudRevs 进程内缓存（undefined=未读）：避免 runner 每轮对同一键重复读盘 */
@@ -269,7 +268,7 @@ async function loadTargetHashImpl(backend: string): Promise<string | null> {
   if (revs !== null || !fsAdapter) return null
   // 迁移回退：cloudRevs 缺失且旧 cloudRev 存在 → 仅首个目标（targets[0]）继承旧基线；不回写
   try {
-    const legacy = await fsAdapter.get(CLOUD_REV_KEY)
+    const legacy = await fsAdapter.get('cloudRev')
     if (!legacy) return null
     const targets = await loadCredsImpl()
     return targets[0]?.cred.backend === backend ? legacy : null
@@ -285,7 +284,7 @@ async function saveTargetHashImpl(backend: string, hash: string | null): Promise
   else revs[backend] = hash
   await fsAdapter.set(CLOUD_REVS_KEY, JSON.stringify(revs))
   cloudRevsCache = revs
-  await fsAdapter.delete(CLOUD_REV_KEY) // 迁移约定：保存只写新键并删除旧键
+  await fsAdapter.delete('cloudRev') // 迁移约定：保存只写新键并删除旧键
 }
 
 /** 云同步自动触发偏好：localStorage 键 cloudAutoPrefs，与 loadBackupPrefs 同风格、独立实现（键不同） */
@@ -325,20 +324,22 @@ function recordAutoStatus(key: 'backupAutoStatus' | 'cloudAutoStatus', ok: boole
   } catch { /* 状态记录失败不影响主流程 */ }
 }
 
+/** 状态 JSON → 卡片展示文本（design §4.1）：「YYYY-MM-DD HH:mm 成功/失败：summary」；缺字段/坏 JSON → null（卡片显示「暂无」） */
+function readAutoStatusText(key: 'backupAutoStatus' | 'cloudAutoStatus'): string | null {
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return null
+    const s = JSON.parse(raw) as { at?: unknown; ok?: unknown; summary?: unknown }
+    if (typeof s.at !== 'number' || typeof s.summary !== 'string' || s.summary === '') return null
+    const d = new Date(s.at)
+    const p = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} ${s.ok === true ? '成功' : '失败'}：${s.summary}`
+  } catch {
+    return null
+  }
+}
+
 const cloudPlatform: CloudPlatform = {
-  async loadCred() {
-    if (!fsAdapter) return null
-    try {
-      const raw = await fsAdapter.get(CLOUD_CRED_KEY)
-      return raw ? (JSON.parse(raw) as CloudCred) : null
-    } catch {
-      return null
-    }
-  },
-  async saveCred(c) {
-    if (!fsAdapter) throw new Error('数据尚未就绪')
-    await fsAdapter.set(CLOUD_CRED_KEY, JSON.stringify(c))
-  },
   readVaultJson() {
     const s = store.value
     if (!s) throw new Error('数据尚未就绪')
@@ -346,19 +347,7 @@ const cloudPlatform: CloudPlatform = {
   },
   persistDownloaded: (json) => replaceAllOps(JSON.parse(json) as Vault),
   saveConflictBackup: async (bytes, backendKey) => saveConflictBackupToDir(bytes, await getBackupDir(), backendKey),
-  async loadHash() {
-    if (!fsAdapter) return null
-    try {
-      return await fsAdapter.get(CLOUD_REV_KEY)
-    } catch {
-      return null
-    }
-  },
-  async saveHash(hash) {
-    if (!fsAdapter) throw new Error('数据尚未就绪')
-    await fsAdapter.set(CLOUD_REV_KEY, hash)
-  },
-  // ---- 多目标新成员（Task 11；旧四成员 Task 13 才删） ----
+  // ---- 多目标成员（Task 13 起旧单目标四成员已删） ----
   loadCreds: loadCredsImpl,
   saveCreds: saveCredsImpl,
   loadTargetHash: loadTargetHashImpl,
@@ -367,6 +356,7 @@ const cloudPlatform: CloudPlatform = {
     get: () => loadCloudPrefs(),
     set: (p) => persistCloudPrefs(p),
   },
+  loadAutoStatus: async () => readAutoStatusText(CLOUD_AUTO_STATUS_KEY),
 }
 
 /** 自动云同步 runner（D6）：多目标编排收敛于 core syncMultipleTargets（runner 实现自本文件上提至

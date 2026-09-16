@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { backupFileName, conflictBackupFileName, createAutoRunScheduler, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, OVERWRITE_NAME, randomBytes, SCHEMES_KEY, type BackupEnvelopeV1, type CloudCred, type ImportScheme, type Vault } from '@totp/core'
+import { backupFileName, conflictBackupFileName, createAutoRunScheduler, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, OVERWRITE_NAME, randomBytes, SCHEMES_KEY, type BackupEnvelopeV1, type ImportScheme, type Vault } from '@totp/core'
 import { CLIPBOARD_CLEAR_DELAY_MS, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, LockScreen, NavigationShell, prfSupported, useTheme, type BackupMode, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { createCloudCredStore } from '../../src/cloudCredStore'
@@ -257,10 +257,8 @@ const backupPlatform: BackupPlatform = {
  * 多目标迁移约定（Task 8，见 ui cloudPlatform.ts 注释块）：多目标读写委托 cloudCredStore
  * （新键 cloudCreds/cloudRevs，旧键 cloudCred/cloudRev 只读回退、保存后删除，绝不回写新键）；
  * 冲突副本经既有 Blob 下载通道；采用云端数据经 replaceAllOp 整体替换。
+ * Task 13：旧单目标四成员已删，卡内口令改由 sessionSecret 注入。
  */
-const CLOUD_CRED_KEY = 'cloudCred'
-const CLOUD_REV_KEY = 'cloudRev'
-
 const cloudCredStore = createCloudCredStore(storageAdapter)
 
 // ---------- 自动云同步偏好（cloudAutoPrefs 键，storage.local 异步读写）----------
@@ -349,36 +347,27 @@ const scheduler = createAutoRunScheduler({
   },
 })
 
+/** 状态 JSON → 卡片展示文本（design §4.1）：「YYYY-MM-DD HH:mm 成功/失败：summary」；缺字段/坏 JSON → null（卡片显示「暂无」） */
+function formatAutoStatus(raw: string | undefined): string | null {
+  if (!raw) return null
+  try {
+    const s = JSON.parse(raw) as { at?: unknown; ok?: unknown; summary?: unknown }
+    if (typeof s.at !== 'number' || typeof s.summary !== 'string' || s.summary === '') return null
+    const d = new Date(s.at)
+    const p = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} ${s.ok === true ? '成功' : '失败'}：${s.summary}`
+  } catch {
+    return null
+  }
+}
+
 const cloudPlatform: CloudPlatform = {
-  async loadCred() {
-    try {
-      const raw = await storageAdapter.get(CLOUD_CRED_KEY)
-      return raw ? (JSON.parse(raw) as CloudCred) : null
-    } catch {
-      return null
-    }
-  },
-  async saveCred(c) {
-    await storageAdapter.set(CLOUD_CRED_KEY, JSON.stringify(c))
-  },
   readVaultJson: () => JSON.stringify(store.vault),
   async persistDownloaded(json) {
     await replaceAllOp(JSON.parse(json) as Vault)
   },
-  async saveConflictBackup(bytes) {
-    return downloadConflictBackup(bytes)
-  },
-  async loadHash() {
-    try {
-      return await storageAdapter.get(CLOUD_REV_KEY)
-    } catch {
-      return null
-    }
-  },
-  async saveHash(hash) {
-    await storageAdapter.set(CLOUD_REV_KEY, hash)
-  },
-  // ---- 多目标新成员（Task 12；旧四成员 Task 13 才删）----
+  saveConflictBackup: (bytes, backendKey) => downloadConflictBackup(bytes, backendKey),
+  // ---- 多目标成员（Task 12；Task 13 起旧单目标四成员已删）----
   loadCreds: () => cloudCredStore.loadCreds(),
   saveCreds: (t) => cloudCredStore.saveCreds(t),
   loadTargetHash: (b) => cloudCredStore.loadTargetHash(b),
@@ -386,6 +375,13 @@ const cloudPlatform: CloudPlatform = {
   autoPrefs: {
     get: () => cloudAutoPrefs,
     set: (p) => persistCloudAutoPrefs(p),
+  },
+  loadAutoStatus: async () => {
+    try {
+      return formatAutoStatus(await storageAdapter.get('cloudAutoStatus'))
+    } catch {
+      return null
+    }
   },
 }
 </script>

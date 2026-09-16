@@ -3,7 +3,9 @@ import {
   type CloudBackend, type CloudCred,
 } from '@totp/core'
 
-/** 云端对象固定路径（内容=加密 envelope JSON，见计划 10 Global Constraints） */
+/** 云端对象固定路径（内容=加密 envelope JSON，见计划 10 Global Constraints）
+ *  @deprecated 仅作兼容导出，云对象路径改用 core resolveObjectPath(cred)（cred.objectPath 可自定义，缺省 DEFAULT_OBJECT_PATH）
+ */
 export const CLOUD_BACKUP_PATH = 'totp-backup.totpbackup'
 
 /**
@@ -31,6 +33,7 @@ export function createCloudBackend(cred: CloudCred, onCredChange?: (cred: CloudC
  * - 基线：新键 cloudRevs：Record<backend, string>；旧键 cloudRev 单串。
  * - 读取：cloudRevs 缺失而 cloudRev 存在 → 该值写入 targets[0].cred.backend 键（cloudCreds 为空数组时该值丢弃）；保存只写 cloudRevs 并删除旧键 cloudRev。
  * - 偏好：两端统一键 cloudAutoPrefs（JSON CloudAutoPrefs）。
+ * - 自动状态：两端统一键 cloudAutoStatus（JSON {at,ok,summary}），宿主格式化为文本经 loadAutoStatus 提供。
  * - backend 键取 cred.backend（同后端仅一份凭据）。
  * - 云端对象路径不落键：由 core resolveObjectPath(cred) 从 cred.objectPath 解析。
  */
@@ -44,44 +47,28 @@ export interface CloudAutoPrefs { onChange: boolean; onInterval: boolean; interv
  * 云同步平台能力（宿主注入：desktop=Tauri fs；extension=chrome.storage.local+Blob 下载）。
  * CloudCard 只依赖此接口，platform 为 null 时整卡不渲染（popup 零影响）。
  *
- * 与简报差异（最小裁定）：
- * - pickBackendCred 不设方法：裁定为表单内联（后端下拉+动态字段+保存到 cloudCred），卡内自持表单。
- * - getPassword 保持可选且卡内不消费：裁定 CloudCard 自带口令输入，与 BackupCard 独立。
- * - 新增可选 loadHash/saveHash：cloudRev（上次已知云端内容 hash）按计划持久化于 local 键；
- *   缺省时退化为会话内基线（重启后首次同步按 downloaded 语义处理）。
+ * Task 13 收口：旧单目标四成员 loadCred/saveCred/loadHash/saveHash 与 getPassword 已删除
+ * （卡内不再自持口令输入，改由 SyncPage 注入 sessionSecret prop），新五成员转必需。
  */
 export interface CloudPlatform {
-  /** 读取已存凭据（local 键 cloudCred）；未存/读取失败 → null
-   *  @deprecated Task13 移除——改用 loadCreds/saveCreds/loadTargetHash/saveTargetHash；Task 13 完成后旧成员删除、新五成员转必需
-   */
-  loadCred(): Promise<CloudCred | null>
-  /** 持久化凭据（含 GDrive onCredChange 回存 fileId 的回写）
-   *  @deprecated Task13 移除——改用 loadCreds/saveCreds/loadTargetHash/saveTargetHash；Task 13 完成后旧成员删除、新五成员转必需
-   */
-  saveCred(c: CloudCred): Promise<void>
+  /** 多目标凭据列表（启用态随项）。宿主实现须按迁移约定回退读取旧键 */
+  loadCreds(): Promise<CloudTarget[]>
+  /** 持久化凭据列表（含 GDrive onCredChange 回存 fileId 的回写） */
+  saveCreds(targets: CloudTarget[]): Promise<void>
   /** 当前本地明文 vault 快照（saveVault 同款 JSON） */
   readVaultJson(): string
   /** 采用云端数据（恢复链路：卡内 parseVaultJson 校验+两步确认 → 宿主整体替换本地存储） */
   persistDownloaded(json: string): Promise<void>
-  /** [可选] 冲突副本落盘（desktop=AppData/backups；extension=Blob 下载），返回副本名回填提示 */
-  saveConflictBackup?(bytes: Uint8Array): Promise<string | null>
-  /** [可选] 读取 cloudRev（上次已知云端内容 hash）；从未记录 → null
-   *  @deprecated Task13 移除——改用 loadCreds/saveCreds/loadTargetHash/saveTargetHash；Task 13 完成后旧成员删除、新五成员转必需
-   */
-  loadHash?(): Promise<string | null>
-  /** [可选] 持久化 cloudRev（uploaded/成功采用云端后调用）
-   *  @deprecated Task13 移除——改用 loadCreds/saveCreds/loadTargetHash/saveTargetHash；Task 13 完成后旧成员删除、新五成员转必需
-   */
-  saveHash?(hash: string): Promise<void>
-  /** 多目标凭据列表（启用态随项）。宿主实现须按迁移约定回退读取旧键 */
-  loadCreds?(): Promise<CloudTarget[]>
-  saveCreds?(targets: CloudTarget[]): Promise<void>
+  /** [可选] 冲突副本落盘（desktop=AppData/backups；extension=Blob 下载），返回副本名回填提示；
+   *  backendKey=目标 backend 键（多目标场景副本名 conflict-{backendKey}-{ts} 区分来源） */
+  saveConflictBackup?(bytes: Uint8Array, backendKey?: string): Promise<string | null>
   /** 按 backend 键读取该目标的远端字节摘要基线（迁移约定见上）；该 backend 无基线 → null */
-  loadTargetHash?(backend: string): Promise<string | null>
+  loadTargetHash(backend: string): Promise<string | null>
   /** 按 backend 键写入基线；hash=null 语义为删除该 backend 的基线键（不是写入 null 值） */
-  saveTargetHash?(backend: string, hash: string | null): Promise<void>
-  /** 云同步自动触发偏好（desktop/extension 均提供；缺省则卡片不渲染自动区） */
-  autoPrefs?: { get(): CloudAutoPrefs; set(p: CloudAutoPrefs): void | Promise<void> }
-  /** [可选] 会话口令缓存（简报原接口；裁定 CloudCard 自带口令输入，故不消费） */
-  getPassword?(): string | null
+  saveTargetHash(backend: string, hash: string | null): Promise<void>
+  /** 云同步自动触发偏好（desktop/extension 均提供；缺省则卡片不渲染自动区）。
+   *  get 允许异步返回（extension storage.local 读写即异步，卡片 await 兼容同步/异步两种形态） */
+  autoPrefs: { get(): CloudAutoPrefs | Promise<CloudAutoPrefs>; set(p: CloudAutoPrefs): void | Promise<void> }
+  /** [可选] 读取「上次自动同步」状态文本（宿主自 cloudAutoStatus 键 JSON {at,ok,summary} 格式化）；缺省则卡片不显示自动状态行 */
+  loadAutoStatus?(): Promise<string | null>
 }

@@ -46,6 +46,9 @@ export interface BackupPlatform {
   getAutoPrefs?(): BackupAutoPrefs
   /** [可选] 回写自动备份偏好（宿主负责持久化；卡内每次传完整对象） */
   setAutoPrefs?(p: BackupAutoPrefs): void | Promise<void>
+  /** [可选] 读取「上次自动备份」状态文本（design §4.1：宿主自 backupAutoStatus 键 JSON {at,ok,summary} 格式化；
+   *  仅 desktop 提供自动备份通道）；宿主不提供则卡内隐藏该状态行 */
+  getAutoStatus?(): Promise<string | null>
   /** [可选] 当前备份目录；null=默认（应用数据目录）。宿主不提供则卡内隐藏目录行 */
   getBackupDir?(): Promise<string | null>
   /** [可选] 设置备份目录；null=恢复默认 */

@@ -4,197 +4,247 @@ import type { VueWrapper } from '@vue/test-utils'
 
 vi.mock('@totp/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@totp/core')>()
-  return { ...actual, syncWithCloud: vi.fn() }
+  return { ...actual, syncMultipleTargets: vi.fn() }
 })
 
-import { syncWithCloud } from '@totp/core'
+import { syncMultipleTargets } from '@totp/core'
 import CloudCard from '../src/components/CloudCard.vue'
-import type { CloudPlatform } from '../src/components/cloudPlatform'
+import type { CloudPlatform, CloudTarget } from '../src/components/cloudPlatform'
 
-const mockedSync = vi.mocked(syncWithCloud)
+const mockedSync = vi.mocked(syncMultipleTargets)
 
 const VALID_VAULT = JSON.stringify({ version: 1, entries: [], groups: [], updatedAt: 0 })
+const EMPTY_RESULT = { results: [], finalVaultJson: VALID_VAULT, adopted: false, hashes: {} }
+
+const WEBDAV_TARGET: CloudTarget = {
+  cred: { backend: 'webdav', serverUrl: 'https://dav.example.com', username: 'alice', password: 'davpw' },
+  enabled: true,
+}
+const GIST_TARGET: CloudTarget = { cred: { backend: 'gist', token: 'tok', gistId: 'gid' }, enabled: true }
 
 function makePlatform(over: Partial<CloudPlatform> = {}): CloudPlatform {
-  return {
-    loadCred: vi.fn().mockResolvedValue(null),
-    saveCred: vi.fn().mockResolvedValue(undefined),
+  const base: CloudPlatform = {
+    loadCreds: vi.fn().mockResolvedValue([]),
+    saveCreds: vi.fn().mockResolvedValue(undefined),
     readVaultJson: vi.fn().mockReturnValue(VALID_VAULT),
     persistDownloaded: vi.fn().mockResolvedValue(undefined),
-    loadHash: vi.fn().mockResolvedValue(null),
-    saveHash: vi.fn().mockResolvedValue(undefined),
-    ...over,
+    loadTargetHash: vi.fn().mockResolvedValue(null),
+    saveTargetHash: vi.fn().mockResolvedValue(undefined),
+    autoPrefs: { get: () => ({ onChange: false, onInterval: false, intervalMinutes: 60 }), set: () => {} },
   }
+  return { ...base, ...over }
 }
 
-function inputByPh(w: VueWrapper, placeholder: string) {
-  return w.findAll('input').find((i) => i.attributes('placeholder') === placeholder)
-}
-
-async function fillWebdav(w: VueWrapper): Promise<void> {
-  await inputByPh(w, '服务器地址（https://dav.example.com）')!.setValue('https://dav.example.com')
-  await inputByPh(w, '用户名')!.setValue('alice')
-  await inputByPh(w, '应用密码')!.setValue('davpw')
+async function mountCard(p: CloudPlatform, sessionSecret: string | null = 'pw') {
+  const w = mount(CloudCard, { props: { platform: p, sessionSecret } })
+  await flushPromises() // onMounted 异步回填 targets/autoPrefs/autoStatus
+  return w
 }
 
 async function clickSync(w: VueWrapper): Promise<void> {
-  await w.find('button.sync-now').trigger('click')
+  await w.find('button.cloud-sync').trigger('click')
   await flushPromises()
 }
 
-describe('CloudCard', () => {
+describe('CloudCard（多目标）', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('敏感凭据字段以密码形态遮蔽，非敏感字段保持文本；回填后仍遮蔽', async () => {
-    const w = mount(CloudCard, { props: { platform: makePlatform() } })
-    const type = (ph: string) => inputByPh(w, ph)!.attributes('type')
-    expect(type('应用密码')).toBe('password')
-    expect(type('用户名')).not.toBe('password')
-    await w.find('select.cloud-backend').setValue('s3')
-    expect(type('SecretAccessKey')).toBe('password')
-    expect(type('Region（如 us-east-1）')).not.toBe('password')
-    expect(type('Bucket')).not.toBe('password')
-    await w.find('select.cloud-backend').setValue('gdrive')
-    expect(type('Access Token（Google OAuth）')).toBe('password')
-    await w.find('select.cloud-backend').setValue('onedrive')
-    expect(type('Access Token（Microsoft Graph）')).toBe('password')
-    await w.find('select.cloud-backend').setValue('gist')
-    expect(type('GitHub Token')).toBe('password')
-    expect(type('Gist ID')).not.toBe('password')
-    // loadCred 回填后仍以遮蔽形态显示
-    const p2 = makePlatform({ loadCred: vi.fn().mockResolvedValue({ backend: 'gist', token: 'tok', gistId: 'gid' }) })
-    const w2 = mount(CloudCard, { props: { platform: p2 } })
-    await flushPromises()
-    expect((inputByPh(w2, 'GitHub Token')!.element as HTMLInputElement).value).toBe('tok')
-    expect(inputByPh(w2, 'GitHub Token')!.attributes('type')).toBe('password')
+  it('①目标列表：loadCreds 回填两条启用目标，渲染标签与启用开关', async () => {
+    const p = makePlatform({ loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET, GIST_TARGET]) })
+    const w = await mountCard(p)
+    expect(w.findAll('.target')).toHaveLength(2)
+    expect(w.text()).toContain('WebDAV')
+    expect(w.text()).toContain('GitHub Gist')
+    expect(w.find('input[aria-label="WebDAV启用"]').exists()).toBe(true)
+    expect(w.find('input[aria-label="GitHub Gist启用"]').exists()).toBe(true)
   })
 
-  it('保存凭据：表单字段组装成 CloudCred 调 saveCred', async () => {
-    const p = makePlatform()
-    const w = mount(CloudCard, { props: { platform: p } })
-    await fillWebdav(w)
-    await w.find('button.save-cred').trigger('click')
-    await flushPromises()
-    expect(p.saveCred).toHaveBeenCalledWith({ backend: 'webdav', serverUrl: 'https://dav.example.com', username: 'alice', password: 'davpw' })
-    expect(w.text()).toContain('凭据已保存')
+  it('②配置展开：显示该后端凭据字段与目标路径框（placeholder=缺省路径）', async () => {
+    const p = makePlatform({ loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET]) })
+    const w = await mountCard(p)
+    // 收起态不渲染字段
+    expect(w.find('input[aria-label="目标文件路径"]').exists()).toBe(false)
+    await w.find('button.target-toggle').trigger('click')
+    expect((w.find('input[placeholder="服务器地址（https://dav.example.com）"]').element as HTMLInputElement).value).toBe('https://dav.example.com')
+    const pathInput = w.find('input[aria-label="目标文件路径"]')
+    expect(pathInput.exists()).toBe(true)
+    expect(pathInput.attributes('placeholder')).toBe('totp-backup.totpbackup')
+    expect((pathInput.element as HTMLInputElement).value).toBe('') // 未自定义 objectPath
   })
 
-  it('loadCred 回填：已存凭据填充后端下拉与动态字段', async () => {
+  it('③仅 enabled 目标进入 syncMultipleTargets', async () => {
+    mockedSync.mockResolvedValue(EMPTY_RESULT)
+    const p = makePlatform({ loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET, { ...GIST_TARGET, enabled: false }]) })
+    const w = await mountCard(p)
+    await clickSync(w)
+    expect(mockedSync).toHaveBeenCalledTimes(1)
+    const inputs = mockedSync.mock.calls[0]![0].targets
+    expect(inputs).toHaveLength(1)
+    expect(inputs[0]!.key).toBe('webdav')
+  })
+
+  it('④objectPath 透传：resolveObjectPath 结果作 path，缺省回落 DEFAULT_OBJECT_PATH', async () => {
+    mockedSync.mockResolvedValue(EMPTY_RESULT)
     const p = makePlatform({
-      loadCred: vi.fn().mockResolvedValue({ backend: 's3', region: 'us-east-1', bucket: 'my-bucket', accessKeyId: 'AKIA', secretAccessKey: 'sk' }),
+      loadCreds: vi.fn().mockResolvedValue([
+        { ...WEBDAV_TARGET, cred: { ...WEBDAV_TARGET.cred, objectPath: 'custom\\dir.totpbackup' } },
+        GIST_TARGET,
+      ]),
     })
-    const w = mount(CloudCard, { props: { platform: p } })
-    await flushPromises()
-    expect((w.find('select.cloud-backend').element as HTMLSelectElement).value).toBe('s3')
-    expect((inputByPh(w, 'Region（如 us-east-1）')!.element as HTMLInputElement).value).toBe('us-east-1')
-    expect((inputByPh(w, 'Bucket')!.element as HTMLInputElement).value).toBe('my-bucket')
-    expect((inputByPh(w, 'AccessKeyId')!.element as HTMLInputElement).value).toBe('AKIA')
+    const w = await mountCard(p)
+    await clickSync(w)
+    expect(mockedSync).toHaveBeenCalledTimes(1)
+    const inputs = mockedSync.mock.calls[0]![0].targets
+    expect(inputs.map((x) => ({ key: x.key, path: x.path }))).toEqual([
+      { key: 'webdav', path: 'custom/dir.totpbackup' }, // 反斜杠段归一为 /
+      { key: 'gist', path: 'totp-backup.totpbackup' },
+    ])
   })
 
-  it('口令缺失：不调用同步编排也不读 vault', async () => {
-    const p = makePlatform()
-    const w = mount(CloudCard, { props: { platform: p } })
-    await fillWebdav(w)
+  it('⑤hash 逐目标透传与回写：失败目标回写 null（删基线）', async () => {
+    mockedSync.mockResolvedValue({
+      results: [
+        { key: 'webdav', outcome: { action: 'in-sync', hash: 'hw1' } },
+        { key: 'gist', outcome: null, error: 'boom' },
+      ],
+      finalVaultJson: VALID_VAULT,
+      adopted: false,
+      hashes: { webdav: 'hw1' },
+    })
+    const p = makePlatform({
+      loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET, GIST_TARGET]),
+      loadTargetHash: vi.fn(async (b: string) => (b === 'webdav' ? 'h-w' : 'h-g')),
+    })
+    const w = await mountCard(p)
+    await clickSync(w)
+    const inputs = mockedSync.mock.calls[0]![0].targets
+    expect(inputs.map((x) => ({ key: x.key, hash: x.hash }))).toEqual([
+      { key: 'webdav', hash: 'h-w' },
+      { key: 'gist', hash: 'h-g' },
+    ])
+    expect(p.saveTargetHash).toHaveBeenCalledWith('webdav', 'hw1')
+    expect(p.saveTargetHash).toHaveBeenCalledWith('gist', null)
+    expect(w.text()).toContain('失败：boom')
+    expect(w.text()).toContain('已是最新')
+  })
+
+  it('⑥adopted：行内确认出现且确认前不落基线，确认后 persistDownloaded(finalVaultJson)+补写基线', async () => {
+    mockedSync.mockResolvedValue({
+      results: [{ key: 'webdav', outcome: { action: 'downloaded', hash: 'h9', envelopeJson: VALID_VAULT } }],
+      finalVaultJson: VALID_VAULT,
+      adopted: true,
+      hashes: { webdav: 'h9' },
+    })
+    const p = makePlatform({ loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET]) })
+    const w = await mountCard(p)
+    await clickSync(w)
+    expect(w.find('.confirm-row').exists()).toBe(true)
+    expect(w.text()).toContain('采用云端将覆盖本地')
+    expect(p.persistDownloaded).not.toHaveBeenCalled()
+    expect(p.saveTargetHash).not.toHaveBeenCalled() // 采纳目标基线延后
+    // 确认行挂起期间禁用立即同步（防二次同步覆盖待确认状态）
+    expect((w.find('button.cloud-sync').element as HTMLButtonElement).disabled).toBe(true)
+    await w.findAll('button').find((b) => b.text() === '采用云端')!.trigger('click')
+    await flushPromises()
+    expect(p.persistDownloaded).toHaveBeenCalledWith(VALID_VAULT)
+    expect(p.saveTargetHash).toHaveBeenCalledWith('webdav', 'h9')
+    expect(w.text()).toContain('已采用云端数据覆盖本地')
+    expect(w.find('.confirm-row').exists()).toBe(false)
+    expect((w.find('button.cloud-sync').element as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('⑦取消采用：persistDownloaded 不调、基线不写，提示已保留冲突副本', async () => {
+    mockedSync.mockResolvedValue({
+      results: [{ key: 'webdav', outcome: { action: 'conflict-resolved', hash: 'h8', envelopeJson: VALID_VAULT, conflictBackup: 'conflict-webdav-20260916-120000.totpbackup' } }],
+      finalVaultJson: VALID_VAULT,
+      adopted: true,
+      hashes: { webdav: 'h8' },
+    })
+    const p = makePlatform({ loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET]) })
+    const w = await mountCard(p)
+    await clickSync(w)
+    await w.findAll('button').find((b) => b.text() === '取消')!.trigger('click')
+    await flushPromises()
+    expect(p.persistDownloaded).not.toHaveBeenCalled()
+    expect(p.saveTargetHash).not.toHaveBeenCalled()
+    expect(w.text()).toContain('已保留冲突副本，未改动本地')
+    expect(w.find('.confirm-row').exists()).toBe(false)
+  })
+
+  it('⑧无 sessionSecret：同步按钮禁用并显示设置口令提示', async () => {
+    const p = makePlatform({ loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET]) })
+    const w = await mountCard(p, null)
+    expect((w.find('button.cloud-sync').element as HTMLButtonElement).disabled).toBe(true)
+    expect(w.text()).toContain('先在上方设置备份口令')
+  })
+
+  it('⑨未启用任何云目标：提示错误且不调同步编排', async () => {
+    const p = makePlatform({ loadCreds: vi.fn().mockResolvedValue([{ ...WEBDAV_TARGET, enabled: false }]) })
+    const w = await mountCard(p)
     await clickSync(w)
     expect(mockedSync).not.toHaveBeenCalled()
     expect(p.readVaultJson).not.toHaveBeenCalled()
-    expect(w.text()).toContain('请输入口令')
+    expect(w.text()).toContain('未启用任何云目标')
   })
 
-  it('downloaded 分支：进入确认流程，确认后 persistDownloaded+saveHash 并提示已应用', async () => {
-    mockedSync.mockResolvedValue({ action: 'downloaded', hash: 'h1', envelopeJson: VALID_VAULT })
-    const p = makePlatform()
-    const w = mount(CloudCard, { props: { platform: p } })
-    await fillWebdav(w)
-    await inputByPh(w, '同步口令')!.setValue('pw')
-    await clickSync(w)
-    expect(mockedSync).toHaveBeenCalledTimes(1)
-    expect(mockedSync.mock.calls[0]![0]).toMatchObject({ path: 'totp-backup.totpbackup', password: 'pw', localHash: null, vaultJson: VALID_VAULT })
-    expect(w.find('.confirm-row').exists()).toBe(true)
-    expect(w.text()).toContain('已保留本地冲突副本')
-    // 确认行挂起期间禁用立即同步（防二次同步覆盖 lastHash 错写 cloudRev），确认完成后恢复
-    expect(w.find('button.sync-now').attributes('disabled')).toBeDefined()
-    expect(p.persistDownloaded).not.toHaveBeenCalled()
-    await w.findAll('button').find((b) => b.text() === '确认覆盖')!.trigger('click')
+  it('⑩保存凭据：整列表调 saveCreds', async () => {
+    const p = makePlatform({ loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET]) })
+    const w = await mountCard(p)
+    await w.find('button.creds-save').trigger('click')
     await flushPromises()
-    expect(w.find('button.sync-now').attributes('disabled')).toBeUndefined()
-    expect(p.persistDownloaded).toHaveBeenCalledWith(VALID_VAULT)
-    expect(p.saveHash).toHaveBeenCalledWith('h1')
-    expect(w.text()).toContain('已应用云端备份')
-    expect(w.find('.confirm-row').exists()).toBe(false)
+    expect(p.saveCreds).toHaveBeenCalledWith([WEBDAV_TARGET])
+    expect(w.text()).toContain('凭据已保存')
   })
 
-  it('conflict-resolved 分支：提示保留副本并采用云端（含副本名），localHash 来自 loadHash', async () => {
-    mockedSync.mockResolvedValue({ action: 'conflict-resolved', conflictBackup: 'conflict-20260913-150405.totpbackup', hash: 'h2', envelopeJson: VALID_VAULT })
-    const p = makePlatform({ loadHash: vi.fn().mockResolvedValue('oldhash') })
-    const w = mount(CloudCard, { props: { platform: p } })
-    await fillWebdav(w)
-    await inputByPh(w, '同步口令')!.setValue('pw')
+  it('⑪单目标错误状态行不影响其余目标结果展示', async () => {
+    mockedSync.mockResolvedValue({
+      results: [
+        { key: 'webdav', outcome: null, error: '网络错误' },
+        { key: 'gist', outcome: { action: 'uploaded', hash: 'hu' } },
+      ],
+      finalVaultJson: VALID_VAULT,
+      adopted: false,
+      hashes: { gist: 'hu' },
+    })
+    const p = makePlatform({ loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET, GIST_TARGET]) })
+    const w = await mountCard(p)
     await clickSync(w)
-    expect(mockedSync.mock.calls[0]![0]).toMatchObject({ localHash: 'oldhash' })
-    await w.findAll('button').find((b) => b.text() === '确认覆盖')!.trigger('click')
-    await flushPromises()
-    expect(w.text()).toContain('检测到冲突：已保留本地副本并采用云端（副本：conflict-20260913-150405.totpbackup）')
+    const statuses = w.findAll('.target-status').map((s) => s.text())
+    expect(statuses).toEqual(['失败：网络错误', '已上传'])
   })
 
-  it('uploaded 分支：直接提示已上传并保存 cloudRev，无确认流程', async () => {
-    mockedSync.mockResolvedValue({ action: 'uploaded', hash: 'h0', envelopeJson: '{"v":1}' })
-    const p = makePlatform()
-    const w = mount(CloudCard, { props: { platform: p } })
-    await fillWebdav(w)
-    await inputByPh(w, '同步口令')!.setValue('pw')
-    await clickSync(w)
-    expect(w.find('.confirm-row').exists()).toBe(false)
-    expect(w.text()).toContain('已上传')
-    expect(p.saveHash).toHaveBeenCalledWith('h0')
-    expect(p.persistDownloaded).not.toHaveBeenCalled()
+  it('⑫自动区：开关/间隔回写 set（get 异步返回兼容）', async () => {
+    const p = makePlatform({
+      autoPrefs: {
+        get: vi.fn(async () => ({ onChange: false, onInterval: false, intervalMinutes: 60 })),
+        set: vi.fn(async () => {}),
+      },
+      loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET]),
+    })
+    const w = await mountCard(p)
+    await w.find('input[aria-label="变更后自动同步"]').setValue(true)
+    await vi.waitFor(() =>
+      expect(p.autoPrefs.set).toHaveBeenLastCalledWith({ onChange: true, onInterval: false, intervalMinutes: 60 }),
+    )
+    await w.find('select.interval').setValue('1440')
+    await vi.waitFor(() =>
+      expect(p.autoPrefs.set).toHaveBeenLastCalledWith({ onChange: true, onInterval: false, intervalMinutes: 1440 }),
+    )
   })
 
-  it('同步失败（口令不匹配）：展示错误且不覆盖本地', async () => {
-    mockedSync.mockRejectedValue(new Error('云端备份口令不匹配，无法合并——请确认口令或手动下载处理'))
-    const p = makePlatform()
-    const w = mount(CloudCard, { props: { platform: p } })
-    await fillWebdav(w)
-    await inputByPh(w, '同步口令')!.setValue('badpw')
-    await clickSync(w)
-    expect(w.text()).toContain('云端备份口令不匹配')
-    expect(p.persistDownloaded).not.toHaveBeenCalled()
-    expect(w.find('.confirm-row').exists()).toBe(false)
-  })
-
-  it('M19：切换 backend 时清空旧后端字段（避免敏感凭据跨后端残留）', async () => {
-    const p = makePlatform()
-    const w = mount(CloudCard, { props: { platform: p } })
-    await fillWebdav(w)
-    // 填了 WebDAV 凭据 → 切到 S3 → WebDAV 字段应被清空
-    await w.find('select.cloud-backend').setValue('s3')
-    // 切回 WebDAV → serverUrl/username/password 都为空（说明它们被清空了）
-    await w.find('select.cloud-backend').setValue('webdav')
-    expect((inputByPh(w, '服务器地址（https://dav.example.com）')!.element as HTMLInputElement).value).toBe('')
-    expect((inputByPh(w, '用户名')!.element as HTMLInputElement).value).toBe('')
-    expect((inputByPh(w, '应用密码')!.element as HTMLInputElement).value).toBe('')
-    // 再填一次 WebDAV → 切到 gist → 再切到 WebDAV 还是空（说明每次切换都清）
-    await fillWebdav(w)
-    await w.find('select.cloud-backend').setValue('gist')
-    await w.find('select.cloud-backend').setValue('webdav')
-    expect((inputByPh(w, '应用密码')!.element as HTMLInputElement).value).toBe('')
-  })
-
-  it('M19：S3 切到 gist 时清空 S3 字段（accessKeyId/secretAccessKey 不残留）', async () => {
-    const p = makePlatform()
-    const w = mount(CloudCard, { props: { platform: p } })
-    await w.find('select.cloud-backend').setValue('s3')
-    await inputByPh(w, 'Region（如 us-east-1）')!.setValue('us-east-1')
-    await inputByPh(w, 'Bucket')!.setValue('my-bucket')
-    await inputByPh(w, 'AccessKeyId')!.setValue('AKIAEXAMPLE')
-    await inputByPh(w, 'SecretAccessKey')!.setValue('secret-value')
-    // 切到 gist
-    await w.find('select.cloud-backend').setValue('gist')
-    // 再切回 S3 → S3 字段都为空
-    await w.find('select.cloud-backend').setValue('s3')
-    expect((inputByPh(w, 'Region（如 us-east-1）')!.element as HTMLInputElement).value).toBe('')
-    expect((inputByPh(w, 'Bucket')!.element as HTMLInputElement).value).toBe('')
-    expect((inputByPh(w, 'AccessKeyId')!.element as HTMLInputElement).value).toBe('')
-    expect((inputByPh(w, 'SecretAccessKey')!.element as HTMLInputElement).value).toBe('')
+  it('⑬loadAutoStatus：渲染「上次自动同步」文本；未提供则不渲染该行', async () => {
+    const p = makePlatform({
+      autoPrefs: { get: () => ({ onChange: false, onInterval: false, intervalMinutes: 60 }), set: () => {} },
+      loadAutoStatus: vi.fn(async () => '2026-09-16 12:00 成功：webdav: in-sync'),
+      loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET]),
+    })
+    const w = await mountCard(p)
+    expect(w.find('.auto-status').text()).toBe('上次自动同步：2026-09-16 12:00 成功：webdav: in-sync')
+    // 未提供 loadAutoStatus：状态行不渲染
+    const w2 = await mountCard(makePlatform({
+      autoPrefs: { get: () => ({ onChange: false, onInterval: false, intervalMinutes: 60 }), set: () => {} },
+      loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET]),
+    }))
+    expect(w2.find('.auto-status').exists()).toBe(false)
   })
 })
