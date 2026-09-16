@@ -55,6 +55,8 @@ export interface SecurityPlatform {
   security: SecurityOps | null
   /** [可选] DPAPI(Windows) 自动解锁；仅 desktop 提供，未提供时 SecurityCard/LockScreen 隐藏该能力（extension 无） */
   dpapi?: DpapiUnlockOps
+  /** 解锁方式按端命名（宿主注入；缺省 Passkey，osAutoLabel null=该端无原生自动解锁） */
+  unlockNaming?: { prfLabel: string; osAutoLabel: string | null }
   /** 复制后 30s 自动清空剪贴板开关（当前值） */
   clipboardClearEnabled: ComputedRef<boolean>
   /** 切换剪贴板清空开关（宿主写 settings + 持久化） */

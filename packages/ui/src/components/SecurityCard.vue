@@ -24,6 +24,9 @@ const hasEnc = computed(() => props.platform?.security?.hasEncryption.value ?? f
 const isLocked = computed(() => props.platform?.security?.locked.value ?? false)
 const clipboardOn = computed(() => props.platform?.clipboardClearEnabled.value ?? true)
 
+/** 解锁方式按端命名（宿主经 unlockNaming 注入；null=回退 Passkey / Windows 自动解锁） */
+const naming = computed(() => props.platform?.unlockNaming ?? null)
+
 /** Passkey(PRF) 能力探测结果：unknown=探测中/宿主未提供；false 时显示不支持提示 */
 const prfCap = ref<'unknown' | boolean>('unknown')
 const passkeyOps = computed(() => props.platform?.security?.passkey ?? null)
@@ -173,7 +176,7 @@ async function onDelayChange(value: string): Promise<void> {
         <div class="actions">
           <MdButton class="enable-enc" :disabled="busy" @click="onEnable">启用加密</MdButton>
         </div>
-        <p class="hint">启用后本地数据以口令加密存储，每次打开需输入口令解锁。</p>
+        <p class="hint">启用后本地数据以口令加密存储。启用后可绑定{{ naming?.prfLabel ?? 'Passkey' }}{{ naming?.osAutoLabel ? ` 或 ${naming.osAutoLabel}` : '' }}，免输口令解锁。</p>
         <p class="hint">启用后浏览器同步的数据也将是密文。</p>
       </template>
       <!-- 已启用且解锁：解锁方式 + 换口令 + 关闭加密 -->
@@ -182,7 +185,7 @@ async function onDelayChange(value: string): Promise<void> {
         <div v-if="passkeyOps || dpapiOps" class="unlock-methods">
           <h3>解锁方式</h3>
           <template v-if="passkeyOps">
-            <p v-if="prfCap === false" class="hint">当前浏览器不支持 Passkey 解锁（PRF）</p>
+            <p v-if="prfCap === false" class="hint">当前浏览器不支持 {{ naming?.prfLabel ?? 'Passkey' }} 解锁（PRF）</p>
             <template v-else>
               <div class="method-row">
                 <span class="method">口令</span>
@@ -195,17 +198,17 @@ async function onDelayChange(value: string): Promise<void> {
                 </li>
               </ul>
               <div class="actions">
-                <MdButton variant="tonal" class="add-passkey" :disabled="busy || prfCap !== true" @click="onAddPasskey">添加 Passkey 解锁</MdButton>
+                <MdButton variant="tonal" class="add-passkey" :disabled="busy || prfCap !== true" @click="onAddPasskey">添加 {{ naming?.prfLabel ?? 'Passkey' }} 解锁</MdButton>
               </div>
             </template>
           </template>
           <template v-if="dpapiOps">
             <div v-if="dpapiSource" class="dpapi-row">
-              <span class="method">Windows 自动解锁（DPAPI）</span>
+              <span class="method">{{ naming?.osAutoLabel ?? 'Windows 自动解锁' }}（DPAPI）</span>
               <MdButton variant="text" danger class="remove-dpapi" :disabled="busy" @click="onRemoveDpapi">移除</MdButton>
             </div>
             <div v-else class="actions">
-              <MdButton variant="tonal" class="enable-dpapi" :disabled="busy" @click="onEnableDpapi">启用 Windows 自动解锁</MdButton>
+              <MdButton variant="tonal" class="enable-dpapi" :disabled="busy" @click="onEnableDpapi">启用 {{ naming?.osAutoLabel ?? 'Windows 自动解锁' }}</MdButton>
             </div>
           </template>
         </div>

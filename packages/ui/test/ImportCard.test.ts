@@ -18,6 +18,20 @@ function mkPlatform(store: Awaited<ReturnType<typeof readyStore>>) {
 }
 
 describe('ImportCard', () => {
+  it('idle 首屏说明：自动识别提示 + 支持格式分组（details/summary 结构，3 组 li）', async () => {
+    const store = await readyStore()
+    const w = mount(ImportCard, { props: { platform: mkPlatform(store) } })
+    expect(w.text()).toContain('自动识别')
+    expect(w.text()).toContain('冲突条目可选跳过/替换/合并')
+    const details = w.find('details.formats')
+    expect(details.exists()).toBe(true)
+    expect(details.find('summary').text()).toBe('支持的导入格式')
+    const items = details.findAll('li')
+    expect(items).toHaveLength(3)
+    expect(items[0]!.text()).toContain('加密备份类')
+    expect(items[1]!.text()).toContain('应用导出类')
+    expect(items[2]!.text()).toContain('文本与通用类')
+  })
   it('URI 批量导入：识别格式→确认冲突策略 skip→报告 1 成功 1 冲突跳过 1 失败', async () => {
     const store = await readyStore()
     const w = mount(ImportCard, { props: { platform: mkPlatform(store) } })

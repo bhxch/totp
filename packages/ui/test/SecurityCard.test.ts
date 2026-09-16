@@ -263,4 +263,65 @@ describe('SecurityCard', () => {
     // 关键：confirmDisable 已复位（不再显示确认行）
     expect(w.find('.confirm-row').exists()).toBe(false)
   })
+
+  // ---- D5：按端解锁命名（unlockNaming 注入与回退） ----
+
+  it('D5：未启用态提示注入 prfLabel 与 osAutoLabel（「 或 」拼接，替换旧首行提示）', () => {
+    const p = makePlatform({ unlockNaming: { prfLabel: 'Windows Hello (Passkey)', osAutoLabel: 'Windows 自动解锁' } })
+    const w = mount(SecurityCard, { props: { platform: p } })
+    expect(w.text()).toContain('启用后可绑定Windows Hello (Passkey) 或 Windows 自动解锁，免输口令解锁')
+    expect(w.text()).not.toContain('每次打开需输入口令解锁')
+    // 原第二行密文说明保留
+    expect(w.text()).toContain('启用后浏览器同步的数据也将是密文')
+  })
+
+  it('D5：未注入 unlockNaming 回退 Passkey 且不含「或」', () => {
+    const w = mount(SecurityCard, { props: { platform: makePlatform() } })
+    expect(w.text()).toContain('启用后可绑定Passkey，免输口令解锁')
+    expect(w.text()).not.toContain('或')
+  })
+
+  it('D5：osAutoLabel=null 不拼接「或」', () => {
+    const p = makePlatform({ unlockNaming: { prfLabel: 'Windows Hello (Passkey)', osAutoLabel: null } })
+    const w = mount(SecurityCard, { props: { platform: p } })
+    expect(w.text()).toContain('启用后可绑定Windows Hello (Passkey)，免输口令解锁')
+    expect(w.text()).not.toContain('或')
+  })
+
+  it('D5：添加解锁按钮含注入的 prfLabel；未注入回退「添加 Passkey 解锁」', () => {
+    const passkey = { sources: computed(() => []), prfSupported: vi.fn().mockResolvedValue(true), add: vi.fn(), remove: vi.fn() }
+    const injected = mount(SecurityCard, {
+      props: {
+        platform: makePlatform({
+          security: unlockedSecurity({ passkey }),
+          unlockNaming: { prfLabel: 'Windows Hello (Passkey)', osAutoLabel: null },
+        }),
+      },
+    })
+    expect(injected.find('button.add-passkey').text()).toBe('添加 Windows Hello (Passkey) 解锁')
+    const fallback = mount(SecurityCard, { props: { platform: makePlatform({ security: unlockedSecurity({ passkey }) }) } })
+    expect(fallback.find('button.add-passkey').text()).toBe('添加 Passkey 解锁')
+  })
+
+  it('D5：prf 不支持提示含注入的 prfLabel', async () => {
+    const passkey = { sources: computed(() => []), prfSupported: vi.fn().mockResolvedValue(false), add: vi.fn(), remove: vi.fn() }
+    const p = makePlatform({
+      security: unlockedSecurity({ passkey }),
+      unlockNaming: { prfLabel: 'Windows Hello (Passkey)', osAutoLabel: null },
+    })
+    const w = mount(SecurityCard, { props: { platform: p } })
+    await vi.waitFor(() => expect(w.text()).toContain('当前浏览器不支持 Windows Hello (Passkey) 解锁（PRF）'))
+  })
+
+  it('D5：dpapi 行使用注入的 osAutoLabel（未注入回退 Windows 自动解锁由既有用例覆盖）', () => {
+    const dpapi = makeDpapi({ source: computed(() => ({ wrappedDekD: 'W' })) })
+    const p = makePlatform({
+      security: unlockedSecurity(),
+      dpapi,
+      unlockNaming: { prfLabel: 'Passkey', osAutoLabel: 'Touch ID 自动解锁' },
+    })
+    const w = mount(SecurityCard, { props: { platform: p } })
+    expect(w.text()).toContain('Touch ID 自动解锁（DPAPI）')
+    expect(w.text()).not.toContain('Windows 自动解锁（DPAPI）')
+  })
 })

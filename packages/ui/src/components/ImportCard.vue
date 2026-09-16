@@ -520,6 +520,18 @@ function failureLabel(f: { index: number; message: string }): string {
 <template>
   <section v-if="platform" class="card import">
     <h2>导入</h2>
+    <!-- idle 态首屏说明：仅 idle 渲染（其余步骤的「冲突」等断言/文案不受污染） -->
+    <template v-if="step === 'idle'">
+      <p class="meta">选择文件后自动识别格式；不确定格式可直接尝试。冲突条目可选跳过/替换/合并。</p>
+      <details class="formats">
+        <summary>支持的导入格式</summary>
+        <ul>
+          <li>加密备份类：Aegis（加密/明文）、WinAuth XML、Authy</li>
+          <li>应用导出类：2FAS、Bitwarden、Proton Authenticator、Stratum、FreeOTP+、旧版 FreeOTP、andOTP、TOTP Authenticator、Battle.net、Duo、Microsoft Authenticator</li>
+          <li>文本与通用类：otpauth URI 批量文本、通用 JSON/JSONL/SQLite（可自定义字段映射，映射方案可保存复用）</li>
+        </ul>
+      </details>
+    </template>
 
     <template v-if="step === 'idle'">
       <div class="actions">
@@ -627,6 +639,9 @@ function failureLabel(f: { index: number; message: string }): string {
 h2 { font-size: 15px; margin: 0; }
 .meta { font-size: 13px; margin: 0; }
 .hint { font-size: 12px; opacity: .65; margin: 0; }
+.formats { font-size: 12px; opacity: .65; }
+.formats summary { cursor: pointer; }
+.formats ul { margin: 4px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .actions .format-select { min-width: 0; flex: 1; max-width: 320px; }
 .map-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
