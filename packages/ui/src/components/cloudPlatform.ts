@@ -29,7 +29,8 @@ export function createCloudBackend(cred: CloudCred, onCredChange?: (cred: CloudC
  * - 读取：cloudCreds 缺失而 cloudCred 存在 → [{ cred: 旧值, enabled: true }]；两者皆缺 → []。
  * - 保存：只写 cloudCreds 并删除旧键 cloudCred。
  * - 基线：新键 cloudRevs：Record<backend, string>；旧键 cloudRev 单串。
- * - 读取：cloudRevs 缺失而 cloudRev 存在 → 首个目标继承该值；保存只写 cloudRevs 并删除旧键 cloudRev。
+ * - 读取：cloudRevs 缺失而 cloudRev 存在 → 该值写入 targets[0].cred.backend 键（cloudCreds 为空数组时该值丢弃）；保存只写 cloudRevs 并删除旧键 cloudRev。
+ * - 偏好：两端统一键 cloudAutoPrefs（JSON CloudAutoPrefs）。
  * - backend 键取 cred.backend（同后端仅一份凭据）。
  * - 云端对象路径不落键：由 core resolveObjectPath(cred) 从 cred.objectPath 解析。
  */
@@ -51,11 +52,11 @@ export interface CloudAutoPrefs { onChange: boolean; onInterval: boolean; interv
  */
 export interface CloudPlatform {
   /** 读取已存凭据（local 键 cloudCred）；未存/读取失败 → null
-   *  @deprecated Task13 移除——改用 loadCreds/saveCreds/loadTargetHash/saveTargetHash
+   *  @deprecated Task13 移除——改用 loadCreds/saveCreds/loadTargetHash/saveTargetHash；Task 13 完成后旧成员删除、新五成员转必需
    */
   loadCred(): Promise<CloudCred | null>
   /** 持久化凭据（含 GDrive onCredChange 回存 fileId 的回写）
-   *  @deprecated Task13 移除——改用 loadCreds/saveCreds/loadTargetHash/saveTargetHash
+   *  @deprecated Task13 移除——改用 loadCreds/saveCreds/loadTargetHash/saveTargetHash；Task 13 完成后旧成员删除、新五成员转必需
    */
   saveCred(c: CloudCred): Promise<void>
   /** 当前本地明文 vault 快照（saveVault 同款 JSON） */
@@ -65,18 +66,19 @@ export interface CloudPlatform {
   /** [可选] 冲突副本落盘（desktop=AppData/backups；extension=Blob 下载），返回副本名回填提示 */
   saveConflictBackup?(bytes: Uint8Array): Promise<string | null>
   /** [可选] 读取 cloudRev（上次已知云端内容 hash）；从未记录 → null
-   *  @deprecated Task13 移除——改用 loadCreds/saveCreds/loadTargetHash/saveTargetHash
+   *  @deprecated Task13 移除——改用 loadCreds/saveCreds/loadTargetHash/saveTargetHash；Task 13 完成后旧成员删除、新五成员转必需
    */
   loadHash?(): Promise<string | null>
   /** [可选] 持久化 cloudRev（uploaded/成功采用云端后调用）
-   *  @deprecated Task13 移除——改用 loadCreds/saveCreds/loadTargetHash/saveTargetHash
+   *  @deprecated Task13 移除——改用 loadCreds/saveCreds/loadTargetHash/saveTargetHash；Task 13 完成后旧成员删除、新五成员转必需
    */
   saveHash?(hash: string): Promise<void>
   /** 多目标凭据列表（启用态随项）。宿主实现须按迁移约定回退读取旧键 */
   loadCreds?(): Promise<CloudTarget[]>
   saveCreds?(targets: CloudTarget[]): Promise<void>
-  /** 按 backend 键读写该目标的远端字节摘要基线（迁移约定见上） */
+  /** 按 backend 键读取该目标的远端字节摘要基线（迁移约定见上）；该 backend 无基线 → null */
   loadTargetHash?(backend: string): Promise<string | null>
+  /** 按 backend 键写入基线；hash=null 语义为删除该 backend 的基线键（不是写入 null 值） */
   saveTargetHash?(backend: string, hash: string | null): Promise<void>
   /** 云同步自动触发偏好（desktop/extension 均提供；缺省则卡片不渲染自动区） */
   autoPrefs?: { get(): CloudAutoPrefs; set(p: CloudAutoPrefs): void | Promise<void> }
