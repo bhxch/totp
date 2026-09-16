@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { defineComponent, h } from 'vue'
 import { mount } from '@vue/test-utils'
 import MdTextField from '../../src/components/md/MdTextField.vue'
 import MdSwitch from '../../src/components/md/MdSwitch.vue'
@@ -81,6 +82,24 @@ describe('MdTextField', () => {
     })
     await w.find('input').trigger('keydown', { key: 'Enter' })
     expect(onKeydown).toHaveBeenCalled()
+  })
+  it('disabled 透传时根带 md-text-field--disabled 降级类（视觉对齐其他 md 组件）', () => {
+    const on = mount(MdTextField, { props: { modelValue: '', label: 'x' }, attrs: { disabled: true } })
+    expect(on.classes()).toContain('md-text-field--disabled')
+    const off = mount(MdTextField, { props: { modelValue: '', label: 'x' }, attrs: { disabled: false } })
+    expect(off.classes()).not.toContain('md-text-field--disabled')
+    const none = mount(MdTextField, { props: { modelValue: '', label: 'x' } })
+    expect(none.classes()).not.toContain('md-text-field--disabled')
+  })
+  it('disabled 动态移除后降级类消失（$attrs 响应式）', async () => {
+    const Harness = defineComponent({
+      props: { disabled: Boolean },
+      setup: props => () => h(MdTextField, { modelValue: '', label: 'x', disabled: props.disabled || undefined }),
+    })
+    const w = mount(Harness, { props: { disabled: true } })
+    expect(w.find('.md-text-field').classes()).toContain('md-text-field--disabled')
+    await w.setProps({ disabled: false })
+    expect(w.find('.md-text-field').classes()).not.toContain('md-text-field--disabled')
   })
 })
 describe('MdSwitch', () => {

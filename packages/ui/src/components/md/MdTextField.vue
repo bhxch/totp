@@ -11,6 +11,12 @@ withDefaults(defineProps<{ modelValue: string; label: string; type?: string; err
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 const errorId = `md-text-field-error-${++errorIdCounter}`
 const attrs = useAttrs()
+// disabled 经 $attrs 透传内部 input,组件内自行感知以做视觉降级(对齐 MdSwitch/MdCheckbox 的 opacity .38);
+// $attrs 响应式,动态增删 disabled 时类名跟随。'' 与缺省视为禁用/未禁用的 HTML 原生语义边界
+const isDisabled = computed(() => {
+  const v = attrs.disabled
+  return v !== undefined && v !== false
+})
 const inputAttrs = computed(() => {
   const rest: Record<string, unknown> = { ...attrs }
   delete rest.class
@@ -19,7 +25,7 @@ const inputAttrs = computed(() => {
 })
 </script>
 <template>
-  <div class="md-text-field" :class="[attrs.class, { 'md-text-field--error': !!error }]" :style="attrs.style">
+  <div class="md-text-field" :class="[attrs.class, { 'md-text-field--error': !!error, 'md-text-field--disabled': isDisabled }]" :style="attrs.style">
     <label class="md-text-field__box">
       <span class="md-text-field__label" :class="{ 'md-text-field__label--floated': !!modelValue || !!placeholder }">{{ label }}</span>
       <input v-bind="inputAttrs" class="md-text-field__input" :type="type" :value="modelValue" :placeholder="placeholder"
@@ -36,6 +42,8 @@ const inputAttrs = computed(() => {
 .md-text-field__box:focus-within { border-bottom: 2px solid var(--md-sys-color-primary); }
 .md-text-field--error .md-text-field__box { border-bottom-color: var(--md-sys-color-error); }
 .md-text-field--error .md-text-field__box:focus-within { border-bottom: 2px solid var(--md-sys-color-error); }
+.md-text-field--disabled { opacity: .38; cursor: default; }
+.md-text-field--disabled .md-text-field__input { cursor: default; }
 .md-text-field__label { position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
   font-size: 16px; color: var(--md-sys-color-on-surface-variant); pointer-events: none; transition: all .15s; }
 .md-text-field__label--floated,

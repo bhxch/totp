@@ -20,10 +20,11 @@ export function readThemeMirror(): { mode?: string; color?: string } {
 
 // 非默认种子的 palettes chunk 懒加载:模块级 promise 缓存,多次调用只发起一次动态导入。
 // blue(base 兜底)直接跳过;加载完成前以 base 的 blue 值渲染,加载后由更高特异度自动换色(ms 级)。
+// 加载失败清空缓存:同会话下次切换颜色可重试,避免一次网络抖动永久停留在 blue 兜底。
 let palettesPromise: Promise<unknown> | undefined
 function ensurePalettes(color: string): void {
   if (color === DEFAULT_THEME_COLOR || palettesPromise) return
-  palettesPromise = loadPalettes().catch(() => { /* 加载失败保持 blue 兜底,不影响功能 */ })
+  palettesPromise = loadPalettes().catch(() => { palettesPromise = undefined /* 失败可重试 */ })
 }
 
 export function useTheme(store: VueStore): { mode: WritableComputedRef<ThemeModeValue>; color: WritableComputedRef<string>; resolvedMode: ComputedRef<'light' | 'dark'> } {

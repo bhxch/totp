@@ -3,10 +3,19 @@ import { reactive } from 'vue'
 import type { VueStore } from '../src/store'
 import { applyThemeAttributes, isThemeColor, THEME_PALETTES, useTheme } from '../src/theme/useTheme'
 
-// mock 静态依赖链上的加载器:loadPalettes 每次被调用即代表发起一次 palettes chunk 动态导入
-const palettesMock = vi.hoisted(() => ({ loads: 0 }))
+// mock 静态依赖链上的加载器:loadPalettes 每次被调用即代表发起一次 palettes chunk 动态导入;
+// 失败分支经 setTimeout 异步化,模拟真实网络往返(同步 reject 会在 watchEffect 同 tick 重试,失真)
+const palettesMock = vi.hoisted(() => ({ loads: 0, failNext: false }))
 vi.mock('../src/theme/loadPalettes', () => ({
-  loadPalettes: vi.fn(async () => { palettesMock.loads++; return {} }),
+  loadPalettes: vi.fn(async () => {
+    palettesMock.loads++
+    if (palettesMock.failNext) {
+      palettesMock.failNext = false
+      await new Promise<void>(resolve => setTimeout(resolve, 0))
+      throw new Error('chunk load failed')
+    }
+    return {}
+  }),
 }))
 
 // stub 只提供 useTheme 依赖的 settings/commitSettings 两成员;断言为 VueStore 满足签名(useTheme 不触及其余成员)
@@ -96,6 +105,18 @@ describe('ensurePalettes 懒加载(tokens-palettes.css 动态导入)', () => {
     t.color.value = 'pink'
     await vi.dynamicImportSettled()
     expect(palettesMock.loads).toBe(1)
+  })
+  it('加载失败清缓存:下次 set 非默认种子重新尝试导入', async () => {
+    const { useTheme: freshUseTheme } = await import('../src/theme/useTheme')
+    palettesMock.failNext = true
+    const t = freshUseTheme(store())
+    t.color.value = 'teal'
+    await vi.dynamicImportSettled()
+    await new Promise(resolve => setTimeout(resolve, 5)) // 等失败传播、catch 清缓存落地
+    expect(palettesMock.loads).toBe(1)
+    t.color.value = 'pink'
+    await vi.dynamicImportSettled()
+    expect(palettesMock.loads).toBe(2)
   })
 })
 
