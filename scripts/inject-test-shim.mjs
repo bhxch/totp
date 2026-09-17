@@ -14,7 +14,7 @@ const shim = `${MARK}
   // ===== chrome.* shim（测试专用，内存实现 + 审计） =====
   var store = {};
   function key(k) { return 'totp:' + k; }
-  var storageListeners = { local: [], sync: [] };
+  var storageListeners = { local: [], sync: [], session: [] };
   var calls = { contextMenus: [], alarms: [], notifications: [], offscreen: [], runtime: [] };
 
   function fireChanged(area, obj) {
@@ -66,12 +66,13 @@ const shim = `${MARK}
       getBytesInUse: function () { return Promise.resolve(JSON.stringify(store[area]).length); }
     };
   }
-  store.local = {}; store.sync = {};
+  store.local = {}; store.sync = {}; store.session = {};
 
   var chromeShim = {
     storage: {
       local: makeStorageArea('local'),
       sync: Object.assign(makeStorageArea('sync'), { QUOTA_BYTES: 102400 }),
+      session: makeStorageArea('session'),
       onChanged: {
         addListener: function (fn, areas) { (areas || ['local', 'sync']).forEach(function (a) { if (storageListeners[a]) storageListeners[a].push(fn); }); },
         removeListener: function (fn) {
