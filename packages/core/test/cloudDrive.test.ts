@@ -149,7 +149,7 @@ describe('Google Drive 后端', () => {
     expect(fetchMock).toHaveBeenCalledOnce()
   })
 
-  it('listBackups：无 fileId 列 root；目标文件 404 → 空数组；非 2xx 抛中文错误', async () => {
+  it('delete：无 fileId 先查询再 DELETE files/{id}；查询无匹配则不请求；已有 fileId 直接 DELETE', async () => {
     // 无 fileId：list → DELETE
     const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
       const u = String(url)

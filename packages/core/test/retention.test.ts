@@ -72,27 +72,31 @@ describe('组合回归：retention × fake fetch × 子目录 cred', () => {
     ])
   })
 
-  it('s3：DELETE key 为 dir/sub/vault-… 完整 key 域', async () => {
+  it('s3：prefix × 子目录——DELETE key 为 prefix+dir 单前缀完整 key（backups/dir/vault-…）', async () => {
     const xml = `<ListBucketResult>
-<Contents><Key>dir/sub/vault-20260101-000000.totpbackup</Key></Contents>
-<Contents><Key>dir/sub/vault-20260202-000000.totpbackup</Key></Contents>
-<Contents><Key>dir/sub/vault-20260303-000000.totpbackup</Key></Contents>
+<Contents><Key>backups/dir/sub/vault-20260101-000000.totpbackup</Key></Contents>
+<Contents><Key>backups/dir/sub/vault-20260202-000000.totpbackup</Key></Contents>
+<Contents><Key>backups/dir/sub/vault-20260303-000000.totpbackup</Key></Contents>
 </ListBucketResult>`
     const delUrls: string[] = []
     vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
       const u = String(url)
-      if (init!.method === 'GET' && u.includes('list-type=2')) return new Response(xml, { status: 200 })
+      if (init!.method === 'GET' && u.includes('list-type=2')) {
+        expect(new URL(u).searchParams.get('prefix')).toBe('backups/dir/sub/')
+        return new Response(xml, { status: 200 })
+      }
       if (init!.method === 'DELETE') {
         delUrls.push(u)
         return new Response(null, { status: 204 })
       }
       throw new Error(`意外请求：${init!.method} ${u}`)
     }))
-    const backend = createS3Backend({ backend: 's3', region: 'us-east-1', bucket: 'b', accessKeyId: 'a', secretAccessKey: 's', objectPath: 'dir/sub/totp-backup.totpbackup' }, { now: () => new Date('2015-08-30T12:36:00Z') })
+    const backend = createS3Backend({ backend: 's3', region: 'us-east-1', bucket: 'b', accessKeyId: 'a', secretAccessKey: 's', prefix: 'backups', objectPath: 'dir/sub/totp-backup.totpbackup' }, { now: () => new Date('2015-08-30T12:36:00Z') })
     expect(await enforceRemoteRetention(backend, 1)).toBe(2)
+    // listBackups 返回 dir/name（无 prefix），keyOf 恰拼回单层 prefix——双重前缀会打在不存在的 key 上虚报 204
     expect(delUrls).toEqual([
-      'https://b.s3.us-east-1.amazonaws.com/dir/sub/vault-20260101-000000.totpbackup',
-      'https://b.s3.us-east-1.amazonaws.com/dir/sub/vault-20260202-000000.totpbackup',
+      'https://b.s3.us-east-1.amazonaws.com/backups/dir/sub/vault-20260101-000000.totpbackup',
+      'https://b.s3.us-east-1.amazonaws.com/backups/dir/sub/vault-20260202-000000.totpbackup',
     ])
   })
 

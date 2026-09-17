@@ -304,7 +304,7 @@ describe('S3 后端（默认 AWS endpoint，virtual-host style）', () => {
     )
   })
 
-  it('listBackups：cred.prefix 与对象父目录拼接为完整 key 前缀', async () => {
+  it('listBackups：cred.prefix 仅作服务端 list 前缀，返回值为 dir/name（prefix 由 delete 的 keyOf 拼回）', async () => {
     const cred = { ...CRED, prefix: 'backups', objectPath: 'dir/totp-backup.totpbackup' }
     const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
       const u = new URL(String(url))
@@ -313,7 +313,7 @@ describe('S3 后端（默认 AWS endpoint，virtual-host style）', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
     const backend = createS3Backend(cred, OPTS)
-    expect(await backend.listBackups!()).toEqual(['backups/dir/vault-20260101-000000.totpbackup'])
+    expect(await backend.listBackups!()).toEqual(['dir/vault-20260101-000000.totpbackup'])
   })
 
   it('listBackups：非 2xx 抛中文错误', async () => {
