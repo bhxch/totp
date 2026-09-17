@@ -35,6 +35,12 @@ export interface AppSettings {
   themeMode: ThemeMode
   /** 主题种子色 id(packages/ui theme/palettes.json 定义);core 仅做格式校验 */
   themeColor: string
+  /** 锁定策略（设计 §1）：重启即锁（DEK 持久化关闭；false=浏览器会话内保持解锁） */
+  lockOnRestart: boolean
+  /** 空闲超时锁定分钟数；0=禁用 */
+  lockIdleMinutes: number
+  /** 系统锁屏即锁定（desktop=Tauri 事件；extension=chrome.idle 'locked'） */
+  lockOnSystemLock: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -45,6 +51,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   syncEnabled: false,
   themeMode: 'auto',
   themeColor: 'blue',
+  lockOnRestart: true,
+  lockIdleMinutes: 0,
+  lockOnSystemLock: true,
 }
 
 export async function loadSettings(adapter: StorageAdapter): Promise<AppSettings> {
@@ -63,6 +72,9 @@ export async function loadSettings(adapter: StorageAdapter): Promise<AppSettings
       syncEnabled: typeof merged.syncEnabled === 'boolean' ? (merged.syncEnabled as boolean) : DEFAULT_SETTINGS.syncEnabled,
       themeMode: merged.themeMode === 'light' || merged.themeMode === 'dark' || merged.themeMode === 'auto' ? merged.themeMode : DEFAULT_SETTINGS.themeMode,
       themeColor: typeof merged.themeColor === 'string' && merged.themeColor.length > 0 && merged.themeColor.length <= 32 ? merged.themeColor : DEFAULT_SETTINGS.themeColor,
+      lockOnRestart: typeof merged.lockOnRestart === 'boolean' ? (merged.lockOnRestart as boolean) : DEFAULT_SETTINGS.lockOnRestart,
+      lockIdleMinutes: typeof merged.lockIdleMinutes === 'number' && Number.isInteger(merged.lockIdleMinutes) && merged.lockIdleMinutes >= 0 ? (merged.lockIdleMinutes as number) : DEFAULT_SETTINGS.lockIdleMinutes,
+      lockOnSystemLock: typeof merged.lockOnSystemLock === 'boolean' ? (merged.lockOnSystemLock as boolean) : DEFAULT_SETTINGS.lockOnSystemLock,
     }
   } catch {
     return { ...DEFAULT_SETTINGS }
