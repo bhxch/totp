@@ -42,7 +42,7 @@ const emit = defineEmits<{ select: [name: string] }>()
  * 不加复合规则会让活动 pill 在悬停时被纯灰替换而「消失」) */
 .md-rail__item--active:hover .md-rail__pill { background: color-mix(in srgb, var(--md-sys-color-on-secondary-container) 8%, var(--md-sys-color-secondary-container)); }
 .md-rail__item--active:active .md-rail__pill { background: color-mix(in srgb, var(--md-sys-color-on-secondary-container) 12%, var(--md-sys-color-secondary-container)); }
-.md-rail__label { font-size: var(--md-sys-typescale-body-small); line-height: 16px; }
+.md-rail__label { font-size: var(--md-sys-typescale-label-medium); line-height: 16px; }
 .md-rail__actions { margin-top: auto; display: flex; flex-direction: column; align-items: center;
   gap: 4px; padding: 8px 12px 0; }
 </style>
