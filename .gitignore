@@ -8,4 +8,5 @@ src-tauri/target/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/
 .superpowers/
+.playwright-cli/
 coverage/
