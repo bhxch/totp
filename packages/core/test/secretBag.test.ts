@@ -21,9 +21,9 @@ describe('DEK 保管区', () => {
   })
   it('null/坏 JSON/结构非法 → 空保管区（不抛）', async () => {
     const dek = randomBytes(32)
-    expect(openSecretBag(dek, null)).resolves.toEqual(emptyBag())
-    expect(openSecretBag(dek, 'not json')).resolves.toEqual(emptyBag())
-    expect(openSecretBag(dek, JSON.stringify({ v: 1, nonce: '!!', ciphertext: '!!' }))).resolves.toEqual(emptyBag())
+    await expect(openSecretBag(dek, null)).resolves.toEqual(emptyBag())
+    await expect(openSecretBag(dek, 'not json')).resolves.toEqual(emptyBag())
+    await expect(openSecretBag(dek, JSON.stringify({ v: 1, nonce: '!!', ciphertext: '!!' }))).resolves.toEqual(emptyBag())
   })
   it('emptyBag 形状', () => {
     expect(emptyBag()).toEqual({ backupPassword: '', creds: {} })
