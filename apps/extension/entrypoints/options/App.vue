@@ -2,7 +2,7 @@
 import { backupFileName, createAutoRunScheduler, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, OVERWRITE_NAME, randomBytes, SCHEMES_KEY, type BackupEnvelopeV1, type ImportScheme, type Vault } from '@totp/core'
 import { CLIPBOARD_CLEAR_DELAY_MS, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, LockScreen, NavigationShell, prfSupported, useTheme, type BackupMode, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { createCloudCredStore, conflictBackupName } from '../../src/cloudCredStore'
+import { createCloudCredStore, conflictBackupName, formatAutoStatusText } from '../../src/cloudCredStore'
 import { createExtensionStore, storageAdapter } from '../../src/store'
 import { markSyncOff, SYNC_STATUS_KEY } from '../../src/syncEngine'
 
@@ -348,22 +348,6 @@ const scheduler = createAutoRunScheduler({
   },
 })
 
-/** 状态 JSON → 卡片展示文本（design §4.1）：「YYYY-MM-DD HH:mm 成功/失败/跳过：summary」；缺字段/坏 JSON → null（卡片显示「暂无」）。
- *  向后兼容：旧 JSON 的 ok 恒为 true/false，照常渲染成功/失败 */
-function formatAutoStatus(raw: string | undefined): string | null {
-  if (!raw) return null
-  try {
-    const s = JSON.parse(raw) as { at?: unknown; ok?: unknown; summary?: unknown }
-    if (typeof s.at !== 'number' || typeof s.summary !== 'string' || s.summary === '') return null
-    const d = new Date(s.at)
-    const p = (n: number) => String(n).padStart(2, '0')
-    const label = s.ok === null ? '跳过' : s.ok === true ? '成功' : '失败'
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} ${label}：${s.summary}`
-  } catch {
-    return null
-  }
-}
-
 const cloudPlatform: CloudPlatform = {
   readVaultJson: () => JSON.stringify(store.vault),
   async persistDownloaded(json) {
@@ -381,7 +365,8 @@ const cloudPlatform: CloudPlatform = {
   },
   loadAutoStatus: async () => {
     try {
-      return formatAutoStatus(await storageAdapter.get('cloudAutoStatus'))
+      // cloudAutoStatus 键原文 → 三态格式化纯函数（单测覆盖；审查 Minor-2 抽出）
+      return formatAutoStatusText(await storageAdapter.get('cloudAutoStatus'))
     } catch {
       return null
     }

@@ -175,7 +175,10 @@ onBeforeUnmount(() => {
 .md-select__option { height: 40px; display: flex; align-items: center; padding: 0 16px; cursor: pointer;
   font-size: var(--md-sys-typescale-body-medium); color: var(--md-sys-color-on-surface); }
 .md-select__option--active { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
-/* 鼠标 hover 同 8% state layer（批 4 抽查修正：此前仅键盘 active 有高亮）；选中项容器色不被覆盖 */
+/* 鼠标 hover 同 8% state layer（批 4 抽查修正：此前仅键盘 active 有高亮） */
 .md-select__option:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
 .md-select__option--selected { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+/* 选中项 hover 保留容器色（仅叠 8% state layer，审查 Minor-1）：选择依据是特异度 (0,3,0) 高于
+ * :hover 的 (0,2,0)，与声明顺序无关；未 hover 的选中项由上条 (0,2,0) 同特异度声明顺序兜住 */
+.md-select__option--selected:hover { background: color-mix(in srgb, var(--md-sys-color-secondary-container) 92%, var(--md-sys-color-on-surface) 8%); }
 </style>

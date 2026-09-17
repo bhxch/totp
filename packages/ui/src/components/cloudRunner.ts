@@ -45,21 +45,22 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(): Promise<v
   async function run(): Promise<void> {
     if (busy) return
     // 跳过态可观测（批 4 裁定）：锁定/无 secret/空目标是「用户需要知道的原因」，return 前记 null 跳过态。
+    // summary 仅存原因文本，不携带「跳过：」前缀——前缀由宿主格式化按 ok=null 拼装（label 拼装职责单一）。
     // 写入频率自审：调度器防抖 10s / 到点 ≥15min，每次触发事件至多写一条，量级可接受
     if (deps.isLocked()) {
-      deps.recordStatus?.(null, '跳过：库已锁定')
+      deps.recordStatus?.(null, '库已锁定')
       return
     }
     const secret = deps.getSecret()
     if (secret === null) {
-      deps.recordStatus?.(null, '跳过：未设置备份口令')
+      deps.recordStatus?.(null, '未设置备份口令')
       return // 自动触发只在解锁会话内
     }
     busy = true
     try {
       const targets = (await deps.loadCreds()).filter((t) => t.enabled)
       if (targets.length === 0) {
-        deps.recordStatus?.(null, '跳过：未启用云目标')
+        deps.recordStatus?.(null, '未启用云目标')
         return
       }
       const inputs = await Promise.all(

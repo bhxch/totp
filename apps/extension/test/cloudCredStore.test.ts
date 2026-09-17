@@ -9,7 +9,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { READABLE_BACKUP_RE, type CloudCred, type StorageAdapter } from '@totp/core'
 import type { CloudTarget } from '@totp/ui'
-import { conflictBackupName, createCloudCredStore } from '../src/cloudCredStore'
+import { conflictBackupName, createCloudCredStore, formatAutoStatusText } from '../src/cloudCredStore'
 
 const CLOUD_CRED_KEY = 'cloudCred'
 const CLOUD_CREDS_KEY = 'cloudCreds'
@@ -137,5 +137,29 @@ describe('conflictBackupName（审查 Minor-1）', () => {
   })
   it('backendKey 缺省：无 backend 段（旧名格式，同样可恢复）', () => {
     expect(conflictBackupName(undefined, d)).toBe('conflict-20260916-120000.totpbackup')
+  })
+})
+
+describe('formatAutoStatusText（options App.vue formatAutoStatus 抽出，cloudAutoStatus 状态行格式化）', () => {
+  // 本地时区构造 + 本地时区格式化，断言与运行环境时区无关
+  const AT = new Date(2026, 8, 17, 14, 30).getTime()
+
+  it('ok=true → 「YYYY-MM-DD HH:mm 成功：summary」', () => {
+    expect(formatAutoStatusText(JSON.stringify({ at: AT, ok: true, summary: 'webdav: 已上传' }))).toBe('2026-09-17 14:30 成功：webdav: 已上传')
+  })
+  it('ok=false → 失败：summary', () => {
+    expect(formatAutoStatusText(JSON.stringify({ at: AT, ok: false, summary: '网络错误' }))).toBe('2026-09-17 14:30 失败：网络错误')
+  })
+  it('ok=null → 跳过：summary（写侧 summary 仅存原因，前缀由格式化拼装）', () => {
+    expect(formatAutoStatusText(JSON.stringify({ at: AT, ok: null, summary: '未启用云目标' }))).toBe('2026-09-17 14:30 跳过：未启用云目标')
+  })
+  it('向后兼容：旧 JSON 无 ok 字段 → 按失败渲染（现状语义不变）', () => {
+    expect(formatAutoStatusText(JSON.stringify({ at: AT, summary: '旧数据' }))).toBe('2026-09-17 14:30 失败：旧数据')
+  })
+  it('缺字段/空 summary/坏 JSON/undefined → null（卡片显示「暂无」）', () => {
+    expect(formatAutoStatusText(JSON.stringify({ summary: 'x' }))).toBeNull() // 缺 at
+    expect(formatAutoStatusText(JSON.stringify({ at: AT, ok: true, summary: '' }))).toBeNull() // 空 summary
+    expect(formatAutoStatusText('{bad json')).toBeNull()
+    expect(formatAutoStatusText(undefined)).toBeNull()
   })
 })

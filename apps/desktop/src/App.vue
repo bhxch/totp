@@ -5,7 +5,7 @@ import { open, save } from '@tauri-apps/plugin-dialog'
 import { backupFileName, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, randomBytes, SCHEMES_KEY, sha256Hex, type CloudCred, type ImportScheme, type StorageAdapter, type Vault } from '@totp/core'
 import { createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupMode, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type CloudTarget, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref } from 'vue'
-import { createDesktopAutoRunner } from './autoBackup'
+import { createDesktopAutoRunner, formatAutoStatusText } from './autoBackup'
 import { createBackupToDir, listBackups, readBackupByName, readBackupFileOs, saveConflictBackupToDir, writeBackupFileOs } from './backupService'
 import { decryptDpapiOs, readImportFileBytesOs, readImportFileOs } from './importService'
 import { createTauriFs } from './tauriFs'
@@ -325,18 +325,11 @@ function recordAutoStatus(key: 'backupAutoStatus' | 'cloudAutoStatus', ok: boole
   } catch { /* 状态记录失败不影响主流程 */ }
 }
 
-/** 状态 JSON → 卡片展示文本（design §4.1）：「YYYY-MM-DD HH:mm 成功/失败/跳过：summary」；缺字段/坏 JSON → null（卡片显示「暂无」）。
- *  向后兼容：旧 JSON 的 ok 恒为 true/false，照常渲染成功/失败 */
+/** 状态 JSON → 卡片展示文本：读 backupAutoStatus/cloudAutoStatus 键后委托 autoBackup.formatAutoStatusText
+ *  （三态格式化纯函数，单测覆盖；审查 Minor-2 抽出） */
 function readAutoStatusText(key: 'backupAutoStatus' | 'cloudAutoStatus'): string | null {
   try {
-    const raw = localStorage.getItem(key)
-    if (!raw) return null
-    const s = JSON.parse(raw) as { at?: unknown; ok?: unknown; summary?: unknown }
-    if (typeof s.at !== 'number' || typeof s.summary !== 'string' || s.summary === '') return null
-    const d = new Date(s.at)
-    const p = (n: number) => String(n).padStart(2, '0')
-    const label = s.ok === null ? '跳过' : s.ok === true ? '成功' : '失败'
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} ${label}：${s.summary}`
+    return formatAutoStatusText(localStorage.getItem(key))
   } catch {
     return null
   }

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createDesktopAutoRunner, type AutoBackupDeps } from './autoBackup'
+import { createDesktopAutoRunner, formatAutoStatusText, type AutoBackupDeps } from './autoBackup'
 
 const JSON1 = '{"vault":1}'
 const HASH1 = `hash(${JSON1})`
@@ -126,24 +126,24 @@ describe('createDesktopAutoRunner（backup 通道）', () => {
     expect(onError).toHaveBeenCalledWith(boom, 'backup')
   })
 
-  it('recordStatus：locked skip 记 null 跳过态（跳过：库已锁定），不备份', async () => {
+  it('recordStatus：locked skip 记 null 跳过态（库已锁定），不备份', async () => {
     const recordStatus = vi.fn()
     const { deps, doBackup } = makeDeps({ isLocked: () => true, recordStatus })
     createDesktopAutoRunner(deps).notifyChanged()
     await vi.advanceTimersByTimeAsync(10_000)
     expect(doBackup).not.toHaveBeenCalled()
     expect(recordStatus).toHaveBeenCalledTimes(1)
-    expect(recordStatus).toHaveBeenCalledWith(null, '跳过：库已锁定')
+    expect(recordStatus).toHaveBeenCalledWith(null, '库已锁定')
   })
 
-  it('recordStatus：no-secret skip 记 null 跳过态（跳过：未设置备份口令）', async () => {
+  it('recordStatus：no-secret skip 记 null 跳过态（未设置备份口令）', async () => {
     const recordStatus = vi.fn()
     const { deps, doBackup } = makeDeps({ getSecret: () => null, recordStatus })
     createDesktopAutoRunner(deps).notifyChanged()
     await vi.advanceTimersByTimeAsync(10_000)
     expect(doBackup).not.toHaveBeenCalled()
     expect(recordStatus).toHaveBeenCalledTimes(1)
-    expect(recordStatus).toHaveBeenCalledWith(null, '跳过：未设置备份口令')
+    expect(recordStatus).toHaveBeenCalledWith(null, '未设置备份口令')
   })
 
   it('recordStatus：unchanged skip 维持静默（不记状态）', async () => {
@@ -152,6 +152,30 @@ describe('createDesktopAutoRunner（backup 通道）', () => {
     createDesktopAutoRunner(deps).notifyChanged()
     await vi.advanceTimersByTimeAsync(10_000)
     expect(recordStatus).not.toHaveBeenCalled()
+  })
+})
+
+describe('formatAutoStatusText（宿主状态行格式化，App.vue readAutoStatusText 委托）', () => {
+  // 本地时区构造 + 本地时区格式化，断言与运行环境时区无关
+  const AT = new Date(2026, 8, 17, 14, 30).getTime()
+
+  it('ok=true → 「YYYY-MM-DD HH:mm 成功：summary」', () => {
+    expect(formatAutoStatusText(JSON.stringify({ at: AT, ok: true, summary: '已创建备份' }))).toBe('2026-09-17 14:30 成功：已创建备份')
+  })
+  it('ok=false → 失败：summary', () => {
+    expect(formatAutoStatusText(JSON.stringify({ at: AT, ok: false, summary: 'disk full' }))).toBe('2026-09-17 14:30 失败：disk full')
+  })
+  it('ok=null → 跳过：summary（写侧 summary 仅存原因，前缀由格式化拼装）', () => {
+    expect(formatAutoStatusText(JSON.stringify({ at: AT, ok: null, summary: '库已锁定' }))).toBe('2026-09-17 14:30 跳过：库已锁定')
+  })
+  it('向后兼容：旧 JSON 无 ok 字段 → 按失败渲染（现状语义不变）', () => {
+    expect(formatAutoStatusText(JSON.stringify({ at: AT, summary: '旧数据' }))).toBe('2026-09-17 14:30 失败：旧数据')
+  })
+  it('缺字段/空 summary/坏 JSON/null → null（卡片显示「暂无」）', () => {
+    expect(formatAutoStatusText(JSON.stringify({ ok: true, summary: 'x' }))).toBeNull() // 缺 at
+    expect(formatAutoStatusText(JSON.stringify({ at: AT, ok: true, summary: '' }))).toBeNull() // 空 summary
+    expect(formatAutoStatusText('{bad json')).toBeNull()
+    expect(formatAutoStatusText(null)).toBeNull()
   })
 })
 

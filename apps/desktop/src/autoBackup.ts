@@ -42,6 +42,24 @@ const DEFAULT_DEBOUNCE_MS = 10_000
 /** doBackup 结果 → 中文 summary（Minor-6 中文化；未知结果兜底「已完成」） */
 const BACKUP_RESULT_LABEL: Record<string, string> = { created: '已创建备份', overwritten: '已覆盖备份' }
 
+/** 自动状态 JSON → 卡片展示文本（design §4.1）：「YYYY-MM-DD HH:mm 成功/失败/跳过：summary」；
+ *  缺字段/坏 JSON/null → null（卡片显示「暂无」）。ok=null 渲染「跳过」（写侧 summary 仅存原因，
+ *  前缀由本函数拼装）；旧 JSON 的 ok 恒为 true/false，照常渲染成功/失败。
+ *  纯函数导出：App.vue readAutoStatusText 委托实现，抽出供三态单测（审查 Minor-2） */
+export function formatAutoStatusText(raw: string | null): string | null {
+  if (!raw) return null
+  try {
+    const s = JSON.parse(raw) as { at?: unknown; ok?: unknown; summary?: unknown }
+    if (typeof s.at !== 'number' || typeof s.summary !== 'string' || s.summary === '') return null
+    const d = new Date(s.at)
+    const p = (n: number) => String(n).padStart(2, '0')
+    const label = s.ok === null ? '跳过' : s.ok === true ? '成功' : '失败'
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} ${label}：${s.summary}`
+  } catch {
+    return null
+  }
+}
+
 /** desktop 自动备份 runner（D2）：backup/cloud 双通道各挂一个 core 调度器。
  *  锁定/无 secret/unchanged 的守护全部收敛在 core decideAutoRun（调度触发永不绕过） */
 export function createDesktopAutoRunner(deps: AutoBackupDeps, opts?: { debounceMs?: number }): DesktopAutoRunner {
@@ -76,10 +94,11 @@ export function createDesktopAutoRunner(deps: AutoBackupDeps, opts?: { debounceM
       })
       if (decision.action === 'skip') {
         // 跳过态可观测（批 4 裁定）：locked/no-secret 是「用户开了开关却无法执行」的原因，记 null 跳过态；
-        // unchanged 维持静默（内容没变无需用户处理）。写入频率自审：调度器防抖 10s（change）/
+        // unchanged 维持静默（内容没变无需用户处理）。summary 仅存原因文本，不携带「跳过：」前缀——
+        // 前缀由宿主格式化按 ok=null 拼装（label 拼装职责单一）。写入频率自审：调度器防抖 10s（change）/
         // 到点 ≥15min（interval），每次触发事件至多写一条，量级可接受
-        if (decision.cause === 'locked') deps.recordStatus?.(null, '跳过：库已锁定')
-        else if (decision.cause === 'no-secret') deps.recordStatus?.(null, '跳过：未设置备份口令')
+        if (decision.cause === 'locked') deps.recordStatus?.(null, '库已锁定')
+        else if (decision.cause === 'no-secret') deps.recordStatus?.(null, '未设置备份口令')
         return
       }
       const secret = deps.getSecret()

@@ -243,10 +243,11 @@ describe('MdSelect', () => {
     w.unmount()
   })
 
-  it('⑰选项 hover 状态层：CSS :hover 8% on-surface，选中项容器色规则在后不被覆盖（jsdom 无样式，源码断言）', () => {
+  it('⑰选项 hover 状态层：CSS :hover 8% on-surface；选中项 hover 特异度(0,3,0)显式保留容器色（jsdom 无样式，源码断言）', () => {
     const src = readFileSync(join(__dirname, '../../src/components/md/MdSelect.vue'), 'utf8')
     expect(src).toMatch(/\.md-select__option:hover\s*{[^}]*color-mix\(in srgb, var\(--md-sys-color-on-surface\) 8%, transparent\)/)
-    // --selected 在 :hover 之后声明（同特异度后者的容器色胜出）
-    expect(src.indexOf('.md-select__option:hover')).toBeLessThan(src.indexOf('.md-select__option--selected'))
+    // 选中项 hover：容器色 92% 叠 on-surface 8%（--selected:hover 特异度 (0,3,0) 高于 :hover (0,2,0)，
+    // 胜出不依赖声明顺序——审查 Minor-1）
+    expect(src).toMatch(/\.md-select__option--selected:hover\s*{[^}]*color-mix\(in srgb, var\(--md-sys-color-secondary-container\) 92%, var\(--md-sys-color-on-surface\) 8%\)/)
   })
 })
