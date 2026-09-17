@@ -308,6 +308,19 @@ describe('CloudCard（多目标）', () => {
     expect(p.saveCreds).toHaveBeenCalledWith([WEBDAV_TARGET, { cred: { backend: 's3', region: '', bucket: '', accessKeyId: '', secretAccessKey: '', endpoint: '', prefix: '', sessionToken: '', objectPath: '' }, enabled: true }])
   })
 
+  it('⑭b添加目标按钮 aria-haspopup=menu 且 aria-expanded 随开关翻转（批 6 a11y）', async () => {
+    const p = makePlatform({ loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET]) })
+    const w = await mountCard(p)
+    const addBtn = w.find('button.target-add')
+    expect(addBtn.attributes('aria-haspopup')).toBe('menu')
+    expect(addBtn.attributes('aria-expanded')).toBe('false')
+    await addBtn.trigger('click')
+    expect(addBtn.attributes('aria-expanded')).toBe('true')
+    // 点选收起后翻回 false
+    await w.findAll('.md-menu button').find((b) => b.text() === 'S3')!.trigger('click')
+    expect(addBtn.attributes('aria-expanded')).toBe('false')
+  })
+
   it('⑮定时自动同步开关：onInterval 切换以最新完整对象回写 set', async () => {
     const set = vi.fn(async () => {})
     const p = makePlatform({

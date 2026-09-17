@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { createMemoryStorage, newEntryFromUri } from '@totp/core'
 import { createVueStore } from '../../src/store'
 import CodesPage from '../../src/pages/CodesPage.vue'
@@ -237,5 +238,22 @@ describe('CodesPage reveal / 右键菜单 / pinned（自 旧单页 C16 迁移）
     const uri = String(writeText.mock.calls[0]![0])
     expect(uri).toMatch(/^otpauth:\/\/totp\/A:a\?secret=JBSWY3DPEHPK3PXP&issuer=A$/)
     expect(w.find('.md-menu').exists()).toBe(false)
+  })
+
+  it('右键菜单键盘化：条目带 aria-haspopup=menu；开启聚焦首项；Esc 关闭后焦点回右键条目（批 6 a11y）', async () => {
+    const s = await storeWithTwo()
+    const w = mount(CodesPage, { props: { store: s }, attachTo: document.body })
+    const item = w.find('.otp-item')
+    // contextmenu 键/Shift+F10 会在焦点元素上派发 contextmenu → 条目可键盘触达，载体补 aria-haspopup
+    expect(item.attributes('aria-haspopup')).toBe('menu')
+    await item.trigger('contextmenu', { clientX: 10, clientY: 10 })
+    await nextTick()
+    expect(w.find('.md-menu').exists()).toBe(true)
+    expect(document.activeElement).toBe(w.findAll('.md-menu button')[0]!.element) // 开启聚焦首项
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await nextTick()
+    expect(w.find('.md-menu').exists()).toBe(false)
+    expect(document.activeElement).toBe(item.element) // 焦点回右键所在条目
+    w.unmount()
   })
 })

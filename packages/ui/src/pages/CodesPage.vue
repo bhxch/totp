@@ -38,8 +38,9 @@ const groupFilter = ref<string | null>(null)
 const revealing = ref<OtpEntry | null>(null)
 /** 分组管理弹层：chips「管理分组」触发（同时向宿主 emit open-groups 保留 Task 9 契约） */
 const groupsOpen = ref(false)
-/** 右键菜单：菜单位置与目标条目 */
-const contextMenu = ref<{ x: number; y: number; entry: OtpEntry } | null>(null)
+/** 右键菜单：菜单位置、目标条目与右键所在元素（trigger 传 MdMenu 供 Esc 关闭回焦；.otp-item 有
+ *  tabindex=0 可聚焦，回焦有效） */
+const contextMenu = ref<{ x: number; y: number; entry: OtpEntry; trigger: HTMLElement | null } | null>(null)
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
 
 /** 排序：pinned 优先，然后按 order。
@@ -122,7 +123,8 @@ function closeReveal() {
 
 /** 右键菜单：编辑 / 复制 URI / 置顶切换 */
 function onContextMenu(entry: OtpEntry, e: MouseEvent) {
-  contextMenu.value = { x: e.clientX, y: e.clientY, entry }
+  // currentTarget = .otp-item 根（contextmenu 监听载体），仅事件派发期可读，此处同步存元素引用
+  contextMenu.value = { x: e.clientX, y: e.clientY, entry, trigger: (e.currentTarget as HTMLElement) ?? null }
 }
 function closeContextMenu() {
   contextMenu.value = null
@@ -217,8 +219,9 @@ async function contextTogglePin(entry: OtpEntry) {
     <!-- 分组管理对话框：chips「管理分组」触发 -->
     <GroupManagerDialog :open="groupsOpen" :store="store" @close="groupsOpen = false" />
 
-    <!-- 右键菜单：MdMenu 负责定位/越界钳制/Esc 关闭；点别处关闭（绑定在 .row @click） -->
-    <MdMenu :x="contextMenu?.x ?? 0" :y="contextMenu?.y ?? 0" :open="contextMenu !== null" @close="closeContextMenu">
+    <!-- 右键菜单：MdMenu 负责定位/越界钳制/Esc 关闭；点别处关闭（绑定在 .row @click）。
+         triggerEl=右键所在条目（tabindex=0 可聚焦），Esc 关闭后焦点回该条目 -->
+    <MdMenu :x="contextMenu?.x ?? 0" :y="contextMenu?.y ?? 0" :open="contextMenu !== null" :trigger-el="contextMenu?.trigger ?? null" @close="closeContextMenu">
       <template v-if="contextMenu">
         <MdButton variant="text" class="ctx-item" @click="contextEdit(contextMenu.entry)">编辑</MdButton>
         <MdButton variant="text" class="ctx-item" @click="contextCopyUri(contextMenu.entry)">复制 URI</MdButton>

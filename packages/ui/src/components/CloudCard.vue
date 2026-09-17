@@ -67,7 +67,11 @@ const addableBackends = computed(() => BACKENDS.filter((b) => !targets.value.som
 /** 「添加目标」下拉菜单（MdMenu 负责定位/Esc 关闭；点选或 Esc 后收起） */
 const addMenuOpen = ref(false)
 const addMenuPos = ref({ x: 0, y: 0 })
+/** 触发按钮元素：openAddMenu 时从 currentTarget 捕获（MdButton 透传原生事件，无需组件 ref 透传），
+ *  传给 MdMenu 作 triggerEl 供 Esc 关闭回焦 */
+const addMenuTrigger = ref<HTMLElement | null>(null)
 function openAddMenu(e: MouseEvent): void {
+  addMenuTrigger.value = (e.currentTarget as HTMLElement) ?? null
   addMenuPos.value = { x: e.clientX, y: e.clientY }
   addMenuOpen.value = true
 }
@@ -421,9 +425,9 @@ function onIntervalChange(v: string | number): void {
     </div>
     <div class="actions">
       <template v-if="addableBackends.length > 0">
-        <MdButton variant="text" class="target-add" @click="openAddMenu">添加目标</MdButton>
-        <!-- MdMenu 只在 open 时渲染；定位/Esc 关闭由组件负责，点选收起在 addTarget 内 -->
-        <MdMenu :x="addMenuPos.x" :y="addMenuPos.y" :open="addMenuOpen" @close="addMenuOpen = false">
+        <MdButton variant="text" class="target-add" aria-haspopup="menu" :aria-expanded="addMenuOpen ? 'true' : 'false'" @click="openAddMenu">添加目标</MdButton>
+        <!-- MdMenu 只在 open 时渲染；定位/Esc 关闭由组件负责，点选收起在 addTarget 内；triggerEl 供 Esc 回焦 -->
+        <MdMenu :x="addMenuPos.x" :y="addMenuPos.y" :open="addMenuOpen" :trigger-el="addMenuTrigger" @close="addMenuOpen = false">
           <MdButton v-for="b in addableBackends" :key="b" variant="text" class="menu-item" @click="addTarget(b)">{{ BACKEND_LABEL[b] }}</MdButton>
         </MdMenu>
       </template>

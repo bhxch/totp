@@ -86,4 +86,123 @@ describe('MdMenu', () => {
     expect(removeSpy).toHaveBeenCalledWith('mousedown', expect.any(Function))
     w.unmount()
   })
+
+  // ---- 批 6 a11y：方向键导航 / menuitem role / 开启聚焦首项 / Tab 关闭 / Esc 焦点回触发点 ----
+
+  /** 挂载含 3 个真实 button 菜单项的开启态菜单（需 attachTo 才能聚焦） */
+  function mountMenu(props: Record<string, unknown> = {}) {
+    const w = mount(MdMenu, {
+      props: { open: true, x: 0, y: 0, ...props },
+      slots: { default: '<button id="m-a">A</button><button id="m-b">B</button><button id="m-c">C</button>' },
+      attachTo: document.body,
+    })
+    return w
+  }
+  function press(key: string): KeyboardEvent {
+    const ev = new KeyboardEvent('keydown', { key, cancelable: true })
+    window.dispatchEvent(ev)
+    return ev
+  }
+  const item = (id: string) => document.getElementById(id)!
+
+  it('open 后首个菜单项获得焦点（APG menu 推荐）', async () => {
+    const w = mountMenu()
+    await nextTick()
+    expect(document.activeElement).toBe(item('m-a'))
+    w.unmount()
+  })
+  it('open 后菜单项带 role=menuitem（根已 role=menu）', async () => {
+    const w = mountMenu()
+    await nextTick()
+    expect(w.findAll('.md-menu button').map((b) => b.attributes('role'))).toEqual(['menuitem', 'menuitem', 'menuitem'])
+    w.unmount()
+  })
+  it('ArrowDown/ArrowUp 在菜单项间循环移动焦点', async () => {
+    const w = mountMenu()
+    await nextTick()
+    expect(document.activeElement).toBe(item('m-a')) // 开启聚焦首项起步
+    press('ArrowDown')
+    expect(document.activeElement).toBe(item('m-b'))
+    press('ArrowDown')
+    expect(document.activeElement).toBe(item('m-c'))
+    press('ArrowDown')
+    expect(document.activeElement).toBe(item('m-a')) // 末项循环回首项
+    press('ArrowUp')
+    expect(document.activeElement).toBe(item('m-c')) // 反向循环
+    w.unmount()
+  })
+  it('Home 跳首项 / End 跳末项；空菜单键盘不抛错', async () => {
+    const w = mountMenu()
+    await nextTick()
+    item('m-b').focus()
+    press('Home')
+    expect(document.activeElement).toBe(item('m-a'))
+    press('End')
+    expect(document.activeElement).toBe(item('m-c'))
+    w.unmount()
+    // 无可聚焦项：方向键静默跳过不抛错
+    const empty = mount(MdMenu, { props: { open: true, x: 0, y: 0 }, attachTo: document.body })
+    await nextTick()
+    expect(() => press('ArrowDown')).not.toThrow()
+    expect(() => press('End')).not.toThrow()
+    empty.unmount()
+  })
+  it('Tab 关闭：emit close、不 preventDefault、焦点不被组件拉回', async () => {
+    const trigger = document.createElement('button')
+    document.body.appendChild(trigger)
+    const w = mountMenu({ triggerEl: trigger })
+    await nextTick()
+    expect(document.activeElement).toBe(item('m-a')) // 焦点在菜单内
+    const ev = press('Tab')
+    expect(w.emitted('close')).toHaveLength(1)
+    expect(ev.defaultPrevented).toBe(false)
+    expect(document.activeElement).toBe(item('m-a')) // 未被拉回 trigger（焦点随 Tab 自然走）
+    w.unmount()
+    trigger.remove()
+  })
+  it('Esc 关闭：triggerEl 存在且焦点在菜单内时焦点回触发元素', async () => {
+    const trigger = document.createElement('button')
+    document.body.appendChild(trigger)
+    const w = mountMenu({ triggerEl: trigger })
+    await nextTick()
+    press('Escape')
+    expect(w.emitted('close')).toHaveLength(1)
+    expect(document.activeElement).toBe(trigger)
+    w.unmount()
+    trigger.remove()
+  })
+  it('导航跳过 disabled 菜单项：聚焦首项与方向键循环均不含 disabled（边界）', async () => {
+    const w = mount(MdMenu, {
+      props: { open: true, x: 0, y: 0 },
+      slots: { default: '<button id="m-x">X</button><button id="m-d" disabled>D</button><button id="m-y">Y</button>' },
+      attachTo: document.body,
+    })
+    await nextTick()
+    expect(document.activeElement).toBe(item('m-x')) // 首个可聚焦项不含 disabled
+    press('ArrowDown')
+    expect(document.activeElement).toBe(item('m-y')) // 跳过 disabled 的 m-d
+    press('ArrowDown')
+    expect(document.activeElement).toBe(item('m-x')) // 循环回首项
+    press('ArrowUp')
+    expect(document.activeElement).toBe(item('m-y')) // 反向同样跳过
+    w.unmount()
+  })
+  it('Esc 关闭：焦点不在菜单内或 triggerEl 未接文档时不抢焦点', async () => {
+    const trigger = document.createElement('button')
+    document.body.appendChild(trigger)
+    const w = mountMenu({ triggerEl: trigger })
+    await nextTick()
+    item('m-a').blur() // 焦点已离开菜单（如用户 Tab 走后 Esc 被动触发）
+    press('Escape')
+    expect(w.emitted('close')).toHaveLength(1)
+    expect(document.activeElement).not.toBe(trigger)
+    w.unmount()
+    // triggerEl 未在文档中（已移除）：静默跳过不抛错
+    const detached = document.createElement('button')
+    const w2 = mountMenu({ triggerEl: detached })
+    await nextTick()
+    expect(() => press('Escape')).not.toThrow()
+    w2.unmount()
+    trigger.remove()
+  })
 })

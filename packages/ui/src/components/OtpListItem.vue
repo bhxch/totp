@@ -26,7 +26,9 @@ function grouped(code: string): string {
   return code.length === 5 || code.length === 7 || code.length === 8 ? code : code.replace(/(\d{3})(\d+)/, '$1 $2')
 }
 
-/** 右键菜单：阻止默认浏览器菜单，上抛 event 给父组件在 (x,y) 渲染自定义菜单 */
+/** 右键菜单：阻止默认浏览器菜单，上抛 event 给父组件在 (x,y) 渲染自定义菜单。
+ *  键盘可达性：根元素 tabindex=0 可聚焦，Context Menu 键 / Shift+F10 会在焦点元素上派发
+ *  contextmenu 事件 → 键盘用户可触达右键菜单，根上的 aria-haspopup="menu" 向 AT 声明该入口 */
 function onContextMenu(e: MouseEvent): void {
   e.preventDefault()
   emit('context', e)
@@ -38,6 +40,7 @@ function onContextMenu(e: MouseEvent): void {
     class="otp-item"
     role="button"
     tabindex="0"
+    aria-haspopup="menu"
     @click="emit('copy')"
     @keydown.enter="emit('copy')"
     @contextmenu="onContextMenu"
