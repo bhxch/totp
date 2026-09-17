@@ -105,8 +105,9 @@ export function createDesktopAutoRunner(deps: AutoBackupDeps, opts?: { debounceM
       if (secret === null) return // decideAutoRun 已挡 no-secret；此处窄化满足 TS
       const r = await deps.doBackup(deps.getVaultJson(), secret)
       deps.setLastBackupHash(currentHash)
-      // 状态记录（design §4.1）：summary 取 doBackup 结果（中文化：created/overwritten）
-      deps.recordStatus?.(true, BACKUP_RESULT_LABEL[typeof r === 'string' ? r : ''] ?? '已完成')
+      // 状态记录（design §4.1）：summary 取 doBackup 结果——created/overwritten 走中文化 label 表，
+      // plan16 T14 起多源中文摘要（如「已备份到 2 个目录（…）」）不在表内，原样透传（诚实反映每源成败）
+      deps.recordStatus?.(true, typeof r === 'string' ? (BACKUP_RESULT_LABEL[r] ?? r) : '已完成')
     } catch (err) {
       // 失败也记状态；rethrow 交调度器 onError 兜底（行为不变）
       deps.recordStatus?.(false, (err instanceof Error ? err.message : String(err)).slice(0, 100))

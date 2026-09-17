@@ -1,8 +1,24 @@
 import { invoke } from '@tauri-apps/api/core'
 import { mkdir, readDir, readTextFile, rename, writeTextFile, BaseDirectory } from '@tauri-apps/plugin-fs'
-import { backupFileName, conflictBackupFileName, selectBackupsToKeep, READABLE_BACKUP_RE, OVERWRITE_NAME, createBackupEnvelope, type BackupEnvelopeV1 } from '@totp/core'
+import {
+  backupFileName, conflictBackupFileName, createBackupEnvelope, DEFAULT_KDF_PROFILE, OVERWRITE_NAME,
+  READABLE_BACKUP_RE, selectBackupsToKeep,
+  type BackupEnvelope, type KdfProfile, type Retention,
+} from '@totp/core'
 
 const dir = 'backups'
+
+/** 每源备份输入（plan16 T14）：ui LocalSourceView / core BackupSource 的公共结构子集，
+ *  宿主直接传 core loadSources 结果（结构兼容，本模块不感知 kind/objectPath；dir 可选与 BackupSource 对齐） */
+export interface BackupSourceInput {
+  id: string
+  /** 摘要中展示的用户可见别名 */
+  name: string
+  /** 备份目录绝对路径；null/缺省=默认（AppData/backups） */
+  dir?: string | null
+  retention: Retention
+  enabled: boolean
+}
 
 /** 用户自选备份目录（D4）的路径拼接：分隔符按 dir 自身风格判定——含 \ 用 \ 连接
  *  （Windows 目录选择器返回 C:\... 天然含反斜杠）；否则（POSIX 含 / 或无分隔符的相对名）用 / 连接 */
@@ -26,6 +42,107 @@ async function writeOsFile(dirOverride: string, name: string, contents: string):
   await invoke('write_text_file_os', { path: joinBackupPath(dirOverride, name), contents, allowedDir: dirOverride })
 }
 
+/** 单目录备份名列表：os 目录走 Rust 白名单命令（已过滤+升序）；null=AppData/backups 走 plugin-fs readDir */
+async function listDirNames(dirOverride: string | null): Promise<string[]> {
+  return dirOverride
+    ? invoke<string[]>('list_backup_files_os', { dir: dirOverride })
+    : (await readDir(dir, { baseDir: BaseDirectory.AppData })).map((e) => e.name)
+}
+
+/** 单源落盘（plan16 前为 createBackupToDir 本体）：overwrite=固定名覆盖；keep=时间戳名+滚动删除。
+ *  信封文本由调用方生成传入（多源共享同一份密文，Argon2id 只跑一次） */
+async function writeSourceBackup(dirOverride: string | null, contents: string, retention: Retention): Promise<'created' | 'overwritten'> {
+  if (retention.type === 'overwrite') {
+    if (dirOverride) await writeOsFile(dirOverride, OVERWRITE_NAME, contents)
+    else await writeDirFile(OVERWRITE_NAME, contents)
+    return 'overwritten'
+  }
+  const name = backupFileName(new Date())
+  if (dirOverride) {
+    await writeOsFile(dirOverride, name, contents)
+    // 滚动删除走 os 列表+删除命令（目录即授权目标；Rust 端已做白名单过滤）
+    const names = await invoke<string[]>('list_backup_files_os', { dir: dirOverride })
+    const stale = selectBackupsToKeep(names, retention.n)
+    for (const staleName of stale) await invoke('remove_backup_file_os', { path: joinBackupPath(dirOverride, staleName), allowedDir: dirOverride })
+  } else {
+    await writeDirFile(name, contents)
+    const entries = await readDir(dir, { baseDir: BaseDirectory.AppData })
+    const stale = selectBackupsToKeep(entries.map((e) => e.name), retention.n)
+    for (const staleName of stale) await invoke('remove_backup_file', { name: staleName })
+  }
+  return 'created'
+}
+
+/**
+ * 每源备份（plan16 T14）：对全部启用源逐一落盘（各按其 retention），返回诚实反映成败的中文摘要。
+ * envelope 按 profile 档位一次生成、多目录复用（同 (vaultJson, password, profile) 密文可多目录存放）；
+ * 单源失败（写盘/滚动删除异常）不阻断其余源，仅计入摘要失败名单；无启用源返回提示文案由卡展示。
+ */
+export async function createBackupToSources(sources: BackupSourceInput[], vaultJson: string, password: string, profile: KdfProfile = DEFAULT_KDF_PROFILE): Promise<string> {
+  const enabled = sources.filter((s) => s.enabled)
+  if (enabled.length === 0) return '未配置启用的备份目录'
+  const contents = JSON.stringify(await createBackupEnvelope(vaultJson, password, profile), null, 2)
+  const ok: string[] = []
+  const failed: string[] = []
+  for (const s of enabled) {
+    try {
+      await writeSourceBackup(s.dir ?? null, contents, s.retention)
+      ok.push(s.name)
+    } catch {
+      failed.push(s.name)
+    }
+  }
+  if (failed.length === 0) return `已备份到 ${ok.length} 个目录（${ok.join('、')}）`
+  if (ok.length === 0) return `备份失败：${failed.join('、')}`
+  return `已备份到 ${ok.length} 个目录（${ok.join('、')}）；失败：${failed.join('、')}`
+}
+
+/** 云同步冲突副本：本地 vault JSON 字节写 backups/conflict-{ts}.totpbackup（不参与滚动删除），返回文件名。
+ *  多源场景带 sourceId 区分来源（conflict-{sourceId}-{ts}.totpbackup，desktop 侧拼接——
+ *  core conflictBackupFileName(now) 无第二参）；缺省保持历史名。恒写默认 backups 目录（源模型后无单一「自选目录」） */
+export async function saveConflictBackupToDir(bytes: Uint8Array, dirOverride: string | null = null, sourceId?: string): Promise<string> {
+  const base = conflictBackupFileName(new Date())
+  const name = sourceId ? `conflict-${sourceId}-${base.slice('conflict-'.length)}` : base
+  const contents = new TextDecoder().decode(bytes)
+  if (dirOverride) await writeOsFile(dirOverride, name, contents)
+  else await writeDirFile(name, contents)
+  return name
+}
+
+/** 聚合全部本地源的备份文件列表（plan16 T14）：逐源列目录（单源失败跳过不影响其余），过滤
+ *  .totpbackup 后标注 sourceId，按文件名倒序=新在前（时间戳名全局字典序可比；码点比较跨 locale 确定） */
+export async function listBackupsFromSources(sources: BackupSourceInput[]): Promise<Array<{ sourceId: string; name: string }>> {
+  const out: Array<{ sourceId: string; name: string }> = []
+  for (const s of sources) {
+    try {
+      const names = await listDirNames(s.dir ?? null)
+      for (const n of names) if (n.endsWith('.totpbackup')) out.push({ sourceId: s.id, name: n })
+    } catch { /* 单源列表失败（目录被移除等）：跳过该源，其余照常展示 */ }
+  }
+  return out.sort((x, y) => (x.name < y.name ? 1 : x.name > y.name ? -1 : 0))
+}
+
+/** 按源 id + 文件名读取该源目录内备份文本：先过 READABLE_BACKUP_RE 白名单（防路径穿越），
+ *  再按 sourceId 定位目录（未知源抛错）；dir=null 走 AppData plugin-fs，否则走 os 命令 */
+export async function readBackupByName(sourceId: string, name: string, sources: Array<Pick<BackupSourceInput, 'id' | 'dir'>>): Promise<string> {
+  if (!READABLE_BACKUP_RE.test(name)) throw new Error('invalid backup name')
+  const src = sources.find((s) => s.id === sourceId)
+  if (!src) throw new Error('未找到该备份目录')
+  const dirOverride = src.dir ?? null
+  if (dirOverride) return invoke<string>('read_text_file_os', { path: joinBackupPath(dirOverride, name), allowedDir: dirOverride })
+  return readTextFile(`${dir}/${name}`, { baseDir: BaseDirectory.AppData })
+}
+
+export async function readBackupFileOs(path: string): Promise<string> {
+  const allowedDir = await parentDirOf(path)
+  return invoke<string>('read_text_file_os', { path, allowedDir })
+}
+
+export async function writeBackupFileOs(path: string, envelope: BackupEnvelope): Promise<void> {
+  const allowedDir = await parentDirOf(path)
+  await invoke('write_text_file_os', { path, contents: JSON.stringify(envelope, null, 2), allowedDir })
+}
+
 /** C9：从用户对话框返回的完整路径取其父目录，作为 Rust 端 write/read_text_file_os 的 allowed_dir。
  *  若解析不出父目录（如根目录），回退到 appDataDir 基线。 */
 async function parentDirOf(path: string): Promise<string> {
@@ -36,64 +153,4 @@ async function parentDirOf(path: string): Promise<string> {
     return await appDataDir()
   }
   return path.slice(0, idx)
-}
-
-export async function createBackupToDir(vaultJson: string, password: string, mode: { type: 'keep'; n: number } | { type: 'overwrite' }, dirOverride: string | null = null): Promise<'created' | 'overwritten'> {
-  const env = await createBackupEnvelope(vaultJson, password)
-  const contents = JSON.stringify(env, null, 2)
-  if (mode.type === 'overwrite') {
-    if (dirOverride) await writeOsFile(dirOverride, OVERWRITE_NAME, contents)
-    else await writeDirFile(OVERWRITE_NAME, contents)
-    return 'overwritten'
-  }
-  const name = backupFileName(new Date())
-  if (dirOverride) {
-    await writeOsFile(dirOverride, name, contents)
-    // 滚动删除走 os 列表+删除命令（目录即授权目标；Rust 端已做白名单过滤）
-    const names = await invoke<string[]>('list_backup_files_os', { dir: dirOverride })
-    const stale = selectBackupsToKeep(names, mode.n)
-    for (const staleName of stale) await invoke('remove_backup_file_os', { path: joinBackupPath(dirOverride, staleName), allowedDir: dirOverride })
-  } else {
-    await writeDirFile(name, contents)
-    const entries = await readDir(dir, { baseDir: BaseDirectory.AppData })
-    const stale = selectBackupsToKeep(entries.map((e) => e.name), mode.n)
-    for (const staleName of stale) await invoke('remove_backup_file', { name: staleName })
-  }
-  return 'created'
-}
-
-/** 云同步冲突副本：本地 vault JSON 字节写 backups/conflict-{ts}.totpbackup（不参与滚动删除），返回文件名。
- *  多目标场景带 backendKey 区分来源（conflict-{backendKey}-{ts}.totpbackup，desktop 侧拼接——
- *  core conflictBackupFileName(now) 无第二参）；缺省保持历史名。 */
-export async function saveConflictBackupToDir(bytes: Uint8Array, dirOverride: string | null = null, backendKey?: string): Promise<string> {
-  const base = conflictBackupFileName(new Date())
-  const name = backendKey ? `conflict-${backendKey}-${base.slice('conflict-'.length)}` : base
-  const contents = new TextDecoder().decode(bytes)
-  if (dirOverride) await writeOsFile(dirOverride, name, contents)
-  else await writeDirFile(name, contents)
-  return name
-}
-
-export async function listBackups(dirOverride: string | null = null): Promise<Array<{ name: string }>> {
-  // 显式排序保证确定性（不依赖文件系统返回顺序），倒序=新在前；Rust 端已按白名单过滤并升序返回
-  const names = dirOverride
-    ? await invoke<string[]>('list_backup_files_os', { dir: dirOverride })
-    : (await readDir(dir, { baseDir: BaseDirectory.AppData })).map((e) => e.name)
-  return names.filter((n) => n.endsWith('.totpbackup')).map((n) => ({ name: n })).sort((a, b) => a.name.localeCompare(b.name)).reverse()
-}
-
-export async function readBackupByName(name: string, dirOverride: string | null = null): Promise<string> {
-  if (!READABLE_BACKUP_RE.test(name)) throw new Error('invalid backup name')
-  if (dirOverride) return invoke<string>('read_text_file_os', { path: joinBackupPath(dirOverride, name), allowedDir: dirOverride })
-  return readTextFile(`${dir}/${name}`, { baseDir: BaseDirectory.AppData })
-}
-
-export async function readBackupFileOs(path: string): Promise<string> {
-  const allowedDir = await parentDirOf(path)
-  return invoke<string>('read_text_file_os', { path, allowedDir })
-}
-
-export async function writeBackupFileOs(path: string, envelope: BackupEnvelopeV1): Promise<void> {
-  const allowedDir = await parentDirOf(path)
-  await invoke('write_text_file_os', { path, contents: JSON.stringify(envelope, null, 2), allowedDir })
 }

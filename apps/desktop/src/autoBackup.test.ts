@@ -116,6 +116,15 @@ describe('createDesktopAutoRunner（backup 通道）', () => {
     expect(recordStatus).toHaveBeenCalledWith(true, '已覆盖备份')
   })
 
+  it('recordStatus：多源中文摘要（plan16 T14 createBackupToSources 返回值）不在 label 表内，原样透传', async () => {
+    const recordStatus = vi.fn()
+    const summary = '已备份到 2 个目录（家里、办公室）；失败：停用'
+    const { deps } = makeDeps({ doBackup: vi.fn(async () => summary), recordStatus })
+    createDesktopAutoRunner(deps).notifyChanged()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(recordStatus).toHaveBeenCalledWith(true, summary)
+  })
+
   it('recordStatus：备份失败写 ok=false（错误消息截断 100 字符），onError 仍收到', async () => {
     const recordStatus = vi.fn()
     const boom = new Error('x'.repeat(150))
