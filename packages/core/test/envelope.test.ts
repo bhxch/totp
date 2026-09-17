@@ -1,17 +1,42 @@
 import { describe, expect, it } from 'vitest'
-import { createBackupEnvelope, isBackupEnvelope, openBackupEnvelope } from '../src/backup/envelope'
+import { createBackupEnvelope, isBackupEnvelope, KDF_PROFILES, openBackupEnvelope } from '../src/backup/envelope'
 import { base64ToBytes, bytesToBase64 } from '../src/crypto/aesgcm'
 
 const vaultJson = JSON.stringify({ version: 1, entries: [{ uuid: 'a' }], groups: [], updatedAt: 1 })
 
-describe('envelope', () => {
-  it('创建→口令正确解开原文', async () => {
+describe('envelope v2', () => {
+  it('创建→口令正确解开原文（v2 结构往返）', async () => {
     const env = await createBackupEnvelope(vaultJson, '口令123')
-    expect(env.v).toBe(1)
+    expect(env.v).toBe(2)
+    expect(env.aead).toBe('aes-256-gcm')
     expect(env.kdf.alg).toBe('argon2id')
+    expect(env.kdf.profile).toBe('balanced')
     expect(env.kdf.m).toBe(65536)
     expect(isBackupEnvelope(env)).toBe(true)
     expect(await openBackupEnvelope(env, '口令123')).toBe(vaultJson)
+  })
+  it('v2 结构：profile 展开参数与 aead 字段落盘', async () => {
+    const env = await createBackupEnvelope('{"x":1}', '口令', 'fast')
+    expect(env.v).toBe(2)
+    expect(env.aead).toBe('aes-256-gcm')
+    expect(env.kdf.profile).toBe('fast')
+    expect(env.kdf.m).toBe(KDF_PROFILES.fast.m)
+    expect(env.kdf.t).toBe(KDF_PROFILES.fast.t)
+    expect(env.kdf.p).toBe(KDF_PROFILES.fast.p)
+    // 展开参数落盘后可解开（读端按展开值派生）
+    expect(await openBackupEnvelope(env, '口令')).toBe('{"x":1}')
+  })
+  it('缺省档位 balanced（65536/3/1）', async () => {
+    const env = await createBackupEnvelope('{}', '口令')
+    expect(env.kdf.profile).toBe('balanced')
+    expect(env.kdf.m).toBe(65536)
+    expect(env.kdf.t).toBe(3)
+    expect(env.kdf.p).toBe(1)
+  })
+  it('v1 信封拒绝（v!==2 → invalid backup envelope）', async () => {
+    await expect(openBackupEnvelope({ v: 1, kdf: {}, wrapNonce: '', wrappedDek: '', dataNonce: '', ciphertext: '' }, 'x')).rejects.toThrow('invalid backup envelope')
+    // v1 旧对象也不被 isBackupEnvelope 认可（缺 aead/profile）
+    expect(isBackupEnvelope({ v: 1, kdf: { alg: 'argon2id', m: 65536, t: 3, p: 1, salt: '' }, wrapNonce: '', wrappedDek: '', dataNonce: '', ciphertext: '' })).toBe(false)
   })
   it('口令错误抛 bad password', async () => {
     const env = await createBackupEnvelope(vaultJson, '对')
@@ -26,6 +51,19 @@ describe('envelope', () => {
   it('结构非法抛 invalid backup envelope', async () => {
     await expect(openBackupEnvelope({ v: 2 }, 'p')).rejects.toThrow('invalid backup envelope')
     await expect(openBackupEnvelope('not json', 'p')).rejects.toThrow('invalid backup envelope')
+    // 缺 aead / aead 非法 → invalid（本实现只认 aes-256-gcm）
+    const env = await createBackupEnvelope(vaultJson, 'p')
+    await expect(openBackupEnvelope({ ...env, aead: undefined }, 'p')).rejects.toThrow('invalid backup envelope')
+    await expect(openBackupEnvelope({ ...env, aead: 'chacha20-poly1305' }, 'p')).rejects.toThrow('invalid backup envelope')
+  })
+  it('KDF 参数钳制沿用：声明超大 m 拒绝', async () => {
+    const env = await createBackupEnvelope('{}', '口令')
+    const evil = { ...env, kdf: { ...env.kdf, m: 2 ** 30 } }
+    await expect(openBackupEnvelope(evil, '口令')).rejects.toThrow('invalid backup envelope')
+  })
+  it('salt 非法 base64 → invalid backup envelope（deriveKek 前置失败路径）', async () => {
+    const env = await createBackupEnvelope(vaultJson, 'p')
+    await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, salt: '!!' } }, 'p')).rejects.toThrow('invalid backup envelope')
   })
   it('kdf 参数超限抛 invalid backup envelope（防恶意 envelope 资源耗尽）', async () => {
     const env = await createBackupEnvelope(vaultJson, 'p')
@@ -51,6 +89,11 @@ describe('envelope', () => {
     await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, p: 0.5 } }, 'p')).rejects.toThrow('invalid backup envelope')
     // 组合违规：m/t/p 同时越界仍抛错（不被单一字段短路掩盖）
     await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, m: 8, t: 0, p: 0 } }, 'p')).rejects.toThrow('invalid backup envelope')
+  })
+  it('非法档位名回落 balanced（防调用方传脏值崩溃）', async () => {
+    const env = await createBackupEnvelope('{}', '口令', 'bogus' as never)
+    expect(env.kdf.profile).toBe('balanced')
+    expect(env.kdf.m).toBe(65536)
   })
   it('同口令两次创建产生不同 salt/nonce（随机性）', async () => {
     const a = await createBackupEnvelope(vaultJson, 'p')

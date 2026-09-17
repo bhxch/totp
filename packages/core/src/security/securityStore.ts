@@ -1,5 +1,9 @@
 import { aesGcmDecrypt, aesGcmEncrypt, base64ToBytes, bytesToBase64, deriveKek, randomBytes } from '../crypto/aesgcm'
+import { DEFAULT_KDF_PROFILE, isKdfProfile, KDF_PROFILES, type KdfProfile } from '../crypto/kdfProfile'
 import { kekSourcesOf } from './multiKek'
+
+export { DEFAULT_KDF_PROFILE, isKdfProfile, KDF_PROFILES } from '../crypto/kdfProfile'
+export type { KdfProfile } from '../crypto/kdfProfile'
 
 // KEK 来源（计划11 多绑）：同一 DEK 可被多把 KEK 分别包裹；wrappedDek 字段保留为口令包裹
 export type KekSource =
@@ -11,10 +15,15 @@ export type KekSource =
 export interface SecuritySettings {
   v: 1
   enabled: true
-  kdf: { alg: 'argon2id'; m: number; t: number; p: number; salt: string }
+  /** profile 镜像落盘（与 envelope v2 kdf 块同形）；顶层 profile 为展示权威，两者同写 */
+  kdf: { alg: 'argon2id'; m: number; t: number; p: number; salt: string; profile?: KdfProfile }
   wrapNonce: string
   wrappedDek: string
   kekSources?: KekSource[]
+  /** KDF 档位（设计 §2）：写入时记录的档位意图，仅展示用；旧数据缺失视为 balanced */
+  profile?: KdfProfile
+  /** 主口令最后更换时刻（设计 §2 天数提示/被动轮换）；旧数据缺失视为未记录 */
+  passwordChangedAt?: number
 }
 
 export interface EncryptedVault { v: 1; enc: true; dataNonce: string; ciphertext: string }
@@ -68,12 +77,14 @@ export function isSecuritySettings(x: unknown): x is SecuritySettings {
 export async function setupVaultEncryption(
   vaultJson: string,
   password: string,
-  // 故意不接受 params：KDF 写入参数统一走默认 65536/3/1，避免外部调用注入「极弱」配置绕过 argon2id 强度
-  _params?: unknown,
+  // 故意只接受档位名而非裸参数：KDF 展开值统一由 KDF_PROFILES 给出，避免外部调用注入「极弱」配置绕过 argon2id 强度
+  opts: { profile?: KdfProfile } = {},
 ): Promise<{ security: SecuritySettings; encrypted: EncryptedVault; dek: Uint8Array }> {
+  const profile = isKdfProfile(opts.profile) ? opts.profile : DEFAULT_KDF_PROFILE
+  const { m, t, p } = KDF_PROFILES[profile]
   const salt = randomBytes(16)
   const dek = randomBytes(32)
-  const kek = await deriveKek(password, salt)
+  const kek = await deriveKek(password, salt, { m, t, p })
   const wrapNonce = randomBytes(12)
   const wrappedDek = await aesGcmEncrypt(kek, dek, wrapNonce)
   const security: SecuritySettings = {
@@ -81,13 +92,16 @@ export async function setupVaultEncryption(
     enabled: true,
     kdf: {
       alg: 'argon2id',
-      m: 65536,
-      t: 3,
-      p: 1,
+      m,
+      t,
+      p,
       salt: bytesToBase64(salt),
+      profile,
     },
     wrapNonce: bytesToBase64(wrapNonce),
     wrappedDek: bytesToBase64(wrappedDek),
+    profile,
+    passwordChangedAt: Date.now(),
   }
   const encrypted = await encryptVaultWithDek(dek, vaultJson)
   return { security, encrypted, dek }
@@ -129,25 +143,43 @@ export async function changeVaultPassphrase(
   security: SecuritySettings,
   dek: Uint8Array,
   newPassword: string,
-): Promise<SecuritySettings> {
+  opts: { rotateDek?: boolean; profile?: KdfProfile } = {},
+): Promise<{ security: SecuritySettings; dek: Uint8Array | null }> {
   if (dek.length !== 32) throw new Error('invalid dek')
   if (!isSecuritySettings(security)) throw new Error('invalid security settings')
   assertKdfParams(security.kdf)
-  // 仅重包裹 DEK：salt/wrapNonce 全新随机，DEK 不变（数据无需重加密），KDF 费用沿用原设置
+  // 档位切换（设计 §2 立即生效裁定）：提供 profile 时用新档位展开参数重 wrap（salt 本就全新随机，数据无需重加密）；缺省沿用原设置
+  const profile = isKdfProfile(opts.profile) ? opts.profile : undefined
+  const m = profile ? KDF_PROFILES[profile].m : security.kdf.m
+  const t = profile ? KDF_PROFILES[profile].t : security.kdf.t
+  const p = profile ? KDF_PROFILES[profile].p : security.kdf.p
+  // 被动轮换（设计 §2）：rotateDek=true 时重生成 DEK 作被包裹对象并返回，调用方须全库重加密 + 保管区重封
+  const nextDek = opts.rotateDek ? randomBytes(32) : dek
+  // 仅重包裹 DEK：salt/wrapNonce 全新随机（数据无需重加密）
   const salt = randomBytes(16)
-  const kek = await deriveKek(newPassword, salt, { m: security.kdf.m, t: security.kdf.t, p: security.kdf.p })
+  const kek = await deriveKek(newPassword, salt, { m, t, p })
   const wrapNonce = randomBytes(12)
-  const wrappedDek = await aesGcmEncrypt(kek, dek, wrapNonce)
+  const wrappedDek = await aesGcmEncrypt(kek, nextDek, wrapNonce)
+  // 恒刷新（设计 §2）：改口令/轮换/换档都视作口令凭证更新
+  const nextProfile = profile ?? security.profile
   return {
-    v: 1,
-    enabled: true,
-    kdf: { alg: 'argon2id', m: security.kdf.m, t: security.kdf.t, p: security.kdf.p, salt: bytesToBase64(salt) },
-    wrapNonce: bytesToBase64(wrapNonce),
-    wrappedDek: bytesToBase64(wrappedDek),
-    // 多绑来源（prf/dpapi 的 wrappedDekP/D 与 DEK 绑定）不受换口令影响，原样保留；
-    // 走 kekSourcesOf 归一：旧数据缺字段/空数组/全非法 → [{kind:'password'}]，避免原条件展开在「旧密码无 kekSources」分支漏写 password 源导致换口令后多绑列表丢失。
-    // M6：去重 — 旧数据/手改/历史 bug 引入同 kind 重复条目时，换口令后只保留首条，避免后续 UI 列表渲染重复项
-    kekSources: removeDuplicateKekSources(kekSourcesOf(security)),
+    security: {
+      v: 1,
+      enabled: true,
+      kdf: { alg: 'argon2id', m, t, p, salt: bytesToBase64(salt), profile: nextProfile },
+      wrapNonce: bytesToBase64(wrapNonce),
+      wrappedDek: bytesToBase64(wrappedDek),
+      // 多绑来源（prf/dpapi 的 wrappedDekP/D 与 DEK 绑定）不受换口令影响，原样保留；
+      // 注意：rotateDek=true 换 DEK 后 prf/dpapi 包裹仍指向旧 DEK，宿主须引导用户重新绑定（T11+ UI 责任）。
+      // 走 kekSourcesOf 归一：旧数据缺字段/空数组/全非法 → [{kind:'password'}]，避免原条件展开在「旧密码无 kekSources」分支漏写 password 源导致换口令后多绑列表丢失。
+      // M6：去重 — 旧数据/手改/历史 bug 引入同 kind 重复条目时，换口令后只保留首条，避免后续 UI 列表渲染重复项
+      kekSources: removeDuplicateKekSources(kekSourcesOf(security)),
+      // 档位未提供时保留原档位意图（无档位记录的旧数据保持 undefined）
+      profile: nextProfile,
+      // 恒刷新（设计 §2）：改口令/轮换/换档都视作口令凭证更新
+      passwordChangedAt: Date.now(),
+    },
+    dek: opts.rotateDek ? nextDek : null,
   }
 }
 

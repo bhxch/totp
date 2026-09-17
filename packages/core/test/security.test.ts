@@ -20,24 +20,50 @@ describe('securityStore', () => {
     const dek2 = await unlockVaultEncryption(security, '口令123')
     expect(await decryptVaultWithDek(dek2, encrypted)).toBe(vaultJson)
   })
-  it('setupVaultEncryption 忽略外部 params 注入：永远用默认 65536/3/1，防止注入极弱 KDF', async () => {
-    // 故意注入极弱参数，期望被忽略（写入仍为默认 65536/3/1），unlock 用同参数风格不受影响
-    const { security } = await setupVaultEncryption(vaultJson, 'p', { m: 1e9, t: 1, p: 1 } as any)
+  it('setupVaultEncryption 非档位 opts 被忽略：永远用默认 balanced 65536/3/1，防止注入极弱 KDF', async () => {
+    // 故意传非法 profile/杂项字段，期望被忽略（写入仍为默认 balanced），unlock 用同参数风格不受影响
+    const { security } = await setupVaultEncryption(vaultJson, 'p', { profile: 'bogus' as never, m: 1e9, t: 1, p: 1 } as never)
     expect(security.kdf.m).toBe(65536)
     expect(security.kdf.t).toBe(3)
     expect(security.kdf.p).toBe(1)
+    expect(security.profile).toBe('balanced')
+    expect(typeof security.passwordChangedAt).toBe('number')
+  })
+  it('setupVaultEncryption 写入 profile 与 passwordChangedAt', async () => {
+    const r = await setupVaultEncryption('{}', '口令', { profile: 'paranoid' })
+    expect(r.security.profile).toBe('paranoid')
+    expect(r.security.kdf.m).toBe(262144)
+    expect(typeof r.security.passwordChangedAt).toBe('number')
+    // 档位展开参数真实参与派生：新口令可解锁
+    expect(await unlockVaultEncryption(r.security, '口令')).toEqual(r.dek)
   })
   it('口令错误报中文错误', async () => {
     const { security } = await setupVaultEncryption(vaultJson, '对')
     await expect(unlockVaultEncryption(security, '错')).rejects.toThrow('口令错误或数据已损坏')
   })
-  it('changePassphrase 后新口令可解、旧口令不可', async () => {
+  it('changePassphrase 后新口令可解、旧口令不可（缺省仅重包裹，dek=null）', async () => {
     const { security, dek } = await setupVaultEncryption(vaultJson, '旧')
-    const s2 = await changeVaultPassphrase(security, dek, '新')
+    const rewrap = await changeVaultPassphrase(security, dek, '新')
+    expect(rewrap.dek).toBeNull()
+    const s2 = rewrap.security
     expect(s2.kdf.salt).not.toBe(security.kdf.salt)
+    expect(s2.profile).toBe(security.profile)
+    expect(s2.passwordChangedAt).toBeGreaterThanOrEqual(security.passwordChangedAt!)
     const dek2 = await unlockVaultEncryption(s2, '新')
     expect(dek2).toEqual(dek) // 同一 DEK：数据无需重加密
     await expect(unlockVaultEncryption(s2, '旧')).rejects.toThrow('口令错误或数据已损坏')
+  })
+  it('changeVaultPassphrase rotateDek=true 返回新 DEK，旧 DEK 解不开新 wrappedDek', async () => {
+    const setup = await setupVaultEncryption(vaultJson, '旧')
+    const rotated = await changeVaultPassphrase(setup.security, setup.dek, '新', { rotateDek: true, profile: 'fast' })
+    expect(rotated.dek).not.toBeNull()
+    expect(rotated.dek).not.toEqual(setup.dek)
+    expect(rotated.security.kdf.profile).toBe('fast')
+    expect(rotated.security.kdf.m).toBe(19456)
+    expect(rotated.security.passwordChangedAt).toBeGreaterThanOrEqual(setup.security.passwordChangedAt!)
+    // 新口令解开的是新 DEK；旧 DEK 不再匹配新 wrappedDek（unlock 返回值 ≠ 旧 DEK）
+    expect(await unlockVaultEncryption(rotated.security, '新')).toEqual(rotated.dek)
+    await expect(unlockVaultEncryption(rotated.security, '旧')).rejects.toThrow('口令错误或数据已损坏')
   })
   it('changePassphrase 保留 kekSources：prf 绑定不丢，unlockWithPrf 仍可解锁同一 DEK', async () => {
     const { security, dek } = await setupVaultEncryption(vaultJson, '口令')
@@ -46,7 +72,7 @@ describe('securityStore', () => {
     expect(withPrf.kekSources).toHaveLength(2) // password + prf
 
     // 换口令：wrappedDek 重包裹，但 kekSources（prf 包裹）必须原样保留
-    const s2 = await changeVaultPassphrase(withPrf, dek, '新口令')
+    const s2 = (await changeVaultPassphrase(withPrf, dek, '新口令')).security
     expect(s2.kekSources).toEqual(withPrf.kekSources)
     // 新口令路径正常
     expect(await unlockVaultEncryption(s2, '新口令')).toEqual(dek)
@@ -93,7 +119,7 @@ describe('securityStore', () => {
         { kind: 'dpapi' as const, wrappedDekD: 'd2' },
       ],
     } as typeof baseWithPrf
-    const s2 = await changeVaultPassphrase(duplicated, dek, 'new')
+    const s2 = (await changeVaultPassphrase(duplicated, dek, 'new')).security
     // 期望：password×1, prf cred-1×1, prf cred-2×1, dpapi×1
     const kinds = (s2.kekSources ?? []).map((k) => (k as { kind: string }).kind)
     expect(kinds).toEqual(['password', 'prf', 'prf', 'dpapi'])

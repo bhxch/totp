@@ -8,6 +8,7 @@
  * hash 同一口径；宿主可把 hashes 原样持久化并在下轮作 localHash 使用。
  */
 import { pushEnvelope, syncWithCloud } from './syncOrchestrator'
+import type { KdfProfile } from '../backup/envelope'
 import type { CloudBackend } from './backend'
 
 /** 供测试与其他调用方直接复用单目标加密推送（re-export 自 syncOrchestrator）。 */
@@ -52,8 +53,10 @@ export async function syncMultipleTargets(opts: {
   vaultJson: string
   password: string
   onConflictBackup?: (key: string, bytes: Uint8Array) => string | null | void | Promise<string | null | void>
+  /** KDF 档位（设计 §2）：透传给全部上传/收敛回推/冲突副本 envelope 生成；缺省 balanced */
+  profile?: KdfProfile
 }): Promise<MultiTargetSyncResult> {
-  const { targets, vaultJson, password, onConflictBackup } = opts
+  const { targets, vaultJson, password, onConflictBackup, profile } = opts
   let current = vaultJson
   let adopted = false
   let winnerHash: string | undefined
@@ -69,6 +72,7 @@ export async function syncMultipleTargets(opts: {
         password,
         localHash: t.hash,
         onConflictBackup: (bytes) => onConflictBackup?.(t.key, bytes),
+        profile,
       })
       hashes[t.key] = outcome.hash
       if ((outcome.action === 'downloaded' || outcome.action === 'conflict-resolved') && outcome.envelopeJson !== undefined) {
@@ -90,7 +94,7 @@ export async function syncMultipleTargets(opts: {
       if (hashes[t.key] === winnerHash) continue
       const result = results[i]!
       try {
-        const pushed = await pushEnvelope({ backend: t.backend, path: t.path, vaultJson: current, password })
+        const pushed = await pushEnvelope({ backend: t.backend, path: t.path, vaultJson: current, password, profile })
         hashes[t.key] = pushed.hash
         result.outcome = { action: 'uploaded', envelopeJson: undefined, conflictBackup: undefined, hash: pushed.hash }
         delete result.error // pass1 失败残留的 error 随收敛改写清除——该目标已有确定的 uploaded 结果

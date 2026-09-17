@@ -24,7 +24,7 @@
  *  fail path 抛错后是否清空 pending 由调用方决定：故意不复位，让用户能继续看到上一次「待确认」
  *  的远端覆盖（避免同步失败意外清掉 pending）。本层保持纯函数语义，不引入 UI 状态耦合。
  */
-import { createBackupEnvelope, openBackupEnvelope } from '../backup/envelope'
+import { createBackupEnvelope, openBackupEnvelope, type KdfProfile } from '../backup/envelope'
 import type { CloudBackend } from './backend'
 
 export interface CloudSyncOutcome {
@@ -45,6 +45,8 @@ export interface SyncWithCloudOpts {
   localHash: string | null
   /** 冲突分支回调：把本地内容持久化为加密冲突副本（参数为 envelope JSON 字节，可被 openBackupEnvelope 恢复），可返回文件名（回填到 outcome.conflictBackup）。 */
   onConflictBackup?: (bytes: Uint8Array) => string | null | void | Promise<string | null | void>
+  /** KDF 档位（设计 §2）：本次上传/冲突副本 envelope 的生成档位；缺省 balanced */
+  profile?: KdfProfile
   onCredChange?: never
 }
 
@@ -64,9 +66,10 @@ export async function pushEnvelope(opts: {
   path: string
   vaultJson: string
   password: string
+  profile?: KdfProfile
 }): Promise<{ hash: string; envelopeJson: string }> {
-  const { backend, path, vaultJson, password } = opts
-  const envelopeJson = JSON.stringify(await createBackupEnvelope(vaultJson, password))
+  const { backend, path, vaultJson, password, profile } = opts
+  const envelopeJson = JSON.stringify(await createBackupEnvelope(vaultJson, password, profile))
   const bytes = new TextEncoder().encode(envelopeJson)
   const hash = await sha256Hex(bytes)
   await backend.put(path, bytes)
@@ -78,11 +81,11 @@ export async function pushEnvelope(opts: {
 }
 
 export async function syncWithCloud(opts: SyncWithCloudOpts): Promise<CloudSyncOutcome & { hash: string }> {
-  const { backend, path, vaultJson, password, localHash: cloudRev, onConflictBackup } = opts
+  const { backend, path, vaultJson, password, localHash: cloudRev, onConflictBackup, profile } = opts
 
   const remote = (await backend.exists(path)) ? await backend.get(path) : null
   if (remote === null) {
-    return { action: 'uploaded', ...(await pushEnvelope({ backend, path, vaultJson, password })) }
+    return { action: 'uploaded', ...(await pushEnvelope({ backend, path, vaultJson, password, profile })) }
   }
 
   const remoteHash = await sha256Hex(remote)
@@ -93,7 +96,7 @@ export async function syncWithCloud(opts: SyncWithCloudOpts): Promise<CloudSyncO
   }
   // 远端未变（与 cloudRev 一致）、本地已改：本地较新，推送
   if (cloudRev !== null && remoteHash === cloudRev) {
-    return { action: 'uploaded', ...(await pushEnvelope({ backend, path, vaultJson, password })) }
+    return { action: 'uploaded', ...(await pushEnvelope({ backend, path, vaultJson, password, profile })) }
   }
 
   // 远端已变且与本地不同：可解密则保留本地冲突副本并采用远端；不可解密抛中文错误
@@ -107,7 +110,7 @@ export async function syncWithCloud(opts: SyncWithCloudOpts): Promise<CloudSyncO
   // 冲突副本与备份同形态：createBackupEnvelope 加密后的 envelope JSON 字节（密文落盘，恢复链路与备份卡一致）
   let conflictBackup: string | undefined
   if (onConflictBackup) {
-    const copyJson = JSON.stringify(await createBackupEnvelope(vaultJson, password))
+    const copyJson = JSON.stringify(await createBackupEnvelope(vaultJson, password, profile))
     const name = await onConflictBackup(new TextEncoder().encode(copyJson))
     if (typeof name === 'string' && name.length > 0) conflictBackup = name
   }
