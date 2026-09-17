@@ -151,6 +151,8 @@ describe('CloudCard（多目标）', () => {
     expect(p.saveTargetHash).not.toHaveBeenCalled() // 采纳目标基线延后
     // 确认行挂起期间禁用立即同步（防二次同步覆盖待确认状态）
     expect((w.find('button.cloud-sync').element as HTMLButtonElement).disabled).toBe(true)
+    // 三态互斥：采纳确认挂起期间，行内移除按钮同步禁用
+    expect((w.find('button.target-remove').element as HTMLButtonElement).disabled).toBe(true)
     await w.findAll('button').find((b) => b.text() === '采用云端')!.trigger('click')
     await flushPromises()
     expect(p.persistDownloaded).toHaveBeenCalledWith(VALID_VAULT)

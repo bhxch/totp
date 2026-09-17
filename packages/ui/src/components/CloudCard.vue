@@ -407,7 +407,7 @@ function onIntervalChange(e: Event): void {
       <span v-if="statusFor(t.cred.backend)" class="target-status">{{ statusFor(t.cred.backend) }}</span>
       <MdButton
         v-if="resettableBackends.includes(t.cred.backend)" variant="text" danger class="cloud-reset"
-        :disabled="busy" @click="askReset(t.cred.backend)"
+        :disabled="busy || pendingAdopt !== null" @click="askReset(t.cred.backend)"
       >用当前口令重置云端</MdButton>
     </div>
     <div class="actions">
