@@ -17,7 +17,8 @@ async function readyStore() {
   return s
 }
 
-const URI_TEXT = 'otpauth://totp/NewServ:a@b.c?secret=JBSWY3DPEHPK3PXP\notpauth://totp/GitHub:me@x.com?secret=JBSWY3DPEHPK3PXP\nbadline'
+// 第二行与 vault 现有 GitHub 条目同 issuer+label 异 secret → conflict 分支（三选策略路径）；badline 解析失败
+const URI_TEXT = 'otpauth://totp/NewServ:a@b.c?secret=JBSWY3DPEHPK3PXR\notpauth://totp/GitHub:me@x.com?secret=JBSWY3DPEHPK3PXQ\nbadline'
 
 function mkPlatform(store: Awaited<ReturnType<typeof readyStore>>) {
   return { readImportFile: vi.fn().mockResolvedValue({ text: URI_TEXT, name: 'u.txt' }), store }
@@ -72,7 +73,7 @@ describe('ImportCard', () => {
     const store = await readyStore()
     const text = JSON.stringify({
       schemaVersion: 4,
-      services: [{ secret: 'JBSWY3DPEHPK3PXP', name: 'TwoFasSvc', otp: { account: 'me@x.com', issuer: 'TwoFasSvc', tokenType: 'TOTP' } }],
+      services: [{ secret: 'JBSWY3DPEHPK3PXQ', name: 'TwoFasSvc', otp: { account: 'me@x.com', issuer: 'TwoFasSvc', tokenType: 'TOTP' } }],
     })
     const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text, name: '2fas.json' }), store } } })
     await w.find('button.import-start').trigger('click')
@@ -86,7 +87,7 @@ describe('ImportCard', () => {
   })
   it('手动指定格式：andOtp 嗅探下手选 generic → 映射页→落库', async () => {
     const store = await readyStore()
-    const text = JSON.stringify([{ type: 'totp', algorithm: 'SHA1', label: 'Svc - me', secret: 'JBSWY3DPEHPK3PXP' }])
+    const text = JSON.stringify([{ type: 'totp', algorithm: 'SHA1', label: 'Svc - me', secret: 'JBSWY3DPEHPK3PXQ' }])
     const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text, name: 'a.json' }), store } } })
     await w.find('button.import-start').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('andOtp'))
@@ -146,7 +147,7 @@ describe('ImportCard', () => {
   it('手动指定 totpAuthenticator：非 "[" 开头（Base64 分享文件）进口令页，口令随 importTotpAuthenticator 生效', async () => {
     const store = await readyStore()
     // 构造真实外部分享文件：Base64(AES-CBC(SHA-256(口令), IV=0, {条目数组JSON串:''}))，与 core buildBin 同构
-    const entries = [{ base: 32, key: 'JBSWY3DPEHPK3PXP', issuer: 'TotpAuth', name: 'me@x.com' }]
+    const entries = [{ base: 32, key: 'JBSWY3DPEHPK3PXQ', issuer: 'TotpAuth', name: 'me@x.com' }]
     const outer = JSON.stringify({ [JSON.stringify(entries)]: '' })
     const keyBytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('Testtest1')))
     const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-CBC', false, ['encrypt'])
@@ -168,7 +169,7 @@ describe('ImportCard', () => {
   })
   it('generic JSON：映射页按常见键名预填 secret 路径→确认导入成功', async () => {
     const store = await readyStore()
-    const text = JSON.stringify([{ name: 'Svc', userName: 'a@b.c', key: 'JBSWY3DPEHPK3PXP' }])
+    const text = JSON.stringify([{ name: 'Svc', userName: 'a@b.c', key: 'JBSWY3DPEHPK3PXQ' }])
     const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text, name: 'g.json' }), store } } })
     await w.find('button.import-start').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('generic'))
@@ -185,7 +186,7 @@ describe('ImportCard', () => {
   })
   it('方案保存：映射页命名保存当前映射→save 落盘且下拉出现该方案', async () => {
     const store = await readyStore()
-    const text = JSON.stringify([{ name: 'Svc', userName: 'a@b.c', key: 'JBSWY3DPEHPK3PXP' }])
+    const text = JSON.stringify([{ name: 'Svc', userName: 'a@b.c', key: 'JBSWY3DPEHPK3PXQ' }])
     const schemesApi = { load: vi.fn().mockResolvedValue([]), save: vi.fn().mockResolvedValue(undefined) }
     const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text, name: 'g.json' }), store }, schemesApi } })
     await w.find('button.import-start').trigger('click')
@@ -208,7 +209,7 @@ describe('ImportCard', () => {
   })
   it('方案应用：下拉选中后应用回填映射路径（覆盖预填）', async () => {
     const store = await readyStore()
-    const text = JSON.stringify([{ name: 'Svc', userName: 'a@b.c', key: 'JBSWY3DPEHPK3PXP' }])
+    const text = JSON.stringify([{ name: 'Svc', userName: 'a@b.c', key: 'JBSWY3DPEHPK3PXQ' }])
     const premade: ImportScheme = {
       id: 's9',
       name: '品牌方案',

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import {
-  SQLITE_TABLE_PROBES, applyImport, extractGenericRows, findConflicts, importAegisEncrypted,
+  SQLITE_TABLE_PROBES, applyImportPlan, dedupeWithinFile, extractGenericRows, importAegisEncrypted,
   importAegisPlaintext, importAndOtp, importAuthy, importBattleNet, importBitwarden, importDuo,
   importFreeOtp, importFreeOtpLegacy, importGeneric, importProton, importStratum,
-  importTotpAuthenticator, importTwoFas, importUriBatch, importWinauth, matchSchemes,
+  importTotpAuthenticator, importTwoFas, importUriBatch, importWinauth, matchSchemes, planImport,
   normalizeSchemes, removeScheme, sniffAegis, sniffFormat, upsertScheme,
-  type ConflictPolicy, type ImportFormat, type ImportResult, type ImportScheme, type RowMapping,
+  type ConflictPolicy, type ImportFormat, type ImportPlan, type ImportResult, type ImportScheme,
+  type ImportStats, type ParsedEntry, type RowMapping, type SuspectChoice,
 } from '@totp/core'
 import { computed, ref } from 'vue'
 import { openSqlite } from '../sqliteLoader'
@@ -43,7 +44,11 @@ const password = ref('')
 const passwordHint = ref('')
 const policy = ref<ConflictPolicy>('skip')
 const result = ref<ImportResult | null>(null)
-const conflicts = ref<Set<number>>(new Set())
+// plan16 四档去重判定树（设计 §4）：confirm 进页时按当前 vault 算一次逐条标注；
+// commit 时重算（vault 可能在预览期间被远端/其他窗口改动）
+const importPlan = ref<ImportPlan | null>(null)
+const inFileMerged = ref(0)
+const suspectChoices = ref<Map<number, SuspectChoice>>(new Map())
 
 const FORMAT_LABEL: Record<ManualFormat, string> = {
   aegis: 'Aegis 备份（加密或明文）',
@@ -229,8 +234,38 @@ function onPolicySelect(v: string): void {
   policy.value = v as ConflictPolicy
 }
 
-const report = ref<{ imported: number; replaced: number; skipped: number; failures: ImportResult['failures'] } | null>(null)
-const conflictCount = computed(() => conflicts.value.size)
+// ---------- suspect（疑似同账户）逐条处理：默认跳过，每条可单独改为新增/覆盖 ----------
+const SUSPECT_OPTIONS = [
+  { value: 'skip', label: '跳过' },
+  { value: 'add', label: '新增' },
+  { value: 'replace', label: '覆盖' },
+]
+/** suspect 行渲染项：incoming 索引 + 导入条目 + 按 targetUuid 定位的现有条目（预览期间 vault 变化可致缺失） */
+const suspectItems = computed(() => {
+  const plan = importPlan.value
+  const r = result.value
+  if (!plan || !r) return []
+  const items: Array<{ idx: number; entry: ParsedEntry; target: { issuer: string; label: string } | null }> = []
+  plan.kinds.forEach((k, i) => {
+    if (k !== 'suspect') return
+    const uuid = plan.targetUuids[i]
+    const t = uuid ? props.platform!.store.vault.entries.find((e) => e.uuid === uuid) : undefined
+    items.push({ idx: i, entry: r.entries[i]!, target: t ? { issuer: t.issuer, label: t.label } : null })
+  })
+  return items
+})
+/** suspect 分段按钮回调：choices 键=incoming 索引 */
+function onSuspectSelect(idx: number, v: string): void {
+  suspectChoices.value.set(idx, v as SuspectChoice)
+}
+
+// report 命名沿用 core ImportStats 口径（plan16 T10）：identical/suspect*/conflict*/inFileMerged 逐项展示，
+// imported = 新增落库（new + suspect add）+ 冲突并存（merge 条目也实际入库）
+const report = ref<{
+  imported: number; identical: number; suspectSkipped: number; suspectAdded: number; suspectReplaced: number
+  conflictSkipped: number; conflictReplaced: number; conflictMerged: number; inFileMerged: number
+  failures: ImportResult['failures']
+} | null>(null)
 
 function fail(e: unknown): void {
   msg.value = e instanceof Error ? e.message : String(e)
@@ -247,6 +282,9 @@ function reset(): void {
   passwordHint.value = ''
   policy.value = 'skip'
   result.value = null
+  importPlan.value = null
+  inFileMerged.value = 0
+  suspectChoices.value = new Map()
   report.value = null
   rows.value = []
   rowsKind.value = ''
@@ -322,8 +360,14 @@ async function parseAndConfirm(
       fail(new Error(`解析结果为空：${r.failures.length} 行全部失败（如「${r.failures[0]!.message}」），请检查字段映射`))
       return
     }
+    // 文件内全字段完全重复行先合并（设计 §4），避免预览计数虚高；合并数在 confirm/report 页展示
+    const dedup = dedupeWithinFile(r.entries)
+    r.entries = dedup.kept
+    inFileMerged.value = dedup.removed
     result.value = r
-    conflicts.value = findConflicts(props.platform!.store.vault.entries, r.entries)
+    // 四档逐条标注按当前 vault 一次算好（identical > suspect > conflict > new，优先级在 core 判定树内）；
+    // commit 时会按最新 vault 重算，对齐既有「冲突数按 commit 时最新 vault 重算」语义
+    importPlan.value = planImport(props.platform!.store.vault.entries, r.entries)
     step.value = 'confirm'
   } catch (e) {
     fail(e)
@@ -513,7 +557,8 @@ async function nextFromPassword(): Promise<void> {
   fail(new Error('当前格式不使用口令页，请取消后重新选择'))
 }
 
-/** 终步：冲突数按 commit 时的最新 vault 重算，applyImport 按策略落库后进报告页 */
+/** 终步：按 commit 时最新 vault 重算判定树（预览期间 vault 可能被远端/其他窗口改动），
+ * applyImportPlan 按 plan+suspect 逐条选择+冲突策略落库后进报告页 */
 async function commitImport(): Promise<void> {
   const r = result.value
   if (!r || busy.value) return
@@ -521,16 +566,33 @@ async function commitImport(): Promise<void> {
   msg.value = ''
   try {
     const pol = policy.value
-    let conflictHit = 0
+    let plan = importPlan.value
+    let stats: ImportStats = { added: 0, replaced: 0, suspectSkipped: 0, identical: 0, conflictSkipped: 0, conflictReplaced: 0, conflictMerged: 0 }
     await props.platform!.store.commit((v) => {
-      const c = findConflicts(v, r.entries)
-      conflictHit = c.size
-      return applyImport(v, r.entries, pol, c)
+      plan = planImport(v, r.entries)
+      const res = applyImportPlan(v, r.entries, plan, suspectChoices.value, pol)
+      stats = res.stats
+      return res.vault
+    })
+    // suspect 新增/覆盖计数 core 未单列（stats.added 混合 new+suspect add），按重算后的 plan+选择在 UI 侧推导
+    let suspectAdded = 0
+    let suspectReplaced = 0
+    plan!.kinds.forEach((k, i) => {
+      if (k !== 'suspect') return
+      const c = suspectChoices.value.get(i) ?? 'skip'
+      if (c === 'add') suspectAdded++
+      else if (c === 'replace') suspectReplaced++
     })
     report.value = {
-      imported: r.entries.length - (pol === 'merge' ? 0 : conflictHit),
-      replaced: pol === 'replace' ? conflictHit : 0,
-      skipped: pol === 'skip' ? conflictHit : 0,
+      imported: stats.added + stats.conflictMerged,
+      identical: stats.identical,
+      suspectSkipped: stats.suspectSkipped,
+      suspectAdded,
+      suspectReplaced,
+      conflictSkipped: stats.conflictSkipped,
+      conflictReplaced: stats.conflictReplaced,
+      conflictMerged: stats.conflictMerged,
+      inFileMerged: inFileMerged.value,
       failures: r.failures,
     }
     step.value = 'report'
@@ -556,7 +618,7 @@ function failureLabel(f: { index: number; message: string }): string {
     <h2>导入</h2>
     <!-- idle 态首屏说明：仅 idle 渲染（其余步骤的「冲突」等断言/文案不受污染） -->
     <template v-if="step === 'idle'">
-      <p class="meta">选择文件后自动识别格式；不确定格式可直接尝试。冲突条目可选跳过/替换/合并。</p>
+      <p class="meta">选择文件后自动识别格式；不确定格式可直接尝试。冲突条目可选跳过/替换/合并；与现有完全相同的条目自动跳过，疑似同账户的条目逐条确认。</p>
       <details class="formats">
         <summary>支持的导入格式</summary>
         <ul>
@@ -632,7 +694,24 @@ function failureLabel(f: { index: number; message: string }): string {
 
     <template v-else-if="step === 'confirm'">
       <p class="meta">解析出 {{ result?.entries.length ?? 0 }} 条，解析失败 {{ result?.failures.length ?? 0 }} 条</p>
-      <p class="meta">与现有条目冲突：{{ conflictCount }} 条</p>
+      <p v-if="inFileMerged" class="meta">文件内重复已合并 {{ inFileMerged }} 条</p>
+      <p class="meta">
+        新增 {{ importPlan?.counts.new ?? 0 }} · 完全相同自动跳过 {{ importPlan?.counts.identical ?? 0 }} ·
+        疑似同账户 {{ importPlan?.counts.suspect ?? 0 }}（默认跳过） · 冲突 {{ importPlan?.counts.conflict ?? 0 }}
+      </p>
+      <div v-if="suspectItems.length" class="suspects">
+        <p class="meta">疑似同账户（secret 相同），请逐条选择处理方式：</p>
+        <div v-for="s in suspectItems" :key="s.idx" class="suspect-row">
+          <span class="suspect-line">
+            导入 {{ s.entry.issuer || '（无 issuer）' }}/{{ s.entry.label || '（无 label）' }} →
+            现有 {{ s.target ? `${s.target.issuer}/${s.target.label}` : '条目已不存在（按跳过处理）' }}
+          </span>
+          <MdSegmentedButton
+            :model-value="suspectChoices.get(s.idx) ?? 'skip'" :options="SUSPECT_OPTIONS"
+            :aria-label="`疑似同账户处理：${s.entry.issuer}/${s.entry.label}`" @update:model-value="onSuspectSelect(s.idx, $event)"
+          />
+        </div>
+      </div>
       <div class="policies">
         <MdSegmentedButton
           aria-label="冲突策略" :model-value="policy" :options="POLICY_OPTIONS"
@@ -647,8 +726,14 @@ function failureLabel(f: { index: number; message: string }): string {
 
     <template v-else-if="step === 'report' && report">
       <p class="ok">成功落库 {{ report.imported }} 条</p>
-      <p v-if="report.skipped" class="meta">跳过 {{ report.skipped }} 条（与现有条目冲突）</p>
-      <p v-if="report.replaced" class="meta">覆盖 {{ report.replaced }} 条（与现有条目冲突）</p>
+      <p v-if="report.inFileMerged" class="meta">文件内重复已合并 {{ report.inFileMerged }} 条</p>
+      <p v-if="report.identical" class="meta">完全相同自动跳过 {{ report.identical }} 条</p>
+      <p v-if="report.suspectSkipped" class="meta">疑似同账户跳过 {{ report.suspectSkipped }} 条</p>
+      <p v-if="report.suspectAdded" class="meta">疑似同账户新增 {{ report.suspectAdded }} 条</p>
+      <p v-if="report.suspectReplaced" class="meta">疑似同账户覆盖 {{ report.suspectReplaced }} 条</p>
+      <p v-if="report.conflictSkipped" class="meta">跳过 {{ report.conflictSkipped }} 条（与现有条目冲突）</p>
+      <p v-if="report.conflictReplaced" class="meta">覆盖 {{ report.conflictReplaced }} 条（与现有条目冲突）</p>
+      <p v-if="report.conflictMerged" class="meta">并存 {{ report.conflictMerged }} 条（与现有条目冲突）</p>
       <div v-if="report.failures.length">
         <p class="meta">失败 {{ report.failures.length }} 条：</p>
         <ul class="failures">
@@ -682,7 +767,11 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .scheme-row .md-text-field, .scheme-row .md-select { flex: 1; min-width: 0; }
 .policies { display: flex; font-size: var(--md-sys-typescale-body-medium); }
 /* 三段标签较长，confirm 步内紧凑渲染：缩段内 padding 防溢出（本卡 scoped，不改 MdSegmentedButton） */
-.policies :deep(.md-seg__item) { padding: 0 12px; }
+.policies :deep(.md-seg__item), .suspect-row :deep(.md-seg__item) { padding: 0 12px; }
+/* suspect 逐条确认区：一行「导入 X → 现有 Y」+ 三选分段按钮，行内换行防窄卡溢出 */
+.suspects { display: flex; flex-direction: column; gap: 6px; border-top: 1px dashed var(--md-sys-color-outline-variant); padding-top: 8px; }
+.suspect-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--md-sys-typescale-body-small); }
+.suspect-line { flex: 1; min-width: 200px; }
 .failures { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 160px; overflow: auto; font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-error); }
 .ok { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-medium); margin: 0; }
 .err { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-medium); }
