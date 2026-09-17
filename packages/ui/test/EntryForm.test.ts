@@ -6,6 +6,12 @@ import EntryForm from '../src/components/EntryForm.vue'
 import { type EntryFormData, validateRegex } from '../src/components/entryForm'
 import { createIconStore } from '../src/iconStore'
 
+/** MdSelect 点选：按 aria-label 开弹层，按显示文本点选项（CloudCard F6 间隔用例同款交互） */
+async function pickOption(w: VueWrapper, ariaLabel: string, label: string): Promise<void> {
+  await w.find(`button[aria-label="${ariaLabel}"]`).trigger('click')
+  await w.findAll('[role="option"]').find((o) => o.text() === label)!.trigger('click')
+}
+
 const entry: OtpEntry = {
   uuid: 'u1', type: 'totp', issuer: 'GitHub', label: 'me@ex.com', secret: 'JBSWY3DPEHPK3PXP',
   algorithm: 'SHA1', digits: 6, period: 30, groupIds: [], order: 0, createdAt: 0,
@@ -45,29 +51,30 @@ describe('EntryForm', () => {
   })
   it('编辑既有条目：type 下拉始终含 totp/hotp/steam 三选项（C15 解除 type 锁定）', async () => {
     const w = mount(EntryForm, { props: { initial: { ...entry, type: 'hotp' }, groups: [] } })
-    const select = w.find('select')
+    const trigger = w.find('button[aria-label="类型"]')
     // 取消 :disabled：type 现在可自由切换（type 变更时 digits 会自动重算）
-    expect(select.attributes('disabled')).toBeUndefined()
-    expect(select.html()).toContain('totp')
-    expect(select.html()).toContain('hotp')
-    expect(select.html()).toContain('steam')
+    expect(trigger.attributes('disabled')).toBeUndefined()
+    await trigger.trigger('click')
+    const opts = w.findAll('[role="option"]')
+    expect(opts.map((o) => o.text())).toEqual(['TOTP', 'HOTP（计数器）', 'Steam'])
+    // 既有 hotp 回填为选中项
+    expect(opts.map((o) => o.attributes('aria-selected'))).toEqual(['false', 'true', 'false'])
   })
   it('F2：type 切 steam 时 digits 实时置 5，切回落回 6（所见即所存）', async () => {
     const w = mount(EntryForm, { props: { initial: null, groups: [] } })
-    const select = w.find('select')
-    await select.setValue('steam')
+    await pickOption(w, '类型', 'Steam')
     expect((w.find('.digits input').element as HTMLInputElement).value).toBe('5')
     // steam 状态下 save 携带 digits 5
     await w.find('input[placeholder="密钥 base32"]').setValue('JBSWY3DPEHPK3PXP')
     await w.find('form').trigger('submit')
     expect(w.emitted('save')![0]![0]).toMatchObject({ type: 'steam', digits: 5 })
     // 切回 totp：digits 回落 6
-    await select.setValue('totp')
+    await pickOption(w, '类型', 'TOTP')
     expect((w.find('.digits input').element as HTMLInputElement).value).toBe('6')
   })
   it('F2：编辑 8 位 totp 切 steam 再提交，save 携带 digits 5', async () => {
     const w = mount(EntryForm, { props: { initial: { ...entry, digits: 8 }, groups: [] } })
-    await w.find('select').setValue('steam')
+    await pickOption(w, '类型', 'Steam')
     expect((w.find('.digits input').element as HTMLInputElement).value).toBe('5')
     await w.find('form').trigger('submit')
     expect(w.emitted('save')![0]![0]).toMatchObject({ type: 'steam', digits: 5 })
@@ -75,7 +82,7 @@ describe('EntryForm', () => {
   it('表单编辑既有 hotp：算法/位数/计数器编辑控件可见且 save 携带', async () => {
     const hotpEntry = { ...entry, type: 'hotp' as const, counter: 3, digits: 6, algorithm: 'SHA256' as const }
     const w = mount(EntryForm, { props: { initial: hotpEntry, groups: [] } })
-    expect(w.find('select.algorithm').exists()).toBe(true)
+    expect(w.find('button[aria-label="算法"]').exists()).toBe(true)
     expect(w.find('.digits input').exists()).toBe(true)
     // hotp 类型显示计数器；不显示周期
     expect(w.find('.counter input').exists()).toBe(true)
@@ -95,7 +102,7 @@ describe('EntryForm', () => {
   })
   it('steam 类型：digits 改 6 提交时报错；counter 编辑器不显示', async () => {
     const w = mount(EntryForm, { props: { initial: null, groups: [] } })
-    await w.find('select').setValue('steam')
+    await pickOption(w, '类型', 'Steam')
     await w.find('input[placeholder="密钥 base32"]').setValue('JBSWY3DPEHPK3PXP')
     // steam 显示周期与位数；不显示 counter
     expect(w.find('.period input').exists()).toBe(true)
@@ -109,9 +116,8 @@ describe('EntryForm', () => {
   it('添加/编辑/删除 matchRule 并随 save 提交', async () => {
     const w = mount(EntryForm, { props: { initial: entry, groups: [] } })
     await w.find('button.add-rule').trigger('click')
-    const selects = w.findAll('select.rule-strategy')
-    expect(selects).toHaveLength(1)
-    await selects[0]!.setValue('baseDomain')
+    expect(w.findAll('button[aria-label="匹配策略"]')).toHaveLength(1)
+    await pickOption(w, '匹配策略', '基础域名')
     await w.find('.rule-pattern input').setValue('github.com')
     await w.find('form').trigger('submit')
     expect(w.emitted('save')![0]![0]).toMatchObject({ matchRules: [{ strategy: 'baseDomain', pattern: 'github.com' }] })
@@ -123,7 +129,7 @@ describe('EntryForm', () => {
   it('I51：matchRules strategy=regex 非法 pattern 阻止 save + 行内错误 + class.invalid', async () => {
     const w = mount(EntryForm, { props: { initial: entry, groups: [] } })
     await w.find('button.add-rule').trigger('click')
-    await w.findAll('select.rule-strategy')[0]!.setValue('regex')
+    await pickOption(w, '匹配策略', '正则')
     await w.find('.rule-pattern input').setValue('[unbalanced') // 非法正则
     // 行内错误展示 + class.invalid
     expect(w.find('.rule-pattern.invalid').exists()).toBe(true)

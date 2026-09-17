@@ -11,6 +11,8 @@ import { computed, ref } from 'vue'
 import { openSqlite } from '../sqliteLoader'
 import type { VueStore } from '../store'
 import MdButton from './md/MdButton.vue'
+import MdSegmentedButton from './md/MdSegmentedButton.vue'
+import MdSelect from './md/MdSelect.vue'
 import MdTextField from './md/MdTextField.vue'
 import type { ImportPlatform, ImportSchemesApi } from './importPlatform'
 
@@ -86,6 +88,16 @@ const MANUAL_OPTIONS: Array<{ value: ManualFormat; label: string }> = [
 
 /** 实际生效格式：手动选择覆盖嗅探结果（auto 时用嗅探值，可能为 null=未识别） */
 const effectiveFormat = computed<ManualFormat | null>(() => (manual.value === 'auto' ? format.value : manual.value))
+
+/** 手动指定格式 MdSelect 选项：首项「自动」label 随嗅探结果动态（picked 页可能晚于嗅探渲染） */
+const manualOptions = computed<Array<{ value: string; label: string }>>(() => [
+  { value: 'auto', label: `自动（${format.value ?? '未识别'}）` },
+  ...MANUAL_OPTIONS,
+])
+/** 格式下拉回调：MdSelect emit 泛化 string|number，收敛回 manual 的联合类型 */
+function onManualSelect(v: string | number): void {
+  manual.value = v as 'auto' | ManualFormat
+}
 
 // generic 映射页：每目标字段一个点路径输入，secret 必填；rows 取自 extractGenericRows
 type MapFieldKey = 'secret' | 'issuer' | 'label' | 'type' | 'algorithm' | 'digits' | 'period' | 'counter' | 'note'
@@ -193,6 +205,28 @@ async function deleteScheme(): Promise<void> {
   } catch (e) {
     fail(e)
   }
+}
+
+/** 方案下拉 MdSelect 选项：占位空值 + 推荐/其他平铺（原生 optgroup 分组在 listbox 语义中不保留，顺序不变） */
+const schemeOptions = computed<Array<{ value: string; label: string }>>(() => [
+  { value: '', label: '选择方案…' },
+  ...recommended.value.map((s) => ({ value: s.id, label: s.name })),
+  ...otherSchemes.value.map((s) => ({ value: s.id, label: s.name })),
+])
+/** 方案下拉回调：id 收敛回 string */
+function onSchemeSelect(v: string | number): void {
+  schemeSel.value = v as string
+}
+
+// ---------- 终步冲突策略：三选一以 MdSegmentedButton 呈现（替代原生 radio，参照 BackupCard F5） ----------
+const POLICY_OPTIONS = [
+  { value: 'skip', label: '跳过冲突条目' },
+  { value: 'replace', label: '覆盖现有条目' },
+  { value: 'merge', label: '保留两者（并存）' },
+]
+/** 分段按钮回调：emit 的 string 收敛回 ConflictPolicy */
+function onPolicySelect(v: string): void {
+  policy.value = v as ConflictPolicy
 }
 
 const report = ref<{ imported: number; replaced: number; skipped: number; failures: ImportResult['failures'] } | null>(null)
@@ -543,10 +577,10 @@ function failureLabel(f: { index: number; message: string }): string {
       <p class="meta">文件：{{ fileName }} · 识别格式：{{ format ?? '未知' }}</p>
       <p class="hint">{{ effectiveFormat ? FORMAT_LABEL[effectiveFormat] : '无法自动识别，请在下方手动指定格式' }}</p>
       <div class="actions">
-        <select v-model="manual" class="format-select" :disabled="busy" aria-label="手动指定格式">
-          <option value="auto">自动（{{ format ?? '未识别' }}）</option>
-          <option v-for="o in MANUAL_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
-        </select>
+        <MdSelect
+          :model-value="manual" class="format-select" label="格式" aria-label="手动指定格式"
+          :disabled="busy" :options="manualOptions" @update:model-value="onManualSelect"
+        />
         <MdButton class="import-next" :disabled="busy" @click="nextFromPicked">下一步</MdButton>
         <MdButton variant="text" :disabled="busy" @click="reset">取消</MdButton>
       </div>
@@ -569,15 +603,10 @@ function failureLabel(f: { index: number; message: string }): string {
           <MdButton variant="tonal" class="scheme-save" :disabled="busy" @click="saveScheme">保存方案</MdButton>
         </div>
         <div v-if="schemes.length" class="scheme-row">
-          <select v-model="schemeSel" class="scheme-select">
-            <option value="">选择方案…</option>
-            <optgroup v-if="recommended.length" label="推荐">
-              <option v-for="s in recommended" :key="s.id" :value="s.id">{{ s.name }}</option>
-            </optgroup>
-            <optgroup v-if="otherSchemes.length" label="其他">
-              <option v-for="s in otherSchemes" :key="s.id" :value="s.id">{{ s.name }}</option>
-            </optgroup>
-          </select>
+          <MdSelect
+            :model-value="schemeSel" class="scheme-select" label="映射方案" aria-label="映射方案"
+            :options="schemeOptions" @update:model-value="onSchemeSelect"
+          />
           <MdButton variant="tonal" class="scheme-apply" :disabled="!schemeSel" @click="applyScheme">应用</MdButton>
           <MdButton danger class="scheme-delete" :disabled="!schemeSel || busy" @click="deleteScheme">删除</MdButton>
         </div>
@@ -605,9 +634,10 @@ function failureLabel(f: { index: number; message: string }): string {
       <p class="meta">解析出 {{ result?.entries.length ?? 0 }} 条，解析失败 {{ result?.failures.length ?? 0 }} 条</p>
       <p class="meta">与现有条目冲突：{{ conflictCount }} 条</p>
       <div class="policies">
-        <label><input v-model="policy" type="radio" name="import-policy" value="skip" /> 跳过冲突条目</label>
-        <label><input v-model="policy" type="radio" name="import-policy" value="replace" /> 覆盖现有条目</label>
-        <label><input v-model="policy" type="radio" name="import-policy" value="merge" /> 保留两者（并存）</label>
+        <MdSegmentedButton
+          aria-label="冲突策略" :model-value="policy" :options="POLICY_OPTIONS"
+          @update:model-value="onPolicySelect"
+        />
       </div>
       <div class="actions">
         <MdButton class="import-commit" :disabled="busy" @click="commitImport">确认导入</MdButton>
@@ -649,9 +679,10 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .map-row .map-field { flex: 1; }
 .schemes { display: flex; flex-direction: column; gap: 6px; border-top: 1px dashed var(--md-sys-color-outline-variant); padding-top: 8px; }
 .scheme-row { display: flex; gap: 8px; align-items: center; }
-.scheme-row .md-text-field, .scheme-row select { flex: 1; min-width: 0; }
-.policies { display: flex; gap: 16px; flex-wrap: wrap; font-size: var(--md-sys-typescale-body-medium); }
-.policies label { display: flex; align-items: center; gap: 4px; }
+.scheme-row .md-text-field, .scheme-row .md-select { flex: 1; min-width: 0; }
+.policies { display: flex; font-size: var(--md-sys-typescale-body-medium); }
+/* 三段标签较长，confirm 步内紧凑渲染：缩段内 padding 防溢出（本卡 scoped，不改 MdSegmentedButton） */
+.policies :deep(.md-seg__item) { padding: 0 12px; }
 .failures { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 160px; overflow: auto; font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-error); }
 .ok { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-medium); margin: 0; }
 .err { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-medium); }

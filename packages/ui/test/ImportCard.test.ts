@@ -1,8 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, type VueWrapper } from '@vue/test-utils'
 import { createMemoryStorage, newEntryFromUri, type ImportScheme } from '@totp/core'
 import { createVueStore } from '../src/store'
 import ImportCard from '../src/components/ImportCard.vue'
+
+/** MdSelect 点选：按 aria-label 开弹层，按显示文本点选项（CloudCard F6 间隔用例同款交互） */
+async function pickOption(w: VueWrapper, ariaLabel: string, label: string): Promise<void> {
+  await w.find(`button[aria-label="${ariaLabel}"]`).trigger('click')
+  await w.findAll('[role="option"]').find((o) => o.text() === label)!.trigger('click')
+}
 
 async function readyStore() {
   const s = createVueStore(createMemoryStorage())
@@ -40,7 +46,9 @@ describe('ImportCard', () => {
     await vi.waitFor(() => expect(w.text()).toContain('uriBatch'))
     await w.find('button.import-next').trigger('click') // URI 格式无映射页
     await vi.waitFor(() => expect(w.text()).toContain('冲突'))
-    await w.find('input[value="skip"]').setValue()
+    // 冲突策略三段以 MdSegmentedButton 呈现（原 radio 收口）；skip 为默认选中，点选等价确认
+    expect(w.findAll('.md-seg__item').map((i) => i.text())).toEqual(['跳过冲突条目', '覆盖现有条目', '保留两者（并存）'])
+    await w.findAll('.md-seg__item')[0]!.trigger('click')
     await w.find('button.import-commit').trigger('click')
     await vi.waitFor(() => {
       expect(w.text()).toContain('成功落库 1 条')
@@ -56,7 +64,7 @@ describe('ImportCard', () => {
     await vi.waitFor(() => expect(w.text()).toContain('手动指定'))
     await w.find('button.import-next').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('无法识别的文件格式'))
-    await w.find('select.format-select').setValue('sqlite')
+    await pickOption(w, '手动指定格式', 'SQLite 数据库（表名探测）')
     await w.find('button.import-next').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('当前端不支持 SQLite 导入'))
   })
@@ -82,7 +90,7 @@ describe('ImportCard', () => {
     const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text, name: 'a.json' }), store } } })
     await w.find('button.import-start').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('andOtp'))
-    await w.find('select.format-select').setValue('generic') // 覆盖嗅探结果
+    await pickOption(w, '手动指定格式', '通用 JSON / JSONL（字段映射）') // 覆盖嗅探结果
     await w.find('button.import-next').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('字段映射'))
     const secretInput = w.find('input[data-field="secret"]')
@@ -106,7 +114,7 @@ describe('ImportCard', () => {
     })
     await w.find('button.import-start').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('手动指定')) // 自动字节复查头不匹配 → 静默回退
-    await w.find('select.format-select').setValue('sqlite')
+    await pickOption(w, '手动指定格式', 'SQLite 数据库（表名探测）')
     await w.find('button.import-next').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('无法识别的 SQLite 数据库'))
   })
@@ -118,7 +126,7 @@ describe('ImportCard', () => {
     const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text: xml, name: 'prefs.xml' }), store } } })
     await w.find('button.import-start').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('手动指定'))
-    await w.find('select.format-select').setValue('authy')
+    await pickOption(w, '手动指定格式', 'Authy shared_prefs（XML）')
     await w.find('button.import-next').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('Authy 令牌可能受口令保护'))
     await w.find('button.import-next').trigger('click') // 空口令 → importAuthy 链路结构级报错（误分派会走 winauth 解析出空结果）
@@ -129,7 +137,7 @@ describe('ImportCard', () => {
     const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text: 'hello', name: 'x' }), store } } })
     await w.find('button.import-start').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('手动指定'))
-    await w.find('select.format-select').setValue('winauth')
+    await pickOption(w, '手动指定格式', 'WinAuth（XML）')
     await w.find('button.import-next').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('WinAuth 文件可能受口令保护'))
     await w.find('button.import-next').trigger('click')
@@ -148,7 +156,7 @@ describe('ImportCard', () => {
     const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text: btoa(bin), name: 'share.txt' }), store } } })
     await w.find('button.import-start').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('手动指定')) // base64 密文嗅探不强判
-    await w.find('select.format-select').setValue('totpAuthenticator')
+    await pickOption(w, '手动指定格式', 'TOTP Authenticator（明文/外部分享）')
     await w.find('button.import-next').trigger('click') // 非 '[' 开头 → 口令页（不走直接解析）
     await vi.waitFor(() => expect(w.text()).toContain('输入该分享文件的口令'))
     await w.find('.import-password input').setValue('Testtest1')
@@ -194,9 +202,9 @@ describe('ImportCard', () => {
     expect(saved[0]!.mapping).toEqual({ secret: { path: 'key' }, issuer: { path: 'name' }, label: { path: 'userName' } })
     expect(typeof saved[0]!.id).toBe('string')
     expect(saved[0]!.createdAt).toBeGreaterThan(0)
-    const sel = w.find('select.scheme-select')
-    expect(sel.exists()).toBe(true)
-    expect(sel.html()).toContain('我的方案')
+    // 保存后方案自动选中：MdSelect 触发端显示该方案名
+    await vi.waitFor(() => expect(w.find('button[aria-label="映射方案"]').exists()).toBe(true))
+    expect(w.find('button[aria-label="映射方案"]').text()).toContain('我的方案')
   })
   it('方案应用：下拉选中后应用回填映射路径（覆盖预填）', async () => {
     const store = await readyStore()
@@ -213,10 +221,10 @@ describe('ImportCard', () => {
     await w.find('button.import-start').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('generic'))
     await w.find('button.import-next').trigger('click')
-    await vi.waitFor(() => expect(w.find('select.scheme-select').exists()).toBe(true))
+    await vi.waitFor(() => expect(w.find('button[aria-label="映射方案"]').exists()).toBe(true))
     const val = (f: string) => (w.find(`input[data-field="${f}"]`).element as HTMLInputElement).value
     expect(val('secret')).toBe('key') // 预填先生效
-    await w.find('select.scheme-select').setValue('s9')
+    await pickOption(w, '映射方案', '品牌方案')
     await w.find('button.scheme-apply').trigger('click')
     expect(val('secret')).toBe('secretKey')
     expect(val('issuer')).toBe('brand')

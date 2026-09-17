@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { base32Decode, getBuiltinIcons, recommendBuiltinIcon, type BuiltinIcon, type Group, type HashAlgorithm, type OtpEntry } from '@totp/core'
+import { base32Decode, getBuiltinIcons, recommendBuiltinIcon, type BuiltinIcon, type Group, type HashAlgorithm, type MatchRule, type MatchStrategy, type OtpEntry } from '@totp/core'
 import { computed, onScopeDispose, reactive, ref, watch } from 'vue'
 import { fileToScaledDataUrl, importIconPackZip } from '../iconImport'
 import type { IconStore } from '../iconStore'
 import MdButton from './md/MdButton.vue'
 import MdCheckbox from './md/MdCheckbox.vue'
 import MdIconButton from './md/MdIconButton.vue'
+import MdSelect from './md/MdSelect.vue'
 import MdTextField from './md/MdTextField.vue'
 import { type EntryFormData, validateRegex } from './entryForm'
 
@@ -60,6 +61,35 @@ const showSecret = ref(false)
 
 function cleanSecret(): string {
   return form.secret.replace(/\s+/g, '').toUpperCase()
+}
+
+// ---------- MdSelect 选项与回调（原生 select 收口；emit 值为泛化 string|number，赋值前收敛回精确联合类型） ----------
+const TYPE_OPTIONS = [
+  { value: 'totp', label: 'TOTP' },
+  { value: 'hotp', label: 'HOTP（计数器）' },
+  { value: 'steam', label: 'Steam' },
+]
+const ALGO_OPTIONS: Array<{ value: HashAlgorithm; label: string }> = [
+  { value: 'SHA1', label: 'SHA1' },
+  { value: 'SHA256', label: 'SHA256' },
+  { value: 'SHA512', label: 'SHA512' },
+]
+const STRATEGY_OPTIONS: Array<{ value: MatchStrategy; label: string }> = [
+  { value: 'baseDomain', label: '基础域名' },
+  { value: 'host', label: '主机' },
+  { value: 'exact', label: '精确' },
+  { value: 'startsWith', label: '前缀' },
+  { value: 'regex', label: '正则' },
+]
+/** type 下拉回调：赋值触发 digits 联动 watch（steam=5，离开 steam 回 6） */
+function onTypeSelect(v: string | number): void {
+  form.type = v as typeof form.type
+}
+function onAlgoSelect(v: string | number): void {
+  form.algorithm = v as HashAlgorithm
+}
+function setRuleStrategy(r: MatchRule, v: string | number): void {
+  r.strategy = v as MatchStrategy
 }
 
 /** 分组勾选（MdCheckbox 替代数组 v-model checkbox）：勾上加 id，取消勾移除 */
@@ -267,11 +297,10 @@ function submit() {
 
 <template>
   <form class="entry-form" @submit.prevent="submit">
-    <select v-model="form.type" aria-label="类型">
-      <option value="totp">TOTP</option>
-      <option value="hotp">HOTP（计数器）</option>
-      <option value="steam">Steam</option>
-    </select>
+    <MdSelect
+      class="type-select" label="类型" aria-label="类型"
+      :model-value="form.type" :options="TYPE_OPTIONS" @update:model-value="onTypeSelect"
+    />
     <MdTextField v-model="form.issuer" label="服务名" placeholder="服务名（如 GitHub）" aria-label="服务名" />
     <div v-if="recommendVisible && recommended" class="icon-recommend">
       检测到图标：
@@ -290,14 +319,10 @@ function submit() {
     <!-- I68：base32 实时校验的视觉反馈（不阻塞输入，submit 仍把关） -->
     <p v-if="base32Hint" class="base32-hint" role="status">{{ base32Hint }}</p>
     <div class="advanced-row">
-      <label class="field">
-        算法
-        <select v-model="form.algorithm" class="algorithm" aria-label="算法">
-          <option value="SHA1">SHA1</option>
-          <option value="SHA256">SHA256</option>
-          <option value="SHA512">SHA512</option>
-        </select>
-      </label>
+      <MdSelect
+        class="algorithm" label="算法" aria-label="算法"
+        :model-value="form.algorithm" :options="ALGO_OPTIONS" @update:model-value="onAlgoSelect"
+      />
       <MdTextField
         class="digits" type="number" label="位数" aria-label="位数" min="5" max="8"
         :model-value="String(form.digits)" @update:model-value="form.digits = looseToNumber($event)"
@@ -350,13 +375,10 @@ function submit() {
     <fieldset>
       <legend>URL 匹配规则（浏览器插件按当前页过滤用）</legend>
       <div v-for="(r, i) in form.matchRules" :key="i" class="rule-row">
-        <select class="rule-strategy" v-model="r.strategy" aria-label="匹配策略">
-          <option value="baseDomain">基础域名</option>
-          <option value="host">主机</option>
-          <option value="exact">精确</option>
-          <option value="startsWith">前缀</option>
-          <option value="regex">正则</option>
-        </select>
+        <MdSelect
+          class="rule-strategy" label="策略" aria-label="匹配策略"
+          :model-value="r.strategy" :options="STRATEGY_OPTIONS" @update:model-value="setRuleStrategy(r, $event)"
+        />
         <MdTextField
           v-model="r.pattern" class="rule-pattern" label="模式" placeholder="如 github.com 或 ^https://" aria-label="匹配模式"
           :class="{ invalid: r.strategy === 'regex' && r.pattern.trim() !== '' && validateRegex(r.pattern) !== null }"
@@ -383,8 +405,8 @@ function submit() {
 
 <style scoped>
 .entry-form { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: 8px; }
-/* 仅存的原生控件（select/textarea/file）保留紧凑样式；其余输入/按钮由 md 组件自带样式 */
-.entry-form select, .entry-form textarea { padding: 6px 8px; box-sizing: border-box; }
+/* 仅存的原生控件（textarea/file）保留紧凑样式；输入/按钮/下拉由 md 组件自带样式 */
+.entry-form textarea { padding: 6px 8px; box-sizing: border-box; }
 .entry-form textarea { resize: vertical; font-family: inherit; }
 .secret-row { display: flex; gap: 6px; align-items: center; }
 .secret-row .secret-field { flex: 1; }
@@ -393,14 +415,13 @@ function submit() {
 /* invalid 类在 MdTextField 根 div 上，经 :deep 传到输入框底边 */
 .entry-form .secret-field.invalid :deep(.md-text-field__box) { border-bottom-color: var(--md-sys-color-error); }
 .advanced-row { display: flex; gap: 8px; flex-wrap: wrap; font-size: var(--md-sys-typescale-body-small); align-items: flex-start; }
-.advanced-row .field { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 80px; }
-.advanced-row .algorithm { width: 100%; box-sizing: border-box; }
+.advanced-row .algorithm { flex: 1; min-width: 110px; } /* MdSelect 根随行内 flex 伸展（弹窗窄宽语境触发端 100%） */
 .advanced-row .digits, .advanced-row .period, .advanced-row .counter { flex: 1; min-width: 80px; }
 .steam-hint { font-size: var(--md-sys-typescale-label-small); opacity: .65; margin: 0; width: 100%; }
 fieldset { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 6px; display: flex; gap: 10px; flex-wrap: wrap; }
 .group-check { font-size: var(--md-sys-typescale-body-medium); }
 .rule-row { display: flex; gap: 6px; align-items: center; }
-.rule-strategy { width: 110px; }
+.rule-strategy { flex: none; width: 128px; } /* MdSelect 根定宽，触发端 100% 填充 */
 .rule-row .rule-pattern { flex: 1; }
 .rule-row .rule-pattern.invalid :deep(.md-text-field__box) { border-bottom-color: var(--md-sys-color-error); }
 .rule-error { font-size: var(--md-sys-typescale-label-small); color: var(--md-sys-color-error); flex-basis: 100%; }
