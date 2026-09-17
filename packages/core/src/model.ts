@@ -37,6 +37,4 @@ export interface Vault {
   entries: OtpEntry[]
   groups: Group[]
   updatedAt: number
-  /** 备份口令：随 DEK 加密的 vault JSON 一起落盘/同步；明文库禁存（守护在 ui store 层），空串视为未设置 */
-  backupSecret?: string
 }
