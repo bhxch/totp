@@ -1,42 +1,26 @@
 import { describe, expect, it } from 'vitest'
 import {
-  createMemoryStorage, decryptVaultWithDek, randomBytes, SECURITY_KEY, unlockWithPrf,
-  type SecuritySettings,
+  createMemoryStorage, decryptVaultWithDek, encryptVaultWithDek, openSecretBag, randomBytes, SECRET_BAG_KEY,
+  SECURITY_KEY, unlockWithPrf,
+  type SecuritySettings, type StorageAdapter,
 } from '@totp/core'
 import { createVueStore } from '../src/store'
 
-/** 会话备份口令（设计 D1）：会话态按窗口隔离、remember 守护入库、解锁自动装载、replaceVault 字段保留 */
-describe('store backupSecret（D1）', () => {
+/** 会话备份口令（设计 §1 保管区语义）：remember 存保管区键而非 vault 密文；锁定清空、解锁自动装载；
+ *  关加密删保管区键；旧 vault.backupSecret 经迁移 op 搬入保管区并从密文剥除（幂等） */
+describe('store backupSecret（保管区）', () => {
   const diskSecurity = async (adapter: ReturnType<typeof createMemoryStorage>): Promise<SecuritySettings> =>
     JSON.parse((await adapter.get(SECURITY_KEY))!) as SecuritySettings
 
-  /** 加密库上盘断言：解开盘上密文校验 backupSecret 字段 */
-  const diskBackupSecret = async (
-    adapter: ReturnType<typeof createMemoryStorage>,
-    dek: Uint8Array,
-  ): Promise<string | undefined> => {
+  /** 解开盘上 vault 密文（断言遗留字段不落盘用） */
+  const diskVaultJson = async (adapter: StorageAdapter, dek: Uint8Array): Promise<Record<string, unknown>> => {
     const enc = JSON.parse((await adapter.get('vault'))!)
-    return JSON.parse(await decryptVaultWithDek(dek, enc)).backupSecret
+    return JSON.parse(await decryptVaultWithDek(dek, enc)) as Record<string, unknown>
   }
 
-  it('replaceVault 保留 backupSecret 字段（commit 写入不清空）', async () => {
-    const adapter = createMemoryStorage()
-    const s = createVueStore(adapter)
-    await s.initStore()
-    await s.commit((v) => ({ ...v, backupSecret: 'pw' }))
-    expect(s.vault.backupSecret).toBe('pw')
-  })
-
-  it('replaceVault 清除语义：源无字段（显式 undefined）时目标字段被删除且盘上无残留', async () => {
-    const adapter = createMemoryStorage()
-    const s = createVueStore(adapter)
-    await s.initStore()
-    await s.commit((v) => ({ ...v, backupSecret: 'pw' }))
-    // 注：{ ...v } 展开 reactive vault 会带上既有字段，「源无字段」须显式置 undefined
-    await s.commit((v) => ({ ...v, backupSecret: undefined }))
-    expect(s.vault.backupSecret).toBeUndefined()
-    expect(JSON.parse((await adapter.get('vault'))!).backupSecret).toBeUndefined()
-  })
+  /** 解开保管区密文 */
+  const diskBag = async (adapter: StorageAdapter, dek: Uint8Array) =>
+    openSecretBag(dek, await adapter.get(SECRET_BAG_KEY))
 
   it('空串/全空白 setBackupSecret 抛「备份口令不能为空」且会话不变；正常值 trim 后存', async () => {
     const adapter = createMemoryStorage()
@@ -49,17 +33,16 @@ describe('store backupSecret（D1）', () => {
     expect(s.backupSecret.value).toBe('pw')
   })
 
-  it('未启用加密 + remember=true：抛「需先启用加密」；会话生效但不入库', async () => {
+  it('未启用加密 + remember=true：抛「需先启用加密」；会话生效但不落保管区键', async () => {
     const adapter = createMemoryStorage()
     const s = createVueStore(adapter)
     await s.initStore()
     await expect(s.setBackupSecret('pw', true)).rejects.toThrow('需先启用加密才能记住备份口令')
     expect(s.backupSecret.value).toBe('pw') // 会话已置（无论 remember）
-    expect(s.vault.backupSecret).toBeUndefined()
-    expect(await adapter.get('vault')).toBeNull() // 未触发任何落盘
+    expect(await adapter.get(SECRET_BAG_KEY)).toBeNull() // 未触发保管区落盘
   })
 
-  it('锁定 + remember=true：抛「解锁后才能记住」；会话生效但不入库', async () => {
+  it('锁定 + remember=true：抛「解锁后才能记住」；解锁后盘上保管区无口令', async () => {
     const adapter = createMemoryStorage()
     const s = createVueStore(adapter)
     await s.initStore()
@@ -67,65 +50,61 @@ describe('store backupSecret（D1）', () => {
     s.lock()
     await expect(s.setBackupSecret('pw', true)).rejects.toThrow('解锁后才能记住备份口令')
     expect(s.backupSecret.value).toBe('pw') // 会话已置
-    await s.unlock('masterpw') // 解锁装载盘上 vault：其中不该有字段
-    expect(s.vault.backupSecret).toBeUndefined()
+    await s.unlock('masterpw')
+    expect(s.bagStored.value).toBe(false)
+    expect((await diskBag(adapter, s.getCurrentDek()!)).backupPassword).toBe('')
   })
 
-  it('启用+解锁 remember=true：vault 有字段且随密文落盘；lock→unlock 后会话自动装载', async () => {
+  it('remember=true 存保管区而非 vault 密文；forget 后保管区口令清空（凭据键不受影响）；lock→unlock 自动装载', async () => {
     const adapter = createMemoryStorage()
     const s = createVueStore(adapter)
     await s.initStore()
     await s.enableEncryption('masterpw')
     await s.setBackupSecret('pw', true)
     expect(s.backupSecret.value).toBe('pw')
-    expect(s.vault.backupSecret).toBe('pw')
-    expect(await diskBackupSecret(adapter, s.getCurrentDek()!)).toBe('pw') // 随 DEK 密文落盘
+    expect(s.bagStored.value).toBe(true)
+    const dek = s.getCurrentDek()!
+    expect((await diskBag(adapter, dek)).backupPassword).toBe('pw') // 保管区密文落盘
+    expect(await diskVaultJson(adapter, dek)).not.toHaveProperty('backupSecret') // vault 密文无该字段
+    // forget：保管区口令清空并重封
+    await s.forgetBackupSecret()
+    expect(s.backupSecret.value).toBeNull()
+    expect(s.bagStored.value).toBe(false)
+    expect((await diskBag(adapter, dek)).backupPassword).toBe('')
+    // 重新记住 → lock→unlock 后从保管区自动装载
+    await s.setBackupSecret('pw', true)
     s.lock()
     expect(s.backupSecret.value).toBeNull()
+    expect(s.bagStored.value).toBe(false)
     await s.unlock('masterpw')
     expect(s.backupSecret.value).toBe('pw') // 解锁自动装载
-    expect(s.vault.backupSecret).toBe('pw')
+    expect(s.bagStored.value).toBe(true)
   })
 
-  it('remember=false：会话生效、内存与盘上 vault 均无字段', async () => {
+  it('remember=false：仅会话生效，盘上保管区无口令', async () => {
     const adapter = createMemoryStorage()
     const s = createVueStore(adapter)
     await s.initStore()
     await s.enableEncryption('masterpw')
     await s.setBackupSecret('pw', false)
     expect(s.backupSecret.value).toBe('pw')
-    expect(s.vault.backupSecret).toBeUndefined()
-    expect(await diskBackupSecret(adapter, s.getCurrentDek()!)).toBeUndefined()
+    expect(s.bagStored.value).toBe(false)
+    expect((await diskBag(adapter, s.getCurrentDek()!)).backupPassword).toBe('')
   })
 
-  it('forgetBackupSecret：清会话 + 清库内字段（盘上密文同步清除）；锁定态只清会话不报错', async () => {
+  it('lock 清会话与保管区视图', async () => {
     const adapter = createMemoryStorage()
     const s = createVueStore(adapter)
     await s.initStore()
     await s.enableEncryption('masterpw')
     await s.setBackupSecret('pw', true)
-    await s.forgetBackupSecret()
-    expect(s.backupSecret.value).toBeNull()
-    expect(s.vault.backupSecret).toBeUndefined()
-    expect(await diskBackupSecret(adapter, s.getCurrentDek()!)).toBeUndefined()
-    // 锁定态：只清会话，不抛错
-    s.lock()
-    await s.setBackupSecret('x', false)
-    await s.forgetBackupSecret()
-    expect(s.backupSecret.value).toBeNull()
-  })
-
-  it('lock 清会话', async () => {
-    const adapter = createMemoryStorage()
-    const s = createVueStore(adapter)
-    await s.initStore()
-    await s.setBackupSecret('pw', false)
-    expect(s.backupSecret.value).toBe('pw')
     s.lock()
     expect(s.backupSecret.value).toBeNull()
+    expect(s.bagStored.value).toBe(false)
+    expect(s.credsCache.value).toEqual({})
   })
 
-  it('disableEncryption：明文库禁存口令（先记住后关 / 会话有值但库无字段 两态均清会话）', async () => {
+  it('disableEncryption：删保管区键 + 清会话/视图（先记住后关 / 会话有值 两态均清）', async () => {
     const adapter = createMemoryStorage()
     const s = createVueStore(adapter)
     await s.initStore()
@@ -134,19 +113,18 @@ describe('store backupSecret（D1）', () => {
     await s.setBackupSecret('pw', true)
     await s.disableEncryption()
     expect(s.backupSecret.value).toBeNull()
-    expect(s.vault.backupSecret).toBeUndefined()
-    const raw = JSON.parse((await adapter.get('vault'))!)
-    expect(raw.enc).toBeUndefined() // 已回明文
-    expect(raw.backupSecret).toBeUndefined() // 明文库无字段
-    // 态 2：会话有值但库无字段（remember=false 后关加密）
+    expect(s.bagStored.value).toBe(false)
+    expect(await adapter.get(SECRET_BAG_KEY)).toBeNull() // 保管区键已删
+    expect(JSON.parse((await adapter.get('vault'))!).enc).toBeUndefined() // 已回明文
+    // 态 2：会话有值（未记住）后关加密
     await s.enableEncryption('masterpw')
     await s.setBackupSecret('pw2', false)
     await s.disableEncryption()
     expect(s.backupSecret.value).toBeNull()
-    expect(JSON.parse((await adapter.get('vault'))!).backupSecret).toBeUndefined()
+    expect(await adapter.get(SECRET_BAG_KEY)).toBeNull()
   })
 
-  it('unlockWithDek（PRF）路径解锁后同样自动装载', async () => {
+  it('unlockWithDek（PRF）路径解锁后同样自动装载保管区口令', async () => {
     const adapter = createMemoryStorage()
     const s = createVueStore(adapter)
     await s.initStore()
@@ -161,7 +139,7 @@ describe('store backupSecret（D1）', () => {
     expect(s.backupSecret.value).toBe('pw')
   })
 
-  it('initStore 重建（同窗口已持 DEK，如刷新/重建 store）：直接解密填充并装载会话口令', async () => {
+  it('initStore 重建（同窗口已持 DEK，如刷新/重建 store）：直接解密填充并装载保管区口令', async () => {
     const adapter = createMemoryStorage()
     const s = createVueStore(adapter)
     await s.initStore()
@@ -172,7 +150,42 @@ describe('store backupSecret（D1）', () => {
     await b.unlockWithDek(s.getCurrentDek()!)
     await b.initStore()
     expect(b.locked.value).toBe(false)
-    expect(b.backupSecret.value).toBe('pw') // 解密填充时同步装载库内口令
+    expect(b.backupSecret.value).toBe('pw') // 解密填充时同步装载保管区口令
     expect(b.vault.groups).toEqual(s.vault.groups)
+  })
+
+  it('migrateLegacySecrets：旧 vault 密文 backupSecret → 保管区 + 从密文剥除；bag 已有口令时仅剥除', async () => {
+    const adapter = createMemoryStorage()
+    const s = createVueStore(adapter)
+    await s.initStore()
+    await s.enableEncryption('masterpw')
+    const dek = s.getCurrentDek()!
+    // 盘上放置遗留密文（vault JSON 带 backupSecret 字段，T2 前旧库形态）
+    const legacyVault = { version: 1, entries: [], groups: [], updatedAt: 1, backupSecret: 'oldpw' }
+    await adapter.set('vault', JSON.stringify(await encryptVaultWithDek(dek, JSON.stringify(legacyVault))))
+    s.lock()
+    await s.unlock('masterpw') // replaceVault 自然丢弃遗留字段（内存无残留）
+    expect(s.backupSecret.value).toBeNull() // 保管区尚未迁移
+    await s.migrateLegacySecrets()
+    expect(s.backupSecret.value).toBe('oldpw') // 先写新：口令入保管区
+    expect(s.bagStored.value).toBe(true)
+    expect((await diskBag(adapter, dek)).backupPassword).toBe('oldpw')
+    expect(await diskVaultJson(adapter, dek)).not.toHaveProperty('backupSecret') // 后删旧：密文重写剥除
+    // bag 已有口令时仅剥除：再放一份带字段密文，迁移不改保管区口令
+    await adapter.set('vault', JSON.stringify(await encryptVaultWithDek(dek, JSON.stringify({ ...legacyVault, backupSecret: 'other' }))))
+    await s.migrateLegacySecrets()
+    expect(s.backupSecret.value).toBe('oldpw')
+    expect((await diskBag(adapter, dek)).backupPassword).toBe('oldpw')
+    expect(await diskVaultJson(adapter, dek)).not.toHaveProperty('backupSecret')
+  })
+
+  it('migrateLegacySecrets：明文库/未启用加密/锁定态直接跳过不报错', async () => {
+    const adapter = createMemoryStorage()
+    const s = createVueStore(adapter)
+    await s.initStore()
+    await expect(s.migrateLegacySecrets()).resolves.toBeUndefined() // 未启用加密
+    await s.enableEncryption('masterpw')
+    s.lock()
+    await expect(s.migrateLegacySecrets()).resolves.toBeUndefined() // 锁定态
   })
 })

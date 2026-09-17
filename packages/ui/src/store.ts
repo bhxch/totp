@@ -1,9 +1,10 @@
 import {
-  DEFAULT_SETTINGS, SECURITY_KEY, VAULT_KEY, addEntry, addGroup, addPrfSource, bytesToBase64, changeVaultPassphrase,
-  createVault, decryptVaultWithDek, encryptVaultWithDek, isEncryptedVault, kekSourcesOf, loadSettings, loadVault,
-  readVaultBackupSecret, removeEntry, removeGroup, removeKekSource, renameGroup, reorderEntries, saveSettings, saveVault,
-  setupVaultEncryption, unlockVaultEncryption, updateEntry, withDpapiSource, withVaultBackupSecret,
-  type AppSettings, type KekSource, type OtpEntry, type SecuritySettings, type StorageAdapter, type Vault,
+  DEFAULT_SETTINGS, SECRET_BAG_KEY, SECURITY_KEY, VAULT_KEY, addEntry, addGroup, addPrfSource, base64ToBytes, bytesToBase64,
+  changeVaultPassphrase, createVault, decryptVaultWithDek, emptyBag, encryptVaultWithDek, isEncryptedVault, kekSourcesOf,
+  loadSettings, openSecretBag, removeEntry, removeGroup, removeKekSource, renameGroup, reorderEntries, saveSettings, saveVault,
+  sealSecretBag, setupVaultEncryption, unlockVaultEncryption, updateEntry, withDpapiSource,
+  type AppSettings, type CloudCred, type KekSource, type KdfProfile, type OtpEntry, type SecretBagContent,
+  type SecuritySettings, type StorageAdapter, type Vault,
 } from '@totp/core'
 import { computed, reactive, ref, toRaw } from 'vue'
 
@@ -20,6 +21,9 @@ export function createVueStore(
     /** 窗口标识：spec §7 末尾要求窗口独立解锁——DEK/locked 按 windowId 索引；
      *  popup/options/desktop mini 必须传不同 id，否则会跨窗口泄漏 DEK */
     windowId?: string
+    /** DEK 持久化（设计 §1 锁定策略·重启即锁）：宿主提供会话级存取（extension=chrome.storage.session base64）；
+     *  缺省=不持久化（desktop 内存级，重启天然锁定）。lock() 必清；解锁/自动恢复必写。 */
+    dekPersist?: { get(): Promise<string | null>; set(dek: Uint8Array): Promise<void>; clear(): Promise<void> }
   } = {},
 ) {
   const suppressMs = opts.selfWriteSuppressMs ?? 500
@@ -37,6 +41,12 @@ export function createVueStore(
   // 会话备份口令（设计 D1）：与 dek 同级、同生命周期——按 windowId 隔离，lock 清空、解锁自动装载
   const backupSecretByWin = new Map<string, string | null>()
   const backupSecretRefByWin = new Map<string, ReturnType<typeof ref<string | null>>>()
+  // DEK 保管区（设计 §1）当前明文缓存：备份口令 + 各源云凭据，仅解锁态有效；lock 清空
+  let bag: SecretBagContent = emptyBag()
+  /** bag.creds 的响应式只读镜像（组件渲染源列表凭据态用；写走 saveSourceCredOp/removeSourceCredOp） */
+  const credsCache = ref<Record<string, CloudCred>>({})
+  /** 保管区是否存有备份口令（bag.backupPassword 非空）：bag 本身非响应式，用镜像 ref 驱动视图 */
+  const bagStoredRef = ref(false)
   // 初始 unlocked（与原 ref(false) 语义对齐）：明文 vault/未启用加密场景下默认解锁；
   // 加密态在 initStore 阶段根据 vault 密文判定 locked=true
   dekByWin.set(windowId, null)
@@ -65,21 +75,30 @@ export function createVueStore(
   const hasEncryption = computed(() => security.value !== null)
   /** 会话备份口令只读视图（存取走 setBackupSecret/forgetBackupSecret） */
   const backupSecret = computed(() => currentBackupSecretRef().value)
+  /** 保管区已存备份口令只读视图（bag.backupPassword 非空即 true；lock/forget/关加密清空）——组件三态判定用 */
+  const bagStored = computed(() => bagStoredRef.value)
 
   function replaceVault(v: Vault): void {
     vault.version = v.version
     vault.updatedAt = v.updatedAt
     vault.entries.splice(0, vault.entries.length, ...v.entries)
     vault.groups.splice(0, vault.groups.length, ...v.groups)
-    // 顶层可选字段逐一对齐：源无字段必须 delete，否则写盘（JSON.stringify(vault)）会把残留字段持久化
-    if (v.backupSecret === undefined) delete vault.backupSecret
-    else vault.backupSecret = v.backupSecret
+    // backupSecret 字段已随 T2 从 Vault 模型删除（保管区接管）：源 JSON 里的遗留字段在此自然丢弃
   }
 
   /** 置/清会话备份口令（Map + ref 双写，两条解锁/锁定路径共用的唯一入口） */
   function setSessionBackupSecret(secret: string | null): void {
     backupSecretByWin.set(windowId, secret)
     currentBackupSecretRef().value = secret
+  }
+
+  /** 解锁后从保管区装载（设计 §1）：口令入会话、凭据入缓存。
+   *  DEK 不匹配/密文损坏时按空保管区回落（不阻断解锁），与新库首启（盘上尚无 secretBag 键）同语义 */
+  async function loadBagIntoSession(): Promise<void> {
+    bag = await openSecretBag(dekByWin.get(windowId)!, await adapter.get(SECRET_BAG_KEY)).catch(() => emptyBag())
+    setSessionBackupSecret(bag.backupPassword || null)
+    credsCache.value = { ...bag.creds }
+    bagStoredRef.value = bag.backupPassword !== ''
   }
 
   function readRawVault(): Promise<unknown> {
@@ -113,13 +132,24 @@ export function createVueStore(
         // 同进程本窗口已持有 DEK（如 unlock 后重建 store / 刷新场景）：直接解密填充
         const loaded = JSON.parse(await decryptVaultWithDek(dekByWin.get(windowId)!, parsed)) as Vault
         replaceVault(loaded)
-        setSessionBackupSecret(readVaultBackupSecret(loaded)) // 解锁恢复同步装载会话口令
+        await loadBagIntoSession() // 解锁恢复同步装载保管区（口令+凭据）
         lockedByWin.set(windowId, false)
         currentLockedRef().value = false
       } else {
-        // 密文在手但本窗口无 DEK：本窗口锁定，vault 保持为空防内存残留读取
-        lockedByWin.set(windowId, true)
-        currentLockedRef().value = true
+        // 会话内 DEK 持久化自动恢复（设计 §1 重启即锁的附带收益）：宿主会话存储仍有 DEK
+        // （如 extension chrome.storage.session 在 options/popup 间共享解锁态），直接进解锁态
+        const persisted = opts.dekPersist ? await opts.dekPersist.get().catch(() => null) : null
+        if (persisted) {
+          try {
+            await applyDekAndUnlock(base64ToBytes(persisted))
+          } catch {
+            lock() // 持久化 DEK 失效（换库/损坏）：lock 清持久化残留，保持锁定等口令输入
+          }
+        } else {
+          // 密文在手但本窗口无 DEK：本窗口锁定，vault 保持为空防内存残留读取
+          lockedByWin.set(windowId, true)
+          currentLockedRef().value = true
+        }
       }
     } else if (parsed) {
       replaceVault(parsed as Vault)
@@ -241,7 +271,7 @@ export function createVueStore(
                 security.value = await readSecurity().catch(() => null)
                 return
               }
-              // 持有 DEK 才解密填充（changePassphrase 只重包裹、DEK 不变，旧 DEK 仍可解）
+              // 持有 DEK 才解密填充（远端未轮换时旧 DEK 仍可解；默认轮换后旧 DEK 解不开 → 上方 catch 转锁定）
               replaceVault(JSON.parse(remoteJson) as Vault)
               // 远端覆盖后必须强制锁定：注释承诺了「丢弃本端 DEK、转锁定」但未执行，
               // 否则下次 commit 会以本端 DEK 加密 + 远端 security 落盘（仍属幽灵密文）。
@@ -283,16 +313,21 @@ export function createVueStore(
       }
       lockedByWin.set(windowId, false)
       currentLockedRef().value = false
+      // DEK 持久化不变量「解锁必写」：enable 同样产出解锁态，宿主会话存储同步持有 DEK
+      void opts.dekPersist?.set(r.dek)
     })
   }
 
-  /** 关闭加密：需已解锁 → 内存明文写回 vault → 删 security → 本窗口丢弃 DEK（经 commit 队列，与写 op 串行） */
+  /** 关闭加密：需已解锁 → 内存明文写回 vault → 删 security 与保管区键 → 本窗口丢弃 DEK（经 commit 队列，与写 op 串行） */
   function disableEncryption(): Promise<void> {
     return enqueue(async () => {
       if (lockedByWin.get(windowId)) throw new Error('vault locked')
       if (!security.value || !dekByWin.get(windowId)) throw new Error('encryption not enabled')
-      // 明文库禁存备份口令（D1）：落盘前剥除（覆盖「先记住后关加密」），并清会话（覆盖「库无字段但会话有值」）
-      replaceVault(withVaultBackupSecret(toRaw(vault) as Vault, null))
+      // 保管区随加密一起退役（设计 §1：明文库无 DEK 可解）：删设备侧键 + 清缓存；会话口令同清（D1 语义反转后口令只存保管区）
+      await adapter.delete(SECRET_BAG_KEY)
+      bag = emptyBag()
+      credsCache.value = {}
+      bagStoredRef.value = false
       setSessionBackupSecret(null)
       lastSelfWrite.vault = Date.now()
       await saveVault(adapter, toRaw(vault) as Vault)
@@ -304,15 +339,25 @@ export function createVueStore(
     })
   }
 
-  /** 更换口令：需已解锁 → 仅重包裹 DEK → 写 security（数据无需重加密；经 commit 队列，与写 op 串行） */
-  function changePassphrase(newPassword: string): Promise<void> {
+  /** 更换口令（需已解锁）：默认 rotateDek=true（设计 §2 裁定改口令即被动轮换）——重生成 DEK、全库重加密写盘、
+   *  保管区重封、kekSources 重置为 password 源（prf/dpapi 死凭证数据层丢弃，宿主 UI 引导重绑）；
+   *  rotateDek=false 仅重包裹（DEK 不变，多绑来源保留）。经 commit 队列，与写 op 串行 */
+  function changePassphrase(newPassword: string, changeOpts: { rotateDek?: boolean; profile?: KdfProfile } = {}): Promise<void> {
     return enqueue(async () => {
       if (lockedByWin.get(windowId)) throw new Error('vault locked')
       if (!security.value || !dekByWin.get(windowId)) throw new Error('encryption not enabled')
-      const next = await changeVaultPassphrase(security.value, dekByWin.get(windowId)!, newPassword)
-      security.value = next
+      const r = await changeVaultPassphrase(security.value, dekByWin.get(windowId)!, newPassword, { rotateDek: true, ...changeOpts })
+      security.value = r.security
+      if (r.dek) {
+        dekByWin.set(windowId, r.dek)
+        // 被动轮换（设计 §2）：DEK 已换 → 全库重加密写盘 + 保管区重封；security 最后落盘作提交点
+        lastSelfWrite.vault = Date.now()
+        await adapter.set(VAULT_KEY, JSON.stringify(await encryptVaultWithDek(r.dek, JSON.stringify(vault))))
+        await adapter.set(SECRET_BAG_KEY, await sealSecretBag(r.dek, bag))
+        void opts.dekPersist?.set(r.dek)
+      }
       lastSelfWrite.vault = Date.now()
-      await adapter.set(SECURITY_KEY, JSON.stringify(next))
+      await adapter.set(SECURITY_KEY, JSON.stringify(r.security))
     })
   }
 
@@ -334,11 +379,13 @@ export function createVueStore(
       loaded = parsed !== null ? (parsed as Vault) : createVault()
     }
     replaceVault(loaded)
-    // 解锁自动装载会话备份口令（password 与 unlockWithDek/PRF 两条路径均汇于此）
-    setSessionBackupSecret(readVaultBackupSecret(loaded))
     dekByWin.set(windowId, key)
+    // 解锁自动装载保管区（password 与 unlockWithDek/PRF 两条路径均汇于此）
+    await loadBagIntoSession()
     lockedByWin.set(windowId, false)
     currentLockedRef().value = false
+    // DEK 持久化（设计 §1 重启即锁）：解锁成功即写宿主会话存储（extension=chrome.storage.session base64）
+    void opts.dekPersist?.set(key)
   }
 
   /** passkey 解锁第二跳：外部经 core unlockWithPrf 解出 DEK 后注入。
@@ -408,8 +455,9 @@ export function createVueStore(
     return dekByWin.get(windowId) ?? null
   }
 
-  /** 设置备份口令（D1）：trim 后先置会话（无论 remember）；
-   *  remember=true 入库前守护：未启用加密/锁定均给中文错误且不写 vault（会话已置），通过则经 commit 随密文落盘 */
+  /** 设置备份口令（设计 §1）：trim 后先置会话（无论 remember）；
+   *  remember=true（存入保管区）守护：未启用加密/锁定均给中文错误且不写盘（会话已置）；
+   *  通过则写入保管区并随 DEK 密文落设备侧独立键（不再写 vault） */
   async function setBackupSecret(secret: string, remember: boolean): Promise<void> {
     const trimmed = secret.trim()
     if (!trimmed) throw new Error('备份口令不能为空')
@@ -417,19 +465,75 @@ export function createVueStore(
     if (remember) {
       if (!security.value) throw new Error('需先启用加密才能记住备份口令')
       if (lockedByWin.get(windowId)) throw new Error('解锁后才能记住备份口令')
-      await commit((v) => withVaultBackupSecret(v, trimmed))
+      bag.backupPassword = trimmed
+      await adapter.set(SECRET_BAG_KEY, await sealSecretBag(dekByWin.get(windowId)!, bag))
+      bagStoredRef.value = true
     }
   }
 
-  /** 清除备份口令：会话必清；已启用加密且解锁时同步清库内字段（未启用/锁定态 vault 本就不该有，只清会话不报错） */
+  /** 清除备份口令：会话必清；解锁+加密态时同步清保管区口令字段并重封写盘（凭据保留）；
+   *  未启用/锁定态保管区密文本就不可用，只清会话不报错 */
   async function forgetBackupSecret(): Promise<void> {
     setSessionBackupSecret(null)
     if (security.value && !lockedByWin.get(windowId)) {
-      await commit((v) => withVaultBackupSecret(v, null))
+      bag.backupPassword = ''
+      await adapter.set(SECRET_BAG_KEY, await sealSecretBag(dekByWin.get(windowId)!, bag))
+      bagStoredRef.value = false
     }
   }
 
-  /** 锁定：本窗口丢弃 DEK、清空内存 vault（防内存残留读取）
+  /** 保存/更新指定源的云凭据入保管区（设计 §1：凭据是秘密，随 DEK 密文存放）。解锁+加密守护 */
+  function saveSourceCredOp(id: string, cred: CloudCred): Promise<void> {
+    return enqueue(async () => {
+      if (lockedByWin.get(windowId)) throw new Error('vault locked')
+      if (!security.value || !dekByWin.get(windowId)) throw new Error('需先启用加密才能保存云凭据')
+      bag.creds[id] = cred
+      await adapter.set(SECRET_BAG_KEY, await sealSecretBag(dekByWin.get(windowId)!, bag))
+      credsCache.value = { ...bag.creds }
+    })
+  }
+
+  /** 移除指定源的云凭据（保管区重封写盘；源元数据在 settings，不由本 op 处理）。解锁+加密守护 */
+  function removeSourceCredOp(id: string): Promise<void> {
+    return enqueue(async () => {
+      if (lockedByWin.get(windowId)) throw new Error('vault locked')
+      if (!security.value || !dekByWin.get(windowId)) throw new Error('需先启用加密才能保存云凭据')
+      delete bag.creds[id]
+      await adapter.set(SECRET_BAG_KEY, await sealSecretBag(dekByWin.get(windowId)!, bag))
+      credsCache.value = { ...bag.creds }
+    })
+  }
+
+  /** 遗留迁移（设计 §1）：旧 vault 密文内的 backupSecret → 写入保管区（先写新），随后剥除字段重写密文（后删旧）。
+   *  幂等：盘上已无字段（或 bag 已有口令）时不重复搬运；bag 已有口令时仅剥除。
+   *  遗留口令从盘上密文读（replaceVault 已不拷该字段，内存 vault 无残留）。解锁态调用（applyDekAndUnlock 后宿主调一次） */
+  async function migrateLegacySecrets(): Promise<void> {
+    if (!security.value || lockedByWin.get(windowId)) return
+    const parsed = await readRawVault()
+    let legacy: unknown
+    if (isEncryptedVault(parsed)) {
+      legacy = (JSON.parse(await decryptVaultWithDek(dekByWin.get(windowId)!, parsed)) as Record<string, unknown>).backupSecret
+    } else if (parsed !== null) {
+      // 「security 在但 vault 明文」半失败态的自愈路径同样剥除
+      legacy = (parsed as Record<string, unknown>).backupSecret
+    }
+    if (typeof legacy === 'string' && legacy && !bag.backupPassword) {
+      bag.backupPassword = legacy
+      await adapter.set(SECRET_BAG_KEY, await sealSecretBag(dekByWin.get(windowId)!, bag))
+      setSessionBackupSecret(legacy)
+      bagStoredRef.value = true
+    }
+    if (legacy !== undefined) {
+      // 剥除落盘：浅拷贝删字段（内存 vault 本就无此字段，实质是重写盘上密文冲掉残留）
+      await commit((v) => {
+        const n = { ...v } as Vault & { backupSecret?: string }
+        delete n.backupSecret
+        return n
+      })
+    }
+  }
+
+  /** 锁定：本窗口丢弃 DEK、清空内存 vault（防内存残留读取）；保管区缓存/持久化 DEK 同步清空
    *  注意：security.value 不在此清空 — 锁定态下 LockScreen 仍需枚举 kekSources 渲染
    *  解锁按钮（passkey/DPAPI 静默解锁），security 本身不包含敏感运行时数据。 */
   function lock(): void {
@@ -437,6 +541,10 @@ export function createVueStore(
     lockedByWin.set(windowId, true)
     currentLockedRef().value = true
     setSessionBackupSecret(null) // 会话口令与 DEK 同生命周期：锁定即清
+    bag = emptyBag() // 保管区缓存与 DEK 同生命周期：锁定即清（密文仍留盘，解锁后重装载）
+    credsCache.value = {}
+    bagStoredRef.value = false
+    void opts.dekPersist?.clear() // 持久化 DEK 必清（设计 §1：锁=丢弃 DEK，含宿主会话存储）
     replaceVault(createVault())
   }
 
@@ -472,9 +580,17 @@ export function createVueStore(
     dpapiSource,
     /** 是否已绑定 DPAPI 来源（boolean 视图，M5 提供以替代 dpapiSource.value !== null 比较） */
     hasDpapiSource,
-    /** 会话备份口令只读视图（D1；随 DEK 密文落盘，明文库禁存；锁定清空、解锁自动装载） */
+    /** 会话备份口令只读视图（随保管区密文落盘；锁定清空、解锁自动装载） */
     backupSecret,
+    /** 保管区是否已存备份口令（bag.backupPassword 非空；与 backupSecret 组合出三态：未设置/会话内已启用/已存入保管区） */
+    bagStored,
+    /** 保管区凭据只读镜像（sourceId → CloudCred；锁定清空，解锁自动装载；写走 saveSourceCredOp/removeSourceCredOp） */
+    credsCache,
     setBackupSecret, forgetBackupSecret,
+    /** 保存/移除源云凭据入保管区（解锁+加密守护，密封写盘） */
+    saveSourceCredOp, removeSourceCredOp,
+    /** 遗留迁移：旧 vault.backupSecret → 保管区并从密文剥除（幂等；解锁态宿主调一次） */
+    migrateLegacySecrets,
     /** 当前解锁态持有的 DEK（DPAPI 启用包装用；锁定/未启用为 null） */
     getCurrentDek,
     unlockWithDek, addPrfSourceOp, removePrfSourceOp, addDpapiSourceOp, removeDpapiSourceOp,

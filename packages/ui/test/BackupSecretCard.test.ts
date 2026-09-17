@@ -1,29 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { computed, reactive, ref } from 'vue'
-import type { Vault } from '@totp/core'
+import { computed, ref } from 'vue'
 import BackupSecretCard from '../src/components/BackupSecretCard.vue'
 import type { VueStore } from '../src/store'
 
-/** 最小 store 假对象：按 VueStore 消费形态构造（backupSecret/hasEncryption 为 ComputedRef 形态的 ref，
- *  vault 为 reactive；setBackupSecret/forgetBackupSecret 为 vi.fn() 且模拟真实语义：会话必置、remember 入库） */
-function makeStore(init: { backupSecret?: string | null; inVault?: boolean; hasEncryption?: boolean } = {}) {
+/** 最小 store 假对象：按 VueStore 消费形态构造（backupSecret/bagStored/hasEncryption 为 ComputedRef 形态的 ref，
+ *  setBackupSecret/forgetBackupSecret 为 vi.fn() 且模拟真实语义：会话必置、remember 存入保管区） */
+function makeStore(init: { backupSecret?: string | null; inBag?: boolean; hasEncryption?: boolean } = {}) {
   const backupSecret = ref<string | null>(init.backupSecret ?? null)
+  const bagStored = ref(init.inBag ?? false)
   const hasEncryption = ref(init.hasEncryption ?? true)
-  const vault = reactive<Vault>({ version: 1, entries: [], groups: [], updatedAt: 0 })
-  if (init.inVault) vault.backupSecret = 'pw'
   const setBackupSecret = vi.fn(async (secret: string, remember: boolean) => {
     backupSecret.value = secret.trim()
-    if (remember) vault.backupSecret = secret.trim()
+    if (remember) bagStored.value = true
   })
   const forgetBackupSecret = vi.fn(async () => {
     backupSecret.value = null
-    delete vault.backupSecret
+    bagStored.value = false
   })
   return {
-    vault,
     hasEncryption: computed(() => hasEncryption.value),
     backupSecret: computed(() => backupSecret.value),
+    bagStored: computed(() => bagStored.value),
     setBackupSecret,
     forgetBackupSecret,
   } as unknown as VueStore
@@ -42,10 +40,11 @@ describe('BackupSecretCard', () => {
     expect(w.find('button.secret-clear').exists()).toBe(false)
   })
 
-  it('说明文案按 §7.2/§7.3 定稿：desc 融合随库存放语义；remember-hint 不写死平台例举', () => {
+  it('说明文案按保管区语义定稿：desc/remember-hint 不再说「随库存放」，记住开关为「记住（存入保管区）」', () => {
     const w = mountCard(makeStore())
-    expect(w.find('.hint.desc').text()).toBe('用于加密本地备份文件与云端同步对象，两者共用；开启记住后随库存放，解锁库即可用；未记住则锁定或关闭页面后需重新输入。')
-    expect(w.find('.remember-hint').text()).toBe('开启后随本库存放（需已启用加密），解锁库即可用，系统原生解锁方式同样生效。')
+    expect(w.find('.hint.desc').text()).toBe('用于加密本地备份文件与云端同步对象，两者共用；开启记住后存入库旁的加密保管区（受本地主口令保护），解锁库即可用；未记住则锁定或关闭页面后需重新输入。')
+    expect(w.find('.remember-hint').text()).toBe('开启后以密文存入保管区（需已启用加密），解锁库即可用，系统原生解锁方式同样生效。')
+    expect(w.text()).toContain('记住（存入保管区）')
   })
 
   it('输入不一致点启用：不调用 setBackupSecret，显示错误', async () => {
@@ -104,7 +103,7 @@ describe('BackupSecretCard', () => {
     expect(w.find('.remember-hint').text()).toContain('需已启用加密')
   })
 
-  it('会话有值（vault 无字段）：状态行「会话内已启用」；点清除调用 forgetBackupSecret + ok 消息', async () => {
+  it('会话有值（保管区无口令）：状态行「会话内已启用」；点清除调用 forgetBackupSecret + ok 消息', async () => {
     const s = makeStore({ backupSecret: 'pw' })
     const w = mountCard(s)
     expect(w.text()).toContain('会话内已启用')
@@ -114,9 +113,9 @@ describe('BackupSecretCard', () => {
     expect(w.text()).toContain('已清除')
   })
 
-  it('库内有字段：状态行「已随库存放，解锁即用」', () => {
-    const w = mountCard(makeStore({ backupSecret: 'pw', inVault: true }))
-    expect(w.text()).toContain('已随库存放，解锁即用')
+  it('保管区已存口令：状态行「已存入保管区，解锁即用」', () => {
+    const w = mountCard(makeStore({ backupSecret: 'pw', inBag: true }))
+    expect(w.text()).toContain('已存入保管区，解锁即用')
   })
 
   it('remember 开关切换值透传（false→true 两次调用参数不同）', async () => {

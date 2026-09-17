@@ -277,7 +277,7 @@ describe('createVueStore', () => {
     expect(b.vault.entries).toHaveLength(2)
   })
 
-  it('跨窗口换口令：B 持旧 DEK 写 op→刷新 security 缓存照常加密写，盘上密文新口令可解', async () => {
+  it('跨窗口换口令（rotateDek=false 仅重包裹）：B 持旧 DEK 写 op→刷新 security 缓存照常加密写，盘上密文新口令可解', async () => {
     const adapter = createMemoryStorage()
     const a = createVueStore(adapter)
     await a.initStore()
@@ -286,7 +286,8 @@ describe('createVueStore', () => {
     const b = createVueStore(adapter)
     await b.initStore() // 密文在手无 dek → 锁定
     await b.unlock('pw1')
-    await a.changePassphrase('pw2') // 盘上 security 已更新，DEK 不变；B 缓存陈旧（pw1 版）
+    // 仅重包裹（DEK 不变）：跨窗口旧 DEK 密文互通的前提；默认轮换语义见 store.secretBag.test.ts（旧 DEK 解不开新密文）
+    await a.changePassphrase('pw2', { rotateDek: false })
 
     await b.addEntryOp(newEntryFromUri('otpauth://totp/B:c?secret=JBSWY3DPEHPK3PXP', 1700000000000))
     const raw = JSON.parse((await adapter.get('vault'))!)

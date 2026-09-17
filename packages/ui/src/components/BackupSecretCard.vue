@@ -6,7 +6,7 @@ import MdSwitch from './md/MdSwitch.vue'
 import MdTextField from './md/MdTextField.vue'
 
 const props = defineProps<{
-  /** 全局响应式 store：读 hasEncryption/backupSecret/vault.backupSecret，写走 setBackupSecret/forgetBackupSecret */
+  /** 全局响应式 store：读 hasEncryption/backupSecret/bagStored，写走 setBackupSecret/forgetBackupSecret */
   store: VueStore
 }>()
 
@@ -20,12 +20,13 @@ const msgKind = ref<'ok' | 'err' | 'hint'>('ok')
 /** store 返回对象内的 computed 不随 props 解包，须显式 .value */
 const hasEnc = computed(() => props.store.hasEncryption.value)
 const sessionSecret = computed(() => props.store.backupSecret.value)
-const storedInVault = computed(() => props.store.vault.backupSecret != null)
+/** 保管区已存口令（bag.backupPassword 非空；解锁自动装载、lock 清空） */
+const storedInBag = computed(() => props.store.bagStored.value)
 
-/** 状态行三态：未设置 / 会话内已启用 / 已随库存放 */
+/** 状态行三态：未设置 / 会话内已启用 / 已存入保管区 */
 const statusText = computed(() => {
   if (!sessionSecret.value) return '未设置'
-  return storedInVault.value ? '已随库存放，解锁即用' : '会话内已启用'
+  return storedInBag.value ? '已存入保管区，解锁即用' : '会话内已启用'
 })
 
 function fail(e: unknown): void {
@@ -76,16 +77,16 @@ async function onClear(): Promise<void> {
 <template>
   <section class="card backup-secret">
     <h2>备份口令</h2>
-    <div class="hint desc">用于加密本地备份文件与云端同步对象，两者共用；开启记住后随库存放，解锁库即可用；未记住则锁定或关闭页面后需重新输入。</div>
+    <div class="hint desc">用于加密本地备份文件与云端同步对象，两者共用；开启记住后存入库旁的加密保管区（受本地主口令保护），解锁库即可用；未记住则锁定或关闭页面后需重新输入。</div>
     <div class="pw-row">
       <MdTextField v-model="password" type="password" label="备份口令" placeholder="备份口令" autocomplete="new-password" />
       <MdTextField v-model="confirmPw" type="password" label="确认口令" placeholder="确认口令" autocomplete="new-password" />
     </div>
     <div class="remember-row">
-      <MdSwitch v-model="remember" aria-label="记住到本库" :disabled="!hasEnc" />
-      <span>记住到本库</span>
+      <MdSwitch v-model="remember" aria-label="记住（存入保管区）" :disabled="!hasEnc" />
+      <span>记住（存入保管区）</span>
     </div>
-    <div class="hint remember-hint">开启后随本库存放（需已启用加密），解锁库即可用，系统原生解锁方式同样生效。</div>
+    <div class="hint remember-hint">开启后以密文存入保管区（需已启用加密），解锁库即可用，系统原生解锁方式同样生效。</div>
     <div class="actions">
       <MdButton class="secret-save" :disabled="busy" @click="onEnable">启用会话</MdButton>
       <MdButton v-if="sessionSecret" class="secret-clear" variant="tonal" :disabled="busy" @click="onClear">清除</MdButton>
