@@ -2,10 +2,15 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { OtpListItem, createClipboardClearer, createIconStore, createVueStore, iconView, useOtpCodes, useTheme, type IconStore, type VueStore } from '@totp/ui'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, shallowRef } from 'vue'
 import { createTauriFs } from './tauriFs'
 
-const store = ref<VueStore | null>(null)
+// store 浅包装（T14 审查根修，与 App.vue 同款）：深 ref 会对嵌套 ref/computed 成员自动解包，
+// 模板 `store.locked` 的布尔判断在深 ref 下靠「解包后恰为 boolean」侥幸正确，shallowRef 下
+// locked 是 ComputedRef（布尔上下文恒真会永远显示不可用）——经下方 locked computed 顶层暴露
+const store = shallowRef<VueStore | null>(null)
+/** 模板锁定态（mini 未就绪/未加密库显示条目，锁定显示不可用） */
+const locked = computed(() => store.value?.locked.value ?? false)
 const icons = ref<IconStore | null>(null)
 
 async function load() {
@@ -56,7 +61,7 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
   if (!code) return
   await writeText(code)
   // C14：HOTP 复制的是旧 counter 的码（RFC 语义），复制完成后再递增；TOTP 不动 counter。
-  // mini 锁定时模板不渲染条目（见 template #v-if="store && store.locked" 分支），故此处 store 必已解锁；
+  // mini 锁定时模板不渲染条目（见 template v-if="store && locked" 分支），故此处 store 必已解锁；
   // updateEntryOp 在 locked 态会抛错，捕获避免在某些边界场景把窗口隐藏打断
   if (entry.type === 'hotp') {
     try { await store.value?.updateEntryOp(entry.uuid, { counter: (entry.counter ?? 0) + 1 }) } catch { /* mini 降级不打扰 */ }
@@ -68,7 +73,7 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
 
 <template>
   <main class="mini">
-    <div v-if="store && store.locked" class="empty">加密启用后迷你窗不可用，请在主窗口解锁使用</div>
+    <div v-if="store && locked" class="empty">加密启用后迷你窗不可用，请在主窗口解锁使用</div>
     <div v-else-if="!store || sorted.length === 0" class="empty">暂无条目</div>
     <OtpListItem v-for="e in sorted" :key="e.uuid" :entry="e" :icon="iconView(e.icon, icons ?? undefined)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" @reveal="revealing = e" />
 

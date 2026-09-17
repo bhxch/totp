@@ -4,7 +4,7 @@ import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { backupFileName, createBackupEnvelope, loadSourceRevs, loadSources, normalizeSchemes, openBackupEnvelope, randomBytes, saveSourceRev, saveSources, SCHEMES_KEY, sha256Hex, type BackupSource, type CloudCred, type ImportScheme, type KdfProfile, type Retention, type StorageAdapter, type Vault } from '@totp/core'
 import { createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type LocalSourceView, type SecurityPlatform, type VueStore } from '@totp/ui'
-import { computed, onMounted, onScopeDispose, ref } from 'vue'
+import { computed, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createDesktopAutoRunner, formatAutoStatusText } from './autoBackup'
 import { createBackupToSources, listBackupsFromSources, readBackupByName, readBackupFileOs, saveConflictBackupToDir, writeBackupFileOs } from './backupService'
 import { decryptDpapiOs, readImportFileBytesOs, readImportFileOs } from './importService'
@@ -12,7 +12,14 @@ import { BACKUP_DIR_KEY, migrateLegacyCloudSources, migrateLegacyLocalSource } f
 import { createTauriFs } from './tauriFs'
 import { osAutoProtectOs, osAutoUnprotectOs } from './tauriSecurity'
 
-const store = ref<VueStore | null>(null)
+// store 必须浅包装（T14 审查根修）：深 ref 会对值做 reactive 深代理，代理 get 对嵌套
+// ref/computed 成员自动解包——闭包 `store.value.locked.value` / 组件 prop `props.store.X.value`
+// 在深 ref 下全部得 undefined/TypeError（探针 storeWrap.test 实证），曾致自动备份/云同步恒跳过、
+// creds/kdfProfile/锁定判定全族失效。shallowRef 下 .value 即原始对象，成员保持真 ref 语义；
+// vault/settings 自身是 reactive，响应式不受影响。模板顶层解包只解一层，locked 经下方 computed 暴露
+const store = shallowRef<VueStore | null>(null)
+/** 模板锁定态（shallowRef 嵌套成员不再被模板隐式解包，显式顶层暴露） */
+const locked = computed(() => store.value?.locked.value ?? false)
 const icons = ref<IconStore | null>(null)
 const loadError = ref('')
 let unlistenFocus: (() => void) | null = null
@@ -540,7 +547,7 @@ const railActions = [{ label: '隐藏到托盘', onClick: () => void getCurrentW
 <template>
   <div v-if="loadError && !store" class="error">{{ loadError }}</div>
   <!-- 解锁成功回调补跑迁移（plan16 T14，幂等）：口令/PRF 解锁各路径在 LockScreen 内 emit unlocked -->
-  <LockScreen v-else-if="store && store.locked" :store="store" :dpapi="dpapiOps" @unlocked="runLegacyMigrations" />
+  <LockScreen v-else-if="store && locked" :store="store" :dpapi="dpapiOps" @unlocked="runLegacyMigrations" />
   <NavigationShell v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :cloud-platform="cloudPlatform" :icons="icons" :schemes-api="schemesApi" :rail-actions="railActions" @copy="copyToClipboard" />
 </template>
 
