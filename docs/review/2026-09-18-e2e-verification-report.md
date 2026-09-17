@@ -65,6 +65,8 @@
 ### N1（静态审计·建议修复）：firefox-mv2 未申请 `idle` 权限且 lockEnforcer 无存在性防护
 `wxt.config.ts` 仅 chrome 端注入 `idle` 权限；`lockEnforcer.ts` 直接调 `chrome.idle.setDetectionInterval/queryState` 无 `chrome.idle` 存在性检查——Firefox 下空闲锁定静默失效（options 页每 30s 轮询抛 TypeError）。建议按 browser 注入权限 + 加守卫降级。另：审查 Critical-3（queryState 阈值语义）在产物 `background/options` bundle 中确认在场。
 
+> **后续（同日）**：N1 的守卫降级已随审查 C3 修复落地（`6384672`，`lockEnforcer.start()` 检测 `chrome.idle` 不可用时上报一次并停用）；C1/C2/C3 三个 Critical 均已原子提交修复并通过回归（core 474 + ext 47 + desktop 64 全绿 + `cargo check`），详见审查报告修复记录。
+
 ## 现场复现的审查结论
 
 - **R3 Important-4**：注入 runner 实际形态的 summary（uuid key）后，状态行原样显示 `feee2f46-e109-40f9-a0a6-659071d3d7ef: 已上传`——uuid 泄露用户可见。

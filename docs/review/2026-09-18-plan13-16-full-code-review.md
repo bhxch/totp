@@ -1,5 +1,17 @@
 # plan13–plan16 全代码审查报告（2026-09-18）
 
+## 状态：3 个 Critical 已修复 ✅（Important/Minor 待后续批次）
+
+2026-09-18 审查当日，3 个 Critical 已原子提交修复并通过回归：
+
+| # | 修复提交 | 回归证据 |
+|---|---|---|
+| C3 空闲锁定阈值 | `6384672` | ext 47/47 绿（含阈值透传与降级 2 新用例）+ typecheck |
+| C2 冲突副本名 | `6315b2e` | core 474/474 绿 + desktop 64/64 绿（含 uuid 用例） |
+| C1 keyring 明文落盘 | `c219286` | `cargo check` exit 0（mac/Linux 分支 cfg 门控，语法经编译解析） |
+
+N1（firefox 缺 idle 权限）已随 C3 在 `lockEnforcer.start()` 加存在性守卫降级；wxt 权限注入按端拆分留待后续（需 firefox 产物实测）。14 项 Important 与 Minor 未在本轮处理，见正文。
+
 ## 范围与方法
 
 对 `docs/review/2026-09-15-e2e-verification-plan.md`（提交 `ed7a634`）之后合入 main 的**全部 138 个提交**（约 +21,400/-1,700 行，205 文件）做分域 fresh review。审查方式与 2026-09-15 全代码审查一致：5 个并行子代理各负责一个领域，对照计划文档逐文件过代码与单测，问题按 Critical / Important / Minor 三级分类，全部结论要求先在最终代码（`c82ee39`）中核实。
