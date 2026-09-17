@@ -7,6 +7,8 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
+mod lock_events;
+
 // mini 最近一次因失焦而隐藏的时刻，用于缓解「托盘点击收起」与「失焦自动隐藏」的竞态
 static LAST_FOCUS_HIDE: Mutex<Option<Instant>> = Mutex::new(None);
 
@@ -463,6 +465,9 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            // 系统锁屏事件监听（plan16 T15）：Windows 下订阅 WTS_SESSION_LOCK → 前端广播
+            // system-lock；非 Windows no-op（mac/Linux 挂账）。前端 App.vue 按设置执行锁定
+            lock_events::start(app.handle().clone());
             // C7：按 settings 覆写默认快捷键——unregister_all + on_shortcut 重新注册一次。
             // Builder.with_shortcuts 在 setup 之前执行已注册默认 alt+shift+t，故仅在配置差异时重注册
             let configured = read_shortcut_from_settings(&app.handle());
@@ -537,8 +542,15 @@ pub fn run() {
             os_auto_unprotect,
             set_global_shortcut
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        // build+run（回调形态）：RunEvent::Exit 时注销系统锁屏监听（plan16 T15）；
+        // 正常运行路径行为与直接 .run(context) 完全一致
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                lock_events::shutdown();
+            }
+        });
 }
 
 // repo 首批 Rust 单测：覆盖备份 os 命令的纯守护逻辑（白名单/目录边界），

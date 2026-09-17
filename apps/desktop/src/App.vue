@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { open, save } from '@tauri-apps/plugin-dialog'
@@ -8,6 +9,7 @@ import { computed, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createDesktopAutoRunner, formatAutoStatusText } from './autoBackup'
 import { createBackupToSources, listBackupsFromSources, readBackupByName, readBackupFileOs, saveConflictBackupToDir, writeBackupFileOs } from './backupService'
 import { decryptDpapiOs, readImportFileBytesOs, readImportFileOs } from './importService'
+import { createIdleLockExecutor } from './idleLock'
 import { BACKUP_DIR_KEY, migrateLegacyCloudSources, migrateLegacyLocalSource } from './legacyMigrate'
 import { createTauriFs } from './tauriFs'
 import { osAutoProtectOs, osAutoUnprotectOs } from './tauriSecurity'
@@ -495,7 +497,31 @@ async function runLegacyMigrations(): Promise<void> {
   }
 }
 
+// ---------- 锁定策略执行（plan16 T15，设计 §1 四触发器的桌面端执行面）----------
+// 系统锁屏：Rust lock_events 模块（Windows WTS）广播 system-lock（mac/Linux 挂账，事件恒不触发
+// 自然降级）；回调实时读 settings（不缓存快照），开关变更即时生效；store.lock() 幂等。
+let unlistenSystemLock: (() => void) | null = null
+
+// 空闲超时：与 extension lockEnforcer（chrome.idle 版）语义一致的原生实现——document 级
+// pointerdown/keydown 节流刷新活动时间戳，30s tick 用 core shouldLockNow 判定（idleLock.ts）；
+// deps 每 tick 现读 settings；store 未就绪时 isLocked 兜底 true（与 autoRunner 同口径）恒不动作。
+const idleLock = createIdleLockExecutor({
+  getIdleMinutes: () => store.value?.settings.lockIdleMinutes ?? 0,
+  isLocked: () => store.value?.locked.value ?? true,
+  lock: () => store.value?.lock(),
+  now: () => Date.now(),
+})
+const onUserActivity = (): void => idleLock.notifyActivity()
+
 onMounted(async () => {
+  // 系统锁屏事件（plan16 T15）：WTS_SESSION_LOCK → system-lock 广播 → 按设置锁定
+  unlistenSystemLock = await listen('system-lock', () => {
+    if (store.value?.settings.lockOnSystemLock) store.value?.lock()
+  })
+  // 空闲锁定执行器：活动监听 + 30s tick（锁定延迟最长一个 tick 粒度）
+  document.addEventListener('pointerdown', onUserActivity, { passive: true })
+  document.addEventListener('keydown', onUserActivity)
+  idleLock.start()
   // 主窗口失焦自动隐藏：仅注册一次，回调内实时读取开关值（勿在 watch 里叠加监听）
   const win = getCurrentWindow()
   const un = await win.onFocusChanged(({ payload: focused }) => {
@@ -527,6 +553,10 @@ onMounted(async () => {
 onScopeDispose(() => {
   auto.stop()
   unlistenFocus?.()
+  unlistenSystemLock?.()
+  idleLock.stop()
+  document.removeEventListener('pointerdown', onUserActivity)
+  document.removeEventListener('keydown', onUserActivity)
 })
 
 /** 30s 清剪贴板：settings.clipboardClearEnabled 开启时复制后定时清空（重复复制重置计时；setup 作用域销毁自动 dispose；store 未就绪时读不到开关视为关闭） */
