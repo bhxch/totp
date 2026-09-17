@@ -92,10 +92,19 @@ export function createVueStore(
     currentBackupSecretRef().value = secret
   }
 
-  /** 解锁后从保管区装载（设计 §1）：口令入会话、凭据入缓存。
-   *  DEK 不匹配/密文损坏时按空保管区回落（不阻断解锁），与新库首启（盘上尚无 secretBag 键）同语义 */
-  async function loadBagIntoSession(): Promise<void> {
-    bag = await openSecretBag(dekByWin.get(windowId)!, await adapter.get(SECRET_BAG_KEY)).catch(() => emptyBag())
+  /** 从盘上装载保管区明文（设计 §1）：DEK 不匹配/密文损坏/IO 失败一律按空保管区回落（不阻断解锁），
+   *  与新库首启（盘上尚无 secretBag 键）同语义 */
+  async function loadBagFromDisk(dek: Uint8Array): Promise<SecretBagContent> {
+    try {
+      return await openSecretBag(dek, await adapter.get(SECRET_BAG_KEY))
+    } catch {
+      return emptyBag()
+    }
+  }
+
+  /** 保管区明文前进到内存态（bag 缓存 + 会话口令 + 凭据镜像 + bagStored 视图） */
+  function advanceBag(next: SecretBagContent): void {
+    bag = next
     setSessionBackupSecret(bag.backupPassword || null)
     credsCache.value = { ...bag.creds }
     bagStoredRef.value = bag.backupPassword !== ''
@@ -129,10 +138,12 @@ export function createVueStore(
     security.value = sec
     if (isEncryptedVault(parsed)) {
       if (dekByWin.get(windowId)) {
-        // 同进程本窗口已持有 DEK（如 unlock 后重建 store / 刷新场景）：直接解密填充
-        const loaded = JSON.parse(await decryptVaultWithDek(dekByWin.get(windowId)!, parsed)) as Vault
+        // 同进程本窗口已持有 DEK（如 unlock 后重建 store / 刷新场景）：先完成可能失败的副步骤（保管区装载），
+        // 再一次性前进内存态（replaceVault+退出锁定）——与 applyDekAndUnlock 同序，消除「锁定但持明文+DEK」瞬态
+        const dek = dekByWin.get(windowId)!
+        const loaded = JSON.parse(await decryptVaultWithDek(dek, parsed)) as Vault
+        advanceBag(await loadBagFromDisk(dek)) // 解锁恢复同步装载保管区（口令+凭据）
         replaceVault(loaded)
-        await loadBagIntoSession() // 解锁恢复同步装载保管区（口令+凭据）
         lockedByWin.set(windowId, false)
         currentLockedRef().value = false
       } else {
@@ -213,8 +224,15 @@ export function createVueStore(
         disk = security.value // 瞬态 IO 失败：保守视为存在
       }
       if (disk === null) {
+        // 远端已 disableEncryption：丢 DEK 必清 persist（T7 审查 R2 对称语义），
+        // 保管区缓存/会话口令一并丢弃（保管区键已被远端删除，密文不可解）
         security.value = null
         dekByWin.set(windowId, null)
+        bag = emptyBag()
+        credsCache.value = {}
+        bagStoredRef.value = false
+        setSessionBackupSecret(null)
+        void opts.dekPersist?.clear()
         lockedByWin.set(windowId, false)
         currentLockedRef().value = false
       } else {
@@ -334,6 +352,7 @@ export function createVueStore(
       await adapter.delete(SECURITY_KEY)
       security.value = null
       dekByWin.set(windowId, null)
+      void opts.dekPersist?.clear() // 丢 DEK 必清 persist（T7 审查 R2 对称语义）
       lockedByWin.set(windowId, false)
       currentLockedRef().value = false
     })
@@ -347,15 +366,16 @@ export function createVueStore(
       if (lockedByWin.get(windowId)) throw new Error('vault locked')
       if (!security.value || !dekByWin.get(windowId)) throw new Error('encryption not enabled')
       const r = await changeVaultPassphrase(security.value, dekByWin.get(windowId)!, newPassword, { rotateDek: true, ...changeOpts })
-      security.value = r.security
       if (r.dek) {
-        dekByWin.set(windowId, r.dek)
-        // 被动轮换（设计 §2）：DEK 已换 → 全库重加密写盘 + 保管区重封；security 最后落盘作提交点
+        // 被动轮换（设计 §2）：DEK 已换 → 全库重加密写盘 + 保管区重封。两次数据写盘先行（失败→内存未前进→
+        // 下次 commit 以旧 DEK+旧 security 落盘，重试自愈，T7 审查 R3）；成功后才前进内存 DEK，security 落盘作最后提交点
         lastSelfWrite.vault = Date.now()
         await adapter.set(VAULT_KEY, JSON.stringify(await encryptVaultWithDek(r.dek, JSON.stringify(vault))))
         await adapter.set(SECRET_BAG_KEY, await sealSecretBag(r.dek, bag))
+        dekByWin.set(windowId, r.dek)
         void opts.dekPersist?.set(r.dek)
       }
+      security.value = r.security
       lastSelfWrite.vault = Date.now()
       await adapter.set(SECURITY_KEY, JSON.stringify(r.security))
     })
@@ -378,10 +398,11 @@ export function createVueStore(
     } else {
       loaded = parsed !== null ? (parsed as Vault) : createVault()
     }
+    // 可能失败的副步骤（保管区装载，失败按空保管区回落）先完成，再一次性前进全部内存态
+    // （bag/会话口令 → vault → 持 DEK → 退出锁定）：消除「locked=true 但内存持明文+DEK」瞬态窗口（T7 审查 R1）
+    advanceBag(await loadBagFromDisk(key)) // 解锁自动装载保管区（password 与 unlockWithDek/PRF 两条路径均汇于此）
     replaceVault(loaded)
     dekByWin.set(windowId, key)
-    // 解锁自动装载保管区（password 与 unlockWithDek/PRF 两条路径均汇于此）
-    await loadBagIntoSession()
     lockedByWin.set(windowId, false)
     currentLockedRef().value = false
     // DEK 持久化（设计 §1 重启即锁）：解锁成功即写宿主会话存储（extension=chrome.storage.session base64）

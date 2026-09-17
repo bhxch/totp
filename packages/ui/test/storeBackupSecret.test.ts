@@ -179,6 +179,28 @@ describe('store backupSecret（保管区）', () => {
     expect(await diskVaultJson(adapter, dek)).not.toHaveProperty('backupSecret')
   })
 
+  it('migrateLegacySecrets：「security 在但 vault 明文」半失败态自愈——遗留口令入保管区、剥除后写盘自愈回密文', async () => {
+    const adapter = createMemoryStorage()
+    const s = createVueStore(adapter)
+    await s.initStore()
+    await s.enableEncryption('masterpw')
+    const dek = s.getCurrentDek()!
+    // 造半失败态（enableEncryption 中途崩溃形态）：security 在、盘上 vault 为明文且带遗留字段
+    const legacyPlain = { version: 1, entries: [], groups: [], updatedAt: 1, backupSecret: 'oldpw' }
+    await adapter.set('vault', JSON.stringify(legacyPlain))
+    s.lock()
+    await s.unlock('masterpw') // 宽容接受明文
+    expect(s.backupSecret.value).toBeNull()
+    await s.migrateLegacySecrets()
+    expect(s.backupSecret.value).toBe('oldpw') // 遗留口令入保管区
+    expect(s.bagStored.value).toBe(true)
+    expect((await diskBag(adapter, dek)).backupPassword).toBe('oldpw')
+    // 剥除落盘经 saveVaultToAdapter 加密分支自愈回密文：明文消失、密文解出无 backupSecret
+    const raw = JSON.parse((await adapter.get('vault'))!)
+    expect(raw.enc).toBe(true)
+    expect(await diskVaultJson(adapter, dek)).not.toHaveProperty('backupSecret')
+  })
+
   it('migrateLegacySecrets：明文库/未启用加密/锁定态直接跳过不报错', async () => {
     const adapter = createMemoryStorage()
     const s = createVueStore(adapter)
