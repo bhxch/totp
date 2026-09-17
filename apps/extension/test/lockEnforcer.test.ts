@@ -2,6 +2,7 @@
  * lockEnforcer（idle/锁屏自动锁定执行器）单测（plan16 T12）：
  * chrome.idle 以假实现注入 globalThis.chrome + vitest fake timers，验证编排逻辑：
  * - 30s tick；idleMinutes>=1 时 setDetectionInterval(clamp(idleMinutes*60))，且仅值变化时调用一次
+ * - queryState(clamp(idleMinutes*60))（勘误 审查C3：queryState 只认入参阈值，不认 setDetectionInterval）
  * - queryState 'locked'+lockOnSystemLock → lock；'idle'+idleMinutes>=1 → lock
  * - 'idle'+idleMinutes=0 / 'active' / prefs null → 不 lock
  * - chrome API 抛错经 onError 上报不向上抛；stop 后不再 tick
@@ -86,15 +87,26 @@ describe('setDetectionInterval 调度', () => {
     expect(chrome.calls.setDetectionInterval).toEqual([300, 600])
   })
 
-  it('超大值钳制到 86400；idleMinutes=0（禁用）不调 setDetectionInterval', async () => {
+  it('超大值钳制到 14400（Chromium 4h 上限）；idleMinutes=0（禁用）不调 setDetectionInterval', async () => {
     const chrome = installChromeIdle()
     const t = setup({ idleMinutes: 999_999, lockOnSystemLock: false })
     t.watcher.start()
     await t.tick(1)
-    expect(chrome.calls.setDetectionInterval).toEqual([86_400])
+    expect(chrome.calls.setDetectionInterval).toEqual([14_400])
     t.setPrefs({ idleMinutes: 0, lockOnSystemLock: true })
     await t.tick(1)
-    expect(chrome.calls.setDetectionInterval).toEqual([86_400]) // 未追加
+    expect(chrome.calls.setDetectionInterval).toEqual([14_400]) // 未追加
+  })
+
+  it('queryState 收到钳制后的用户阈值：5 分钟 → 300（审查 C3 勘误），0 分钟 → 15（探测系统锁屏用下限）', async () => {
+    const chrome = installChromeIdle()
+    const t = setup({ idleMinutes: 5, lockOnSystemLock: false })
+    t.watcher.start()
+    await t.tick(2)
+    expect(chrome.calls.queryState).toEqual([300, 300])
+    t.setPrefs({ idleMinutes: 0, lockOnSystemLock: true })
+    await t.tick(1)
+    expect(chrome.calls.queryState).toEqual([300, 300, 15])
   })
 })
 
@@ -174,7 +186,7 @@ describe('容错与生命周期', () => {
     fail = false
     await t.tick(1)
     expect(chrome.calls.setDetectionInterval).toEqual([300, 300]) // 抛错未更新缓存 → 下 tick 重试成功
-    expect(chrome.calls.queryState).toEqual([15])
+    expect(chrome.calls.queryState).toEqual([300])
     expect(t.calls.onError).toHaveLength(1)
   })
 
@@ -216,6 +228,14 @@ describe('容错与生命周期', () => {
     t.watcher.stop()
     await t.tick(3)
     expect(t.calls.lock).toBe(1) // stop 后无新 tick
-    expect(chrome.calls.queryState).toEqual([15])
+    expect(chrome.calls.queryState).toEqual([300])
+  })
+
+  it('chrome.idle 不存在（宿主无 idle 权限）→ start 上报一次错误且不启定时器（N1 降级）', async () => {
+    const t = setup({ idleMinutes: 5, lockOnSystemLock: true })
+    t.watcher.start()
+    await t.tick(2)
+    expect(t.calls.onError).toHaveLength(1)
+    expect(t.calls.lock).toBe(0)
   })
 })
