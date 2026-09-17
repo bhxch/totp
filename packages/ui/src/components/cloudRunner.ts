@@ -6,7 +6,8 @@
  *   不弹确认——设计 §4「自动执行结果不打扰」（区别于 CloudCard 手动同步的两步确认）；
  * - 单目标失败由 core 编排隔离（outcome=null + error），仅全程意外抛错才走 onError；
  * - keep 源 outcome=uploaded（含收敛改写后 uploaded）后执行 enforceRemoteRetention 远端滚动删除，
- *   结果经 onRetentionDeleted 交宿主记录（deleted=-1=后端不支持，宿主降级提示）；
+ *   结果经 onRetentionDeleted 交宿主记录（deleted=-1=后端不支持，宿主降级提示）；清理全程逐源
+ *   try/catch 隔离，失败不影响该源上传结果与其余源（下轮重试）；
  * - 已知边界：busy 只防 runner 重入（自动与自动重叠），与 CloudCard 手动同步可能并发，
  *   由两边各自的 hash 回写顺序兜底（后完成者覆盖基线），不引入跨实例锁。
  */
@@ -98,14 +99,20 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(): Promise<v
       // 回写各源基线：成功目标=新 hash；失败目标（hashes 无键）=null 即删除基线（下轮全量重比）
       for (const t of inputs) await deps.saveTargetHash(t.key, r.hashes[t.key] ?? null)
       // keep 源滚动删除（基线回写后执行；复用 input.backend 实例，onCredChange 回写口径一致）：
-      // 仅对 outcome=uploaded（上传/收敛回推成功）的源执行——in-sync 无新文件，失败源无可清理依据
+      // 仅对 outcome=uploaded（上传/收敛回推成功）的源执行——in-sync 无新文件，失败源无可清理依据。
+      // per-source try/catch 隔离：listBackups 网络抛错或宿主回调抛错只损失本轮清理（下轮重试），
+      // 不改写该源 uploaded 结果、不中断其余源清理与最终 summary（上传成功的既成事实不因清理失败回滚）
       for (const { source } of pairs) {
         if (source.retention.type !== 'keep') continue
         const res = r.results.find((x) => x.key === source.id)
         if (!res?.outcome || res.outcome.action !== 'uploaded') continue
         const backend = inputs.find((x) => x.key === source.id)!.backend
-        const deleted = await enforceRemoteRetention(backend, source.retention.n)
-        deps.onRetentionDeleted?.(source.id, deleted)
+        try {
+          const deleted = await enforceRemoteRetention(backend, source.retention.n)
+          deps.onRetentionDeleted?.(source.id, deleted)
+        } catch {
+          // 不进 onError（区别于编排层意外）：清理失败下轮同步自动重试
+        }
       }
       // summary 动作中文化（Minor-6）：与手动同步状态行同口径；单目标失败（outcome=null）记「失败」
       deps.recordStatus?.(true, r.results.map((x) => `${x.key}: ${x.outcome ? CLOUD_ACTION_LABEL[x.outcome.action] : '失败'}`).join('; '))

@@ -218,8 +218,8 @@ onMounted(async () => {
 })
 
 /**
- * 保存凭据：源元数据整列表落盘 + 逐启用源把编辑副本写入保管区（空白凭据跳过并提示——
- * 空白行从未配置过，写入只会污染保管区）。
+ * 保存凭据：源元数据整列表落盘 + 逐源把编辑副本写入保管区（含禁用源——凭据与启用态独立，
+ * 跳过会造成编辑静默丢失；空白凭据跳过并提示——空白行从未配置过，写入只会污染保管区）。
  */
 async function onSaveCreds(): Promise<void> {
   const p = props.platform
@@ -228,7 +228,6 @@ async function onSaveCreds(): Promise<void> {
     await p.saveSources(sources.value)
     let skipped = 0
     for (const s of sources.value) {
-      if (!s.enabled) continue
       const draft = credDrafts.value[s.id]
       if (!draft || isBlankCred(draft)) {
         skipped++
@@ -311,14 +310,20 @@ async function onSync(): Promise<void> {
       statusMap.value[res.key] = ACTION_LABEL[res.outcome.action] ?? res.outcome.action
       if (res.convergeError) statusMap.value[res.key] += `（收敛回推失败：${trunc(res.convergeError)}）`
       // keep 源上传成功（含收敛改写后的 uploaded）→ 远端滚动删除超额旧份，结果附到状态行：
-      // deleted>0 显示清理份数；-1=后端不支持 listBackups，提示改回覆盖；0=未超额不刷屏
+      // deleted>0 显示清理份数；-1=后端不支持自动清理，提示累积风险与替代选项；0=未超额不刷屏。
+      // per-source try/catch 隔离：listBackups/删除网络抛错不改写该源上传成功状态、
+      // 不中断 results 循环后续（该源基线回写与其余源处理照常），失败仅提示下轮重试
       const src = sources.value.find((x) => x.id === res.key)
       if (src?.retention.type === 'keep' && res.outcome.action === 'uploaded') {
         const backend = inputs.find((x) => x.key === res.key)?.backend
         if (backend) {
-          const deleted = await enforceRemoteRetention(backend, src.retention.n)
-          if (deleted > 0) statusMap.value[res.key] += `（滚动清理 ${deleted} 份）`
-          else if (deleted < 0) statusMap.value[res.key] += '（该后端不支持保留多份，已按覆盖处理）'
+          try {
+            const deleted = await enforceRemoteRetention(backend, src.retention.n)
+            if (deleted > 0) statusMap.value[res.key] += `（滚动清理 ${deleted} 份）`
+            else if (deleted < 0) statusMap.value[res.key] += '（该后端不支持自动清理，历史备份会累积，可手动清理或改用覆盖模式）'
+          } catch {
+            statusMap.value[res.key] += '（滚动清理失败，下轮同步重试）'
+          }
         }
       }
       if (res.outcome.action === 'downloaded' || res.outcome.action === 'conflict-resolved') {

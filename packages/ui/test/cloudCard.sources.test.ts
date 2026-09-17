@@ -161,21 +161,23 @@ describe('CloudCard（源列表 plan16 T8）', () => {
     expect(p.saveSources).toHaveBeenLastCalledWith([src({ id: 's1', retention: { type: 'keep', n: 3 } })])
   })
 
-  it('S4 保存调用序列：saveSources 先于逐源 saveCred；禁用源凭据跳过、空白源计数提示', async () => {
+  it('S4 保存调用序列：saveSources 先于逐源 saveCred（禁用源凭据一并保存不静默丢失）；空白源计数提示', async () => {
+    const S2_CRED: CloudCred = { backend: 'gist', token: 'tok2', gistId: 'gid2' }
     const p = makePlatform({
       loadSources: vi.fn().mockResolvedValue([
         src({ id: 's1' }),
-        src({ id: 's2', name: '空白源', enabled: false }),
+        src({ id: 's2', kind: 'gist', name: '禁用源', enabled: false }),
         src({ id: 's3', name: '未配置源' }),
       ]),
-      creds: { s1: WEBDAV_CRED }, // s3 空白（无已存凭据），s2 禁用
+      creds: { s1: WEBDAV_CRED, s2: S2_CRED }, // s3 空白（无已存凭据）
     })
     const w = await mountCard(p)
     await w.find('button.creds-save').trigger('click')
     await flushPromises()
     expect(p.saveSources).toHaveBeenCalledTimes(1)
-    expect(p.saveCred).toHaveBeenCalledTimes(1)
+    expect(p.saveCred).toHaveBeenCalledTimes(2)
     expect(p.saveCred).toHaveBeenCalledWith('s1', WEBDAV_CRED)
+    expect(p.saveCred).toHaveBeenCalledWith('s2', S2_CRED) // 禁用源凭据不跳过
     // 序列：saveSources 先落盘，再写各源凭据
     const saveSourcesOrder = vi.mocked(p.saveSources).mock.invocationCallOrder[0]!
     const saveCredOrder = vi.mocked(p.saveCred).mock.invocationCallOrder[0]!
@@ -220,7 +222,7 @@ describe('CloudCard（源列表 plan16 T8）', () => {
     expect(w.text()).toContain('已上传（滚动清理 1 份）')
   })
 
-  it('S5b keep 源后端不支持 listBackups：状态行降级提示「已按覆盖处理」，删除零调用', async () => {
+  it('S5b keep 源后端不支持 listBackups：状态行提示「不支持自动清理、会累积」，删除零调用', async () => {
     const plain: CloudBackend = { id: 'webdav', put: async () => {}, get: async () => null, delete: async () => {}, exists: async () => false }
     const delSpy = vi.spyOn(plain, 'delete')
     vi.mocked(createCloudBackend).mockImplementation(() => plain)
@@ -238,7 +240,40 @@ describe('CloudCard（源列表 plan16 T8）', () => {
     await clickSync(w)
     expect(mockedRetention).toHaveBeenCalledWith(plain, 2)
     expect(delSpy).not.toHaveBeenCalled()
-    expect(w.text()).toContain('已上传（该后端不支持保留多份，已按覆盖处理）')
+    // 时间戳文件已写入（主流程 uploaded 不改写），仅清理能力缺失如实提示
+    expect(w.text()).toContain('已上传（该后端不支持自动清理，历史备份会累积，可手动清理或改用覆盖模式）')
+  })
+
+  it('S5c keep 源 listBackups 抛错：per-source 隔离——该源仍记「已上传（滚动清理失败，下轮同步重试）」，其余源结果与基线回写不中断', async () => {
+    const bad: CloudBackend = {
+      id: 'webdav', put: async () => {}, get: async () => null, delete: async () => {}, exists: async () => false,
+      listBackups: async () => { throw new Error('PROPFIND 网络失败') },
+    }
+    const plain: CloudBackend = { id: 'gist', put: async () => {}, get: async () => null, delete: async () => {}, exists: async () => false }
+    vi.mocked(createCloudBackend).mockImplementation((cred) => (cred.backend === 'webdav' ? bad : plain))
+    mockedSync.mockResolvedValue({
+      results: [
+        { key: 'k1', outcome: { action: 'uploaded', hash: 'h1' } },
+        { key: 's2', outcome: { action: 'uploaded', hash: 'h2' } },
+      ],
+      finalVaultJson: VALID_VAULT,
+      adopted: false,
+      hashes: { k1: 'h1', s2: 'h2' },
+    })
+    const p = makePlatform({
+      loadSources: vi.fn().mockResolvedValue([
+        src({ id: 'k1', name: '滚动', retention: { type: 'keep', n: 2 } }),
+        src({ id: 's2', kind: 'gist', name: '普通源' }),
+      ]),
+      creds: { k1: WEBDAV_CRED, s2: { backend: 'gist', token: 't', gistId: 'g' } },
+    })
+    const w = await mountCard(p)
+    await clickSync(w)
+    const statuses = w.findAll('.target-status').map((s) => s.text())
+    expect(statuses).toEqual(['已上传（滚动清理失败，下轮同步重试）', '已上传'])
+    // 异常未中断基线回写：两源基线均按成功结果落盘
+    expect(p.saveTargetHash).toHaveBeenCalledWith('k1', 'h1')
+    expect(p.saveTargetHash).toHaveBeenCalledWith('s2', 'h2')
   })
 
   it('S6 GDrive 回存按 sourceId：仅触发源更新 saveCred(id, next)，同类型另一源不受影响', async () => {

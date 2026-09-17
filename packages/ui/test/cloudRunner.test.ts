@@ -362,6 +362,48 @@ describe('createCloudSyncRunner', () => {
     expect(env2.kdf.profile).toBe('balanced')
   })
 
+  it('⑮keep 源 listBackups 抛错：逐源隔离——该源仍记 uploaded 且基线已回写，其余源与 summary 不受影响', async () => {
+    const bad = fakeBackend()
+    bad.listBackups = async () => {
+      throw new Error('PROPFIND 网络失败')
+    }
+    const good = fakeBackend()
+    const { deps, saveTargetHash, onRetentionDeleted, recordStatus, onError } = makeDeps({
+      loadSources: vi.fn(async () => [
+        { source: source('s-keep', { retention: { type: 'keep', n: 2 } }), cred: WEBDAV_CRED },
+        { source: source('s2', { kind: 'gist' }), cred: GIST_CRED },
+      ]),
+      makeBackend: (cred) => (cred.backend === 'gist' ? good : bad),
+    })
+    await expect(createCloudSyncRunner(deps).run()).resolves.toBeUndefined()
+    // 上传成功的既成结果不改写：summary 仍 ok=true、两源基线均已回写（滚动删除在基线回写后，异常不上溢）
+    expect(recordStatus).toHaveBeenCalledWith(true, 's-keep: 已上传; s2: 已上传')
+    expect(saveTargetHash).toHaveBeenCalledWith('s-keep', expect.any(String))
+    expect(saveTargetHash).toHaveBeenCalledWith('s2', expect.any(String))
+    expect(onRetentionDeleted).not.toHaveBeenCalled()
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  it('⑮bonRetentionDeleted 宿主回调抛错：同样逐源隔离，不影响其余源清理与 summary', async () => {
+    const b = fakeBackend()
+    b.listBackups = async () => ['vault-1.totpbackup'] // keep=5 未超额 → deleted=0 → 回调抛错路径
+    const good = fakeBackend()
+    const { deps, recordStatus, onError } = makeDeps({
+      loadSources: vi.fn(async () => [
+        { source: source('s1', { retention: { type: 'keep', n: 5 } }), cred: WEBDAV_CRED },
+        { source: source('s2', { kind: 'gist', retention: { type: 'keep', n: 5 } }), cred: GIST_CRED },
+      ]),
+      makeBackend: (cred) => (cred.backend === 'gist' ? good : b),
+      onRetentionDeleted: vi.fn((_id: string, deleted: number) => {
+        if (deleted >= 0) throw new Error('宿主记录失败') // s1（deleted=0）抛；s2（-1 不支持）不抛
+      }),
+    })
+    await expect(createCloudSyncRunner(deps).run()).resolves.toBeUndefined()
+    // s1 回调抛错被隔离；s2（无 listBackups → -1）回调仍执行，summary 不受影响
+    expect(recordStatus).toHaveBeenCalledWith(true, 's1: 已上传; s2: 已上传')
+    expect(onError).not.toHaveBeenCalled()
+  })
+
   it('⑭未提供 onRetentionDeleted 时 keep 源滚动删除静默执行不报错', async () => {
     const b = fakeBackend()
     b.listBackups = async () => ['vault-1.totpbackup']
