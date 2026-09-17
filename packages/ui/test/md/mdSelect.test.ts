@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import MdSelect from '../../src/components/md/MdSelect.vue'
@@ -10,8 +12,25 @@ const OPTIONS = [
   { value: 1440, label: '每天' },
 ]
 
+/** 弹层定位校准测试的布局桩：jsdom 无布局（rect 全 0、offsetHeight 0），mock 后驱动校准分支。
+ *  window.innerHeight 用 defineProperty 覆盖（jsdom 该值为普通实例属性）；弹层高用原型 getter spy
+ *  （menu 元素开启后才渲染，无法对实例逐个 spy） */
+function stubLayout(innerH: number, triggerRect: { top: number; bottom: number; left: number }, menuH: number): void {
+  Object.defineProperty(window, 'innerHeight', { value: innerH, configurable: true })
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(menuH)
+  const rect = { top: triggerRect.top, bottom: triggerRect.bottom, left: triggerRect.left, right: triggerRect.left + 160, width: 160, height: triggerRect.bottom - triggerRect.top, x: triggerRect.left, y: triggerRect.top, toJSON: () => ({}) }
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    // 仅触发按钮返回桩值；其余元素保持全 0（jsdom 默认），避免污染无关注入
+    if (this.classList.contains('md-select__trigger')) return rect as DOMRect
+    return { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect
+  })
+}
+
 describe('MdSelect', () => {
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
 
   it('①渲染触发字段与 label；有选中值时 label 悬浮类', () => {
     const w = mount(MdSelect, { props: { label: '自动同步间隔', modelValue: 60, options: OPTIONS } })
@@ -187,5 +206,47 @@ describe('MdSelect', () => {
     expect(ev.defaultPrevented).toBe(false)
     expect(w.find('[role="listbox"]').exists()).toBe(false)
     w.unmount()
+  })
+
+  // ---- 弹层定位校准（批 4 C.1）：首帧按 EST_HEIGHT 估算夹取会过推遮挡触发框，渲染后按实际高度校准 ----
+
+  it('⑭夹取过推校正：触发框下方实际放得下 → 弹层回正下方（触发框底 +8px），不遮触发框', async () => {
+    // 实拍缺陷场景（视口 900）：触发框 bottom=692，EST 280 夹取把弹层推到 612（遮触发框 80px），
+    // 实际弹层高 172 下方放得下 → 校准到 692+8=700
+    stubLayout(900, { top: 643, bottom: 692, left: 446 }, 172)
+    const w = mount(MdSelect, { props: { label: '间隔', modelValue: 60, options: OPTIONS }, attachTo: document.body })
+    await w.find('button.md-select__trigger').trigger('click')
+    const menu = w.find('.md-select__menu')
+    expect(menu.exists()).toBe(true)
+    expect(menu.attributes('style')).toContain('top: 700px')
+    w.unmount()
+  })
+
+  it('⑮底部夹取遮挡：下方放不下且上方更宽裕 → 向上翻转（弹层底=触发框顶-8px），不溢出不遮挡', async () => {
+    // 页面滚到视口底部再开弹层：触发框 top=850/bottom=890，下方仅剩 ~2px，上方 842 → 翻转 top=850-8-172=670
+    stubLayout(900, { top: 850, bottom: 890, left: 446 }, 172)
+    const w = mount(MdSelect, { props: { label: '间隔', modelValue: 60, options: OPTIONS }, attachTo: document.body })
+    await w.find('button.md-select__trigger').trigger('click')
+    const style = w.find('.md-select__menu').attributes('style')!
+    expect(style).toContain('top: 670px')
+    // 翻转后弹层底 842 ≤ 视口底内边距 892：无溢出
+    expect(670 + 172).toBeLessThanOrEqual(900 - 8)
+    w.unmount()
+  })
+
+  it('⑯上下都放不下 → 贴视口底内边距夹取（高度压缩语义），top 不低于 8px', async () => {
+    // 矮视口 300：触发框 top=100/bottom=140，弹层高 280 → 上方 92 / 下方 152 均不够 → top=max(8, 300-8-280)=12
+    stubLayout(300, { top: 100, bottom: 140, left: 446 }, 280)
+    const w = mount(MdSelect, { props: { label: '间隔', modelValue: 60, options: OPTIONS }, attachTo: document.body })
+    await w.find('button.md-select__trigger').trigger('click')
+    expect(w.find('.md-select__menu').attributes('style')).toContain('top: 12px')
+    w.unmount()
+  })
+
+  it('⑰选项 hover 状态层：CSS :hover 8% on-surface，选中项容器色规则在后不被覆盖（jsdom 无样式，源码断言）', () => {
+    const src = readFileSync(join(__dirname, '../../src/components/md/MdSelect.vue'), 'utf8')
+    expect(src).toMatch(/\.md-select__option:hover\s*{[^}]*color-mix\(in srgb, var\(--md-sys-color-on-surface\) 8%, transparent\)/)
+    // --selected 在 :hover 之后声明（同特异度后者的容器色胜出）
+    expect(src.indexOf('.md-select__option:hover')).toBeLessThan(src.indexOf('.md-select__option--selected'))
   })
 })

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import MdDialog from '../../src/components/md/MdDialog.vue'
@@ -71,5 +71,19 @@ describe('MdMenu', () => {
   it('根 wrapper 带 role=menu', () => {
     const w = mount(MdMenu, { props: { open: true, x: 0, y: 0 } })
     expect(w.find('.md-menu').attributes('role')).toBe('menu')
+  })
+  it('外点（document mousedown）emit close；容器内 mousedown 不关；open=false 后监听随移除', async () => {
+    const removeSpy = vi.spyOn(document, 'removeEventListener')
+    const w = mount(MdMenu, { props: { open: true, x: 0, y: 0 }, attachTo: document.body })
+    // 容器内 mousedown 不关
+    w.find('.md-menu').element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    expect(w.emitted('close')).toBeUndefined()
+    // 外点 mousedown 关闭
+    document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    expect(w.emitted('close')).toHaveLength(1)
+    // open 翻转为 false 后监听移除（宿主收起后不再响应）
+    await w.setProps({ open: false })
+    expect(removeSpy).toHaveBeenCalledWith('mousedown', expect.any(Function))
+    w.unmount()
   })
 })

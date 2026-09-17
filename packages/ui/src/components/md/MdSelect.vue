@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 const props = withDefaults(defineProps<{
   /** 触发端字段标签（同 MdTextField label 语义，悬浮呈现） */
@@ -15,6 +15,7 @@ const open = ref(false)
 const activeIdx = ref(-1)
 const rootRef = ref<HTMLElement | null>(null)
 const triggerRef = ref<HTMLButtonElement | null>(null)
+const menuRef = ref<HTMLElement | null>(null)
 
 const selectedLabel = computed(() => props.options.find(o => o.value === props.modelValue)?.label ?? '')
 // 有显示值即悬浮（同 MdTextField「有值即悬浮」语义；0 等合法 number 也悬浮，故以显示值判断而非真值）
@@ -38,6 +39,24 @@ function openMenu(): void {
   pos.value = { left, top }
   activeIdx.value = props.options.findIndex(o => o.value === props.modelValue)
   open.value = true
+  // 首帧定位用 EST_HEIGHT 估算；渲染后按实际弹层高度校准（批 4 C.1）：
+  // 估算比实际大时会过推（弹层上缘高于触发框底 → 遮挡触发框），三个分支取不遮挡且不溢出者：
+  // 下方放得下 → 正下方；下方放不下且上方更宽裕 → 向上翻转；上下都放不下 → 贴视口底内边距夹取
+  void nextTick(() => {
+    if (!open.value) return
+    const el = menuRef.value
+    const rect = triggerRef.value?.getBoundingClientRect()
+    if (!el || !rect) return
+    const h = el.offsetHeight
+    if (h <= 0) return // jsdom 等无布局环境跳过（校准不可行，首帧估算仍成立）
+    const below = window.innerHeight - GAP - (rect.bottom + GAP) // 触发框下方可用高度
+    const above = rect.top - GAP // 上方可用高度
+    let top: number
+    if (h <= below) top = rect.bottom + GAP
+    else if (h <= above && above >= below) top = Math.max(GAP, rect.top - GAP - h)
+    else top = Math.max(GAP, window.innerHeight - GAP - h)
+    pos.value = { left: pos.value.left, top }
+  })
 }
 /** focusBack：是否回焦触发按钮。键盘 Esc/点选/触发 toggle 回焦；resize/scroll/Tab 被动关闭不抢焦点
  *  （用户已 Tab 移走时滚动页面不应把焦点猛拉回） */
@@ -122,7 +141,7 @@ onBeforeUnmount(() => {
         </svg>
       </button>
     </div>
-    <div v-if="open" class="md-select__menu" role="listbox" :style="`left: ${pos.left}px; top: ${pos.top}px;`">
+    <div v-if="open" ref="menuRef" class="md-select__menu" role="listbox" :style="`left: ${pos.left}px; top: ${pos.top}px;`">
       <div v-for="(o, i) in options" :key="o.value" class="md-select__option" role="option"
         :class="{ 'md-select__option--selected': o.value === modelValue, 'md-select__option--active': i === activeIdx }"
         :aria-selected="o.value === modelValue ? 'true' : 'false'"
@@ -156,5 +175,7 @@ onBeforeUnmount(() => {
 .md-select__option { height: 40px; display: flex; align-items: center; padding: 0 16px; cursor: pointer;
   font-size: var(--md-sys-typescale-body-medium); color: var(--md-sys-color-on-surface); }
 .md-select__option--active { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
+/* 鼠标 hover 同 8% state layer（批 4 抽查修正：此前仅键盘 active 有高亮）；选中项容器色不被覆盖 */
+.md-select__option:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
 .md-select__option--selected { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
 </style>
