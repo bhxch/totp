@@ -314,17 +314,19 @@ function persistCloudPrefs(p: CloudAutoPrefs): void {
   } catch { /* 偏好持久化失败不影响功能 */ }
 }
 
-/** 「上次自动备份/同步」状态记录（design §4.1：{at, ok, summary}；Task 13 卡片渲染消费，本任务只写） */
+/** 「上次自动备份/同步」状态记录（design §4.1：{at, ok, summary}；Task 13 卡片渲染消费）。
+ *  ok 三态（批 4）：true=成功 / false=失败 / null=跳过 */
 const BACKUP_AUTO_STATUS_KEY = 'backupAutoStatus'
 const CLOUD_AUTO_STATUS_KEY = 'cloudAutoStatus'
 
-function recordAutoStatus(key: 'backupAutoStatus' | 'cloudAutoStatus', ok: boolean, summary: string): void {
+function recordAutoStatus(key: 'backupAutoStatus' | 'cloudAutoStatus', ok: boolean | null, summary: string): void {
   try {
     localStorage.setItem(key, JSON.stringify({ at: Date.now(), ok, summary }))
   } catch { /* 状态记录失败不影响主流程 */ }
 }
 
-/** 状态 JSON → 卡片展示文本（design §4.1）：「YYYY-MM-DD HH:mm 成功/失败：summary」；缺字段/坏 JSON → null（卡片显示「暂无」） */
+/** 状态 JSON → 卡片展示文本（design §4.1）：「YYYY-MM-DD HH:mm 成功/失败/跳过：summary」；缺字段/坏 JSON → null（卡片显示「暂无」）。
+ *  向后兼容：旧 JSON 的 ok 恒为 true/false，照常渲染成功/失败 */
 function readAutoStatusText(key: 'backupAutoStatus' | 'cloudAutoStatus'): string | null {
   try {
     const raw = localStorage.getItem(key)
@@ -333,7 +335,8 @@ function readAutoStatusText(key: 'backupAutoStatus' | 'cloudAutoStatus'): string
     if (typeof s.at !== 'number' || typeof s.summary !== 'string' || s.summary === '') return null
     const d = new Date(s.at)
     const p = (n: number) => String(n).padStart(2, '0')
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} ${s.ok === true ? '成功' : '失败'}：${s.summary}`
+    const label = s.ok === null ? '跳过' : s.ok === true ? '成功' : '失败'
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} ${label}：${s.summary}`
   } catch {
     return null
   }

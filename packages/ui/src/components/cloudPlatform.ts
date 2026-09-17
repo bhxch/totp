@@ -33,7 +33,7 @@ export function createCloudBackend(cred: CloudCred, onCredChange?: (cred: CloudC
  * - 基线：新键 cloudRevs：Record<backend, string>；旧键 cloudRev 单串。
  * - 读取：cloudRevs 缺失而 cloudRev 存在 → 该值写入 targets[0].cred.backend 键（cloudCreds 为空数组时该值丢弃）；保存只写 cloudRevs 并删除旧键 cloudRev。
  * - 偏好：两端统一键 cloudAutoPrefs（JSON CloudAutoPrefs）。
- * - 自动状态：两端统一键 cloudAutoStatus（JSON {at,ok,summary}），宿主格式化为文本经 loadAutoStatus 提供。
+ * - 自动状态：两端统一键 cloudAutoStatus（JSON {at, ok: boolean|null, summary}，ok=null=跳过态），宿主格式化为文本经 loadAutoStatus 提供。
  * - backend 键取 cred.backend（同后端仅一份凭据）。
  * - 云端对象路径不落键：由 core resolveObjectPath(cred) 从 cred.objectPath 解析。
  */

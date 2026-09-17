@@ -125,6 +125,34 @@ describe('createDesktopAutoRunner（backup 通道）', () => {
     expect(recordStatus).toHaveBeenCalledWith(false, 'x'.repeat(100))
     expect(onError).toHaveBeenCalledWith(boom, 'backup')
   })
+
+  it('recordStatus：locked skip 记 null 跳过态（跳过：库已锁定），不备份', async () => {
+    const recordStatus = vi.fn()
+    const { deps, doBackup } = makeDeps({ isLocked: () => true, recordStatus })
+    createDesktopAutoRunner(deps).notifyChanged()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(doBackup).not.toHaveBeenCalled()
+    expect(recordStatus).toHaveBeenCalledTimes(1)
+    expect(recordStatus).toHaveBeenCalledWith(null, '跳过：库已锁定')
+  })
+
+  it('recordStatus：no-secret skip 记 null 跳过态（跳过：未设置备份口令）', async () => {
+    const recordStatus = vi.fn()
+    const { deps, doBackup } = makeDeps({ getSecret: () => null, recordStatus })
+    createDesktopAutoRunner(deps).notifyChanged()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(doBackup).not.toHaveBeenCalled()
+    expect(recordStatus).toHaveBeenCalledTimes(1)
+    expect(recordStatus).toHaveBeenCalledWith(null, '跳过：未设置备份口令')
+  })
+
+  it('recordStatus：unchanged skip 维持静默（不记状态）', async () => {
+    const recordStatus = vi.fn()
+    const { deps } = makeDeps({ getLastBackupHash: () => HASH1, recordStatus })
+    createDesktopAutoRunner(deps).notifyChanged()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(recordStatus).not.toHaveBeenCalled()
+  })
 })
 
 describe('createDesktopAutoRunner（cloud 通道）', () => {

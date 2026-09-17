@@ -27,8 +27,10 @@ export interface CloudRunnerDeps {
   persistAdopted(json: string): Promise<void>
   /** 冲突副本落盘（key=目标 backend 键）；缺省则丢弃副本提示 */
   saveConflictBackup?(key: string, bytes: Uint8Array): void
-  /** 「上次自动同步」状态记录（design §4.1：desktop 写 localStorage / extension 写 storage.local 的 cloudAutoStatus） */
-  recordStatus?(ok: boolean, summary: string): void
+  /** 「上次自动同步」状态记录（design §4.1：desktop 写 localStorage / extension 写 storage.local 的 cloudAutoStatus）。
+   *  三态（批 4）：true=成功 / false=失败 / null=跳过（锁定/无 secret/空目标；记录仅来自自动通道——
+   *  手动同步走 CloudCard 自身的 platform 链路，不经过本 runner，不会污染手动状态行） */
+  recordStatus?(ok: boolean | null, summary: string): void
   onError?(err: unknown): void
 }
 
@@ -42,12 +44,24 @@ function errMsg(err: unknown): string {
 export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(): Promise<void> } {
   async function run(): Promise<void> {
     if (busy) return
+    // 跳过态可观测（批 4 裁定）：锁定/无 secret/空目标是「用户需要知道的原因」，return 前记 null 跳过态。
+    // 写入频率自审：调度器防抖 10s / 到点 ≥15min，每次触发事件至多写一条，量级可接受
+    if (deps.isLocked()) {
+      deps.recordStatus?.(null, '跳过：库已锁定')
+      return
+    }
     const secret = deps.getSecret()
-    if (deps.isLocked() || secret === null) return // 自动触发只在解锁会话内
+    if (secret === null) {
+      deps.recordStatus?.(null, '跳过：未设置备份口令')
+      return // 自动触发只在解锁会话内
+    }
     busy = true
     try {
       const targets = (await deps.loadCreds()).filter((t) => t.enabled)
-      if (targets.length === 0) return
+      if (targets.length === 0) {
+        deps.recordStatus?.(null, '跳过：未启用云目标')
+        return
+      }
       const inputs = await Promise.all(
         targets.map(async (t) => ({
           key: t.cred.backend,

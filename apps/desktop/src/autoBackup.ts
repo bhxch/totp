@@ -24,8 +24,9 @@ export interface AutoBackupDeps {
   doCloudSync(): Promise<unknown>
   /** 摘要函数注入：desktop 用 core sha256Hex(TextEncoder(vaultJson))，测试用轻量实现 */
   sha256Hex(s: string): Promise<string>
-  /** 「上次自动备份」状态记录（design §4.1：App.vue 写 localStorage backupAutoStatus）；缺省不记录 */
-  recordStatus?(ok: boolean, summary: string): void
+  /** 「上次自动备份」状态记录（design §4.1：App.vue 写 localStorage backupAutoStatus）；缺省不记录。
+   *  三态（批 4）：true=成功 / false=失败 / null=跳过（locked/no-secret 等用户需要知道的原因；unchanged 静默不记） */
+  recordStatus?(ok: boolean | null, summary: string): void
   /** 通道级错误兜底（backup/cloud）；缺省则 console.warn */
   onError?(err: unknown, channel: 'backup' | 'cloud'): void
 }
@@ -73,7 +74,14 @@ export function createDesktopAutoRunner(deps: AutoBackupDeps, opts?: { debounceM
         locked: deps.isLocked(),
         hasSecret: deps.getSecret() !== null,
       })
-      if (decision.action === 'skip') return
+      if (decision.action === 'skip') {
+        // 跳过态可观测（批 4 裁定）：locked/no-secret 是「用户开了开关却无法执行」的原因，记 null 跳过态；
+        // unchanged 维持静默（内容没变无需用户处理）。写入频率自审：调度器防抖 10s（change）/
+        // 到点 ≥15min（interval），每次触发事件至多写一条，量级可接受
+        if (decision.cause === 'locked') deps.recordStatus?.(null, '跳过：库已锁定')
+        else if (decision.cause === 'no-secret') deps.recordStatus?.(null, '跳过：未设置备份口令')
+        return
+      }
       const secret = deps.getSecret()
       if (secret === null) return // decideAutoRun 已挡 no-secret；此处窄化满足 TS
       const r = await deps.doBackup(deps.getVaultJson(), secret)

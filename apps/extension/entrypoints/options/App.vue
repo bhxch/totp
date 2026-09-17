@@ -328,8 +328,8 @@ const cloudSync = createCloudSyncRunner({
   saveConflictBackup: (key, bytes) => {
     void downloadConflictBackup(bytes, key).catch(() => {})
   },
-  // 状态记录不 await：storage 写失败不影响同步主流程
-  recordStatus: (ok, summary) => {
+  // 状态记录不 await：storage 写失败不影响同步主流程。ok 三态（批 4）：true/false/null（跳过）
+  recordStatus: (ok: boolean | null, summary) => {
     void storageAdapter.set('cloudAutoStatus', JSON.stringify({ at: Date.now(), ok, summary })).catch(() => {})
   },
   onError: (err) => console.warn('[cloudAutoSync]', err),
@@ -348,7 +348,8 @@ const scheduler = createAutoRunScheduler({
   },
 })
 
-/** 状态 JSON → 卡片展示文本（design §4.1）：「YYYY-MM-DD HH:mm 成功/失败：summary」；缺字段/坏 JSON → null（卡片显示「暂无」） */
+/** 状态 JSON → 卡片展示文本（design §4.1）：「YYYY-MM-DD HH:mm 成功/失败/跳过：summary」；缺字段/坏 JSON → null（卡片显示「暂无」）。
+ *  向后兼容：旧 JSON 的 ok 恒为 true/false，照常渲染成功/失败 */
 function formatAutoStatus(raw: string | undefined): string | null {
   if (!raw) return null
   try {
@@ -356,7 +357,8 @@ function formatAutoStatus(raw: string | undefined): string | null {
     if (typeof s.at !== 'number' || typeof s.summary !== 'string' || s.summary === '') return null
     const d = new Date(s.at)
     const p = (n: number) => String(n).padStart(2, '0')
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} ${s.ok === true ? '成功' : '失败'}：${s.summary}`
+    const label = s.ok === null ? '跳过' : s.ok === true ? '成功' : '失败'
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} ${label}：${s.summary}`
   } catch {
     return null
   }

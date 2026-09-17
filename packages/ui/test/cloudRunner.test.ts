@@ -86,24 +86,29 @@ function makeDeps(over: Partial<CloudRunnerDeps> = {}) {
 }
 
 describe('createCloudSyncRunner', () => {
-  it('①锁定 → 直接 return（不读凭据、不建 backend、不记状态）', async () => {
-    const { deps, loadCreds } = makeDeps({ isLocked: () => true })
+  it('①锁定 → 记 null 跳过态（跳过：库已锁定），不读凭据、不建 backend', async () => {
+    const { deps, loadCreds, recordStatus } = makeDeps({ isLocked: () => true })
     await createCloudSyncRunner(deps).run()
     expect(loadCreds).not.toHaveBeenCalled()
-    expect(deps.recordStatus).not.toHaveBeenCalled()
+    expect(recordStatus).toHaveBeenCalledTimes(1)
+    expect(recordStatus).toHaveBeenCalledWith(null, '跳过：库已锁定')
   })
 
-  it('②无 secret → 直接 return', async () => {
-    const { deps, loadCreds } = makeDeps({ getSecret: () => null })
+  it('②无 secret → 记 null 跳过态（跳过：未设置备份口令），直接 return', async () => {
+    const { deps, loadCreds, recordStatus } = makeDeps({ getSecret: () => null })
     await createCloudSyncRunner(deps).run()
     expect(loadCreds).not.toHaveBeenCalled()
+    expect(recordStatus).toHaveBeenCalledTimes(1)
+    expect(recordStatus).toHaveBeenCalledWith(null, '跳过：未设置备份口令')
   })
 
-  it('③空目标 → return（不建 backend、不回写 hash）', async () => {
-    const { deps, backends, saveTargetHash } = makeDeps()
+  it('③空目标 → 记 null 跳过态（跳过：未启用云目标），不建 backend、不回写 hash', async () => {
+    const { deps, backends, saveTargetHash, recordStatus } = makeDeps()
     await createCloudSyncRunner(deps).run()
     expect(backends).toHaveLength(0)
     expect(saveTargetHash).not.toHaveBeenCalled()
+    expect(recordStatus).toHaveBeenCalledTimes(1)
+    expect(recordStatus).toHaveBeenCalledWith(null, '跳过：未启用云目标')
   })
 
   it('④仅 enabled 目标进入编排：disabled 不建 backend，enabled 正常回写 hash', async () => {
