@@ -182,10 +182,12 @@ export function createS3Backend(cred: S3Cred, opts: S3BackendOptions = {}): Clou
       return res.ok
     },
     async listBackups() {
-      // keep-n（设计 §3）：ListObjectsV2 列对象父目录（key 前缀 = cred.prefix + 对象父目录），Key 末段过滤备份名
+      // keep-n（设计 §3）：ListObjectsV2 列对象父目录（key 前缀 = cred.prefix + 对象父目录），Key 末段过滤备份名。
+      // 返回与 put/get/delete 同 key 域的完整 key（prefix+dir+name）——子目录 cred 下裸名会删 404；
+      // delete 对已不存在的 key 返 204（S3 幂等语义）：目标若在列表后、删除前被并发清掉，会多计一次成功，属可接受偏差。
       const dir = resolveDirPath(cred)
-      const base = [prefix, dir].filter((s): s is string => !!s).join('/')
-      const listPrefix = base === '' ? '' : `${base}/`
+      const keyPrefix = [prefix, dir].filter((s): s is string => !!s)
+      const listPrefix = keyPrefix.length === 0 ? '' : `${keyPrefix.join('/')}/`
       const query: Record<string, string> = { 'list-type': '2', prefix: listPrefix }
       const url = `${endpoint}${pathStyle ? `/${cred.bucket}` : ''}/?${buildCanonicalQueryString(query)}`
       const res = await cloudFetch(LABEL, url, { method: 'GET', headers: await signedHeadersOf('GET', url, undefined, query) })
@@ -194,7 +196,7 @@ export function createS3Backend(cred: S3Cred, opts: S3BackendOptions = {}): Clou
       const out: string[] = []
       for (const m of xml.matchAll(/<Key>([^<]+)<\/Key>/g)) {
         const name = m[1]!.split('/').pop() ?? ''
-        if (BACKUP_NAME_RE.test(name)) out.push(name)
+        if (BACKUP_NAME_RE.test(name)) out.push([...keyPrefix, name].join('/'))
       }
       return out
     },

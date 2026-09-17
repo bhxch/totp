@@ -117,7 +117,39 @@ describe('Google Drive 后端', () => {
     await expect(backend.get(PATH)).rejects.toThrow('Google Drive 请求失败（HTTP 401）')
   })
 
-  it('delete：无 fileId 先查询再 DELETE files/{id}；查询无匹配则不请求；已有 fileId 直接 DELETE', async () => {
+  it('delete：fileId 已设且目标异名（keep-n 时间戳名）→ 按名查 id 删同名文件，绝不触碰 files/{fileId}，不回写 fileId', async () => {
+    const onCredChange = vi.fn()
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const u = String(url)
+      if (init!.method === 'GET' && u.startsWith('https://www.googleapis.com/drive/v3/files?')) {
+        // 按名查询的 name 与 put 的创建名同串（完整 path），非主对象名
+        expect(decodeURIComponent(new URL(u).searchParams.get('q')!)).toBe(
+          `name='dir/sub/vault-20260101-000000.totpbackup' and mimeType='application/json' and trashed=false`,
+        )
+        return jsonRes({ files: [{ id: 'tsfile1' }] })
+      }
+      if (init!.method === 'DELETE' && u === 'https://www.googleapis.com/drive/v3/files/tsfile1') {
+        return new Response(null, { status: 204 })
+      }
+      throw new Error(`意外请求：${init!.method} ${u}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok', fileId: 'fid9', objectPath: 'dir/sub/totp-backup.totpbackup' }, { onCredChange })
+    await backend.delete('dir/sub/vault-20260101-000000.totpbackup')
+    // 仅 list + DELETE tsfile1 两次请求——绝不出现 files/fid9 的 DELETE（主 vault 对象保护）
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(onCredChange).not.toHaveBeenCalled() // 异名查询不劫持主对象指针
+  })
+
+  it('delete：异名目标按名查不到 → 静默返回（宁可不删），不发 DELETE', async () => {
+    const fetchMock = vi.fn(async () => jsonRes({ files: [] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok', fileId: 'fid9' })
+    await backend.delete('vault-20260101-000000.totpbackup')
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('listBackups：无 fileId 列 root；目标文件 404 → 空数组；非 2xx 抛中文错误', async () => {
     // 无 fileId：list → DELETE
     const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
       const u = String(url)
@@ -336,7 +368,8 @@ describe('OneDrive 后端', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
     const backend = createOneDriveBackend({ backend: 'onedrive', accessToken: 'tok', objectPath: 'dir/sub/totp-backup.totpbackup' })
-    expect(await backend.listBackups!()).toEqual(['vault-20260101-000000.totpbackup', 'vault-20260202-000000.totpbackup'])
+    // 返回与 put/get/delete 同域的完整路径（dir/name）——子目录 cred 下裸名会删错层
+    expect(await backend.listBackups!()).toEqual(['dir/sub/vault-20260101-000000.totpbackup', 'dir/sub/vault-20260202-000000.totpbackup'])
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 

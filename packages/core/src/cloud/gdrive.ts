@@ -1,6 +1,7 @@
 import type { CloudBackend, GDriveCred } from './backend'
 import { cloudFetch, ensureHttpOk } from './backend'
 import { BACKUP_NAME_RE } from '../backup/policy'
+import { resolveObjectPath } from './targetPath'
 
 const LABEL = 'Google Drive'
 const DRIVE_API = 'https://www.googleapis.com/drive/v3'
@@ -19,6 +20,9 @@ export interface GDriveBackendOptions {
 export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions = {}): CloudBackend {
   const auth = { Authorization: `Bearer ${cred.accessToken}` }
   let fileId = cred.fileId
+  // objectPath 的 basename：delete 判定「目标与主对象同名」用（objectPath 实例生命周期内不变，算一次）
+  const objectBasename = resolveObjectPath(cred).split('/').pop()!
+  const basenameOf = (p: string) => p.split('/').filter((s) => s !== '').pop() ?? p
 
   const createFile = async (name: string): Promise<string> => {
     const res = await cloudFetch(LABEL, `${DRIVE_API}/files`, {
@@ -37,8 +41,9 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
   }
 
   /** 按 name + mimeType 查询文件 id（排除回收站），取首个匹配。
-   *  单引号按 Drive 查询语法转义为 \'，防 name 含 ' 时破坏 q 字符串（注入风险）。 */
-  const queryIdByName = async (name: string): Promise<string | null> => {
+   *  单引号按 Drive 查询语法转义为 \'，防 name 含 ' 时破坏 q 字符串（注入风险）。
+   *  writeBack=false：纯查询（滚动删除异名目标用），命中结果不回写 fileId——防主对象指针被时间戳文件劫持。 */
+  const queryIdByName = async (name: string, writeBack = true): Promise<string | null> => {
     const safe = name.replace(/'/g, "\\'")
     const q = `name='${safe}' and mimeType='application/json' and trashed=false`
     const res = await cloudFetch(LABEL, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id,name,mimeType)`, {
@@ -48,7 +53,7 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
     ensureHttpOk(LABEL, res) // 同上：HTTP 错误 vs 业务字段缺失错误文案区分
     const json = (await res.json()) as { files?: Array<{ id?: string }> }
     const found = json.files?.[0]?.id ?? null
-    if (found && found !== fileId) {
+    if (writeBack && found && found !== fileId) {
       // 首次按 name 解析到 fileId 时回存凭据,避免后续每次都重复查询
       fileId = found
       opts.onCredChange?.({ ...cred, fileId: found })
@@ -88,7 +93,11 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
       return new Uint8Array(await res.arrayBuffer())
     },
     async delete(path) {
-      const id = fileId ?? (await queryIdByName(path))
+      // 主对象保护（keep-n 滚动删除激活了本路径）：cred.fileId 指向云端主 vault 对象，仅当删除目标与
+      // objectPath 同 basename 时才可删 fileId；时间戳等异名目标改按名查询删除同名文件（writeBack=false），
+      // 查不到（404/空）静默返回——宁可不删不可误删主对象。
+      const sameTarget = basenameOf(path) === objectBasename
+      const id = sameTarget ? (fileId ?? (await queryIdByName(path))) : (await queryIdByName(path, false))
       if (!id) return
       const res = await cloudFetch(LABEL, `${DRIVE_API}/files/${id}`, { method: 'DELETE', headers: auth })
       ensureHttpOk(LABEL, res)

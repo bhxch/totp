@@ -96,7 +96,8 @@ describe('WebDAV 后端', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
     const backend = createWebdavBackend({ backend: 'webdav', serverUrl: DAV, username: 'user', password: 'pass', objectPath: 'dir/sub/totp-backup.totpbackup' })
-    expect(await backend.listBackups!()).toEqual(['vault-20260101-000000.totpbackup', 'vault-20260202-000000.totpbackup'])
+    // 返回与 put/get/delete 同域的完整路径（dir/name）——子目录 cred 下裸名会删错层 404
+    expect(await backend.listBackups!()).toEqual(['dir/sub/vault-20260101-000000.totpbackup', 'dir/sub/vault-20260202-000000.totpbackup'])
   })
 
   it('listBackups：根路径对象 PROPFIND 集合根；非法百分号编码 href 不中断', async () => {
@@ -191,10 +192,11 @@ describe('Gist 后端', () => {
     expect(await backend.exists(PATH)).toBe(false)
   })
 
-  it('listBackups：GET gist 后 files 键名过滤 BACKUP_NAME_RE（gist 文件名无目录层级）', async () => {
+  it('listBackups：GET gist 后 files 键名过滤 BACKUP_NAME_RE（gist 文件名无目录层级）；content=\'\' 残留键剔除', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => jsonRes({ public: false, files: {
       'vault-20260101-000000.totpbackup': { content: 'a' },
       'vault-20260202-000000.totpbackup': { content: 'b' },
+      'vault-20251231-000000.totpbackup': { content: '' }, // delete 置空残留（gist 无法真删），不再参与滚动删除
       'vault-backup.totpbackup': { content: 'c' },
       'conflict-gist-20260101-000000.totpbackup': { content: 'd' },
       'notes.txt': { content: 'e' },

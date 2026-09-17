@@ -294,7 +294,8 @@ describe('S3 后端（默认 AWS endpoint，virtual-host style）', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
     const backend = createS3Backend(cred, OPTS)
-    expect(await backend.listBackups!()).toEqual(['vault-20260101-000000.totpbackup', 'vault-20260202-000000.totpbackup'])
+    // 返回与 put/get/delete 同 key 域的完整 key（prefix+dir+name）——子目录 cred 下裸名会删 404
+    expect(await backend.listBackups!()).toEqual(['dir/sub/vault-20260101-000000.totpbackup', 'dir/sub/vault-20260202-000000.totpbackup'])
     // canonical query（编码后按键名排序）必须参与签名，否则 AWS 会以 SignatureDoesNotMatch 拒绝
     const canonicalQuery = 'list-type=2&prefix=dir%2Fsub%2F'
     const listUrl = `https://mybucket.s3.us-east-1.amazonaws.com/?${canonicalQuery}`
@@ -312,7 +313,7 @@ describe('S3 后端（默认 AWS endpoint，virtual-host style）', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
     const backend = createS3Backend(cred, OPTS)
-    expect(await backend.listBackups!()).toEqual(['vault-20260101-000000.totpbackup'])
+    expect(await backend.listBackups!()).toEqual(['backups/dir/vault-20260101-000000.totpbackup'])
   })
 
   it('listBackups：非 2xx 抛中文错误', async () => {

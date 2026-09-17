@@ -65,9 +65,12 @@ export function createGistBackend(cred: GistCred, opts: { onCredChange?: (cred: 
       return !!json.files?.[path]?.content
     },
     async listBackups() {
-      // keep-n（设计 §3）：gist 是天然多文件容器，文件名不允许 '/'（无目录层级），列全量后按备份名过滤
+      // keep-n（设计 §3）：gist 是天然多文件容器，文件名不允许 '/'（无目录层级），列全量后按备份名过滤。
+      // content=='' 是 delete 的置空残留（gist API 无法真删），不可再参与滚动删除。
       const json = await fetchGist()
-      return Object.keys(json.files ?? {}).filter((n) => BACKUP_NAME_RE.test(n))
+      return Object.entries(json.files ?? {})
+        .filter(([n, f]) => BACKUP_NAME_RE.test(n) && !!f?.content)
+        .map(([n]) => n)
     },
   }
 }

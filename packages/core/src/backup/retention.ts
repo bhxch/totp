@@ -7,15 +7,23 @@ import { selectBackupsToKeep } from './policy'
 export async function enforceRemoteRetention(backend: CloudBackend, keep: number): Promise<number> {
   if (!backend.listBackups) return -1
   if (!Number.isInteger(keep) || keep < 1) return 0
-  const stale = selectBackupsToKeep(await backend.listBackups(), keep)
+  const listed = await backend.listBackups()
+  // 名单口径与本地一致（BACKUP_NAME_RE、字典序=时间序、conflict/overwrite 名不参与）——按 basename 判定；
+  // 删除用 list 原名：webdav/s3/onedrive 返回 dir/name 完整路径域，须与 put/get/delete 同域才能删中目标
+  const originalByBasename = new Map(listed.map((p) => [basenameOf(p), p]))
+  const stale = selectBackupsToKeep([...originalByBasename.keys()], keep)
   let deleted = 0
   for (const name of stale) {
     try {
-      await backend.delete(name)
+      await backend.delete(originalByBasename.get(name)!)
       deleted++
     } catch {
       // 单个删除失败不阻断：下轮同步会再次尝试
     }
   }
   return deleted
+}
+
+function basenameOf(p: string): string {
+  return p.split('/').filter((s) => s !== '').pop() ?? p
 }

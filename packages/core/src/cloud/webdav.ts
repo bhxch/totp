@@ -61,14 +61,17 @@ export function createWebdavBackend(cred: WebdavCred): CloudBackend {
       return res.ok
     },
     async listBackups() {
-      // keep-n（设计 §3）：PROPFIND 对象父目录 Depth:1，列同目录 vault-{ts} 名（207 Multi-Status 属 2xx）
+      // keep-n（设计 §3）：PROPFIND 对象父目录 Depth:1，列同目录 vault-{ts} 名（207 Multi-Status 属 2xx）。
+      // 返回与 put/get/delete 同域的完整路径（dir/name）——子目录 cred 下裸名会删错层 404。
       const dir = resolveDirPath(cred)
       const res = await cloudFetch(LABEL, urlOf(dir ? `${dir}/` : ''), {
         method: 'PROPFIND',
         headers: { Authorization: auth, Depth: '1' },
       })
       ensureHttpOk(LABEL, res)
-      return hrefNames(await res.text()).filter((n) => BACKUP_NAME_RE.test(n))
+      return hrefNames(await res.text())
+        .filter((n) => BACKUP_NAME_RE.test(n))
+        .map((n) => (dir ? `${dir}/${n}` : n))
     },
   }
 }
