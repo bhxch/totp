@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import type { SecurityPlatform } from './securityPlatform'
+import type { KdfProfile } from '@totp/core'
+import type { LockPrefs, SecurityPlatform } from './securityPlatform'
 import MdButton from './md/MdButton.vue'
 import MdCheckbox from './md/MdCheckbox.vue'
+import MdSelect from './md/MdSelect.vue'
+import MdSwitch from './md/MdSwitch.vue'
 import MdTextField from './md/MdTextField.vue'
 
 const props = defineProps<{
@@ -46,12 +49,43 @@ const kekOnlyPassword = computed(() => {
   return passkeySources.value.length === 0 && dpapiSource.value === null
 })
 
+// ---- plan16 T11：KDF 加密强度档位 ----
+
+/** 三档选项（设计 §2 KDF 档位表：fast≈OWASP 低档 / balanced=历史默认 / paranoid=保守） */
+const KDF_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'fast', label: '更快（低端机友好）' },
+  { value: 'balanced', label: '平衡（默认）' },
+  { value: 'paranoid', label: '更慢更耐暴力破解' },
+]
+const curProfile = computed<KdfProfile>(() => props.platform?.security?.kdfProfile.value ?? 'balanced')
+/** 待确认的新档位（null=未在调整；确认成功或取消/重选当前档位即复位） */
+const profileSel = ref<KdfProfile | null>(null)
+const profilePw = ref('')
+
+/** 主口令最近更换时间（null=宿主未记录）与天数换算 */
+const pwChangedAt = computed(() => props.platform?.security?.passwordChangedAt.value ?? null)
+const pwAgeDays = computed<number | null>(() => {
+  const at = pwChangedAt.value
+  if (at === null) return null
+  return Math.floor((Date.now() - at) / 86_400_000)
+})
+
+// ---- plan16 T11：锁定策略偏好（异步载入，载入完成前不渲染避免闪烁默认值） ----
+
+const lockPrefsState = ref<LockPrefs | null>(null)
+
 onMounted(() => {
   const pk = passkeyOps.value
-  if (!pk) return
-  pk.prfSupported()
-    .then((ok) => { prfCap.value = ok })
-    .catch(() => { prfCap.value = false })
+  if (pk) {
+    pk.prfSupported()
+      .then((ok) => { prfCap.value = ok })
+      .catch(() => { prfCap.value = false })
+  }
+  const lp = props.platform?.lockPrefs
+  if (!lp) return
+  Promise.resolve(lp.get())
+    .then((p) => { lockPrefsState.value = { ...p } })
+    .catch(() => { /* 载入失败按未提供处理（锁定策略区不渲染） */ })
 })
 
 /** credentialId 缩略显示：base64url 串较长，取首尾各 6 字符 */
@@ -104,15 +138,50 @@ async function onChangePw(): Promise<void> {
   if (!p) return
   const err = validatePw(newPw.value, newPwConfirm.value)
   if (err) return fail(new Error(err))
-  // I53：成功后消息补充说明 Passkey/OS 自动解锁来源不受换口令影响（DEK 不变，仅重包裹）；
-  // osAuto 显示名取 dpapi.label（宿主注入，按端动态化）；extension 无 dpapi ops 时仅提示 Passkey
-  const keepHint = passkeySources.value.length > 0 || dpapiSource.value !== null
-    ? (dpapiOps.value ? `；Passkey/${dpapiOps.value.label}保持不变` : '；Passkey保持不变')
+  // 换口令即被动轮换（plan16 设计 §2 裁定，rotateDek:true）：DEK 重生成 → prf/dpapi 旧包裹来源全部失效需重绑。
+  // 换前存在非口令来源时追加重绑提示（文案按 dpapiOps 有无动态化，与旧 keepHint 反向）
+  const hadAlternate = passkeySources.value.length > 0 || dpapiSource.value !== null
+  const rebindHint = hadAlternate
+    ? (dpapiOps.value ? `；已绑定的 Passkey/${dpapiOps.value.label}已因密钥轮换失效，请重新绑定` : '；已绑定的 Passkey已因密钥轮换失效，请重新绑定')
     : ''
-  if (await run(() => p.changePassphrase(newPw.value), `口令已更换${keepHint}`)) {
+  if (await run(() => p.changePassphrase(newPw.value, { rotateDek: true }), `口令已更换${rebindHint}`)) {
     newPw.value = ''
     newPwConfirm.value = ''
   }
+}
+
+/** 选择档位：与当前档位相同视作取消（收起确认行）；不同则展开当前口令确认行 */
+function onProfileSelect(v: string | number): void {
+  const next = v as KdfProfile
+  profileSel.value = next === curProfile.value ? null : next
+}
+
+/** 档位调整确认：重 wrap 立即生效（rotateDek:false + profile），口令不变、数据无需重加密 */
+async function onConfirmProfile(): Promise<void> {
+  const p = props.platform?.security
+  const sel = profileSel.value
+  if (!p || !sel) return
+  if (!profilePw.value) return fail(new Error('请输入当前口令'))
+  if (await run(() => p.changePassphrase(profilePw.value, { rotateDek: false, profile: sel }), '加密强度已更新（立即生效，数据无需重新加密）')) {
+    profileSel.value = null
+    profilePw.value = ''
+  }
+}
+
+/** 锁定策略任一控件变更：内存即时前进 + 完整对象覆写（避免宿主端部分更新歧义） */
+async function onLockPrefChange(patch: Partial<LockPrefs>): Promise<void> {
+  const lp = props.platform?.lockPrefs
+  const cur = lockPrefsState.value
+  if (!lp || !cur) return
+  const next: LockPrefs = { ...cur, ...patch }
+  lockPrefsState.value = next
+  await lp.set(next)
+}
+
+/** 空闲分钟输入钳制：≥0 整数，0=禁用 */
+async function onIdleMinutesChange(value: string): Promise<void> {
+  const mins = Math.max(0, Math.floor(Number(value) || 0))
+  await onLockPrefChange({ lockIdleMinutes: mins })
 }
 
 async function onDisable(): Promise<void> {
@@ -219,6 +288,23 @@ async function onDelayChange(value: string): Promise<void> {
             </div>
           </template>
         </div>
+        <!-- 主口令天数提示（设计 §2：超 180 天强调色；passwordChangedAt 缺失显示未记录） -->
+        <p v-if="pwAgeDays === null" class="pw-age-hint">本地主口令未记录更换时间</p>
+        <p v-else :class="pwAgeDays > 180 ? 'pw-age-warn' : 'pw-age-hint'">本地主口令已 {{ pwAgeDays }} 天未更换</p>
+        <!-- 加密强度档位（plan16 设计 §2 立即生效裁定：重 wrap 换 salt，数据无需重加密） -->
+        <div class="kdf-row">
+          <MdSelect
+            class="kdf-select" label="加密强度" aria-label="加密强度"
+            :model-value="profileSel ?? curProfile" :options="KDF_OPTIONS" :disabled="busy"
+            @update:model-value="onProfileSelect"
+          />
+          <span class="opt-hint">调整立即生效，数据无需重新加密</span>
+        </div>
+        <div v-if="profileSel" class="confirm-row kdf-confirm">
+          <MdTextField v-model="profilePw" type="password" label="当前口令" placeholder="当前口令" autocomplete="current-password" :disabled="busy" />
+          <MdButton class="confirm-kdf" :disabled="busy" @click="onConfirmProfile">确认调整</MdButton>
+          <MdButton variant="text" :disabled="busy" @click="profileSel = null">取消</MdButton>
+        </div>
         <div class="pw-row">
           <MdTextField v-model="newPw" type="password" label="新口令" placeholder="新口令" autocomplete="new-password" :disabled="busy" />
           <MdTextField v-model="newPwConfirm" type="password" label="确认新口令" placeholder="确认新口令" autocomplete="new-password" :disabled="busy" />
@@ -235,6 +321,33 @@ async function onDelayChange(value: string): Promise<void> {
       </template>
       <!-- 锁定：仅提示（解锁入口由主 LockScreen 处理） -->
       <p v-else class="locked-hint">已锁定——解锁后可管理加密设置</p>
+      <!-- 锁定策略区（plan16 设计 §1；仅已启用加密且宿主提供 lockPrefs 时渲染，锁定态也可改——settings 写入不依赖 DEK） -->
+      <div v-if="hasEnc && platform.lockPrefs && lockPrefsState" class="lock-prefs">
+        <h3>锁定策略</h3>
+        <div class="opt">
+          <MdSwitch
+            class="lock-restart" :model-value="lockPrefsState.lockOnRestart" aria-label="重启后保持锁定"
+            @update:model-value="(v: boolean) => onLockPrefChange({ lockOnRestart: v })"
+          />
+          <span>重启后保持锁定</span>
+          <span class="opt-hint">（关闭后浏览器会话内保持解锁，仅对支持会话保持的端有意义）</span>
+        </div>
+        <div class="opt">
+          <span>空闲 N 分钟后锁定（0=禁用）</span>
+          <MdTextField
+            class="idle-min" type="number" label="空闲（分钟）" aria-label="空闲 N 分钟后锁定（0 为禁用）"
+            min="0" :model-value="String(lockPrefsState.lockIdleMinutes)" :disabled="busy"
+            @update:model-value="onIdleMinutesChange"
+          />
+        </div>
+        <div class="opt">
+          <MdSwitch
+            class="lock-syslock" :model-value="lockPrefsState.lockOnSystemLock" aria-label="系统锁屏时锁定"
+            @update:model-value="(v: boolean) => onLockPrefChange({ lockOnSystemLock: v })"
+          />
+          <span>系统锁屏时锁定</span>
+        </div>
+      </div>
     </template>
     <!-- 通用设置区 -->
     <div class="opt">
@@ -284,4 +397,12 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .err { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-medium); }
 .hint { opacity: .65; font-size: var(--md-sys-typescale-body-medium); }
 .kek-hint { font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-tertiary); margin: 0; }
+/* plan16 T11：主口令天数提示（默认弱化，超 180 天 error 强调）与加密强度/锁定策略排版 */
+.pw-age-hint { font-size: var(--md-sys-typescale-body-small); opacity: .65; margin: 0; }
+.pw-age-warn { font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-error); margin: 0; }
+.kdf-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.kdf-select { width: 260px; }
+.lock-prefs { display: flex; flex-direction: column; gap: 8px; }
+.lock-prefs h3 { font-size: var(--md-sys-typescale-body-medium); margin: 0; opacity: .8; }
+.idle-min { width: 150px; }
 </style>

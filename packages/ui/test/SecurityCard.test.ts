@@ -11,6 +11,8 @@ function makeSecurity(over: Partial<SecurityOps> = {}): SecurityOps {
     enableEncryption: vi.fn().mockResolvedValue(undefined),
     disableEncryption: vi.fn().mockResolvedValue(undefined),
     changePassphrase: vi.fn().mockResolvedValue(undefined),
+    kdfProfile: computed(() => 'balanced'),
+    passwordChangedAt: computed(() => null),
     ...over,
   }
 }
@@ -86,7 +88,7 @@ describe('SecurityCard', () => {
     expect(enabled.text()).not.toContain('与备份口令相互独立')
   })
 
-  it('已启用解锁态：渲染换口令与关闭加密按钮；换口令一致后调用 changePassphrase', async () => {
+  it('已启用解锁态：渲染换口令与关闭加密按钮；换口令一致后调用 changePassphrase（plan16 裁定 rotateDek:true）', async () => {
     const p = makePlatform({ security: unlockedSecurity() })
     const w = mount(SecurityCard, { props: { platform: p } })
     expect(w.find('button.change-pw').exists()).toBe(true)
@@ -95,7 +97,7 @@ describe('SecurityCard', () => {
     await inputs[0]!.setValue('n1')
     await inputs[1]!.setValue('n1')
     await w.find('button.change-pw').trigger('click')
-    await vi.waitFor(() => expect(p.security!.changePassphrase).toHaveBeenCalledWith('n1'))
+    await vi.waitFor(() => expect(p.security!.changePassphrase).toHaveBeenCalledWith('n1', { rotateDek: true }))
   })
 
   it('C18：解锁方式区显示"口令 默认解锁方式，不可移除"明示文案', async () => {
@@ -205,19 +207,19 @@ describe('SecurityCard', () => {
     expect(dpapi.add).not.toHaveBeenCalled()
   })
 
-  it('I53：换口令成功且存在 Passkey 绑定 → 提示中包含「Passkey/Windows 自动解锁保持不变」（回退形态）', async () => {
+  it('plan16：换口令成功且存在 Passkey 绑定 → 提示含「Passkey/Windows 自动解锁已因密钥轮换失效，请重新绑定」（回退形态）', async () => {
     const passkey = { sources: computed(() => [{ credentialId: 'Y3JlZC0x' }]), prfSupported: vi.fn().mockResolvedValue(true), add: vi.fn(), remove: vi.fn() }
-    // 无 naming 注入 + dpapi.label 默认回退「Windows 自动解锁」→ 文案与旧实现逐字一致
+    // 无 naming 注入 + dpapi.label 默认回退「Windows 自动解锁」→ 文案与旧实现口径动态化
     const p = makePlatform({ security: unlockedSecurity({ passkey }), dpapi: makeDpapi() })
     const w = mount(SecurityCard, { props: { platform: p } })
     const inputs = w.findAll('input[type="password"]')
     await inputs[0]!.setValue('new')
     await inputs[1]!.setValue('new')
     await w.find('button.change-pw').trigger('click')
-    await vi.waitFor(() => expect(w.text()).toContain('Passkey/Windows 自动解锁保持不变'))
+    await vi.waitFor(() => expect(w.text()).toContain('Passkey/Windows 自动解锁已因密钥轮换失效，请重新绑定'))
   })
 
-  it('I53：换口令成功仅 Passkey 绑定且无 dpapi ops（extension）→ 提示仅含「Passkey保持不变」', async () => {
+  it('plan16：换口令成功仅 Passkey 绑定且无 dpapi ops（extension）→ 提示仅含「Passkey已因密钥轮换失效，请重新绑定」', async () => {
     const passkey = { sources: computed(() => [{ credentialId: 'Y3JlZC0x' }]), prfSupported: vi.fn().mockResolvedValue(true), add: vi.fn(), remove: vi.fn() }
     const p = makePlatform({ security: unlockedSecurity({ passkey }) })
     const w = mount(SecurityCard, { props: { platform: p } })
@@ -225,11 +227,11 @@ describe('SecurityCard', () => {
     await inputs[0]!.setValue('new')
     await inputs[1]!.setValue('new')
     await w.find('button.change-pw').trigger('click')
-    await vi.waitFor(() => expect(w.text()).toContain('Passkey保持不变'))
+    await vi.waitFor(() => expect(w.text()).toContain('Passkey已因密钥轮换失效，请重新绑定'))
     expect(w.text()).not.toContain('Windows')
   })
 
-  it('I53：换口令成功且无其他解锁方式 → 提示中不包含保持不变文案', async () => {
+  it('plan16：换口令成功且无其他解锁方式 → 提示中不包含重绑失效文案', async () => {
     const p = makePlatform({ security: unlockedSecurity() })
     const w = mount(SecurityCard, { props: { platform: p } })
     const inputs = w.findAll('input[type="password"]')
@@ -237,7 +239,7 @@ describe('SecurityCard', () => {
     await inputs[1]!.setValue('new')
     await w.find('button.change-pw').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('口令已更换'))
-    expect(w.text()).not.toContain('保持不变')
+    expect(w.text()).not.toContain('重新绑定')
   })
 
   it('I54：仅口令解锁时显示「跨设备需用同一口令」；存在 passkey 或 dpapi 时不显示', () => {
@@ -377,8 +379,8 @@ describe('SecurityCard', () => {
     expect(w.text()).not.toContain('Windows')
   })
 
-  it('D14：换口令成功且 dpapi 注入 mac label → 提示 Passkey/钥匙串自动解锁保持不变（不含 Windows）', async () => {
-    // 绑定 source 使 keepHint 条件（存在非口令来源）触发
+  it('D14：换口令成功且 dpapi 注入 mac label → 提示 Passkey/钥匙串自动解锁已因密钥轮换失效（不含 Windows）', async () => {
+    // 绑定 source 使 rebindHint 条件（存在非口令来源）触发
     const dpapi = makeDpapi({ label: '钥匙串自动解锁', source: computed(() => ({ wrappedDekD: 'W' })) })
     const p = makePlatform({
       security: unlockedSecurity(),
@@ -391,7 +393,7 @@ describe('SecurityCard', () => {
     await inputs[1]!.setValue('new')
     await w.find('button.change-pw').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('口令已更换'))
-    expect(w.text()).toContain('Passkey/钥匙串自动解锁保持不变')
+    expect(w.text()).toContain('Passkey/钥匙串自动解锁已因密钥轮换失效，请重新绑定')
     expect(w.text()).not.toContain('Windows')
   })
 

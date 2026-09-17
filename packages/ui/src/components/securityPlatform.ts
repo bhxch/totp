@@ -1,4 +1,8 @@
+import type { AppSettings, KdfProfile } from '@totp/core'
 import type { ComputedRef, Ref } from 'vue'
+
+/** 锁定策略偏好（设计 §1 锁定策略四触发器中用户可配置的三项；宿主从 AppSettings 映射） */
+export type LockPrefs = Pick<AppSettings, 'lockOnRestart' | 'lockIdleMinutes' | 'lockOnSystemLock'>
 
 /** Passkey(PRF) 解锁管理（宿主从 store 闭包绑定；WebAuthn 交互由宿主侧 prf.ts 承载） */
 export interface PasskeyUnlockOps {
@@ -47,8 +51,13 @@ export interface SecurityOps {
   enableEncryption(password: string): Promise<void>
   /** 关闭加密（回明文存储） */
   disableEncryption(): Promise<void>
-  /** 更换口令（仅重包裹 DEK，数据无需重加密） */
-  changePassphrase(newPassword: string): Promise<void>
+  /** 更换口令/调整 KDF 档位（plan16 T11）：opts 缺省 rotateDek=true（改口令即被动轮换，prf/dpapi 来源失效待重绑）；
+   *  档位切换走 { rotateDek: false, profile }（重 wrap 立即生效，数据无需重加密，口令不变） */
+  changePassphrase(newPassword: string, opts?: { rotateDek?: boolean; profile?: KdfProfile }): Promise<void>
+  /** 当前 KDF 档位（宿主从 store.securitySettings 映射，缺省 'balanced'；SecurityCard 档位行展示用） */
+  kdfProfile: Readonly<Ref<KdfProfile>>
+  /** 主口令最近更换时间（宿主从 store.securitySettings 映射；null=未记录，SecurityCard 天数提示用） */
+  passwordChangedAt: Readonly<Ref<number | null>>
   /** [可选] Passkey(PRF) 解锁管理；未提供时 SecurityCard 隐藏 prf 相关渲染 */
   passkey?: PasskeyUnlockOps
 }
@@ -73,4 +82,10 @@ export interface SecurityPlatform {
   popupCloseDelayMs?: ComputedRef<number>
   /** [可选] 修改弹窗关闭延迟（宿主写 settings + 持久化） */
   setPopupCloseDelay?(ms: number): Promise<void>
+  /** [可选] 锁定策略偏好（设计 §1；宿主映射 AppSettings 三字段读写）。未提供时 SecurityCard 锁定策略区不渲染 */
+  lockPrefs?: {
+    get(): LockPrefs | Promise<LockPrefs>
+    /** 任一控件变更即以完整对象覆写（避免宿主端部分更新歧义） */
+    set(p: LockPrefs): void | Promise<void>
+  }
 }
