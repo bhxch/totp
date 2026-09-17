@@ -1,0 +1,60 @@
+import { describe, expect, it } from 'vitest'
+import { createMemoryStorage } from '../src/storage/memory'
+import type { StorageAdapter } from '../src/storage/adapter'
+import { isBackupSource, loadSourceRevs, loadSources, normalizeRetention, saveSourceRev, saveSources, type BackupSource } from '../src/backup/sources'
+
+const src = (over: Partial<BackupSource> = {}): BackupSource => ({
+  id: 's1', kind: 'webdav', name: '家里 WebDAV', retention: { type: 'overwrite' }, enabled: true, ...over,
+})
+
+describe('BackupSource 存取', () => {
+  it('normalizeRetention：overwrite 与 keep(n≥1)，非法回退 overwrite', () => {
+    expect(normalizeRetention({ type: 'overwrite' })).toEqual({ type: 'overwrite' })
+    expect(normalizeRetention({ type: 'keep', n: 3 })).toEqual({ type: 'keep', n: 3 })
+    expect(normalizeRetention({ type: 'keep', n: 0 })).toEqual({ type: 'overwrite' })
+    expect(normalizeRetention(undefined)).toEqual({ type: 'overwrite' })
+  })
+  it('isBackupSource：合法真、缺 id/kind/retention 假、kind 非法假', () => {
+    expect(isBackupSource(src())).toBe(true)
+    expect(isBackupSource({ ...src(), id: '' })).toBe(false)
+    expect(isBackupSource({ ...src(), kind: 'ftp' })).toBe(false)
+    expect(isBackupSource({ ...src(), retention: { type: 'keep', n: -1 } })).toBe(false)
+  })
+  it('loadSources：坏 JSON/缺键 → 空数组；非法条目过滤不抛', async () => {
+    const a = createMemoryStorage()
+    await expect(loadSources(a)).resolves.toEqual([])
+    await a.set('backupSources', 'not json')
+    await expect(loadSources(a)).resolves.toEqual([])
+    await a.set('backupSources', '{"x":1}')
+    await expect(loadSources(a)).resolves.toEqual([])
+    await a.set('backupSources', JSON.stringify([src(), { id: 'bad' }]))
+    await expect(loadSources(a)).resolves.toHaveLength(1)
+  })
+  it('loadSources/loadSourceRevs：adapter.get 抛错 → 空、不抛', async () => {
+    const bad: StorageAdapter = {
+      get: async () => { throw new Error('storage unavailable') },
+      set: async () => {},
+      delete: async () => {},
+    }
+    await expect(loadSources(bad)).resolves.toEqual([])
+    await expect(loadSourceRevs(bad)).resolves.toEqual({})
+  })
+  it('saveSources→loadSources 往返', async () => {
+    const a = createMemoryStorage()
+    await saveSources(a, [src({ retention: { type: 'keep', n: 5 } }), src({ id: 's2', kind: 'local', dir: 'C:\\bp' })])
+    expect(await loadSources(a)).toHaveLength(2)
+  })
+  it('sourceRevs：按 id 存删基线；坏 JSON/值非字符串 → 过滤或空', async () => {
+    const a = createMemoryStorage()
+    expect(await loadSourceRevs(a)).toEqual({})
+    await a.set('sourceRevs', 'not json')
+    expect(await loadSourceRevs(a)).toEqual({})
+    await a.set('sourceRevs', JSON.stringify({ s0: 123 }))
+    expect(await loadSourceRevs(a)).toEqual({})
+    await saveSourceRev(a, 's1', 'abc')
+    await saveSourceRev(a, 's2', 'def')
+    expect(await loadSourceRevs(a)).toEqual({ s1: 'abc', s2: 'def' })
+    await saveSourceRev(a, 's1', null) // null=删除该源基线
+    expect(await loadSourceRevs(a)).toEqual({ s2: 'def' })
+  })
+})
