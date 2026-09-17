@@ -1,5 +1,7 @@
 import type { CloudBackend, OneDriveCred } from './backend'
 import { cloudFetch, ensureHttpOk } from './backend'
+import { BACKUP_NAME_RE } from '../backup/policy'
+import { resolveObjectPath } from './targetPath'
 
 const LABEL = 'OneDrive'
 const GRAPH = 'https://graph.microsoft.com/v1.0'
@@ -39,6 +41,20 @@ export function createOneDriveBackend(cred: OneDriveCred): CloudBackend {
       if (res.status === 404) return false
       ensureHttpOk(LABEL, res)
       return res.ok
+    },
+    async listBackups() {
+      // keep-n（设计 §3）：按对象路径（含文件名）取 item 的 parentReference，再列同父 children 过滤备份名；
+      // item 不存在（404）或父引用缺失 → 空数组（宁可不删不可误删）
+      const res = await cloudFetch(LABEL, `${itemUrl(resolveObjectPath(cred))}?select=parentReference`, { method: 'GET', headers: auth })
+      if (res.status === 404) return []
+      ensureHttpOk(LABEL, res)
+      const item = (await res.json()) as { parentReference?: { id?: string } }
+      const parentId = item.parentReference?.id
+      if (!parentId) return []
+      const children = await cloudFetch(LABEL, `${GRAPH}/me/drive/items/${encodeURIComponent(parentId)}/children`, { method: 'GET', headers: auth })
+      ensureHttpOk(LABEL, children)
+      const json = (await children.json()) as { value?: Array<{ name?: string }> }
+      return (json.value ?? []).map((f) => f.name ?? '').filter((n) => BACKUP_NAME_RE.test(n))
     },
   }
 }

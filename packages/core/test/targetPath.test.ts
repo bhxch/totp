@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_OBJECT_PATH, resolveObjectPath } from '../src/cloud/targetPath'
+import { DEFAULT_OBJECT_PATH, resolveDirPath, resolveObjectPath, resolveTimestampPath } from '../src/cloud/targetPath'
 
 describe('resolveObjectPath', () => {
   it('无 objectPath 时各后端用默认值', () => {
@@ -24,5 +24,31 @@ describe('resolveObjectPath', () => {
   })
   it('纯分隔符输入（split 后空段）回退默认', () => {
     expect(resolveObjectPath({ backend: 'webdav', serverUrl: 's', username: 'u', password: 'p', objectPath: '///' })).toBe(DEFAULT_OBJECT_PATH)
+  })
+})
+
+describe('keep-n 云源时间戳路径（设计 §3）', () => {
+  const cred = { backend: 'webdav', serverUrl: 's', username: 'u', password: 'p', objectPath: 'dir/sub/totp-backup.totpbackup' } as const
+  const NOW = new Date(2026, 8, 17, 12, 34, 56)
+
+  it('resolveTimestampPath：overwrite 名同目录 vault-{ts}；根路径对象直接 vault-{ts}', () => {
+    expect(resolveTimestampPath(cred, NOW)).toBe('dir/sub/vault-20260917-123456.totpbackup')
+    expect(resolveTimestampPath({ ...cred, objectPath: undefined }, NOW)).toBe('vault-20260917-123456.totpbackup')
+  })
+  it('resolveDirPath：取对象路径父目录（根=\'\'）', () => {
+    expect(resolveDirPath(cred)).toBe('dir/sub')
+    expect(resolveDirPath({ ...cred, objectPath: undefined })).toBe('')
+  })
+  it('时间戳格式与本地 backupFileName 同款', () => {
+    const name = resolveTimestampPath(cred, NOW).split('/').pop()!
+    expect(name).toMatch(/^vault-\d{8}-\d{6}\.totpbackup$/)
+  })
+  it('穿越校验沿用 resolveObjectPath', () => {
+    expect(() => resolveTimestampPath({ ...cred, objectPath: 'a/../b.totpbackup' }, NOW)).toThrow()
+    expect(() => resolveDirPath({ ...cred, objectPath: 'a\u0000b.totpbackup' })).toThrow()
+  })
+  it('反斜杠分隔正规化后取父目录', () => {
+    expect(resolveDirPath({ ...cred, objectPath: 'a\\b\\c.totpbackup' })).toBe('a/b')
+    expect(resolveTimestampPath({ ...cred, objectPath: 'a\\b\\c.totpbackup' }, NOW)).toBe('a/b/vault-20260917-123456.totpbackup')
   })
 })

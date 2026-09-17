@@ -1,3 +1,4 @@
+import { backupFileName } from '../backup/policy'
 import type { CloudCred } from './backend'
 
 export const DEFAULT_OBJECT_PATH = 'totp-backup.totpbackup'
@@ -11,4 +12,18 @@ export function resolveObjectPath(cred: CloudCred): string {
   if (segments.length === 0) return DEFAULT_OBJECT_PATH
   if (segments.some((s) => s === '.' || s === '..')) throw new Error('云端路径不允许相对段（. / ..）')
   return segments.join('/')
+}
+
+/** keep-n 云源上传名：对象路径同目录下 vault-{yyyyMMdd-HHmmss}.totpbackup（与本地 backupFileName 同戳格式） */
+export function resolveTimestampPath(cred: CloudCred, now: Date): string {
+  const dir = resolveDirPath(cred)
+  const name = backupFileName(now)
+  return dir ? `${dir}/${name}` : name
+}
+
+/** 对象路径父目录（'a/b/c.totpbackup'→'a/b'；无目录段→''）。穿越校验与 resolveObjectPath 同款 */
+export function resolveDirPath(cred: CloudCred): string {
+  const p = resolveObjectPath(cred)
+  const idx = p.lastIndexOf('/')
+  return idx > 0 ? p.slice(0, idx) : ''
 }

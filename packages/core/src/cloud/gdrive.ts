@@ -1,5 +1,6 @@
 import type { CloudBackend, GDriveCred } from './backend'
 import { cloudFetch, ensureHttpOk } from './backend'
+import { BACKUP_NAME_RE } from '../backup/policy'
 
 const LABEL = 'Google Drive'
 const DRIVE_API = 'https://www.googleapis.com/drive/v3'
@@ -94,6 +95,28 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
     },
     async exists(path) {
       return (await resolveId(path)) != null
+    },
+    async listBackups() {
+      // keep-n（设计 §3）：cred.fileId 是文件非目录——先取其 parents，再列同父下 vault-*；
+      // 无 fileId（首推未发生）按 Drive 根目录别名 'root' 列；目标文件已删（404）父目录未知，返回空（宁可不删不可误删）。
+      let parent = 'root'
+      if (fileId) {
+        const res = await cloudFetch(LABEL, `${DRIVE_API}/files/${fileId}?fields=parents`, { method: 'GET', headers: auth })
+        if (res.status === 404) return []
+        ensureHttpOk(LABEL, res)
+        const json = (await res.json()) as { parents?: string[] }
+        parent = json.parents?.[0] ?? 'root'
+      }
+      // 单引号按 Drive 查询语法转义，防注入（与 queryIdByName 同款）
+      const safe = parent.replace(/'/g, "\\'")
+      const q = `'${safe}' in parents and name contains 'vault-' and trashed=false`
+      const list = await cloudFetch(LABEL, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(name)`, {
+        method: 'GET',
+        headers: auth,
+      })
+      ensureHttpOk(LABEL, list)
+      const json = (await list.json()) as { files?: Array<{ name?: string }> }
+      return (json.files ?? []).map((f) => f.name ?? '').filter((n) => BACKUP_NAME_RE.test(n))
     },
   }
 }

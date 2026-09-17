@@ -75,6 +75,50 @@ describe('WebDAV 后端', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 500 })))
     await expect(backend.exists(PATH)).rejects.toThrow('WebDAV 请求失败（HTTP 500）')
   })
+
+  it('listBackups：PROPFIND 父目录 Depth:1，multistatus href 末段过滤 BACKUP_NAME_RE', async () => {
+    const xml = `<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+<D:response><D:href>/dav/dir/sub/</D:href></D:response>
+<D:response><D:href>/dav/dir/sub/vault-20260101-000000.totpbackup</D:href></D:response>
+<D:response><D:href>/dav/dir/sub/vault-20260202-000000.totpbackup</D:href></D:response>
+<D:response><D:href>/dav/dir/sub/vault-backup.totpbackup</D:href></D:response>
+<D:response><D:href>/dav/dir/sub/conflict-webdav-20260101-000000.totpbackup</D:href></D:response>
+<D:response><D:href>/dav/dir/sub/notes.txt</D:href></D:response>
+</D:multistatus>`
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      expect(_url).toBe(`${DAV}/dir/sub/`)
+      expect(init!.method).toBe('PROPFIND')
+      const headers = init!.headers as Record<string, string>
+      expect(headers.Depth).toBe('1')
+      expect(headers.Authorization).toBe(AUTH_BASIC)
+      return new Response(xml, { status: 207, headers: { 'Content-Type': 'application/xml; charset=utf-8' } })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createWebdavBackend({ backend: 'webdav', serverUrl: DAV, username: 'user', password: 'pass', objectPath: 'dir/sub/totp-backup.totpbackup' })
+    expect(await backend.listBackups!()).toEqual(['vault-20260101-000000.totpbackup', 'vault-20260202-000000.totpbackup'])
+  })
+
+  it('listBackups：根路径对象 PROPFIND 集合根；非法百分号编码 href 不中断', async () => {
+    const xml = `<multistatus xmlns="DAV:">
+<response><href>${DAV}/vault-20260101-000000.totpbackup</href></response>
+<response><href>/100%zz.totpbackup</href></response>
+<response><href>/</href></response>
+</multistatus>`
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      expect(url).toBe(`${DAV}/`)
+      return new Response(xml, { status: 207 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createWebdavBackend({ backend: 'webdav', serverUrl: DAV, username: 'user', password: 'pass' })
+    expect(await backend.listBackups!()).toEqual(['vault-20260101-000000.totpbackup'])
+  })
+
+  it('listBackups：非 2xx 抛中文错误', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 401 })))
+    const backend = createWebdavBackend({ backend: 'webdav', serverUrl: DAV, username: 'user', password: 'pass' })
+    await expect(backend.listBackups!()).rejects.toThrow('WebDAV 请求失败（HTTP 401）')
+  })
 })
 
 describe('Gist 后端', () => {
@@ -145,5 +189,25 @@ describe('Gist 后端', () => {
     expect(await backend.exists(PATH)).toBe(false)
     vi.stubGlobal('fetch', vi.fn(async () => jsonRes({ files: {} })))
     expect(await backend.exists(PATH)).toBe(false)
+  })
+
+  it('listBackups：GET gist 后 files 键名过滤 BACKUP_NAME_RE（gist 文件名无目录层级）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonRes({ public: false, files: {
+      'vault-20260101-000000.totpbackup': { content: 'a' },
+      'vault-20260202-000000.totpbackup': { content: 'b' },
+      'vault-backup.totpbackup': { content: 'c' },
+      'conflict-gist-20260101-000000.totpbackup': { content: 'd' },
+      'notes.txt': { content: 'e' },
+    } })))
+    const backend = createGistBackend(CRED)
+    expect(await backend.listBackups!()).toEqual(['vault-20260101-000000.totpbackup', 'vault-20260202-000000.totpbackup'])
+  })
+
+  it('listBackups：gist 404 → 空数组；401 抛中文错误', async () => {
+    const backend = createGistBackend(CRED)
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 404 })))
+    expect(await backend.listBackups!()).toEqual([])
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 401 })))
+    await expect(backend.listBackups!()).rejects.toThrow('Gist 请求失败（HTTP 401）')
   })
 })

@@ -191,6 +191,53 @@ describe('Google Drive 后端', () => {
     const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok', fileId: 'fid9' })
     await expect(backend.get(PATH)).rejects.toThrow('Google Drive 网络请求失败：fetch failed')
   })
+
+  it('listBackups：files/{fileId}?fields=parents 取父目录，再列同父 vault-*；names 过滤 BACKUP_NAME_RE', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const u = new URL(String(url))
+      if (u.origin + u.pathname === 'https://www.googleapis.com/drive/v3/files/fid9' && u.searchParams.get('fields') === 'parents') {
+        return jsonRes({ parents: ['pid1'] })
+      }
+      if (u.origin + u.pathname === 'https://www.googleapis.com/drive/v3/files') {
+        expect(decodeURIComponent(u.searchParams.get('q')!)).toBe(`'pid1' in parents and name contains 'vault-' and trashed=false`)
+        expect(u.searchParams.get('fields')).toBe('files(name)')
+        return jsonRes({ files: [
+          { name: 'vault-20260101-000000.totpbackup' },
+          { name: 'vault-20260202-000000.totpbackup' },
+          { name: 'vault-backup.totpbackup' },
+          { name: 'conflict-gdrive-20260101-000000.totpbackup' },
+          { name: 'notes.txt' },
+        ] })
+      }
+      throw new Error(`意外请求：${init!.method} ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok', fileId: 'fid9' })
+    expect(await backend.listBackups!()).toEqual(['vault-20260101-000000.totpbackup', 'vault-20260202-000000.totpbackup'])
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('listBackups：无 fileId 列 root；目标文件 404 → 空数组；非 2xx 抛中文错误', async () => {
+    // 无 fileId：parents 未知，按 Drive 根目录别名 'root' 列
+    const rootMock = vi.fn(async (url: RequestInfo | URL) => {
+      const u = new URL(String(url))
+      expect(u.origin + u.pathname).toBe('https://www.googleapis.com/drive/v3/files')
+      expect(decodeURIComponent(u.searchParams.get('q')!)).toBe(`'root' in parents and name contains 'vault-' and trashed=false`)
+      return jsonRes({ files: [{ name: 'vault-20260101-000000.totpbackup' }] })
+    })
+    vi.stubGlobal('fetch', rootMock)
+    const noId = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok' })
+    expect(await noId.listBackups!()).toEqual(['vault-20260101-000000.totpbackup'])
+    expect(rootMock).toHaveBeenCalledOnce()
+
+    // fileId 指向的文件已被删（404）→ 不知父目录，返回空（宁可不删不可误删）
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 404 })))
+    const gone = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok', fileId: 'fid9' })
+    expect(await gone.listBackups!()).toEqual([])
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 401 })))
+    await expect(gone.listBackups!()).rejects.toThrow('Google Drive 请求失败（HTTP 401）')
+  })
 })
 
 describe('OneDrive 后端', () => {
@@ -268,5 +315,38 @@ describe('OneDrive 后端', () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed') }))
     const backend = createOneDriveBackend({ backend: 'onedrive', accessToken: 'tok' })
     await expect(backend.get(PATH)).rejects.toThrow('OneDrive 网络请求失败：fetch failed')
+  })
+
+  it('listBackups：按编码路径取 item parentReference，再列 children 过滤 BACKUP_NAME_RE', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const u = String(url)
+      if (u === `${GRAPH}/me/drive/root:/dir/sub/totp-backup.totpbackup:?select=parentReference`) {
+        return jsonRes({ parentReference: { driveId: 'd1', id: 'pid1', path: '/drive/root:/dir/sub' } })
+      }
+      if (u === `${GRAPH}/me/drive/items/pid1/children`) {
+        return jsonRes({ value: [
+          { name: 'vault-20260101-000000.totpbackup' },
+          { name: 'vault-20260202-000000.totpbackup' },
+          { name: 'vault-backup.totpbackup' },
+          { name: 'conflict-webdav-20260101-000000.totpbackup' },
+          { name: 'notes.txt' },
+        ] })
+      }
+      throw new Error(`意外请求：${init!.method} ${u}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createOneDriveBackend({ backend: 'onedrive', accessToken: 'tok', objectPath: 'dir/sub/totp-backup.totpbackup' })
+    expect(await backend.listBackups!()).toEqual(['vault-20260101-000000.totpbackup', 'vault-20260202-000000.totpbackup'])
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('listBackups：item 404 → 空数组；缺 parentReference.id → 空数组；非 2xx 抛中文错误', async () => {
+    const backend = createOneDriveBackend({ backend: 'onedrive', accessToken: 'tok' })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 404 })))
+    expect(await backend.listBackups!()).toEqual([])
+    vi.stubGlobal('fetch', vi.fn(async () => jsonRes({})))
+    expect(await backend.listBackups!()).toEqual([])
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 500 })))
+    await expect(backend.listBackups!()).rejects.toThrow('OneDrive 请求失败（HTTP 500）')
   })
 })

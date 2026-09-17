@@ -1,5 +1,6 @@
 import type { CloudBackend, GistCred } from './backend'
 import { cloudFetch, ensureHttpOk } from './backend'
+import { BACKUP_NAME_RE } from '../backup/policy'
 
 const LABEL = 'Gist'
 const GIST_URL = 'https://api.github.com/gists'
@@ -62,6 +63,11 @@ export function createGistBackend(cred: GistCred, opts: { onCredChange?: (cred: 
     async exists(path) {
       const json = await fetchGist()
       return !!json.files?.[path]?.content
+    },
+    async listBackups() {
+      // keep-n（设计 §3）：gist 是天然多文件容器，文件名不允许 '/'（无目录层级），列全量后按备份名过滤
+      const json = await fetchGist()
+      return Object.keys(json.files ?? {}).filter((n) => BACKUP_NAME_RE.test(n))
     },
   }
 }

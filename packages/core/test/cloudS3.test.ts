@@ -31,6 +31,7 @@ function expectedS3Authorization(
   url: string,
   body: Uint8Array | undefined,
   cred: { accessKeyId: string; secretAccessKey: string; region: string },
+  canonicalQuery = '',
 ): string {
   const payloadHash = createHash('sha256').update(body ?? new Uint8Array()).digest('hex')
   const u = new URL(url)
@@ -38,7 +39,7 @@ function expectedS3Authorization(
   const canonical = [
     method,
     u.pathname,
-    '',
+    canonicalQuery,
     `host:${u.host}`,
     `x-amz-content-sha256:${payloadHash}`,
     `x-amz-date:${amzDate}`,
@@ -272,6 +273,52 @@ describe('S3 后端（默认 AWS endpoint，virtual-host style）', () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed') }))
     const backend = createS3Backend(CRED, OPTS)
     await expect(backend.get(PATH)).rejects.toThrow('S3 网络请求失败：fetch failed')
+  })
+
+  it('listBackups：ListObjectsV2 prefix=对象目录/，Key 末段过滤 BACKUP_NAME_RE；query 参与签名', async () => {
+    const cred = { ...CRED, objectPath: 'dir/sub/totp-backup.totpbackup' }
+    const xml = `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+<Contents><Key>dir/sub/vault-20260101-000000.totpbackup</Key></Contents>
+<Contents><Key>dir/sub/vault-20260202-000000.totpbackup</Key></Contents>
+<Contents><Key>dir/sub/vault-backup.totpbackup</Key></Contents>
+<Contents><Key>dir/sub/conflict-webdav-20260101-000000.totpbackup</Key></Contents>
+<Contents><Key>dir/sub/notes.txt</Key></Contents>
+</ListBucketResult>`
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const u = new URL(String(url))
+      expect(u.origin + u.pathname).toBe('https://mybucket.s3.us-east-1.amazonaws.com/')
+      expect(u.searchParams.get('list-type')).toBe('2')
+      expect(u.searchParams.get('prefix')).toBe('dir/sub/')
+      expect(init!.method).toBe('GET')
+      return new Response(xml, { status: 200, headers: { 'Content-Type': 'application/xml' } })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createS3Backend(cred, OPTS)
+    expect(await backend.listBackups!()).toEqual(['vault-20260101-000000.totpbackup', 'vault-20260202-000000.totpbackup'])
+    // canonical query（编码后按键名排序）必须参与签名，否则 AWS 会以 SignatureDoesNotMatch 拒绝
+    const canonicalQuery = 'list-type=2&prefix=dir%2Fsub%2F'
+    const listUrl = `https://mybucket.s3.us-east-1.amazonaws.com/?${canonicalQuery}`
+    expect((fetchMock.mock.calls[0]![1]!.headers as Record<string, string>).Authorization).toBe(
+      expectedS3Authorization('GET', listUrl, undefined, cred, canonicalQuery),
+    )
+  })
+
+  it('listBackups：cred.prefix 与对象父目录拼接为完整 key 前缀', async () => {
+    const cred = { ...CRED, prefix: 'backups', objectPath: 'dir/totp-backup.totpbackup' }
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      const u = new URL(String(url))
+      expect(u.searchParams.get('prefix')).toBe('backups/dir/')
+      return new Response('<ListBucketResult><Contents><Key>backups/dir/vault-20260101-000000.totpbackup</Key></Contents></ListBucketResult>', { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createS3Backend(cred, OPTS)
+    expect(await backend.listBackups!()).toEqual(['vault-20260101-000000.totpbackup'])
+  })
+
+  it('listBackups：非 2xx 抛中文错误', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 403 })))
+    const backend = createS3Backend(CRED, OPTS)
+    await expect(backend.listBackups!()).rejects.toThrow('S3 请求失败（HTTP 403）')
   })
   it('网络层 TypeError 命中 CORS 模式时追加「请检查服务端 CORS 配置」中文提示（自建 WebDAV/MinIO 场景）', async () => {
     const cases: Array<[string, string]> = [

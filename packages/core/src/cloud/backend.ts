@@ -11,6 +11,9 @@ export interface CloudBackend {
   get(path: string): Promise<Uint8Array | null>
   delete(path: string): Promise<void>
   exists(path: string): Promise<boolean>
+  /** [可选] 列出该后端容器内可滚动的备份名（vault-{ts}.totpbackup）。keep-n 云源需要；
+   *  缺省=该后端不支持（enforceRemoteRetention 返回 -1，UI 对 keep 选项降级提示）。 */
+  listBackups?(): Promise<string[]>
 }
 
 export interface WebdavCred {

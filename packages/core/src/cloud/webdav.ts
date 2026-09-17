@@ -1,5 +1,7 @@
 import type { CloudBackend, WebdavCred } from './backend'
 import { cloudFetch, ensureHttpOk } from './backend'
+import { BACKUP_NAME_RE } from '../backup/policy'
+import { resolveDirPath } from './targetPath'
 
 const LABEL = 'WebDAV'
 
@@ -8,6 +10,25 @@ export function joinDavUrl(serverUrl: string, path: string): string {
   const base = serverUrl.replace(/\/+$/, '')
   const rel = path.replace(/^\/+/, '')
   return `${base}/${rel}`
+}
+
+/** href 可能是百分号编码（空格等），解码失败（非法 % 序列）按原文匹配 */
+function safeDecode(s: string): string {
+  try {
+    return decodeURIComponent(s)
+  } catch {
+    return s
+  }
+}
+
+/** 解 multistatus 中任意命名空间前缀的 <href>，取路径末段非空段 */
+function hrefNames(xml: string): string[] {
+  const out: string[] = []
+  for (const m of xml.matchAll(/<(?:[\w.-]+:)?href(?:\s[^>]*)?>([^<]*)<\/(?:[\w.-]+:)?href\s*>/gi)) {
+    const segments = safeDecode(m[1]!).split('/').filter((s) => s !== '')
+    if (segments.length > 0) out.push(segments[segments.length - 1]!)
+  }
+  return out
 }
 
 export function createWebdavBackend(cred: WebdavCred): CloudBackend {
@@ -38,6 +59,16 @@ export function createWebdavBackend(cred: WebdavCred): CloudBackend {
       if (res.status === 404) return false
       ensureHttpOk(LABEL, res)
       return res.ok
+    },
+    async listBackups() {
+      // keep-n（设计 §3）：PROPFIND 对象父目录 Depth:1，列同目录 vault-{ts} 名（207 Multi-Status 属 2xx）
+      const dir = resolveDirPath(cred)
+      const res = await cloudFetch(LABEL, urlOf(dir ? `${dir}/` : ''), {
+        method: 'PROPFIND',
+        headers: { Authorization: auth, Depth: '1' },
+      })
+      ensureHttpOk(LABEL, res)
+      return hrefNames(await res.text()).filter((n) => BACKUP_NAME_RE.test(n))
     },
   }
 }

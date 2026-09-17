@@ -1,5 +1,7 @@
 import type { CloudBackend, S3Cred } from './backend'
 import { cloudFetch, ensureHttpOk } from './backend'
+import { BACKUP_NAME_RE } from '../backup/policy'
+import { resolveDirPath } from './targetPath'
 
 const LABEL = 'S3'
 /** SHA-256("")——SigV4 空 payload 的规范哈希。 */
@@ -121,7 +123,7 @@ export function createS3Backend(cred: S3Cred, opts: S3BackendOptions = {}): Clou
   // virtual-host style：https://{bucket}.s3.{region}.amazonaws.com/{key}；path-style：{endpoint}/{bucket}/{key}
   const urlOf = (path: string) => `${endpoint}${pathStyle ? `/${cred.bucket}` : ''}/${awsUriEncode(keyOf(path), false)}`
 
-  const signedHeadersOf = async (method: string, url: string, body: Uint8Array | undefined) => {
+  const signedHeadersOf = async (method: string, url: string, body: Uint8Array | undefined, query?: Record<string, string>) => {
     const amzDate = toAmzDate((opts.now ?? (() => new Date()))())
     const payloadHash = await sha256Hex(body ?? '')
     // STS 临时凭据：x-amz-security-token 必须参与签名（SigV4 规范）。仅当 cred.sessionToken 有值时附加。
@@ -134,7 +136,7 @@ export function createS3Backend(cred: S3Cred, opts: S3BackendOptions = {}): Clou
     const canonicalRequest = sigV4CanonicalRequest(
       method,
       new URL(url).pathname,
-      buildCanonicalQueryString(), // 当前无 query string，留接口位
+      buildCanonicalQueryString(query),
       baseHeaders,
       payloadHash,
     )
@@ -178,6 +180,23 @@ export function createS3Backend(cred: S3Cred, opts: S3BackendOptions = {}): Clou
       if (res.status === 404) return false
       ensureHttpOk(LABEL, res)
       return res.ok
+    },
+    async listBackups() {
+      // keep-n（设计 §3）：ListObjectsV2 列对象父目录（key 前缀 = cred.prefix + 对象父目录），Key 末段过滤备份名
+      const dir = resolveDirPath(cred)
+      const base = [prefix, dir].filter((s): s is string => !!s).join('/')
+      const listPrefix = base === '' ? '' : `${base}/`
+      const query: Record<string, string> = { 'list-type': '2', prefix: listPrefix }
+      const url = `${endpoint}${pathStyle ? `/${cred.bucket}` : ''}/?${buildCanonicalQueryString(query)}`
+      const res = await cloudFetch(LABEL, url, { method: 'GET', headers: await signedHeadersOf('GET', url, undefined, query) })
+      ensureHttpOk(LABEL, res)
+      const xml = await res.text()
+      const out: string[] = []
+      for (const m of xml.matchAll(/<Key>([^<]+)<\/Key>/g)) {
+        const name = m[1]!.split('/').pop() ?? ''
+        if (BACKUP_NAME_RE.test(name)) out.push(name)
+      }
+      return out
     },
   }
 }
