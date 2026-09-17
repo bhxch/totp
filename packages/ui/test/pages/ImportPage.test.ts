@@ -15,9 +15,7 @@ async function readyStore() {
 /** BackupPlatform 最小实现（ImportPage 只消费 readImportFile 派生导入平台） */
 function backupPlatform(readImportFile?: BackupPlatform['readImportFile']): BackupPlatform {
   return {
-    createBackup: vi.fn(async () => 'created' as const),
-    mode: { type: 'overwrite' },
-    setMode: vi.fn(async () => {}),
+    createBackup: vi.fn(async () => '已备份到 1 个目录'),
     ...(readImportFile ? { readImportFile } : {}),
   }
 }

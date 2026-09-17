@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Vault } from '@totp/core'
-import { onMounted, ref, watch } from 'vue'
-import type { BackupAutoPrefs, BackupMode, BackupPlatform } from './backupPlatform'
+import { onMounted, ref } from 'vue'
+import type { BackupAutoPrefs, BackupPlatform, LocalSourceView } from './backupPlatform'
 import { parseVaultJson } from './parseVaultJson'
 import MdButton from './md/MdButton.vue'
 import MdSegmentedButton from './md/MdSegmentedButton.vue'
@@ -21,7 +21,8 @@ const props = defineProps<{
 const busy = ref(false)
 const msg = ref('')
 const msgKind = ref<'ok' | 'err' | 'hint'>('ok')
-const backups = ref<Array<{ name: string }>>([])
+/** 聚合全部本地源的备份文件（sourceId 供恢复定位来源目录） */
+const backups = ref<Array<{ sourceId: string; name: string }>>([])
 
 /** 已解密待确认覆盖的 vault（两步确认防误覆盖） */
 const pending = ref<Vault | null>(null)
@@ -29,27 +30,36 @@ const pending = ref<Vault | null>(null)
 /** 恢复回退态：会话口令不可用/解密失败 → 记住来源并展开一次性口令输入 */
 const showFallback = ref(false)
 const fallbackPw = ref('')
-const restoreReq = ref<{ kind: 'picker' | 'name'; name?: string } | null>(null)
+const restoreReq = ref<{ kind: 'picker' | 'name'; sourceId?: string; name?: string } | null>(null)
 
 /** 自动备份偏好（D2）：卡内编辑副本，挂载时从平台读初值；每次变更整体回写 */
 const autoPrefs = ref<BackupAutoPrefs>({ onChange: false, onInterval: false, intervalMinutes: 60 })
 /** 「上次自动备份」状态文本（design §4.1）：挂载时读；读不到/为空显示「暂无」 */
 const autoStatus = ref<string | null>(null)
-/** 当前备份目录；null=默认（应用数据目录） */
-const backupDir = ref<string | null>(null)
+
+/** 本地源列表（plan16 §3「目录=源」；platform.listLocalSources 提供才渲染源区，extension 零影响） */
+const sources = ref<LocalSourceView[]>([])
+const hasSources = ref(false)
+/** 「添加目录」入口（platform.pickBackupDir 提供才渲染） */
+const canAddDir = ref(false)
+/** 当前展开配置的源 id（同时只展开一个；null=全部收起） */
+const expanded = ref<string | null>(null)
+/** 待确认移除的源 id（行内两步确认防误删，沿 CloudCard askRemove 模式） */
+const pendingRemove = ref<string | null>(null)
 
 function fail(e: unknown): void {
   msg.value = e instanceof Error ? e.message : String(e)
   msgKind.value = 'err'
 }
 
+/** 「立即备份」= 全部启用源（宿主遍历落盘）：展示宿主返回的中文摘要；空串兜底「未配置启用目录」 */
 async function onBackup(): Promise<void> {
   if (!props.sessionSecret) return // 按钮已禁用，防御兜底
   busy.value = true
   msg.value = ''
   try {
     const r = await props.platform!.createBackup(props.vaultJson, props.sessionSecret)
-    msg.value = r === 'overwritten' ? '备份成功（覆盖）' : '备份成功（新文件）'
+    msg.value = r.trim() !== '' ? r : '未配置启用目录'
     msgKind.value = 'ok'
     if (props.platform?.listBackups) await refreshList()
   } catch (e) {
@@ -79,36 +89,6 @@ async function onExport(): Promise<void> {
   }
 }
 
-async function setMode(m: BackupMode): Promise<void> {
-  await props.platform?.setMode(m)
-}
-
-/** F5（审查挂账收口）：备份模式二选一以 MdSegmentedButton 呈现，替代原生 radio */
-const MODE_OPTIONS = [
-  { value: 'keep', label: '保留最近' },
-  { value: 'overwrite', label: '覆盖单一文件' },
-] as const
-
-/** I70：本地 keepN 副本——keep 模式时与平台同步；切到 overwrite 后保留前值，再切回 keep 时恢复。
- *  避免 keep→overwrite→keep 时丢失用户已配的 N */
-const keepN = ref<number>(
-  props.platform?.mode.type === 'keep' ? props.platform.mode.n : 3,
-)
-/** 监听平台模式：keep 时把最新 n 同步进本地；overwrite 不动 */
-watch(() => props.platform?.mode, (m) => {
-  if (m?.type === 'keep') keepN.value = m.n
-})
-
-async function onNChange(value: string): Promise<void> {
-  const n = Math.max(1, Math.floor(Number(value) || 1))
-  await setMode({ type: 'keep', n })
-}
-
-/** 分段选择值 → BackupMode：keep 用本地 keepN（保留用户配置），overwrite 无参——与原 radio change 语义等价 */
-async function onModeSelect(v: string): Promise<void> {
-  await setMode(v === 'overwrite' ? { type: 'overwrite' } : { type: 'keep', n: keepN.value })
-}
-
 async function refreshList(): Promise<void> {
   try {
     backups.value = await props.platform!.listBackups!()
@@ -116,23 +96,132 @@ async function refreshList(): Promise<void> {
     backups.value = []
   }
 }
+
+async function refreshSources(): Promise<void> {
+  const p = props.platform
+  if (!p?.listLocalSources) return
+  try {
+    sources.value = await p.listLocalSources()
+  } catch {
+    sources.value = [] // 回填失败按未存源处理
+  }
+}
+
+/** 源 id 工厂：优先 crypto.randomUUID（宿主安全上下文），jsdom 等缺失环境回落时间戳+随机段 */
+function newSourceId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `src-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+/** 目录显示名：末段（兼容 \ 与 / 分隔）；解析不出回落「本地备份」 */
+function dirLabelOf(dir: string): string {
+  return dir.split(/[\\/]/).filter((s) => s !== '').pop() ?? '本地备份'
+}
+
+/** 「添加目录」：选目录 → 以目录末段为名建源（keep 3、enabled 开）落盘并刷新列表；取消不动 */
+async function onAddDir(): Promise<void> {
+  const p = props.platform
+  if (!p?.pickBackupDir || !p.saveLocalSource) return
+  try {
+    const dir = await p.pickBackupDir()
+    if (dir === null) return // 用户取消
+    await p.saveLocalSource({ id: newSourceId(), name: dirLabelOf(dir), dir, retention: { type: 'keep', n: 3 }, enabled: true })
+    await refreshSources()
+  } catch (e) {
+    fail(e)
+  }
+}
+
+/** 单源编辑回写：整源落盘（名称/retention/启用态共用） */
+async function persistSource(s: LocalSourceView): Promise<void> {
+  const p = props.platform
+  if (!p?.saveLocalSource) return
+  try {
+    await p.saveLocalSource({ ...s })
+  } catch (e) {
+    fail(e)
+  }
+}
+
+/** 启用开关：先改内存再回写（回写失败内存保持用户所见，错误走 msg 通道） */
+function onEnabled(s: LocalSourceView, v: boolean): void {
+  s.enabled = v
+  void persistSource(s)
+}
+
+/** 名称编辑：update:model-value 只更新内存（逐键不落盘），change（blur/回车）落盘一次 */
+function onName(s: LocalSourceView, v: string): void {
+  s.name = v
+}
+function onNameCommit(s: LocalSourceView): void {
+  void persistSource(s)
+}
+
+/** 保留策略二选（MdSegmentedButton 选项，沿 T8 CloudCard 口径） */
+const RETENTION_OPTIONS = [
+  { value: 'overwrite', label: '覆盖' },
+  { value: 'keep', label: '保留最近' },
+]
+function onRetentionType(s: LocalSourceView, v: string | number): void {
+  s.retention = v === 'keep' ? { type: 'keep', n: 3 } : { type: 'overwrite' }
+  void persistSource(s)
+}
+/** keep 份数输入 → 源 retention：空串/非数字回落 3（与本地源默认一致），数字钳下限 1 */
+function onKeepN(s: LocalSourceView, v: string | number): void {
+  const parsed = v === '' ? NaN : Number(v)
+  s.retention = { type: 'keep', n: Number.isFinite(parsed) ? Math.max(1, Math.round(parsed)) : 3 }
+  void persistSource(s)
+}
+
+function askRemove(id: string): void {
+  pendingRemove.value = id
+}
+
+function onCancelRemove(): void {
+  pendingRemove.value = null
+}
+
+/** 确认移除：平台删除该源并从卡内列表移除；失败保留列表并走错误通道 */
+async function onConfirmRemove(): Promise<void> {
+  const p = props.platform
+  const id = pendingRemove.value
+  if (!p?.removeLocalSource || !id) {
+    pendingRemove.value = null
+    return
+  }
+  try {
+    await p.removeLocalSource(id)
+    sources.value = sources.value.filter((x) => x.id !== id)
+    if (expanded.value === id) expanded.value = null
+  } catch (e) {
+    fail(e)
+  }
+  pendingRemove.value = null
+}
+
+/** 确认行文案用的源名（按 id 解析；挂起期间该源仍在列表） */
+function sourceName(id: string): string {
+  return sources.value.find((x) => x.id === id)?.name ?? ''
+}
+
 onMounted(() => {
   const p = props.platform
   if (!p) return
+  hasSources.value = typeof p.listLocalSources === 'function'
+  canAddDir.value = typeof p.pickBackupDir === 'function'
+  if (hasSources.value) void refreshSources()
   if (p.listBackups) void refreshList()
   // getAutoPrefs 可能同步返回：onMounted 直接读初值（无则保留默认）
   if (p.getAutoPrefs) {
     const v = p.getAutoPrefs()
     if (v) autoPrefs.value = { ...v }
   }
-  if (p.getBackupDir) void p.getBackupDir().then((d) => { backupDir.value = d })
   if (p.getAutoStatus) void p.getAutoStatus().then((s) => { autoStatus.value = s }).catch(() => { autoStatus.value = null })
 })
 
 /** 恢复统一尝试：pw=会话口令（首发）或一次性回退口令（重试）。
  *  无口令可用或解密抛错 → 记住来源并展开回退区；用户取消（null）静默返回；
  *  解密成功但内容无效 → 显示错误不进回退（内容问题不该误导为口令问题） */
-async function attemptRestore(req: { kind: 'picker' | 'name'; name?: string }, pw: string | null): Promise<void> {
+async function attemptRestore(req: { kind: 'picker' | 'name'; sourceId?: string; name?: string }, pw: string | null): Promise<void> {
   const p = props.platform
   if (!p) return
   busy.value = true
@@ -141,7 +230,7 @@ async function attemptRestore(req: { kind: 'picker' | 'name'; name?: string }, p
   let needFallback = false
   try {
     if (pw) {
-      r = req.kind === 'picker' ? await p.restoreFromPicker!(pw) : await p.restoreByName!(req.name!, pw)
+      r = req.kind === 'picker' ? await p.restoreFromPicker!(pw) : await p.restoreByName!(req.sourceId!, req.name!, pw)
     } else {
       needFallback = true
     }
@@ -174,8 +263,8 @@ async function attemptRestore(req: { kind: 'picker' | 'name'; name?: string }, p
   restoreReq.value = null
 }
 
-function startRestore(kind: 'picker' | 'name', name?: string): void {
-  void attemptRestore({ kind, name }, props.sessionSecret)
+function startRestore(kind: 'picker' | 'name', sourceId?: string, name?: string): void {
+  void attemptRestore({ kind, sourceId, name }, props.sessionSecret)
 }
 
 /** 回退重试：用一次性输入的口令对同一来源再解一次 */
@@ -229,38 +318,48 @@ function onIntervalChange(v: string | number): void {
   autoPrefs.value = { ...autoPrefs.value, intervalMinutes: Number(v) }
   void syncAutoPrefs()
 }
-
-async function onChangeDir(): Promise<void> {
-  const p = props.platform
-  if (!p?.pickBackupDir) return
-  const dir = await p.pickBackupDir()
-  if (dir === null) return // 用户取消
-  await p.setBackupDir!(dir)
-  backupDir.value = dir
-}
-
-async function onResetDir(): Promise<void> {
-  const p = props.platform
-  if (!p?.setBackupDir) return
-  await p.setBackupDir(null)
-  backupDir.value = null
-}
 </script>
 
 <template>
   <section v-if="platform" class="card backup">
     <h2>备份</h2>
-    <div class="modes">
-      <MdSegmentedButton
-        aria-label="备份模式"
-        :model-value="platform.mode.type" :options="MODE_OPTIONS"
-        @update:model-value="onModeSelect"
-      />
-      <MdTextField
-        v-if="platform.mode.type === 'keep'" class="keep-n" type="number" label="份数" aria-label="保留份数"
-        min="1" :model-value="String(platform.mode.n)" @update:model-value="onNChange"
-      />
-      <span v-if="platform.mode.type === 'keep'" class="unit">份</span>
+    <div v-if="hasSources" class="sources-block">
+      <div class="sources-head">
+        <span class="sources-title">本地备份目录</span>
+        <MdButton v-if="canAddDir" variant="tonal" class="dir-add" :disabled="busy" @click="onAddDir">添加目录…</MdButton>
+      </div>
+      <p v-if="sources.length === 0" class="hint">尚无备份目录，点「添加目录」选择一个文件夹（默认源为应用数据目录）。</p>
+      <div v-for="s in sources" :key="s.id" class="source">
+        <div class="source-head">
+          <MdSwitch :model-value="s.enabled" :aria-label="`${s.name}启用`" @update:model-value="onEnabled(s, $event)" />
+          <strong class="source-name">{{ s.name }}</strong>
+          <span class="source-dir">{{ s.dir ?? '默认（应用数据目录）' }}</span>
+          <MdButton variant="text" class="source-toggle" @click="expanded = expanded === s.id ? null : s.id">{{ expanded === s.id ? '收起' : '配置' }}</MdButton>
+          <MdButton variant="text" danger class="source-remove" :disabled="busy" @click="askRemove(s.id)">移除</MdButton>
+        </div>
+        <div v-if="expanded === s.id" class="source-fields">
+          <MdTextField
+            :model-value="s.name" label="名称" aria-label="源名称" autocomplete="off"
+            @update:model-value="onName(s, $event)" @change="onNameCommit(s)"
+          />
+          <div class="retention-row">
+            <MdSegmentedButton
+              :options="RETENTION_OPTIONS" :model-value="s.retention.type" aria-label="保留策略"
+              @update:model-value="onRetentionType(s, $event)"
+            />
+            <MdTextField
+              v-if="s.retention.type === 'keep'" class="keep-n"
+              :model-value="String(s.retention.n)" type="number" label="保留份数" aria-label="保留份数"
+              @update:model-value="onKeepN(s, $event)"
+            />
+          </div>
+        </div>
+      </div>
+      <div v-if="pendingRemove" class="confirm-row remove-confirm-row">
+        <span>移除备份目录「{{ sourceName(pendingRemove) }}」？目录内已备份文件不受影响。</span>
+        <MdButton danger :disabled="busy" @click="onConfirmRemove">确认移除</MdButton>
+        <MdButton variant="text" :disabled="busy" @click="onCancelRemove">取消</MdButton>
+      </div>
     </div>
     <div class="actions">
       <MdButton class="backup-now" :disabled="busy || !sessionSecret" @click="onBackup">立即备份</MdButton>
@@ -273,9 +372,9 @@ async function onResetDir(): Promise<void> {
       <MdButton :disabled="busy" @click="retryRestore">重试</MdButton>
     </div>
     <ul v-if="backups.length" class="backup-list">
-      <li v-for="b in backups" :key="b.name">
+      <li v-for="b in backups" :key="`${b.sourceId}/${b.name}`">
         <span class="bname">{{ b.name }}</span>
-        <MdButton v-if="platform.restoreByName" variant="text" :disabled="busy" @click="startRestore('name', b.name)">恢复</MdButton>
+        <MdButton v-if="platform.restoreByName" variant="text" :disabled="busy" @click="startRestore('name', b.sourceId, b.name)">恢复</MdButton>
       </li>
     </ul>
     <div v-if="pending" class="confirm-row">
@@ -303,11 +402,6 @@ async function onResetDir(): Promise<void> {
       </div>
       <span v-if="platform.getAutoStatus" class="auto-status">上次自动备份：{{ autoStatus ?? '暂无' }}</span>
     </div>
-    <div v-if="platform.getBackupDir" class="dir-row">
-      <span class="dir-value">备份目录：{{ backupDir ?? '默认（应用数据目录）' }}</span>
-      <MdButton variant="tonal" :disabled="busy" @click="onChangeDir">更改…</MdButton>
-      <MdButton variant="text" :disabled="busy" @click="onResetDir">恢复默认</MdButton>
-    </div>
     <div v-if="msg" :class="msgKind" role="status">{{ msg }}</div>
   </section>
 </template>
@@ -316,22 +410,27 @@ async function onResetDir(): Promise<void> {
 /* 卡片边界由外层 MdCard outlined 统一提供(M3 双描边裁定,2026-09-16 审查 X1);本组件只负责内容排版 */
 .card { display: flex; flex-direction: column; gap: 8px; }
 h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
-.modes { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
-.keep-n { width: 90px; }
-.unit { font-size: var(--md-sys-typescale-body-medium); }
+.sources-block { display: flex; flex-direction: column; gap: 6px; }
+.sources-head { display: flex; align-items: center; gap: 8px; }
+.sources-title { font-size: var(--md-sys-typescale-body-medium); opacity: .85; flex: 1; }
+.source { display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--md-sys-color-outline-variant); padding-bottom: 6px; }
+.source-head { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); flex-wrap: wrap; }
+.source-name { flex-shrink: 0; }
+.source-dir { flex: 1; opacity: .7; font-size: var(--md-sys-typescale-body-small); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.source-fields { display: flex; flex-direction: column; gap: 6px; }
+.retention-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.keep-n { width: 120px; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .fallback-row { display: flex; gap: 8px; align-items: center; }
 .fallback-pw { flex: 1; max-width: 240px; }
 .backup-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 160px; overflow: auto; }
 .backup-list li { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); }
 .bname { flex: 1; opacity: .8; }
-.confirm-row { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); }
+.confirm-row { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); flex-wrap: wrap; }
 .auto-block { display: flex; flex-direction: column; gap: 4px; }
 .auto-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
 .auto-item { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); }
 .auto-status { font-size: var(--md-sys-typescale-body-small); opacity: .65; }
-.dir-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.dir-value { font-size: var(--md-sys-typescale-body-medium); opacity: .85; }
 .ok { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-medium); }
 .err { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-medium); }
 .hint { opacity: .65; font-size: var(--md-sys-typescale-body-medium); margin: 0; }

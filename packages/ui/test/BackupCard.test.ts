@@ -1,17 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import { reactive } from 'vue'
 import BackupCard from '../src/components/BackupCard.vue'
-import type { BackupAutoPrefs, BackupPlatform } from '../src/components/backupPlatform'
+import type { BackupAutoPrefs, BackupPlatform, LocalSourceView } from '../src/components/backupPlatform'
 
 const VALID_VAULT = JSON.stringify({ version: 1, entries: [], groups: [], updatedAt: 0 })
 
-/** mock platform 工厂：必选三件套打底，用例按需覆盖/追加可选成员 */
+/** mock platform 工厂：必选件打底（plan16 T9：createBackup 返回中文摘要），用例按需覆盖/追加可选成员 */
 function makePlatform(over: Partial<BackupPlatform> = {}): BackupPlatform {
   return {
-    createBackup: vi.fn(async () => 'created' as const),
-    mode: { type: 'keep', n: 5 },
-    setMode: vi.fn(async () => {}),
+    createBackup: vi.fn(async () => '已备份到 1 个目录'),
     ...over,
   }
 }
@@ -30,34 +27,41 @@ describe('BackupCard', () => {
     expect(hint).toBeTruthy()
   })
 
-  it('有 sessionSecret：立即备份以 (vaultJson, sessionSecret) 调 createBackup 并显示成功', async () => {
+  it('有 sessionSecret：立即备份以 (vaultJson, sessionSecret) 调 createBackup 并展示宿主返回的中文摘要', async () => {
     const p = makePlatform()
     const w = mount(BackupCard, { props: { platform: p, vaultJson: '{"v":1}', sessionSecret: 'sec' } })
     await w.find('button.backup-now').trigger('click')
     await vi.waitFor(() => expect(p.createBackup).toHaveBeenCalledWith('{"v":1}', 'sec'))
-    expect(w.text()).toContain('备份成功')
+    expect(w.text()).toContain('已备份到 1 个目录')
   })
 
-  it('恢复失败 → 回退口令输入出现 → 用回退口令重试成功（restoreByName 先后收到两个口令）', async () => {
+  it('无启用源：宿主返回空串时摘要兜底「未配置启用目录」', async () => {
+    const p = makePlatform({ createBackup: vi.fn(async () => '') })
+    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
+    await w.find('button.backup-now').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('未配置启用目录'))
+  })
+
+  it('恢复失败 → 回退口令输入出现 → 用回退口令重试成功（restoreByName 收到 (sourceId, name, 口令)）', async () => {
     const p = makePlatform({
-      listBackups: vi.fn(async () => [{ name: 'b1.json' }]),
+      listBackups: vi.fn(async () => [{ sourceId: 's1', name: 'b1.json' }]),
       restoreByName: vi.fn()
         .mockRejectedValueOnce(new Error('decrypt failed'))
         .mockResolvedValueOnce({ json: VALID_VAULT }),
       replaceAllOp: vi.fn(async () => {}),
     })
-    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 's1' } })
+    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'pw1' } })
     // 备份列表由 listBackups 异步填充：先等「恢复」按钮出现
     await vi.waitFor(() => expect(w.findAll('button').some((b) => b.text() === '恢复')).toBe(true))
     const btn = w.findAll('button').find((b) => b.text() === '恢复')!
     await btn.trigger('click')
     // 首发用会话口令；失败 → 回退区展开
     await vi.waitFor(() => expect(w.find('.fallback-pw').exists()).toBe(true))
-    expect(p.restoreByName).toHaveBeenLastCalledWith('b1.json', 's1')
+    expect(p.restoreByName).toHaveBeenLastCalledWith('s1', 'b1.json', 'pw1')
     // 输入一次性口令重试：成功 → 回退区收起、输入清空、进入两步确认
     await w.find('.fallback-pw input').setValue('pw2')
     await w.findAll('button').find((b) => b.text() === '重试')!.trigger('click')
-    await vi.waitFor(() => expect(p.restoreByName).toHaveBeenLastCalledWith('b1.json', 'pw2'))
+    await vi.waitFor(() => expect(p.restoreByName).toHaveBeenLastCalledWith('s1', 'b1.json', 'pw2'))
     expect(w.find('.fallback-pw').exists()).toBe(false)
     expect(w.find('.confirm-row').exists()).toBe(true)
   })
@@ -73,10 +77,10 @@ describe('BackupCard', () => {
 
   it('回退区已展开时重试再失败：显示「口令不匹配，请重试」且回退区保持展开', async () => {
     const p = makePlatform({
-      listBackups: vi.fn(async () => [{ name: 'b1.json' }]),
+      listBackups: vi.fn(async () => [{ sourceId: 's1', name: 'b1.json' }]),
       restoreByName: vi.fn().mockRejectedValue(new Error('decrypt failed')),
     })
-    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 's1' } })
+    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'pw1' } })
     await vi.waitFor(() => expect(w.findAll('button').some((b) => b.text() === '恢复')).toBe(true))
     await w.findAll('button').find((b) => b.text() === '恢复')!.trigger('click')
     // 首发失败：静默展开回退区，无错误提示
@@ -103,10 +107,11 @@ describe('BackupCard', () => {
     expect(w.find('.fallback-pw').exists()).toBe(false)
   })
 
-  it('平台未提供 getAutoPrefs/getBackupDir：自动区与目录行不渲染', () => {
+  it('能力探测：platform 未提供 getAutoPrefs/listLocalSources → 自动区与源区不渲染，立即备份仍在（createBackup 必需）', () => {
     const w = mount(BackupCard, { props: { platform: makePlatform(), vaultJson: '{}', sessionSecret: 'sec' } })
     expect(w.find('.auto-row').exists()).toBe(false)
-    expect(w.find('.dir-row').exists()).toBe(false)
+    expect(w.find('.sources-block').exists()).toBe(false)
+    expect(w.find('button.backup-now').exists()).toBe(true)
   })
 
   it('autoPrefs 开关切换：每次以最新完整对象调 setAutoPrefs', async () => {
@@ -162,90 +167,6 @@ describe('BackupCard', () => {
     expect(w3.find('.auto-status').exists()).toBe(false)
   })
 
-  it('目录行：显示当前值；恢复默认调 setBackupDir(null)；更改…选完路径调 setBackupDir(路径)', async () => {
-    const p = makePlatform({
-      getBackupDir: vi.fn(async () => 'D:\\bk'),
-      setBackupDir: vi.fn(async () => {}),
-      pickBackupDir: vi.fn(async () => 'E:\\new'),
-    })
-    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
-    await vi.waitFor(() => expect(w.find('.dir-row').text()).toContain('D:\\bk'))
-    await w.findAll('button').find((b) => b.text() === '恢复默认')!.trigger('click')
-    await vi.waitFor(() => expect(p.setBackupDir).toHaveBeenCalledWith(null))
-    expect(w.find('.dir-row').text()).toContain('默认（应用数据目录）')
-    await w.findAll('button').find((b) => b.text() === '更改…')!.trigger('click')
-    await vi.waitFor(() => expect(p.setBackupDir).toHaveBeenLastCalledWith('E:\\new'))
-    expect(w.find('.dir-row').text()).toContain('E:\\new')
-  })
-
-  it('getBackupDir 渲染时返回 null：显示「默认（应用数据目录）」', async () => {
-    const p = makePlatform({
-      getBackupDir: vi.fn(async () => null),
-      setBackupDir: vi.fn(async () => {}),
-    })
-    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
-    await vi.waitFor(() => expect(w.find('.dir-row').exists()).toBe(true))
-    expect(w.find('.dir-row').text()).toContain('默认（应用数据目录）')
-  })
-
-  it('备份模式分段选择（F5 收口）：aria-checked 单选语义；点击以等价 BackupMode 调 setMode；overwrite 态 N 输入框不渲染', async () => {
-    const mode = reactive<{ type: 'keep'; n: number } | { type: 'overwrite' }>({ type: 'keep', n: 5 })
-    const platform = {
-      createBackup: vi.fn().mockResolvedValue('created'),
-      mode,
-      setMode: vi.fn(async (m: { type: 'keep'; n: number } | { type: 'overwrite' }) => {
-        Object.assign(mode, m)
-      }),
-    }
-    const w = mount(BackupCard, { props: { platform, vaultJson: '{}', sessionSecret: 'sec' } })
-    const items = w.findAll('.md-seg__item')
-    expect(items.map((i) => i.text())).toEqual(['保留最近', '覆盖单一文件'])
-    // 初始 keep：第一段 aria-checked，keep-n 输入渲染
-    expect(items[0]!.attributes('aria-checked')).toBe('true')
-    expect(items[1]!.attributes('aria-checked')).toBe('false')
-    expect(w.find('.keep-n input').exists()).toBe(true)
-    // 切 overwrite：以 {type:'overwrite'} 调 setMode；N 输入框随之不渲染、选中段迁移
-    await items[1]!.trigger('click')
-    await vi.waitFor(() => expect(platform.setMode).toHaveBeenCalledWith({ type: 'overwrite' }))
-    await vi.waitFor(() => {
-      expect(mode.type).toBe('overwrite')
-      expect(w.find('.keep-n input').exists()).toBe(false)
-      expect(w.findAll('.md-seg__item')[1]!.attributes('aria-checked')).toBe('true')
-    })
-  })
-
-  it('overwrite 初态：keep-n 输入框不渲染', () => {
-    const p = makePlatform({ mode: { type: 'overwrite' } })
-    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
-    expect(w.find('.keep-n input').exists()).toBe(false)
-  })
-
-  it('I70：keep→overwrite→keep 切换时保留本地 keepN，不丢失用户配置', async () => {
-    // 用 reactive 包装让模板访问自动解包 ref（vue-test-utils mount 默认不深 reactive）
-    const mode = reactive<{ type: 'keep'; n: number } | { type: 'overwrite' }>({ type: 'keep', n: 7 })
-    const platform = {
-      createBackup: vi.fn().mockResolvedValue('created'),
-      mode,
-      setMode: vi.fn(async (m: { type: 'keep'; n: number } | { type: 'overwrite' }) => {
-        Object.assign(mode, m)
-      }),
-    }
-    const w = mount(BackupCard, { props: { platform, vaultJson: '{}', sessionSecret: 'sec' } })
-    // 初始 keep n=7：keep-n input 可见
-    expect(w.find('.keep-n input').exists()).toBe(true)
-    // 切到 overwrite（F5：备份模式为 MdSegmentedButton 分段选择）
-    await w.findAll('.md-seg__item')[1]!.trigger('click')
-    await vi.waitFor(() => expect(mode.type).toBe('overwrite'))
-    expect(w.find('.keep-n input').exists()).toBe(false)
-    // 切回 keep：应使用本地 keepN（即用户配置的 7），不会变成默认 3
-    await w.findAll('.md-seg__item')[0]!.trigger('click')
-    await vi.waitFor(() => {
-      expect(mode.type).toBe('keep')
-      // I70：切回 keep 保留用户配置的 keepN（不是默认 3）
-      if (mode.type === 'keep') expect(mode.n).toBe(7)
-    })
-  })
-
   it('导出到文件：exportToFile 成功显示「已导出到文件」，取消（false）显示「已取消」', async () => {
     const p = makePlatform({ exportToFile: vi.fn(async () => true) })
     const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
@@ -259,23 +180,13 @@ describe('BackupCard', () => {
     await vi.waitFor(() => expect(w2.text()).toContain('已取消'))
   })
 
-  it('keep 模式份数修改：keep-n input 变更以 (keep, n) 调 setMode（下取整且最小 1）', async () => {
-    const p = makePlatform()
-    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
-    await w.find('.keep-n input').setValue('3')
-    await vi.waitFor(() => expect(p.setMode).toHaveBeenCalledWith({ type: 'keep', n: 3 }))
-    // 非法输入（0/NaN）：回落最小值 1
-    await w.find('.keep-n input').setValue('0')
-    await vi.waitFor(() => expect(p.setMode).toHaveBeenLastCalledWith({ type: 'keep', n: 1 }))
-  })
-
   it('恢复第 2 步：确认覆盖调 replaceAllOp(pending) 并显示「恢复成功」；失败显示错误', async () => {
     const p = makePlatform({
-      listBackups: vi.fn(async () => [{ name: 'b1.json' }]),
+      listBackups: vi.fn(async () => [{ sourceId: 's1', name: 'b1.json' }]),
       restoreByName: vi.fn(async () => ({ json: VALID_VAULT })),
       replaceAllOp: vi.fn(async () => {}),
     })
-    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 's1' } })
+    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'pw1' } })
     await vi.waitFor(() => expect(w.findAll('button').some((b) => b.text() === '恢复')).toBe(true))
     await w.findAll('button').find((b) => b.text() === '恢复')!.trigger('click')
     await vi.waitFor(() => expect(w.find('.confirm-row').exists()).toBe(true))
@@ -284,15 +195,33 @@ describe('BackupCard', () => {
     expect(p.replaceAllOp).toHaveBeenCalledTimes(1)
     // 失败路径：replaceAllOp 拒绝 → 错误提示
     const p2 = makePlatform({
-      listBackups: vi.fn(async () => [{ name: 'b1.json' }]),
+      listBackups: vi.fn(async () => [{ sourceId: 's1', name: 'b1.json' }]),
       restoreByName: vi.fn(async () => ({ json: VALID_VAULT })),
       replaceAllOp: vi.fn(async () => { throw new Error('replace failed') }),
     })
-    const w2 = mount(BackupCard, { props: { platform: p2, vaultJson: '{}', sessionSecret: 's1' } })
+    const w2 = mount(BackupCard, { props: { platform: p2, vaultJson: '{}', sessionSecret: 'pw1' } })
     await vi.waitFor(() => expect(w2.findAll('button').some((b) => b.text() === '恢复')).toBe(true))
     await w2.findAll('button').find((b) => b.text() === '恢复')!.trigger('click')
     await vi.waitFor(() => expect(w2.find('.confirm-row').exists()).toBe(true))
     await w2.findAll('button').find((b) => b.text() === '确认覆盖')!.trigger('click')
     await vi.waitFor(() => expect(w2.text()).toContain('replace failed'))
+  })
+
+  it('立即备份成功后刷新聚合列表（listBackups 新签名 sourceId+name）', async () => {
+    const p = makePlatform({
+      listBackups: vi.fn(async () => [{ sourceId: 's1', name: 'vault-1.totpbackup' }]),
+    })
+    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
+    await w.find('button.backup-now').trigger('click')
+    await flushPromises()
+    expect(p.listBackups).toHaveBeenCalled()
+    expect(w.find('.backup-list').text()).toContain('vault-1.totpbackup')
+  })
+
+  // 类型层面锚定新接口形态（LocalSourceView 从 ui 导出，desktop T14 消费）
+  it('LocalSourceView 形状锚定', () => {
+    const s: LocalSourceView = { id: 's1', name: 'bk', dir: null, retention: { type: 'keep', n: 3 }, enabled: true }
+    expect(s.dir).toBeNull()
+    expect(s.retention).toEqual({ type: 'keep', n: 3 })
   })
 })

@@ -19,9 +19,7 @@ async function readyStore() {
 
 function backupPlatform(): BackupPlatform {
   return {
-    createBackup: vi.fn(async () => 'created' as const),
-    mode: { type: 'overwrite' },
-    setMode: vi.fn(async () => {}),
+    createBackup: vi.fn(async () => '已备份到 1 个目录'),
   }
 }
 /** CloudCard 挂载仅读接口做回填；同步链路成员不被页面路径触达，实现按需补全 */
