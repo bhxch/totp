@@ -281,14 +281,19 @@ describe('CloudCard（多目标）', () => {
     expect(w2.find('.auto-status').exists()).toBe(false)
   })
 
-  it('⑭添加目标：点「添加目标：S3」push 空白凭据（enabled 开）并展开其配置', async () => {
+  it('⑭添加目标：点「添加目标」弹菜单列全部缺失后端，点选后 push 空白凭据（enabled 开）并展开其配置', async () => {
     const p = makePlatform({ loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET]) })
     const w = await mountCard(p)
     expect(w.findAll('.target')).toHaveLength(1)
     const addBtn = w.find('button.target-add')
-    expect(addBtn.text()).toBe('添加目标：S3')
+    expect(addBtn.text()).toBe('添加目标')
     await addBtn.trigger('click')
+    // 菜单仅列缺失后端（不含已有 webdav），中文名
+    const menuItems = w.findAll('.md-menu button').map((b) => b.text())
+    expect(menuItems).toEqual(['S3', 'GitHub Gist', 'Google Drive', 'OneDrive'])
+    await w.findAll('.md-menu button').find((b) => b.text() === 'S3')!.trigger('click')
     expect(w.findAll('.target')).toHaveLength(2)
+    expect(w.find('.md-menu').exists()).toBe(false) // 点选后菜单关闭
     // 新目标展开态：S3 字段可见且为空白凭据
     expect(w.find('input[placeholder="Region（如 us-east-1）"]').exists()).toBe(true)
     expect((w.find('input[placeholder="Region（如 us-east-1）"]').element as HTMLInputElement).value).toBe('')
@@ -308,6 +313,72 @@ describe('CloudCard（多目标）', () => {
     const w = await mountCard(p)
     await w.find('input[aria-label="定时自动同步"]').setValue(true)
     await vi.waitFor(() => expect(set).toHaveBeenLastCalledWith({ onChange: false, onInterval: true, intervalMinutes: 60 }))
+  })
+
+  it('⑱b添加菜单只列缺失后端：已有 webdav/gist 时不含这两项', async () => {
+    const p = makePlatform({ loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET, GIST_TARGET]) })
+    const w = await mountCard(p)
+    await w.find('button.target-add').trigger('click')
+    const menuItems = w.findAll('.md-menu button').map((b) => b.text())
+    expect(menuItems).toEqual(['S3', 'Google Drive', 'OneDrive'])
+  })
+
+  it('⑱c全部后端已添加：「添加目标」按钮隐藏', async () => {
+    const p = makePlatform({
+      loadCreds: vi.fn().mockResolvedValue([
+        WEBDAV_TARGET, GIST_TARGET,
+        { cred: { backend: 's3', region: 'r', bucket: 'b', accessKeyId: 'a', secretAccessKey: 's' }, enabled: true },
+        { cred: { backend: 'gdrive', accessToken: 't' }, enabled: true },
+        { cred: { backend: 'onedrive', accessToken: 't' }, enabled: true },
+      ]),
+    })
+    const w = await mountCard(p)
+    expect(w.find('button.target-add').exists()).toBe(false)
+  })
+
+  it('⑱d移除-空凭据：直接删（不弹确认、不调 saveCreds）', async () => {
+    const p = makePlatform({ loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET]) })
+    const w = await mountCard(p)
+    await w.find('button.target-add').trigger('click')
+    await w.findAll('.md-menu button').find((b) => b.text() === 'S3')!.trigger('click')
+    expect(w.findAll('.target')).toHaveLength(2)
+    const removes = w.findAll('button.target-remove')
+    expect(removes).toHaveLength(2)
+    await removes[1]!.trigger('click') // 新加的空白 S3 行
+    expect(w.findAll('.target')).toHaveLength(1)
+    expect(w.find('.md-menu button').exists()).toBe(false)
+    expect(w.find('.confirm-row').exists()).toBe(false) // 未弹确认
+    expect(p.saveCreds).not.toHaveBeenCalled() // 未持久化过，无需落盘
+  })
+
+  it('⑱e移除-非空凭据：两步确认；确认后 saveCreds 以减去该项的列表调用，取消不动', async () => {
+    const p = makePlatform({ loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET, GIST_TARGET]) })
+    const w = await mountCard(p)
+    await w.findAll('button.target-remove')[1]!.trigger('click') // gist（非空）
+    expect(w.text()).toContain('移除目标 GitHub Gist？已保存的凭据将从本机删除，云端对象不受影响。')
+    // 取消：列表与存储均不动
+    await w.findAll('button').find((b) => b.text() === '取消')!.trigger('click')
+    expect(w.findAll('.target')).toHaveLength(2)
+    expect(p.saveCreds).not.toHaveBeenCalled()
+    // 再确认：saveCreds 收内存列表减去该项
+    await w.findAll('button.target-remove')[1]!.trigger('click')
+    await w.findAll('button').find((b) => b.text() === '确认移除')!.trigger('click')
+    await flushPromises()
+    expect(p.saveCreds).toHaveBeenCalledTimes(1)
+    expect(p.saveCreds).toHaveBeenCalledWith([WEBDAV_TARGET])
+    expect(w.findAll('.target')).toHaveLength(1)
+    expect(w.find('.confirm-row').exists()).toBe(false)
+  })
+
+  it('⑱f挂起移除确认期间：立即同步按钮禁用；移除后可重置集合/采纳基线引用同步清理', async () => {
+    const p = makePlatform({ loadCreds: vi.fn().mockResolvedValue([WEBDAV_TARGET]) })
+    const w = await mountCard(p)
+    await w.findAll('button.target-remove')[0]!.trigger('click')
+    expect((w.find('button.cloud-sync').element as HTMLButtonElement).disabled).toBe(true)
+    await w.findAll('button').find((b) => b.text() === '确认移除')!.trigger('click')
+    await flushPromises()
+    expect((w.find('button.cloud-sync').element as HTMLButtonElement).disabled).toBe(false)
+    expect(w.findAll('.target')).toHaveLength(0)
   })
 
   it('⑯gdrive 首推回存：后端 onChange 携新凭据（fileId）更新内存目标并 saveCreds 持久化', async () => {

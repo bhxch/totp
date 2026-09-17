@@ -7,6 +7,7 @@ import type { CloudAutoPrefs, CloudPlatform, CloudTarget } from './cloudPlatform
 import { parseVaultJson } from './parseVaultJson'
 import MdButton from './md/MdButton.vue'
 import MdCheckbox from './md/MdCheckbox.vue'
+import MdMenu from './md/MdMenu.vue'
 import MdSwitch from './md/MdSwitch.vue'
 import MdTextField from './md/MdTextField.vue'
 
@@ -51,6 +52,8 @@ const pendingHashes = ref<Array<[string, string]>>([])
 const resettableBackends = ref<string[]>([])
 /** 待确认重置的 backend 键（行内两步确认，同 pendingAdopt 模式；挂起期间同步按钮禁用） */
 const pendingReset = ref<string | null>(null)
+/** 待确认移除的 backend 键（行内两步确认，同 pendingReset 模式；挂起期间同步按钮禁用） */
+const pendingRemove = ref<string | null>(null)
 
 /** 自动触发偏好（卡内编辑副本，挂载时读初值；每次变更整体回写） */
 const autoPrefs = ref<CloudAutoPrefs>({ onChange: false, onInterval: false, intervalMinutes: 60 })
@@ -59,7 +62,14 @@ const autoStatus = ref<string | null>(null)
 
 /** 尚未添加的目标后端（同后端仅一份凭据，已存在的不重复添加） */
 const addableBackends = computed(() => BACKENDS.filter((b) => !targets.value.some((t) => t.cred.backend === b)))
-const nextBackend = computed(() => addableBackends.value[0])
+
+/** 「添加目标」下拉菜单（MdMenu 负责定位/Esc 关闭；点选或 Esc 后收起） */
+const addMenuOpen = ref(false)
+const addMenuPos = ref({ x: 0, y: 0 })
+function openAddMenu(e: MouseEvent): void {
+  addMenuPos.value = { x: e.clientX, y: e.clientY }
+  addMenuOpen.value = true
+}
 
 /** 空白凭据工厂：按 backend 给最小必选字段空串（可选字段不设键，与保存语义一致） */
 function blankCred(b: BackendId): CloudCred {
@@ -72,10 +82,69 @@ function blankCred(b: BackendId): CloudCred {
   }
 }
 
-/** 添加目标：push 空白凭据（enabled 默认开）并展开其配置 */
+/** 添加目标：push 空白凭据（enabled 默认开）并展开其配置；点选后收起菜单 */
 function addTarget(b: BackendId): void {
   targets.value.push({ cred: blankCred(b), enabled: true })
   expanded.value = targets.value.length - 1
+  addMenuOpen.value = false
+}
+
+/** 凭据是否空白（除 backend 外所有字段均为空串/undefined）：空白行从未持久化过 */
+function isBlankCred(cred: CloudCred): boolean {
+  return Object.entries(cred).every(([k, v]) => k === 'backend' || v === undefined || v === '')
+}
+
+/**
+ * 从 targets 移除该 backend 目标并同步清理引用它的状态：
+ * 可重置集合、采纳基线（挂起确认不再给已移除目标写基线）、单目标状态行；
+ * 展开索引按 backend 重解析（删除会使后续索引前移）。
+ */
+function removeTarget(backend: string): void {
+  const expandedBackend = expanded.value >= 0 ? targets.value[expanded.value]?.cred.backend : null
+  targets.value = targets.value.filter((x) => x.cred.backend !== backend)
+  resettableBackends.value = resettableBackends.value.filter((x) => x !== backend)
+  pendingHashes.value = pendingHashes.value.filter(([k]) => k !== backend)
+  delete statusMap.value[backend]
+  expanded.value = expandedBackend !== undefined && expandedBackend !== null
+    ? targets.value.findIndex((x) => x.cred.backend === expandedBackend)
+    : -1
+}
+
+/** 移除入口：空白凭据直接删（未持久化过，不需要 saveCreds）；非空走行内两步确认 */
+function askRemove(backend: string): void {
+  const t = targets.value.find((x) => x.cred.backend === backend)
+  if (!t) return
+  if (isBlankCred(t.cred)) {
+    removeTarget(backend)
+    return
+  }
+  pendingRemove.value = backend
+  pendingReset.value = null // 三态互斥：同时只有一个行内确认挂起
+}
+
+/** 取消移除：本地存储与列表均不动 */
+function onCancelRemove(): void {
+  pendingRemove.value = null
+}
+
+/**
+ * 确认移除：保存的是当前内存列表减去该项（与「保存凭据」持久化内存列表的既有语义一致），
+ * 已保存凭据随之从本机删除，云端对象不受影响。
+ */
+async function onConfirmRemove(): Promise<void> {
+  const p = props.platform
+  const b = pendingRemove.value
+  if (!p || !b) {
+    pendingRemove.value = null
+    return
+  }
+  removeTarget(b)
+  try {
+    await p.saveCreds(targets.value)
+  } catch (e) {
+    fail(e)
+  }
+  pendingRemove.value = null
 }
 
 function fail(e: unknown): void {
@@ -227,6 +296,7 @@ function onCancelAdopt(): void {
 /** 口令不匹配救济第一步：进入行内两步确认（挂起期间同步/重置按钮禁用，同 pendingAdopt 模式） */
 function askReset(backend: string): void {
   pendingReset.value = backend
+  pendingRemove.value = null // 三态互斥：同时只有一个行内确认挂起
 }
 
 /** 取消重置：不触碰云端，仅退出确认行 */
@@ -291,6 +361,7 @@ function onIntervalChange(e: Event): void {
         <MdSwitch v-model="t.enabled" :aria-label="`${BACKEND_LABEL[t.cred.backend]}启用`" />
         <strong>{{ BACKEND_LABEL[t.cred.backend] }}</strong>
         <MdButton variant="text" class="target-toggle" @click="expanded = expanded === i ? -1 : i">{{ expanded === i ? '收起' : '配置' }}</MdButton>
+        <MdButton variant="text" danger class="target-remove" :disabled="busy || pendingAdopt !== null" @click="askRemove(t.cred.backend)">移除</MdButton>
       </div>
       <template v-if="expanded === i">
         <div v-if="t.cred.backend === 'webdav'" class="fields">
@@ -335,9 +406,15 @@ function onIntervalChange(e: Event): void {
       >用当前口令重置云端</MdButton>
     </div>
     <div class="actions">
-      <MdButton v-if="nextBackend" variant="text" class="target-add" @click="addTarget(nextBackend)">添加目标：{{ BACKEND_LABEL[nextBackend] }}</MdButton>
+      <template v-if="addableBackends.length > 0">
+        <MdButton variant="text" class="target-add" @click="openAddMenu">添加目标</MdButton>
+        <!-- MdMenu 只在 open 时渲染；定位/Esc 关闭由组件负责，点选收起在 addTarget 内 -->
+        <MdMenu :x="addMenuPos.x" :y="addMenuPos.y" :open="addMenuOpen" @close="addMenuOpen = false">
+          <MdButton v-for="b in addableBackends" :key="b" variant="text" class="menu-item" @click="addTarget(b)">{{ BACKEND_LABEL[b] }}</MdButton>
+        </MdMenu>
+      </template>
       <MdButton class="creds-save" :disabled="busy" @click="onSaveCreds">保存凭据</MdButton>
-      <MdButton class="cloud-sync" :disabled="busy || !sessionSecret || pendingAdopt !== null || pendingReset !== null" @click="onSync">立即同步</MdButton>
+      <MdButton class="cloud-sync" :disabled="busy || !sessionSecret || pendingAdopt !== null || pendingReset !== null || pendingRemove !== null" @click="onSync">立即同步</MdButton>
     </div>
     <p v-if="!sessionSecret" class="hint">先在上方设置备份口令。</p>
     <div v-if="platform.autoPrefs" class="auto-block">
@@ -376,6 +453,11 @@ function onIntervalChange(e: Event): void {
       <MdButton danger :disabled="busy" @click="onConfirmReset">确认重置</MdButton>
       <MdButton variant="text" :disabled="busy" @click="onCancelReset">取消</MdButton>
     </div>
+    <div v-if="pendingRemove" class="confirm-row remove-confirm-row">
+      <span>移除目标 {{ backendLabel(pendingRemove) }}？已保存的凭据将从本机删除，云端对象不受影响。</span>
+      <MdButton danger :disabled="busy" @click="onConfirmRemove">确认移除</MdButton>
+      <MdButton variant="text" :disabled="busy" @click="onCancelRemove">取消</MdButton>
+    </div>
     <div v-if="msg" :class="msgKind" role="status">{{ msg }}</div>
   </section>
 </template>
@@ -396,6 +478,8 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .interval { height: 32px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline); background: transparent; color: inherit; font: inherit; font-size: var(--md-sys-typescale-body-medium); padding: 0 6px; }
 .auto-status { font-size: var(--md-sys-typescale-body-small); opacity: .65; }
 .confirm-row { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); flex-wrap: wrap; }
+/* 「添加目标」菜单项（MdMenu 容器自带定位与外观；MdButton text 形收紧为菜单项排版，同 CodesPage ctx-item） */
+.menu-item { display: block; width: 100%; height: 36px; justify-content: flex-start; border-radius: 0; font-size: var(--md-sys-typescale-body-medium); text-align: left; padding: 0 14px; }
 .hint { font-size: var(--md-sys-typescale-body-small); opacity: .65; margin: 0; }
 .ok { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-medium); }
 .err { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-medium); }
