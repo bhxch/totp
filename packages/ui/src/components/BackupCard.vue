@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Vault } from '@totp/core'
+import type { KdfProfile, Vault } from '@totp/core'
 import { onMounted, ref } from 'vue'
 import type { BackupAutoPrefs, BackupPlatform, LocalSourceView } from './backupPlatform'
 import { parseVaultJson } from './parseVaultJson'
@@ -36,6 +36,15 @@ const restoreReq = ref<{ kind: 'picker' | 'name'; sourceId?: string; name?: stri
 const autoPrefs = ref<BackupAutoPrefs>({ onChange: false, onInterval: false, intervalMinutes: 60 })
 /** 「上次自动备份」状态文本（design §4.1）：挂载时读；读不到/为空显示「暂无」 */
 const autoStatus = ref<string | null>(null)
+
+/** 备份加密强度档位（plan16 T11.5）：null=未提供或初值未载入，载入前不渲染防闪烁（同 SecurityCard lockPrefs 模式） */
+const backupProfile = ref<KdfProfile | null>(null)
+/** 档位三档（文案与 SecurityCard KDF_OPTIONS 同口径） */
+const BACKUP_PROFILE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'fast', label: '更快（低端机友好）' },
+  { value: 'balanced', label: '平衡（默认）' },
+  { value: 'paranoid', label: '更慢更耐暴力破解' },
+]
 
 /** 本地源列表（plan16 §3「目录=源」；platform.listLocalSources 提供才渲染源区，extension 零影响） */
 const sources = ref<LocalSourceView[]>([])
@@ -216,6 +225,12 @@ onMounted(() => {
     if (v) autoPrefs.value = { ...v }
   }
   if (p.getAutoStatus) void p.getAutoStatus().then((s) => { autoStatus.value = s }).catch(() => { autoStatus.value = null })
+  // 备份档位异步读初值：载入完成前不渲染（防闪烁），失败按未提供处理（档位行不渲染）
+  if (p.backupKdfProfile) {
+    Promise.resolve(p.backupKdfProfile.get())
+      .then((v) => { backupProfile.value = v })
+      .catch(() => { /* 载入失败按未提供处理 */ })
+  }
 })
 
 /** 恢复统一尝试：pw=会话口令（首发）或一次性回退口令（重试）。
@@ -318,6 +333,13 @@ function onIntervalChange(v: string | number): void {
   autoPrefs.value = { ...autoPrefs.value, intervalMinutes: Number(v) }
   void syncAutoPrefs()
 }
+
+/** 备份档位变更：内存即时前进 + 回写平台（后续备份/云上传 envelope 按新档位生成） */
+function onBackupProfileChange(v: string | number): void {
+  const next = v as KdfProfile
+  backupProfile.value = next
+  void props.platform?.backupKdfProfile?.set(next)
+}
 </script>
 
 <template>
@@ -382,6 +404,14 @@ function onIntervalChange(v: string | number): void {
       <MdButton danger :disabled="busy" @click="confirmRestore">确认覆盖</MdButton>
       <MdButton variant="text" :disabled="busy" @click="pending = null">取消</MdButton>
     </div>
+    <div v-if="platform.backupKdfProfile && backupProfile" class="profile-row">
+      <MdSelect
+        class="profile-select"
+        :model-value="backupProfile" :options="BACKUP_PROFILE_OPTIONS"
+        label="备份加密强度" aria-label="备份加密强度" @update:model-value="onBackupProfileChange"
+      />
+      <p class="hint">用于本地备份文件与云端同步对象的加密参数（Argon2id 强度）</p>
+    </div>
     <div v-if="platform.getAutoPrefs" class="auto-block">
       <p class="hint">自动执行前会与上次内容比对，无变化则跳过写入。</p>
       <div class="auto-row">
@@ -431,6 +461,8 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .auto-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
 .auto-item { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); }
 .auto-status { font-size: var(--md-sys-typescale-body-small); opacity: .65; }
+.profile-row { display: flex; flex-direction: column; gap: 4px; }
+.profile-select { max-width: 280px; }
 .ok { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-medium); }
 .err { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-medium); }
 .hint { opacity: .65; font-size: var(--md-sys-typescale-body-medium); margin: 0; }

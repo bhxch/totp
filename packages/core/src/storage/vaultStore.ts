@@ -1,5 +1,6 @@
 import type { Vault } from '../model'
 import type { StorageAdapter } from './adapter'
+import { DEFAULT_KDF_PROFILE, isKdfProfile, type KdfProfile } from '../crypto/kdfProfile'
 import { createVault } from '../vault'
 
 export const VAULT_KEY = 'vault'
@@ -41,6 +42,8 @@ export interface AppSettings {
   lockIdleMinutes: number
   /** 系统锁屏即锁定（desktop=Tauri 事件；extension=chrome.idle 'locked'） */
   lockOnSystemLock: boolean
+  /** 备份加密强度档位（plan16 §2：本地备份与云上传 envelope 按此档位生成；与本地库档位 securityStore 各自独立） */
+  backupKdfProfile: KdfProfile
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -54,6 +57,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lockOnRestart: true,
   lockIdleMinutes: 0,
   lockOnSystemLock: true,
+  backupKdfProfile: DEFAULT_KDF_PROFILE,
 }
 
 export async function loadSettings(adapter: StorageAdapter): Promise<AppSettings> {
@@ -75,6 +79,7 @@ export async function loadSettings(adapter: StorageAdapter): Promise<AppSettings
       lockOnRestart: typeof merged.lockOnRestart === 'boolean' ? (merged.lockOnRestart as boolean) : DEFAULT_SETTINGS.lockOnRestart,
       lockIdleMinutes: typeof merged.lockIdleMinutes === 'number' && Number.isInteger(merged.lockIdleMinutes) && merged.lockIdleMinutes >= 0 ? (merged.lockIdleMinutes as number) : DEFAULT_SETTINGS.lockIdleMinutes,
       lockOnSystemLock: typeof merged.lockOnSystemLock === 'boolean' ? (merged.lockOnSystemLock as boolean) : DEFAULT_SETTINGS.lockOnSystemLock,
+      backupKdfProfile: isKdfProfile(merged.backupKdfProfile) ? merged.backupKdfProfile : DEFAULT_SETTINGS.backupKdfProfile,
     }
   } catch {
     return { ...DEFAULT_SETTINGS }

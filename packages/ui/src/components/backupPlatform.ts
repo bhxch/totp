@@ -1,4 +1,4 @@
-import type { Retention, Vault } from '@totp/core'
+import type { KdfProfile, Retention, Vault } from '@totp/core'
 
 /** 自动备份偏好（D2）：onChange=变更后自动备份；onInterval=定时自动备份；intervalMinutes=定时间隔（分钟） */
 export interface BackupAutoPrefs {
@@ -68,4 +68,10 @@ export interface BackupPlatform {
   getAutoStatus?(): Promise<string | null>
   /** [可选] 弹出目录选择对话框；null=用户取消（「添加目录」建源用） */
   pickBackupDir?(): Promise<string | null>
+  /** [可选] 备份加密强度档位（plan16 T11.5：本地备份/云上传 envelope 按此档位生成；宿主映射 AppSettings.backupKdfProfile 读写）。
+   *  宿主不提供则卡内不渲染「备份加密强度」行；get 可能异步，载入完成前卡内不渲染（防闪烁，同 lockPrefs 模式） */
+  backupKdfProfile?: {
+    get(): KdfProfile | Promise<KdfProfile>
+    set(p: KdfProfile): void | Promise<void>
+  }
 }

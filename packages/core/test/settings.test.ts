@@ -8,8 +8,8 @@ describe('settingsStore', () => {
   })
   it('save/load 往返', async () => {
     const s = createMemoryStorage()
-    await saveSettings(s, { urlFilterEnabled: false, blurHideEnabled: false, clipboardClearEnabled: false, popupCloseDelayMs: 5000, syncEnabled: true, themeMode: 'dark', themeColor: 'teal', lockOnRestart: false, lockIdleMinutes: 15, lockOnSystemLock: false })
-    expect(await loadSettings(s)).toEqual({ urlFilterEnabled: false, blurHideEnabled: false, clipboardClearEnabled: false, popupCloseDelayMs: 5000, syncEnabled: true, themeMode: 'dark', themeColor: 'teal', lockOnRestart: false, lockIdleMinutes: 15, lockOnSystemLock: false })
+    await saveSettings(s, { urlFilterEnabled: false, blurHideEnabled: false, clipboardClearEnabled: false, popupCloseDelayMs: 5000, syncEnabled: true, themeMode: 'dark', themeColor: 'teal', lockOnRestart: false, lockIdleMinutes: 15, lockOnSystemLock: false, backupKdfProfile: 'fast' })
+    expect(await loadSettings(s)).toEqual({ urlFilterEnabled: false, blurHideEnabled: false, clipboardClearEnabled: false, popupCloseDelayMs: 5000, syncEnabled: true, themeMode: 'dark', themeColor: 'teal', lockOnRestart: false, lockIdleMinutes: 15, lockOnSystemLock: false, backupKdfProfile: 'fast' })
   })
   it('损坏 JSON 回退默认值', async () => {
     const s = createMemoryStorage()
@@ -19,7 +19,7 @@ describe('settingsStore', () => {
   it('未知字段被丢弃（只保留已知键）', async () => {
     const s = createMemoryStorage()
     await s.set(SETTINGS_KEY, JSON.stringify({ urlFilterEnabled: true, hacked: 1 }))
-    expect(await loadSettings(s)).toEqual({ urlFilterEnabled: true, blurHideEnabled: false, clipboardClearEnabled: true, popupCloseDelayMs: 2000, syncEnabled: false, themeMode: 'auto', themeColor: 'blue', lockOnRestart: true, lockIdleMinutes: 0, lockOnSystemLock: true })
+    expect(await loadSettings(s)).toEqual({ urlFilterEnabled: true, blurHideEnabled: false, clipboardClearEnabled: true, popupCloseDelayMs: 2000, syncEnabled: false, themeMode: 'auto', themeColor: 'blue', lockOnRestart: true, lockIdleMinutes: 0, lockOnSystemLock: true, backupKdfProfile: 'balanced' })
   })
   it('类型非法的值回退默认', async () => {
     const s = createMemoryStorage()
@@ -28,7 +28,7 @@ describe('settingsStore', () => {
   })
   it('blurHideEnabled 缺省 false；非法类型回退 false', async () => {
     const s = createMemoryStorage()
-    expect(await loadSettings(s)).toEqual({ urlFilterEnabled: true, blurHideEnabled: false, clipboardClearEnabled: true, popupCloseDelayMs: 2000, syncEnabled: false, themeMode: 'auto', themeColor: 'blue', lockOnRestart: true, lockIdleMinutes: 0, lockOnSystemLock: true })
+    expect(await loadSettings(s)).toEqual({ urlFilterEnabled: true, blurHideEnabled: false, clipboardClearEnabled: true, popupCloseDelayMs: 2000, syncEnabled: false, themeMode: 'auto', themeColor: 'blue', lockOnRestart: true, lockIdleMinutes: 0, lockOnSystemLock: true, backupKdfProfile: 'balanced' })
     await s.set(SETTINGS_KEY, JSON.stringify({ blurHideEnabled: 'yes' }))
     expect((await loadSettings(s)).blurHideEnabled).toBe(false)
   })
@@ -77,6 +77,25 @@ describe('settingsStore', () => {
     await s.set(SETTINGS_KEY, JSON.stringify({ lockOnSystemLock: 0 }))
     expect((await loadSettings(s)).lockOnSystemLock).toBe(true)
   })
+  it('backupKdfProfile 缺省 balanced（plan16 T11.5）', async () => {
+    const loaded = await loadSettings(createMemoryStorage())
+    expect(loaded.backupKdfProfile).toBe('balanced')
+    expect(DEFAULT_SETTINGS.backupKdfProfile).toBe('balanced')
+  })
+  it('backupKdfProfile 非法值回退 balanced：未知档位/非字符串均回退', async () => {
+    const s = createMemoryStorage()
+    await s.set(SETTINGS_KEY, JSON.stringify({ backupKdfProfile: 'extreme' }))
+    expect((await loadSettings(s)).backupKdfProfile).toBe('balanced')
+    await s.set(SETTINGS_KEY, JSON.stringify({ backupKdfProfile: 42 }))
+    expect((await loadSettings(s)).backupKdfProfile).toBe('balanced')
+  })
+  it('backupKdfProfile 合法值透传：fast/paranoid 均保留', async () => {
+    const s = createMemoryStorage()
+    await s.set(SETTINGS_KEY, JSON.stringify({ backupKdfProfile: 'paranoid' }))
+    expect((await loadSettings(s)).backupKdfProfile).toBe('paranoid')
+    await s.set(SETTINGS_KEY, JSON.stringify({ backupKdfProfile: 'fast' }))
+    expect((await loadSettings(s)).backupKdfProfile).toBe('fast')
+  })
   it('M4：旧 settings JSON 缺新字段 → load 走 DEFAULT_SETTINGS 兜底', async () => {
     // 模拟「settings 新增 syncEnabled 字段前」落盘的旧 JSON：仅含历史已知键
     const s = createMemoryStorage()
@@ -93,6 +112,8 @@ describe('settingsStore', () => {
     expect(loaded.lockOnRestart).toBe(DEFAULT_SETTINGS.lockOnRestart)
     expect(loaded.lockIdleMinutes).toBe(DEFAULT_SETTINGS.lockIdleMinutes)
     expect(loaded.lockOnSystemLock).toBe(DEFAULT_SETTINGS.lockOnSystemLock)
+    // 缺备份加密强度档位（plan16 T11.5）→ 同样走 DEFAULT 兜底
+    expect(loaded.backupKdfProfile).toBe(DEFAULT_SETTINGS.backupKdfProfile)
     // 其余已存字段保留
     expect(loaded.urlFilterEnabled).toBe(false)
     expect(loaded.blurHideEnabled).toBe(true)
