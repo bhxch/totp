@@ -49,6 +49,9 @@ describe('planImport 判定树', () => {
   it('无碰撞 → new', () => {
     expect(planImport(seeded(), [p({ issuer: 'Other', label: 'z', secret: 'ANOTHERSECRET' })]).kinds[0]).toBe('new')
   })
+  it('planImport 兼容直接传 OtpEntry[]（非 Vault 包装）', () => {
+    expect(planImport(seeded().entries, [p()]).kinds[0]).toBe('identical')
+  })
   it('空 incoming：kinds 为空、四组计数全 0', () => {
     const plan = planImport(seeded(), [])
     expect(plan.kinds).toEqual([])
@@ -174,6 +177,16 @@ describe('applyImportPlan', () => {
     const out = applyImportPlan(v, inc, broken, new Map([[0, 'replace'] as const]), 'skip')
     expect(out.vault.entries).toHaveLength(1)
     expect(out.stats.suspectSkipped).toBe(1)
+  })
+  it('plan 全 new：逐条新增落库（added 计数与 vault 长度同步 +1）', () => {
+    const v = seeded()
+    const inc = [p({ issuer: 'Other', label: 'z', secret: 'ANOTHERSECRET' })]
+    const plan = planImport(v, inc)
+    expect(plan.kinds).toEqual(['new'])
+    const out = applyImportPlan(v, inc, plan, new Map(), 'skip')
+    expect(out.vault.entries).toHaveLength(2)
+    expect(out.vault.entries[1]!.label).toBe('z')
+    expect(out.stats.added).toBe(1)
   })
   it('空 incoming：vault 不变、stats 全 0', () => {
     const v = seeded()
