@@ -305,7 +305,7 @@ describe('CloudCard（多目标）', () => {
     // 保存：整列表含新空白目标
     await w.find('button.creds-save').trigger('click')
     await flushPromises()
-    expect(p.saveCreds).toHaveBeenCalledWith([WEBDAV_TARGET, { cred: { backend: 's3', region: '', bucket: '', accessKeyId: '', secretAccessKey: '' }, enabled: true }])
+    expect(p.saveCreds).toHaveBeenCalledWith([WEBDAV_TARGET, { cred: { backend: 's3', region: '', bucket: '', accessKeyId: '', secretAccessKey: '', endpoint: '', prefix: '', sessionToken: '', objectPath: '' }, enabled: true }])
   })
 
   it('⑮定时自动同步开关：onInterval 切换以最新完整对象回写 set', async () => {

@@ -72,14 +72,15 @@ function openAddMenu(e: MouseEvent): void {
   addMenuOpen.value = true
 }
 
-/** 空白凭据工厂：按 backend 给最小必选字段空串（可选字段不设键，与保存语义一致） */
+/** 空白凭据工厂：字符串字段（含可选）一律空串，避免 undefined 传 MdTextField 触发 prop 警告；
+ * 布尔可选字段不设键——isBlankCred 依赖「可选字段 undefined」判空白，置 false 会破坏空白直删语义 */
 function blankCred(b: BackendId): CloudCred {
   switch (b) {
-    case 'webdav': return { backend: 'webdav', serverUrl: '', username: '', password: '' }
-    case 's3': return { backend: 's3', region: '', bucket: '', accessKeyId: '', secretAccessKey: '' }
-    case 'gist': return { backend: 'gist', token: '', gistId: '' }
-    case 'gdrive': return { backend: 'gdrive', accessToken: '' }
-    case 'onedrive': return { backend: 'onedrive', accessToken: '' }
+    case 'webdav': return { backend: 'webdav', serverUrl: '', username: '', password: '', objectPath: '' }
+    case 's3': return { backend: 's3', region: '', bucket: '', accessKeyId: '', secretAccessKey: '', endpoint: '', prefix: '', sessionToken: '', objectPath: '' }
+    case 'gist': return { backend: 'gist', token: '', gistId: '', objectPath: '' }
+    case 'gdrive': return { backend: 'gdrive', accessToken: '', objectPath: '' }
+    case 'onedrive': return { backend: 'onedrive', accessToken: '', objectPath: '' }
   }
 }
 
