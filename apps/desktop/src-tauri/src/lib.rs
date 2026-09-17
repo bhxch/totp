@@ -418,14 +418,16 @@ fn os_auto_unprotect(wrapped_b64: String) -> Result<String, String> {
     dpapi_unprotect_inner(wrapped_b64)
 }
 
-// keyring 条目存 base64(DEK)：Keychain/Secret Service 条目本身由 OS 加密，与 DPAPI 语义对齐
-//（wrapped 参数为与 dpapi/os_auto Windows 分支对齐的形态占位，取回恒读同一 service/account 条目）
+// keyring 条目存 base64(DEK)：Keychain/Secret Service 条目本身由 OS 加密，与 DPAPI 语义对齐。
+// 返回固定占位串而非 base64(DEK)（审查 2026-09-18 C1）：返回值会经 addDpapiSourceOp 作为
+// wrappedDekD 明文落盘 security.json——磁盘上不得出现未包裹的 DEK；os_auto_unprotect
+// 恒读同一 service/account 条目并忽略入参，占位串不影响解锁链路。
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[tauri::command]
 fn os_auto_protect(data_b64: String) -> Result<String, String> {
     let entry = keyring::Entry::new("totp-desktop", "dek").map_err(|e| e.to_string())?;
     entry.set_password(&data_b64).map_err(|e| e.to_string())?;
-    Ok(data_b64)
+    Ok("os-keyring".into())
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
