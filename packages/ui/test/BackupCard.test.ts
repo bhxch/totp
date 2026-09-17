@@ -187,6 +187,38 @@ describe('BackupCard', () => {
     expect(w.find('.dir-row').text()).toContain('默认（应用数据目录）')
   })
 
+  it('备份模式分段选择（F5 收口）：aria-checked 单选语义；点击以等价 BackupMode 调 setMode；overwrite 态 N 输入框不渲染', async () => {
+    const mode = reactive<{ type: 'keep'; n: number } | { type: 'overwrite' }>({ type: 'keep', n: 5 })
+    const platform = {
+      createBackup: vi.fn().mockResolvedValue('created'),
+      mode,
+      setMode: vi.fn(async (m: { type: 'keep'; n: number } | { type: 'overwrite' }) => {
+        Object.assign(mode, m)
+      }),
+    }
+    const w = mount(BackupCard, { props: { platform, vaultJson: '{}', sessionSecret: 'sec' } })
+    const items = w.findAll('.md-seg__item')
+    expect(items.map((i) => i.text())).toEqual(['保留最近', '覆盖单一文件'])
+    // 初始 keep：第一段 aria-checked，keep-n 输入渲染
+    expect(items[0]!.attributes('aria-checked')).toBe('true')
+    expect(items[1]!.attributes('aria-checked')).toBe('false')
+    expect(w.find('.keep-n input').exists()).toBe(true)
+    // 切 overwrite：以 {type:'overwrite'} 调 setMode；N 输入框随之不渲染、选中段迁移
+    await items[1]!.trigger('click')
+    await vi.waitFor(() => expect(platform.setMode).toHaveBeenCalledWith({ type: 'overwrite' }))
+    await vi.waitFor(() => {
+      expect(mode.type).toBe('overwrite')
+      expect(w.find('.keep-n input').exists()).toBe(false)
+      expect(w.findAll('.md-seg__item')[1]!.attributes('aria-checked')).toBe('true')
+    })
+  })
+
+  it('overwrite 初态：keep-n 输入框不渲染', () => {
+    const p = makePlatform({ mode: { type: 'overwrite' } })
+    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
+    expect(w.find('.keep-n input').exists()).toBe(false)
+  })
+
   it('I70：keep→overwrite→keep 切换时保留本地 keepN，不丢失用户配置', async () => {
     // 用 reactive 包装让模板访问自动解包 ref（vue-test-utils mount 默认不深 reactive）
     const mode = reactive<{ type: 'keep'; n: number } | { type: 'overwrite' }>({ type: 'keep', n: 7 })
@@ -200,14 +232,12 @@ describe('BackupCard', () => {
     const w = mount(BackupCard, { props: { platform, vaultJson: '{}', sessionSecret: 'sec' } })
     // 初始 keep n=7：keep-n input 可见
     expect(w.find('.keep-n input').exists()).toBe(true)
-    // 切到 overwrite
-    const overwriteRadio = w.findAll('input[type="radio"]')[1]!
-    await overwriteRadio.setValue(true)
+    // 切到 overwrite（F5：备份模式为 MdSegmentedButton 分段选择）
+    await w.findAll('.md-seg__item')[1]!.trigger('click')
     await vi.waitFor(() => expect(mode.type).toBe('overwrite'))
     expect(w.find('.keep-n input').exists()).toBe(false)
     // 切回 keep：应使用本地 keepN（即用户配置的 7），不会变成默认 3
-    const keepRadio = w.findAll('input[type="radio"]')[0]!
-    await keepRadio.setValue(true)
+    await w.findAll('.md-seg__item')[0]!.trigger('click')
     await vi.waitFor(() => {
       expect(mode.type).toBe('keep')
       // I70：切回 keep 保留用户配置的 keepN（不是默认 3）

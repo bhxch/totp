@@ -4,6 +4,7 @@ import { onMounted, ref, watch } from 'vue'
 import type { BackupAutoPrefs, BackupMode, BackupPlatform } from './backupPlatform'
 import { parseVaultJson } from './parseVaultJson'
 import MdButton from './md/MdButton.vue'
+import MdSegmentedButton from './md/MdSegmentedButton.vue'
 import MdSwitch from './md/MdSwitch.vue'
 import MdTextField from './md/MdTextField.vue'
 
@@ -81,6 +82,12 @@ async function setMode(m: BackupMode): Promise<void> {
   await props.platform?.setMode(m)
 }
 
+/** F5（审查挂账收口）：备份模式二选一以 MdSegmentedButton 呈现，替代原生 radio */
+const MODE_OPTIONS = [
+  { value: 'keep', label: '保留最近' },
+  { value: 'overwrite', label: '覆盖单一文件' },
+] as const
+
 /** I70：本地 keepN 副本——keep 模式时与平台同步；切到 overwrite 后保留前值，再切回 keep 时恢复。
  *  避免 keep→overwrite→keep 时丢失用户已配的 N */
 const keepN = ref<number>(
@@ -94,6 +101,11 @@ watch(() => props.platform?.mode, (m) => {
 async function onNChange(value: string): Promise<void> {
   const n = Math.max(1, Math.floor(Number(value) || 1))
   await setMode({ type: 'keep', n })
+}
+
+/** 分段选择值 → BackupMode：keep 用本地 keepN（保留用户配置），overwrite 无参——与原 radio change 语义等价 */
+async function onModeSelect(v: string): Promise<void> {
+  await setMode(v === 'overwrite' ? { type: 'overwrite' } : { type: 'keep', n: keepN.value })
 }
 
 async function refreshList(): Promise<void> {
@@ -231,25 +243,16 @@ async function onResetDir(): Promise<void> {
   <section v-if="platform" class="card backup">
     <h2>备份</h2>
     <div class="modes">
-      <label>
-        <input
-          type="radio" name="backup-mode" value="keep" :checked="platform.mode.type === 'keep'"
-          @change="setMode({ type: 'keep', n: keepN })"
-        />
-        保留最近
-      </label>
+      <MdSegmentedButton
+        aria-label="备份模式"
+        :model-value="platform.mode.type" :options="MODE_OPTIONS"
+        @update:model-value="onModeSelect"
+      />
       <MdTextField
         v-if="platform.mode.type === 'keep'" class="keep-n" type="number" label="份数" aria-label="保留份数"
         min="1" :model-value="String(platform.mode.n)" @update:model-value="onNChange"
       />
       <span v-if="platform.mode.type === 'keep'" class="unit">份</span>
-      <label>
-        <input
-          type="radio" name="backup-mode" value="overwrite" :checked="platform.mode.type === 'overwrite'"
-          @change="setMode({ type: 'overwrite' })"
-        />
-        覆盖单一文件
-      </label>
     </div>
     <div class="actions">
       <MdButton class="backup-now" :disabled="busy || !sessionSecret" @click="onBackup">立即备份</MdButton>
@@ -311,8 +314,7 @@ async function onResetDir(): Promise<void> {
 /* 卡片边界由外层 MdCard outlined 统一提供(M3 双描边裁定,2026-09-16 审查 X1);本组件只负责内容排版 */
 .card { display: flex; flex-direction: column; gap: 8px; }
 h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
-.modes { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; font-size: var(--md-sys-typescale-body-medium); }
-.modes label { display: flex; align-items: center; gap: 4px; }
+.modes { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
 .keep-n { width: 90px; }
 .unit { font-size: var(--md-sys-typescale-body-medium); }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
