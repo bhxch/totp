@@ -169,11 +169,13 @@ export async function changeVaultPassphrase(
       kdf: { alg: 'argon2id', m, t, p, salt: bytesToBase64(salt), profile: nextProfile },
       wrapNonce: bytesToBase64(wrapNonce),
       wrappedDek: bytesToBase64(wrappedDek),
-      // 多绑来源（prf/dpapi 的 wrappedDekP/D 与 DEK 绑定）不受换口令影响，原样保留；
-      // 注意：rotateDek=true 换 DEK 后 prf/dpapi 包裹仍指向旧 DEK，宿主须引导用户重新绑定（T11+ UI 责任）。
+      // 多绑来源的数据层失效语义：prf/dpapi 的 wrappedDekP/D 包裹的是旧 DEK，rotateDek=true 轮换后
+      // 新 DEK 不可能由旧凭证源解开——留盘只会把「未绑定」误报成「解密失败」，故轮换路径直接丢弃，
+      // 仅保留 password 源（口令通道恒可用，不产生死锁）；宿主 UI 需引导用户重新绑定 passkey/DPAPI。
+      // rotateDek=false 仅换口令时凭证源与 DEK 绑定关系不变，原样保留。
       // 走 kekSourcesOf 归一：旧数据缺字段/空数组/全非法 → [{kind:'password'}]，避免原条件展开在「旧密码无 kekSources」分支漏写 password 源导致换口令后多绑列表丢失。
       // M6：去重 — 旧数据/手改/历史 bug 引入同 kind 重复条目时，换口令后只保留首条，避免后续 UI 列表渲染重复项
-      kekSources: removeDuplicateKekSources(kekSourcesOf(security)),
+      kekSources: opts.rotateDek ? [{ kind: 'password' }] : removeDuplicateKekSources(kekSourcesOf(security)),
       // 档位未提供时保留原档位意图（无档位记录的旧数据保持 undefined）
       profile: nextProfile,
       // 恒刷新（设计 §2）：改口令/轮换/换档都视作口令凭证更新

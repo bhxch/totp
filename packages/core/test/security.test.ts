@@ -53,14 +53,22 @@ describe('securityStore', () => {
     expect(dek2).toEqual(dek) // 同一 DEK：数据无需重加密
     await expect(unlockVaultEncryption(s2, '旧')).rejects.toThrow('口令错误或数据已损坏')
   })
-  it('changeVaultPassphrase rotateDek=true 返回新 DEK，旧 DEK 解不开新 wrappedDek', async () => {
+  it('changeVaultPassphrase rotateDek=true 返回新 DEK，丢弃 prf 死凭证源，旧 DEK 解不开新 wrappedDek', async () => {
     const setup = await setupVaultEncryption(vaultJson, '旧')
-    const rotated = await changeVaultPassphrase(setup.security, setup.dek, '新', { rotateDek: true, profile: 'fast' })
+    // 先绑定 prf 源：其包裹指向旧 DEK，轮换后必须被数据层丢弃（方案a：旧 DEK 不可信，可解包裹物不留盘）
+    const prfOutput = randomBytes(64)
+    const withPrf = await addPrfSource(setup.security, setup.dek, 'cred-1', prfOutput, bytesToBase64(randomBytes(32)))
+    expect(withPrf.kekSources).toHaveLength(2)
+    const rotated = await changeVaultPassphrase(withPrf, setup.dek, '新', { rotateDek: true, profile: 'fast' })
     expect(rotated.dek).not.toBeNull()
     expect(rotated.dek).not.toEqual(setup.dek)
     expect(rotated.security.kdf.profile).toBe('fast')
     expect(rotated.security.kdf.m).toBe(19456)
     expect(rotated.security.passwordChangedAt).toBeGreaterThanOrEqual(setup.security.passwordChangedAt!)
+    // 轮换丢弃死凭证源：kekSources 仅剩 password（口令通道恒可用，不产生死锁）
+    expect(rotated.security.kekSources).toEqual([{ kind: 'password' }])
+    // prf 路径从「解密失败误导」变为「明确的未绑定」：passkey 解锁失败
+    await expect(unlockWithPrf(rotated.security, prfOutput)).rejects.toThrow('passkey 解锁失败')
     // 新口令解开的是新 DEK；旧 DEK 不再匹配新 wrappedDek（unlock 返回值 ≠ 旧 DEK）
     expect(await unlockVaultEncryption(rotated.security, '新')).toEqual(rotated.dek)
     await expect(unlockVaultEncryption(rotated.security, '旧')).rejects.toThrow('口令错误或数据已损坏')

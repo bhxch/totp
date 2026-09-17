@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createBackupEnvelope, openBackupEnvelope } from '../src/backup/envelope'
+import { createBackupEnvelope, KDF_PROFILES, openBackupEnvelope } from '../src/backup/envelope'
 import { pushEnvelope, syncMultipleTargets } from '../src/cloud/multiTarget'
 import { sha256Hex } from '../src/cloud/syncOrchestrator'
 import type { CloudBackend } from '../src/cloud/backend'
@@ -91,11 +91,17 @@ describe('syncMultipleTargets', () => {
       ],
       vaultJson: A,
       password: PW,
+      // profile 透传：pass1 上传与收敛回推的信封均按注入档位生成
+      profile: 'fast',
     })
     expect(r.adopted).toBe(true)
     expect(r.finalVaultJson).toBe(B)
     // 目标1（原空）被回推 B，基线为回推后服务器现字节的摘要
     await expectOpensTo(b1.store.get(PATH)!, PW, B)
+    // 收敛回推透传 profile：回推信封以 fast 档展开参数落盘
+    const converged = JSON.parse(new TextDecoder().decode(b1.store.get(PATH)!)) as { kdf: { profile: string; m: number } }
+    expect(converged.kdf.profile).toBe('fast')
+    expect(converged.kdf.m).toBe(KDF_PROFILES.fast.m)
     expect(r.results[0]!.outcome!.action).toBe('uploaded')
     expect(r.hashes['fake1']).toBe(await sha256Hex(b1.store.get(PATH)!))
     // 采纳源 t2 基线已等于赢家（downloaded 的 hash 即远端字节摘要）→ 收敛轮跳过，不被重推
