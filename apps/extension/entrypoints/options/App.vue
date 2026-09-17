@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { backupFileName, createAutoRunScheduler, createBackupEnvelope, loadSourceRevs, normalizeSchemes, openBackupEnvelope, OVERWRITE_NAME, randomBytes, saveSourceRev, SCHEMES_KEY, type BackupEnvelopeV1, type BackupSource, type CloudCred, type ImportScheme, type Vault } from '@totp/core'
-import { CLIPBOARD_CLEAR_DELAY_MS, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, LockScreen, NavigationShell, prfSupported, useTheme, type BackupMode, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
+import { backupFileName, createAutoRunScheduler, createBackupEnvelope, loadSourceRevs, normalizeSchemes, openBackupEnvelope, OVERWRITE_NAME, randomBytes, saveSourceRev, SCHEMES_KEY, type BackupEnvelope, type BackupSource, type CloudCred, type ImportScheme, type Retention, type Vault } from '@totp/core'
+import { CLIPBOARD_CLEAR_DELAY_MS, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, LockScreen, NavigationShell, prfSupported, useTheme, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { conflictBackupName, formatAutoStatusText, loadSourcesImpl, migrateLegacySources, saveSourcesImpl } from '../../src/cloudCredStore'
 import { createDekSession } from '../../src/dekSession'
@@ -103,12 +103,13 @@ async function copyToClipboard(code: string) {
 }
 
 // ---------- 备份平台实现 ----------
-// 模式偏好存扩展页 localStorage（非同步内容）：keep=时间戳文件名下载；overwrite=固定名下载
+// 文件命名偏好存扩展页 localStorage（非同步内容）：keep=时间戳文件名下载；overwrite=固定名下载。
+// T9 后 BackupCard 已无模式切换（本地源归 desktop），本值仅决定 createBackup 的下载文件名（只读不再写）
 const BACKUP_MODE_KEY = 'backupMode'
 const BACKUP_KEEP_N_KEY = 'backupKeepN'
 const DEFAULT_KEEP_N = 3
 
-function loadBackupMode(): BackupMode {
+function loadBackupMode(): Retention {
   try {
     if (localStorage.getItem(BACKUP_MODE_KEY) === 'overwrite') return { type: 'overwrite' }
     const n = Number(localStorage.getItem(BACKUP_KEEP_N_KEY))
@@ -118,16 +119,9 @@ function loadBackupMode(): BackupMode {
   }
 }
 
-function persistBackupMode(m: BackupMode): void {
-  try {
-    localStorage.setItem(BACKUP_MODE_KEY, m.type)
-    if (m.type === 'keep') localStorage.setItem(BACKUP_KEEP_N_KEY, String(m.n))
-  } catch { /* 偏好持久化失败不影响功能 */ }
-}
+const backupMode = ref<Retention>(loadBackupMode())
 
-const backupMode = ref<BackupMode>(loadBackupMode())
-
-function downloadEnvelope(envelope: BackupEnvelopeV1, name: string): void {
+function downloadEnvelope(envelope: BackupEnvelope, name: string): void {
   const blob = new Blob([JSON.stringify(envelope, null, 2)], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -260,17 +254,14 @@ const syncPlatform: SyncPlatform = {
 }
 
 const backupPlatform: BackupPlatform = {
-  get mode() { return backupMode.value },
-  async setMode(m) {
-    backupMode.value = m
-    persistBackupMode(m)
-  },
   async createBackup(vaultJson, password) {
     // plan16 T11.5：本地备份 envelope 按备份设置所选 KDF 档位生成（默认 balanced 兜底旧设置）
     const envelope = await createBackupEnvelope(vaultJson, password, settings.backupKdfProfile)
-    const name = backupMode.value.type === 'overwrite' ? OVERWRITE_NAME : backupFileName(new Date())
+    const overwrite = backupMode.value.type === 'overwrite'
+    const name = overwrite ? OVERWRITE_NAME : backupFileName(new Date())
     downloadEnvelope(envelope, name)
-    return backupMode.value.type === 'overwrite' ? 'overwritten' : 'created'
+    // T9 后 BackupCard 直接展示宿主摘要：返回中文（含文件名，诚实反映导出结果）
+    return overwrite ? `已导出备份文件（覆盖）：${name}` : `已导出备份文件：${name}`
   },
   async restoreFromPicker(password) {
     const file = await pickBackupFile()
