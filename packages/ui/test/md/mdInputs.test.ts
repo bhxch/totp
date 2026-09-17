@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { mount } from '@vue/test-utils'
@@ -122,6 +124,18 @@ describe('MdSwitch', () => {
     expect(input.attributes('aria-label')).toBe('启用同步')
     const withoutLabel = mount(MdSwitch, { props: { modelValue: false } })
     expect(withoutLabel.find('input').attributes('aria-label')).toBeUndefined()
+  })
+  it('未选中拇指 16dp/选中 24dp（M3 拇指随状态缩放）：thumb 样式钩子存在且随 checked 切换类', async () => {
+    const w = mount(MdSwitch, { props: { modelValue: false } })
+    // 未选中：thumb 节点存在、容器无 checked 类（拇指缩放样式挂载点）
+    expect(w.find('.md-switch__thumb').exists()).toBe(true)
+    expect(w.classes()).not.toContain('md-switch--checked')
+    await w.find('input[type=checkbox]').setValue(true)
+    expect(w.classes()).toContain('md-switch--checked')
+    // jsdom 不应用 SFC 样式，16dp/24dp 档位以源码断言（同 themeTypescale 读 tokens.css 模式）
+    const src = readFileSync(join(__dirname, '../../src/components/md/MdSwitch.vue'), 'utf8')
+    expect(src).toMatch(/\.md-switch__thumb\s*\{[^}]*width:\s*16px/)
+    expect(src).toMatch(/\.md-switch--checked \.md-switch__thumb\s*\{[^}]*width:\s*24px/)
   })
 })
 describe('MdCheckbox', () => {

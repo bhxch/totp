@@ -31,9 +31,14 @@ function onChange(e: Event) {
 .md-switch:active .md-switch__track::before { background: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent); }
 .md-switch--checked:hover .md-switch__track::before { background: color-mix(in srgb, var(--md-sys-color-on-primary) 8%, transparent); }
 .md-switch--checked:active .md-switch__track::before { background: color-mix(in srgb, var(--md-sys-color-on-primary) 12%, transparent); }
-.md-switch__thumb { position: relative; width: 24px; height: 24px; border-radius: 50%; background: var(--md-sys-color-outline);
-  transition: transform .15s, background-color .15s; }
+/* M3 拇指随状态缩放(审查挂账收口):未选中 16dp(on-surface-variant 描边+芯,border-box 含描边)、
+ * 选中 24dp 实心(on-primary);150ms cubic(.2,0,0,1) 标准过渡。轨尺寸与状态层(X7)保持不动 */
+.md-switch__thumb { position: relative; box-sizing: border-box; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--md-sys-color-on-surface-variant); border: 2px solid var(--md-sys-color-on-surface-variant);
+  transition: transform .15s cubic-bezier(.2, 0, 0, 1), width .15s cubic-bezier(.2, 0, 0, 1),
+    height .15s cubic-bezier(.2, 0, 0, 1), border-color .15s, background-color .15s; }
 .md-switch--checked .md-switch__track { background: var(--md-sys-color-primary); box-shadow: none; }
-.md-switch--checked .md-switch__thumb { background: var(--md-sys-color-on-primary); transform: translateX(20px); }
+.md-switch--checked .md-switch__thumb { width: 24px; height: 24px; background: var(--md-sys-color-on-primary);
+  border-color: var(--md-sys-color-on-primary); transform: translateX(20px); }
 .md-switch__input:focus-visible + .md-switch__track { outline: 3px solid var(--md-sys-color-primary); outline-offset: 2px; }
 </style>
