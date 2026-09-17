@@ -152,4 +152,40 @@ describe('MdSelect', () => {
     expect(w.find('[role="listbox"]').exists()).toBe(false)
     w.unmount()
   })
+
+  it('⑫弹层内滚动（scroll 捕获收到弹层自身）不误关', async () => {
+    const w = mount(MdSelect, { props: { label: '间隔', modelValue: 60, options: OPTIONS }, attachTo: document.body })
+    await w.find('button.md-select__trigger').trigger('click')
+    expect(w.find('[role="listbox"]').exists()).toBe(true)
+    // scroll 派发到弹层元素（捕获阶段 window 会收到，target=弹层且在组件内 → 排除）
+    w.find('.md-select__menu').element.dispatchEvent(new Event('scroll', { bubbles: true }))
+    await nextTick()
+    expect(w.find('[role="listbox"]').exists()).toBe(true)
+    // 弹层外滚动仍关闭
+    document.body.dispatchEvent(new Event('scroll', { bubbles: true }))
+    await nextTick()
+    expect(w.find('[role="listbox"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('⑬resize 被动关闭不抢焦点；Tab 关闭不 preventDefault', async () => {
+    const w = mount(MdSelect, { props: { label: '间隔', modelValue: 60, options: OPTIONS }, attachTo: document.body })
+    const trigger = w.find('button.md-select__trigger')
+    await trigger.trigger('click')
+    // 焦点已移走（模拟用户 Tab 离开后滚动页面）
+    ;(trigger.element as HTMLElement).blur()
+    expect(document.activeElement).not.toBe(trigger.element)
+    window.dispatchEvent(new Event('resize'))
+    await nextTick()
+    expect(w.find('[role="listbox"]').exists()).toBe(false)
+    expect(document.activeElement).not.toBe(trigger.element) // 不回焦
+    // Tab 关闭：不 preventDefault，焦点随 Tab 自然走
+    await trigger.trigger('click')
+    const ev = new KeyboardEvent('keydown', { key: 'Tab', cancelable: true })
+    trigger.element.dispatchEvent(ev)
+    await nextTick()
+    expect(ev.defaultPrevented).toBe(false)
+    expect(w.find('[role="listbox"]').exists()).toBe(false)
+    w.unmount()
+  })
 })

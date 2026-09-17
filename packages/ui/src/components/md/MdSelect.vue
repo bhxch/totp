@@ -21,7 +21,7 @@ const selectedLabel = computed(() => props.options.find(o => o.value === props.m
 const floated = computed(() => selectedLabel.value !== '')
 
 const GAP = 8
-const EST_HEIGHT = 240
+const EST_HEIGHT = 280 // 与 CSS max-height 同值，保证夹取估算与实际弹层高度一致
 /** 弹层窗口坐标（同 MdMenu 的 fixed 方案）：触发框正下方，视口右/下溢出按估算宽高夹取 */
 const pos = ref({ left: 0, top: 0 })
 function openMenu(): void {
@@ -39,9 +39,11 @@ function openMenu(): void {
   activeIdx.value = props.options.findIndex(o => o.value === props.modelValue)
   open.value = true
 }
-function close(): void {
+/** focusBack：是否回焦触发按钮。键盘 Esc/点选/触发 toggle 回焦；resize/scroll/Tab 被动关闭不抢焦点
+ *  （用户已 Tab 移走时滚动页面不应把焦点猛拉回） */
+function close(focusBack = true): void {
   open.value = false
-  triggerRef.value?.focus() // 关闭焦点回触发按钮
+  if (focusBack) triggerRef.value?.focus() // 关闭焦点回触发按钮
 }
 function toggle(): void {
   if (props.disabled) return
@@ -75,6 +77,8 @@ function onTriggerKeydown(e: KeyboardEvent): void {
   } else if (e.key === 'Escape') {
     e.preventDefault()
     close()
+  } else if (e.key === 'Tab') {
+    close(false) // 不 preventDefault，焦点随 Tab 自然走
   }
 }
 
@@ -82,9 +86,11 @@ function onTriggerKeydown(e: KeyboardEvent): void {
 function onDocMousedown(e: MouseEvent): void {
   if (!rootRef.value?.contains(e.target as Node)) close()
 }
-/** 窗口 resize/scroll 一律关闭（简化策略；scroll 用捕获以覆盖容器滚动） */
-function onWindowClose(): void {
-  if (open.value) close()
+/** 窗口 resize/scroll 一律关闭（简化策略；scroll 用捕获以覆盖容器滚动）。
+ *  捕获阶段会收到弹层自身滚动：target 在组件内（弹层为 rootRef 子元素）时排除，内部一滚即关属误关 */
+function onWindowClose(e?: Event): void {
+  if (e?.target instanceof Node && rootRef.value?.contains(e.target)) return
+  if (open.value) close(false)
 }
 watch(open, (v) => {
   if (v) {
