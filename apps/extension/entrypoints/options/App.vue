@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { backupFileName, createAutoRunScheduler, createBackupEnvelope, openBackupEnvelope, normalizeSchemes, OVERWRITE_NAME, randomBytes, SCHEMES_KEY, type BackupEnvelopeV1, type ImportScheme, type Vault } from '@totp/core'
+import { backupFileName, createAutoRunScheduler, createBackupEnvelope, loadSourceRevs, normalizeSchemes, openBackupEnvelope, OVERWRITE_NAME, randomBytes, saveSourceRev, SCHEMES_KEY, type BackupEnvelopeV1, type BackupSource, type CloudCred, type ImportScheme, type Vault } from '@totp/core'
 import { CLIPBOARD_CLEAR_DELAY_MS, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, LockScreen, NavigationShell, prfSupported, useTheme, type BackupMode, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { createCloudCredStore, conflictBackupName, formatAutoStatusText } from '../../src/cloudCredStore'
+import { conflictBackupName, formatAutoStatusText, loadSourcesImpl, migrateLegacySources, saveSourcesImpl } from '../../src/cloudCredStore'
 import { createDekSession } from '../../src/dekSession'
 import { createIdleLockWatcher } from '../../src/lockEnforcer'
 import { createExtensionStore, storageAdapter } from '../../src/store'
@@ -45,6 +45,22 @@ const schemesApi: ImportSchemesApi = {
 }
 
 const loadError = ref('')
+/** plan16 T13 迁移提示：本次挂载/解锁迁移了 N 个旧云目标时显示（幂等重跑=0 不再提示） */
+const migrateNote = ref('')
+
+/** 旧数据迁移编排（plan16 T13，幂等可重复跑）：vault.backupSecret → 保管区（store op）→
+ *  旧云多目标键 → 源模型 + 保管区凭据。仅解锁态执行（保管区写入需 DEK）；未启用加密时
+ *  saveCred 守护抛错 → 旧键保留（先写新后删旧），待启用加密后任一次重跑自愈。 */
+async function runLegacyMigrations(): Promise<void> {
+  if (store.locked.value) return
+  try {
+    await store.migrateLegacySecrets()
+    const n = await migrateLegacySources(storageAdapter, { saveCred: store.saveSourceCredOp })
+    if (n > 0) migrateNote.value = `已迁移 ${n} 个云目标到新模型`
+  } catch (e) {
+    console.warn('[migrate] 旧数据迁移失败（旧键保留，解锁后重试）', e)
+  }
+}
 
 onMounted(async () => {
   try {
@@ -53,6 +69,8 @@ onMounted(async () => {
     useTheme(store)
     registerStorageSync()
     await icons.init()
+    // 旧数据迁移（plan16 T13）：initStore 已含会话 DEK 自动恢复，解锁态在此直接跑（幂等）
+    await runLegacyMigrations()
     // 自动云同步（页面存活期，勘误 §4.1）：读偏好填充缓存后启动调度器；initStore 失败（页面不可用）则不启动
     await refreshCloudAutoPrefs()
     scheduler.start()
@@ -158,14 +176,18 @@ const pickBackupFile = (): Promise<File | null> => pickFile('.totpbackup')
 let lastImportFile: File | null = null
 
 /** 安全平台：security 闭包绑 store；剪贴板/弹窗延迟走 settings+commitSettings（extension 有 popup，提供 popupCloseDelayMs）；
- *  passkey(PRF)：WebAuthn 交互（创建/求值）经 ui prf.ts，绑定落盘走 store 的 prf 源 op */
+ *  passkey(PRF)：WebAuthn 交互（创建/求值）经 ui prf.ts，绑定落盘走 store 的 prf 源 op。
+ *  plan16 T11 审查四项：changePassphrase opts 透传（漏接=档位切换误触发全库轮换）、kdfProfile、
+ *  passwordChangedAt、lockPrefs——.vue 无 typecheck 对 platform 成员的覆盖，漏接无编译信号，全量接线。 */
 const securityPlatform: SecurityPlatform = {
   security: {
     locked,
     hasEncryption,
     enableEncryption: (pw) => enableEncryption(pw),
     disableEncryption: () => disableEncryption(),
-    changePassphrase: (pw) => changePassphrase(pw),
+    changePassphrase: (pw, opts) => changePassphrase(pw, opts),
+    kdfProfile: computed(() => store.securitySettings.value?.profile ?? 'balanced'),
+    passwordChangedAt: computed(() => store.securitySettings.value?.passwordChangedAt ?? null),
     passkey: {
       sources: computed(() => prfSources.value.map((p) => ({ credentialId: p.credentialId }))),
       prfSupported: () => prfSupported(),
@@ -191,6 +213,14 @@ const securityPlatform: SecurityPlatform = {
   async setPopupCloseDelay(ms) {
     settings.popupCloseDelayMs = ms
     await commitSettings()
+  },
+  // 锁定策略（plan16 T11）：三字段整体覆写进 settings 后持久化（core loadSettings 已归一化）
+  lockPrefs: {
+    get: () => ({ lockOnRestart: settings.lockOnRestart, lockIdleMinutes: settings.lockIdleMinutes, lockOnSystemLock: settings.lockOnSystemLock }),
+    set: (p) => {
+      Object.assign(settings, p)
+      void commitSettings()
+    },
   },
 }
 
@@ -236,7 +266,8 @@ const backupPlatform: BackupPlatform = {
     persistBackupMode(m)
   },
   async createBackup(vaultJson, password) {
-    const envelope = await createBackupEnvelope(vaultJson, password)
+    // plan16 T11.5：本地备份 envelope 按备份设置所选 KDF 档位生成（默认 balanced 兜底旧设置）
+    const envelope = await createBackupEnvelope(vaultJson, password, settings.backupKdfProfile)
     const name = backupMode.value.type === 'overwrite' ? OVERWRITE_NAME : backupFileName(new Date())
     downloadEnvelope(envelope, name)
     return backupMode.value.type === 'overwrite' ? 'overwritten' : 'created'
@@ -262,16 +293,23 @@ const backupPlatform: BackupPlatform = {
     lastImportFile = file
     return { bytes: new Uint8Array(await file.arrayBuffer()), name: file.name }
   },
+  // 备份加密强度档位（plan16 T11.5）：settings 持久化（跨端随设置同步；extension 无本地源，仅影响 envelope 生成）
+  backupKdfProfile: {
+    get: () => settings.backupKdfProfile,
+    set: (p) => {
+      settings.backupKdfProfile = p
+      void commitSettings()
+    },
+  },
 }
 
 /**
- * 云同步平台实现：凭据与基线存 local 区（storage.local 键，不进浏览器同步）。
- * 多目标迁移约定（Task 8，见 ui cloudPlatform.ts 注释块）：多目标读写委托 cloudCredStore
- * （新键 cloudCreds/cloudRevs，旧键 cloudCred/cloudRev 只读回退、保存后删除，绝不回写新键）；
- * 冲突副本经既有 Blob 下载通道；采用云端数据经 replaceAllOp 整体替换。
- * Task 13：旧单目标四成员已删，卡内口令改由 sessionSecret 注入。
+ * 云同步平台实现（plan16 T13 源化口径）：源元数据明文存 backupSources 键（core loadSources/saveSources
+ * 包装）；凭据是秘密存 DEK 保管区（store.saveSourceCredOp/removeSourceCredOp，解锁态限定，未解锁中文报错）；
+ * 基线按源 id 存 sourceRevs（core loadSourceRevs/saveSourceRev）。旧 cloudCreds/cloudCred/cloudRevs/cloudRev
+ * 四键由 migrateLegacySources 一次性迁移（见 runLegacyMigrations）。冲突副本经既有 Blob 下载通道；
+ * 采用云端数据经 replaceAllOp 整体替换。
  */
-const cloudCredStore = createCloudCredStore(storageAdapter)
 
 // ---------- 自动云同步偏好（cloudAutoPrefs 键，storage.local 异步读写）----------
 const CLOUD_AUTO_PREFS_KEY = 'cloudAutoPrefs'
@@ -318,31 +356,41 @@ async function downloadConflictBackup(bytes: Uint8Array, backendKey?: string): P
   return name
 }
 
-/** 存活期自动云同步 runner（D6，ui 共享实现，与 desktop 同一编排）：
- *  onCredChange（GDrive 首推回存 fileId 等）以新凭据替换同 backend 项后回存；
- *  loadCreds 返回空（IO/坏 JSON 瞬时失败）时跳过回写，防把空列表固化为凭据存储（同 desktop 审查 M-1） */
+/** keep 源远端滚动删除的待并入提示（runner 顺序保证：先逐源 onRetentionDeleted 后 recordStatus，
+ *  状态写盘前拼入 summary 并清空，不跨轮残留） */
+let retentionNotes: string[] = []
+
+/** 存活期自动云同步 runner（D6，ui 共享实现，与 desktop 同一编排；plan16 T13 源口径）：
+ *  loadSources 装配「启用云源 × 保管区凭据」对（无凭据的源跳过——锁定态 credsCache 为空自然全跳过）；
+ *  GDrive 首推凭据回存由 CloudCard 手动通道持有（runner deps 新口径不含 onCredChange） */
 const cloudSync = createCloudSyncRunner({
   isLocked: () => store.locked.value,
   getSecret: () => store.backupSecret.value,
   getVaultJson: () => JSON.stringify(store.vault),
-  loadCreds: () => cloudCredStore.loadCreds(),
-  loadTargetHash: (b) => cloudCredStore.loadTargetHash(b),
-  saveTargetHash: (b, h) => cloudCredStore.saveTargetHash(b, h),
-  makeBackend: (cred) => createCloudBackend(cred, (next) => {
-    void cloudCredStore.loadCreds()
-      .then((targets) => {
-        if (targets.length === 0) return
-        return cloudCredStore.saveCreds(targets.map((t) => (t.cred.backend === next.backend ? { ...t, cred: next } : t)))
-      })
-      .catch((e) => console.warn('[cloudAutoSync] 凭据回存失败', e))
-  }),
+  loadSources: async () => {
+    const sources = await loadSourcesImpl(storageAdapter)
+    return sources
+      .filter((s) => s.kind !== 'local') // 云卡通道只装配云源（本地源归 BackupCard，extension 无）
+      .map((s) => ({ source: s, cred: store.credsCache.value[s.id] }))
+      .filter((p): p is { source: BackupSource; cred: CloudCred } => p.cred !== undefined)
+  },
+  loadTargetHash: async (id) => (await loadSourceRevs(storageAdapter))[id] ?? null,
+  saveTargetHash: (id, h) => saveSourceRev(storageAdapter, id, h),
+  makeBackend: (cred) => createCloudBackend(cred),
   persistAdopted: (json) => replaceAllOp(JSON.parse(json) as Vault),
   saveConflictBackup: (key, bytes) => {
     void downloadConflictBackup(bytes, key).catch(() => {})
   },
+  // KDF 档位（备份设置所选）：云上传/冲突副本 envelope 生成口径与本地备份一致
+  kdfProfile: () => settings.backupKdfProfile,
+  onRetentionDeleted: (sourceId, deleted) => {
+    retentionNotes.push(deleted >= 0 ? `${sourceId} 清理 ${deleted} 份旧云备份` : `${sourceId} 后端不支持远端清理`)
+  },
   // 状态记录不 await：storage 写失败不影响同步主流程。ok 三态（批 4）：true/false/null（跳过）
   recordStatus: (ok: boolean | null, summary) => {
-    void storageAdapter.set('cloudAutoStatus', JSON.stringify({ at: Date.now(), ok, summary })).catch(() => {})
+    const notes = retentionNotes.join('；')
+    retentionNotes = []
+    void storageAdapter.set('cloudAutoStatus', JSON.stringify({ at: Date.now(), ok, summary: notes ? `${summary}；${notes}` : summary })).catch(() => {})
   },
   onError: (err) => console.warn('[cloudAutoSync]', err),
 })
@@ -374,16 +422,22 @@ const lockWatcher = createIdleLockWatcher({
 })
 
 const cloudPlatform: CloudPlatform = {
+  // ---- 源模型成员（plan16 T13）----
+  loadSources: () => loadSourcesImpl(storageAdapter),
+  saveSources: (list) => saveSourcesImpl(storageAdapter, list),
+  saveCred: (id, cred) => store.saveSourceCredOp(id, cred),
+  removeCred: (id) => store.removeSourceCredOp(id),
+  // getter 形态：CloudCard 渲染/回调按 id 动态读取（p.creds[id]），锁定清空/解锁装载/保存后即时可见
+  get creds() { return store.credsCache.value },
   readVaultJson: () => JSON.stringify(store.vault),
   async persistDownloaded(json) {
     await replaceAllOp(JSON.parse(json) as Vault)
   },
-  saveConflictBackup: (bytes, backendKey) => downloadConflictBackup(bytes, backendKey),
-  // ---- 多目标成员（Task 12；Task 13 起旧单目标四成员已删）----
-  loadCreds: () => cloudCredStore.loadCreds(),
-  saveCreds: (t) => cloudCredStore.saveCreds(t),
-  loadTargetHash: (b) => cloudCredStore.loadTargetHash(b),
-  saveTargetHash: (b, h) => cloudCredStore.saveTargetHash(b, h),
+  // 冲突副本 Blob 下载：sourceId 仅用于文件名区分来源（迁移源 id=旧 backend 键，文件名与旧格式一致）
+  saveConflictBackup: (bytes, sourceId) => downloadConflictBackup(bytes, sourceId),
+  loadTargetHash: async (id) => (await loadSourceRevs(storageAdapter))[id] ?? null,
+  saveTargetHash: (id, h) => saveSourceRev(storageAdapter, id, h),
+  kdfProfile: () => settings.backupKdfProfile,
   autoPrefs: {
     get: () => cloudAutoPrefs,
     set: (p) => persistCloudAutoPrefs(p),
@@ -400,15 +454,21 @@ const cloudPlatform: CloudPlatform = {
 </script>
 
 <template>
-  <LockScreen v-if="locked" :store="store" />
+  <!-- 解锁成功回调补跑迁移（plan16 T13，幂等）：口令/PRF 解锁各路径在 LockScreen 内 emit unlocked -->
+  <LockScreen v-if="locked" :store="store" @unlocked="runLegacyMigrations" />
   <template v-else>
     <div v-if="loadError" class="error">{{ loadError }}</div>
-    <!-- 同构五页:与桌面同一 Shell(无 railActions → 设置页不渲染桌面专属项;传 syncPlatform → 渲染扩展专属项) -->
-    <NavigationShell v-else :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :sync-platform="syncPlatform" :cloud-platform="cloudPlatform" :icons="icons" :schemes-api="schemesApi" @copy="copyToClipboard" />
+    <template v-else>
+      <!-- 迁移提示与主体并列（非互斥）：一次性提示，下次挂载重跑迁移=0 后不再出现 -->
+      <div v-if="migrateNote" class="migrate-note">{{ migrateNote }}</div>
+      <!-- 同构五页:与桌面同一 Shell(无 railActions → 设置页不渲染桌面专属项;传 syncPlatform → 渲染扩展专属项) -->
+      <NavigationShell :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :sync-platform="syncPlatform" :cloud-platform="cloudPlatform" :icons="icons" :schemes-api="schemesApi" @copy="copyToClipboard" />
+    </template>
   </template>
 </template>
 
 <style scoped>
 body { font-family: system-ui, sans-serif; margin: 0; }
 .error { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); padding: 16px; }
+.migrate-note { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-small); padding: 8px 16px; }
 </style>

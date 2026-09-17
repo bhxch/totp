@@ -1,15 +1,16 @@
 /**
- * cloudCredStore 单测：内存 StorageAdapter（仿 syncEngine.test 的 storage 桩）注入，
- * 验证 Task 8 迁移约定在 storage.local 键形态下的实现（与 desktop App.vue *Impl 同语义）：
- * - cloudCreds 缺失回退旧 cloudCred（[{cred, enabled:true}]）；都无 → []；坏 JSON → 安全默认 []
- * - saveCreds 只写新键 cloudCreds 并删除旧键 cloudCred（重复保存旧键删除幂等）
- * - cloudRevs 缺失且旧 cloudRev 存在 → 仅 targets[0].cred.backend 继承旧基线，绝不回写新键
- * - saveTargetHash(null)=删除该 backend 的基线键（非写入 null 值）+删除旧 cloudRev 键
+ * cloudCredStore 单测：内存 StorageAdapter（仿 syncEngine.test 的 storage 桩）注入。
+ * plan16 T13 源化后职责：
+ * - migrateLegacySources：旧 cloudCreds（数组）/cloudCred（单对象回退）→ BackupSource[]（id=旧 backend 键）
+ *   + 凭据经注入 saveCred 入保管区 + cloudRevs/cloudRev → sourceRevs 平移 + 四旧键删除；先写新后删旧、
+ *   幂等（二次调用返回 0 且不再写）、坏 JSON 不迁移不删键、saveCred 失败旧键保留
+ * - loadSourcesImpl/saveSourcesImpl：core 包装 roundtrip 与坏 JSON 安全默认
+ * - conflictBackupName / formatAutoStatusText：本任务不变面，沿用既有断言
+ * （旧 loadCreds/saveCreds/loadTargetHash/saveTargetHash 四成员已删，CloudTarget 断言随之移除）
  */
-import { beforeEach, describe, expect, it } from 'vitest'
-import { READABLE_BACKUP_RE, type CloudCred, type StorageAdapter } from '@totp/core'
-import type { CloudTarget } from '@totp/ui'
-import { conflictBackupName, createCloudCredStore, formatAutoStatusText } from '../src/cloudCredStore'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { READABLE_BACKUP_RE, SOURCE_REVS_KEY, SOURCES_KEY, type CloudCred, type StorageAdapter } from '@totp/core'
+import { conflictBackupName, formatAutoStatusText, loadSourcesImpl, migrateLegacySources, saveSourcesImpl } from '../src/cloudCredStore'
 
 const CLOUD_CRED_KEY = 'cloudCred'
 const CLOUD_CREDS_KEY = 'cloudCreds'
@@ -35,10 +36,6 @@ function makeAdapter(initial: Record<string, string> = {}): StorageAdapter & { d
 
 const WEBDAV: CloudCred = { backend: 'webdav', serverUrl: 'https://dav', username: 'u', password: 'p' }
 const GIST: CloudCred = { backend: 'gist', token: 't', gistId: 'g' }
-const TARGETS: CloudTarget[] = [
-  { cred: WEBDAV, enabled: true },
-  { cred: GIST, enabled: false },
-]
 
 let adapter: StorageAdapter & { data: Record<string, string> }
 
@@ -46,96 +43,147 @@ beforeEach(() => {
   adapter = makeAdapter()
 })
 
-describe('loadCreds（迁移回退）', () => {
-  it('①旧键回退：cloudCreds 缺失而 cloudCred 存在 → [{cred, enabled:true}]', async () => {
+describe('migrateLegacySources（旧多目标键 → 源模型 + 保管区）', () => {
+  it('①旧 cloudCreds+cloudRevs：源列表/凭据调用序列/基线平移/旧键全删/返回源数', async () => {
+    adapter.data[CLOUD_CREDS_KEY] = JSON.stringify([
+      { cred: WEBDAV, enabled: true },
+      { cred: GIST, enabled: false },
+    ])
+    adapter.data[CLOUD_REVS_KEY] = JSON.stringify({ webdav: 'w-hash', gist: 'g-hash' })
+    const saveCred = vi.fn().mockResolvedValue(undefined)
+
+    await expect(migrateLegacySources(adapter, { saveCred })).resolves.toBe(2)
+
+    // 源列表：id=旧 backend 键（保基线兼容）、kind/name 映射、retention overwrite、enabled 原值
+    expect(JSON.parse(adapter.data[SOURCES_KEY]!)).toEqual([
+      { id: 'webdav', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true },
+      { id: 'gist', kind: 'gist', name: 'GitHub Gist', retention: { type: 'overwrite' }, enabled: false },
+    ])
+    // 凭据逐源写入保管区（调用序列与源顺序一致）
+    expect(saveCred).toHaveBeenCalledTimes(2)
+    expect(saveCred).toHaveBeenNthCalledWith(1, 'webdav', WEBDAV)
+    expect(saveCred).toHaveBeenNthCalledWith(2, 'gist', GIST)
+    // 基线平移至 sourceRevs（键=源 id）
+    expect(JSON.parse(adapter.data[SOURCE_REVS_KEY]!)).toEqual({ webdav: 'w-hash', gist: 'g-hash' })
+    // 四个旧键全删
+    expect(adapter.data[CLOUD_CREDS_KEY]).toBeUndefined()
+    expect(adapter.data[CLOUD_CRED_KEY]).toBeUndefined()
+    expect(adapter.data[CLOUD_REVS_KEY]).toBeUndefined()
+    expect(adapter.data[CLOUD_REV_KEY]).toBeUndefined()
+  })
+
+  it('②旧单对象 cloudCred 回退（无 cloudCreds）：1 源 enabled:true；无 cloudRevs 时 cloudRev 仅由该源继承', async () => {
     adapter.data[CLOUD_CRED_KEY] = JSON.stringify(WEBDAV)
-    await expect(createCloudCredStore(adapter).loadCreds()).resolves.toEqual([{ cred: WEBDAV, enabled: true }])
+    adapter.data[CLOUD_REV_KEY] = 'legacy-hash'
+    const saveCred = vi.fn().mockResolvedValue(undefined)
+
+    await expect(migrateLegacySources(adapter, { saveCred })).resolves.toBe(1)
+    expect(JSON.parse(adapter.data[SOURCES_KEY]!)).toEqual([
+      { id: 'webdav', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true },
+    ])
+    expect(saveCred).toHaveBeenCalledWith('webdav', WEBDAV)
+    expect(JSON.parse(adapter.data[SOURCE_REVS_KEY]!)).toEqual({ webdav: 'legacy-hash' })
+    expect(adapter.data[CLOUD_CRED_KEY]).toBeUndefined()
+    expect(adapter.data[CLOUD_REV_KEY]).toBeUndefined()
   })
 
-  it('②都无 → []', async () => {
-    await expect(createCloudCredStore(adapter).loadCreds()).resolves.toEqual([])
+  it('③幂等：迁移后二次调用返回 0，sources/sourceRevs 不再写', async () => {
+    adapter.data[CLOUD_CREDS_KEY] = JSON.stringify([{ cred: WEBDAV, enabled: true }])
+    adapter.data[CLOUD_REVS_KEY] = JSON.stringify({ webdav: 'w-hash' })
+    const saveCred = vi.fn().mockResolvedValue(undefined)
+    await migrateLegacySources(adapter, { saveCred })
+    const sources = adapter.data[SOURCES_KEY]
+    const revs = adapter.data[SOURCE_REVS_KEY]
+
+    saveCred.mockClear()
+    await expect(migrateLegacySources(adapter, { saveCred })).resolves.toBe(0)
+    expect(saveCred).not.toHaveBeenCalled()
+    expect(adapter.data[SOURCES_KEY]).toBe(sources)
+    expect(adapter.data[SOURCE_REVS_KEY]).toBe(revs)
   })
 
-  it('③坏 JSON → 安全默认 []（新键损坏不回退旧键，与 desktop 同口径）', async () => {
+  it('④无旧键：返回 0 且不创建 sources/sourceRevs 键', async () => {
+    await expect(migrateLegacySources(adapter, { saveCred: vi.fn() })).resolves.toBe(0)
+    expect(SOURCES_KEY in adapter.data).toBe(false)
+    expect(SOURCE_REVS_KEY in adapter.data).toBe(false)
+  })
+
+  it('⑤坏 JSON 安全默认：cloudCreds/cloudCred 不可解析 → 返回 0 且旧键保留（读不出 = 不删）', async () => {
     adapter.data[CLOUD_CREDS_KEY] = '{not-json'
-    adapter.data[CLOUD_CRED_KEY] = JSON.stringify(WEBDAV)
-    await expect(createCloudCredStore(adapter).loadCreds()).resolves.toEqual([])
-    adapter.data[CLOUD_CREDS_KEY] = JSON.stringify(TARGETS)
-    adapter.data[CLOUD_CRED_KEY] = '{not-json' // 新键有效时旧键损坏不影响（新键优先）
-    await expect(createCloudCredStore(adapter).loadCreds()).resolves.toEqual(TARGETS)
+    adapter.data[CLOUD_CRED_KEY] = JSON.stringify(WEBDAV) // 新键坏时不回退旧键（与旧 loadCreds 口径一致）
+    await expect(migrateLegacySources(adapter, { saveCred: vi.fn() })).resolves.toBe(0)
+    expect(adapter.data[CLOUD_CREDS_KEY]).toBe('{not-json')
+    expect(adapter.data[CLOUD_CRED_KEY]).toBe(JSON.stringify(WEBDAV))
+
+    delete adapter.data[CLOUD_CREDS_KEY]
+    adapter.data[CLOUD_CRED_KEY] = '{bad'
+    await expect(migrateLegacySources(adapter, { saveCred: vi.fn() })).resolves.toBe(0)
+    expect(adapter.data[CLOUD_CRED_KEY]).toBe('{bad')
+  })
+
+  it('⑥迁移失败不删旧键（先写新后删旧）：saveCred 抛错 → 异常上抛，旧键原样保留', async () => {
+    adapter.data[CLOUD_CREDS_KEY] = JSON.stringify([
+      { cred: WEBDAV, enabled: true },
+      { cred: GIST, enabled: true },
+    ])
+    adapter.data[CLOUD_REVS_KEY] = JSON.stringify({ webdav: 'w-hash' })
+    const saveCred = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('需先启用加密才能保存云凭据'))
+
+    await expect(migrateLegacySources(adapter, { saveCred })).rejects.toThrow('需先启用加密才能保存云凭据')
+    // 源列表已先行写入（重跑按 id 去重），但旧键一律不删：数据双在，重跑自愈
+    expect(adapter.data[CLOUD_CREDS_KEY]).toBe(JSON.stringify([
+      { cred: WEBDAV, enabled: true },
+      { cred: GIST, enabled: true },
+    ]))
+    expect(adapter.data[CLOUD_REVS_KEY]).toBe(JSON.stringify({ webdav: 'w-hash' }))
+  })
+
+  it('⑦中断重跑：盘上已有同 id 源时元数据去重不覆盖，凭据/基线重放幂等', async () => {
+    // 模拟 ⑥ 中断后用户手动改过源名再重跑：已存在同 id 源的元数据保留
+    adapter.data[CLOUD_CREDS_KEY] = JSON.stringify([{ cred: WEBDAV, enabled: true }])
+    adapter.data[SOURCES_KEY] = JSON.stringify([
+      { id: 'webdav', kind: 'webdav', name: '我的 WebDAV', retention: { type: 'keep', n: 5 }, enabled: false },
+    ])
+    const saveCred = vi.fn().mockResolvedValue(undefined)
+
+    await expect(migrateLegacySources(adapter, { saveCred })).resolves.toBe(1)
+    expect(JSON.parse(adapter.data[SOURCES_KEY]!)).toEqual([
+      { id: 'webdav', kind: 'webdav', name: '我的 WebDAV', retention: { type: 'keep', n: 5 }, enabled: false },
+    ])
+    expect(saveCred).toHaveBeenCalledWith('webdav', WEBDAV) // 凭据重放（覆盖写幂等）
+    expect(adapter.data[CLOUD_CREDS_KEY]).toBeUndefined() // 本次成功 → 旧键删除
+  })
+
+  it('⑧cloudRevs 中不属于迁移源的键不平移（防御：仅当对应源存在）', async () => {
+    adapter.data[CLOUD_CREDS_KEY] = JSON.stringify([{ cred: WEBDAV, enabled: true }])
+    adapter.data[CLOUD_REVS_KEY] = JSON.stringify({ webdav: 'w-hash', gdrive: 'ghost' })
+    await migrateLegacySources(adapter, { saveCred: vi.fn() })
+    expect(JSON.parse(adapter.data[SOURCE_REVS_KEY]!)).toEqual({ webdav: 'w-hash' })
   })
 })
 
-describe('saveCreds', () => {
-  it('④写新键并删除旧键；旧键已无时重复保存幂等不抛错', async () => {
-    adapter.data[CLOUD_CRED_KEY] = JSON.stringify(WEBDAV)
-    const store = createCloudCredStore(adapter)
-    await store.saveCreds(TARGETS)
-    expect(adapter.data[CLOUD_CREDS_KEY]).toBe(JSON.stringify(TARGETS))
-    expect(CLOUD_CRED_KEY in adapter.data).toBe(false)
-    await store.saveCreds([TARGETS[0]!]) // 再保存：旧键删除幂等
-    expect(adapter.data[CLOUD_CREDS_KEY]).toBe(JSON.stringify([TARGETS[0]]))
-    expect(CLOUD_CRED_KEY in adapter.data).toBe(false)
+describe('loadSourcesImpl/saveSourcesImpl（core 包装）', () => {
+  it('⑨roundtrip：saveSourcesImpl → loadSourcesImpl 原样还原', async () => {
+    const sources = [{ id: 'webdav', kind: 'webdav' as const, name: 'WebDAV', retention: { type: 'overwrite' as const }, enabled: true }]
+    await saveSourcesImpl(adapter, sources)
+    await expect(loadSourcesImpl(adapter)).resolves.toEqual(sources)
   })
 
-  it('⑤roundtrip：saveCreds → loadCreds 原样还原', async () => {
-    const store = createCloudCredStore(adapter)
-    await store.saveCreds(TARGETS)
-    await expect(store.loadCreds()).resolves.toEqual(TARGETS)
-  })
-})
-
-describe('loadTargetHash（首目标继承）', () => {
-  it('⑥cloudRevs 缺失且旧 cloudRev 存在 → 仅 targets[0].cred.backend 继承，且不回写新键', async () => {
-    adapter.data[CLOUD_REV_KEY] = 'legacy-hash'
-    adapter.data[CLOUD_CREDS_KEY] = JSON.stringify(TARGETS)
-    const store = createCloudCredStore(adapter)
-    await expect(store.loadTargetHash('webdav')).resolves.toBe('legacy-hash')
-    await expect(store.loadTargetHash('gist')).resolves.toBeNull() // 非首目标不继承
-    expect(CLOUD_REVS_KEY in adapter.data).toBe(false) // 绝不回写新键
-  })
-
-  it('⑦cloudRevs 存在时按新键读取（首目标也不吃旧键）；键缺失且无旧键 → null', async () => {
-    adapter.data[CLOUD_REVS_KEY] = JSON.stringify({ gist: 'g-hash' })
-    adapter.data[CLOUD_REV_KEY] = 'legacy-hash'
-    adapter.data[CLOUD_CREDS_KEY] = JSON.stringify(TARGETS)
-    const store = createCloudCredStore(adapter)
-    await expect(store.loadTargetHash('gist')).resolves.toBe('g-hash')
-    await expect(store.loadTargetHash('webdav')).resolves.toBeNull() // 新键有值时不再回退旧键
-    delete adapter.data[CLOUD_REVS_KEY]
-    delete adapter.data[CLOUD_REV_KEY]
-    await expect(store.loadTargetHash('webdav')).resolves.toBeNull()
-  })
-})
-
-describe('saveTargetHash', () => {
-  it('⑧hash=null 删除该 backend 基线键（非写入 null 值）并删除旧 cloudRev 键', async () => {
-    adapter.data[CLOUD_REVS_KEY] = JSON.stringify({ webdav: 'h1', gist: 'h2' })
-    adapter.data[CLOUD_REV_KEY] = 'legacy'
-    await createCloudCredStore(adapter).saveTargetHash('webdav', null)
-    expect(JSON.parse(adapter.data[CLOUD_REVS_KEY]!)).toEqual({ gist: 'h2' })
-    expect(adapter.data[CLOUD_REVS_KEY]!).not.toContain('webdav')
-    expect(CLOUD_REV_KEY in adapter.data).toBe(false)
-  })
-
-  it('⑨roundtrip：saveTargetHash → loadTargetHash 还原；重复置 null 幂等', async () => {
-    const store = createCloudCredStore(adapter)
-    await store.saveTargetHash('webdav', 'h1')
-    await expect(store.loadTargetHash('webdav')).resolves.toBe('h1')
-    await store.saveTargetHash('webdav', null)
-    await store.saveTargetHash('webdav', null) // 幂等
-    await expect(store.loadTargetHash('webdav')).resolves.toBeNull()
+  it('⑩坏 JSON/空盘 → 安全默认 []', async () => {
+    await expect(loadSourcesImpl(adapter)).resolves.toEqual([])
+    adapter.data[SOURCES_KEY] = '{bad'
+    await expect(loadSourcesImpl(adapter)).resolves.toEqual([])
   })
 })
 
 describe('conflictBackupName（审查 Minor-1）', () => {
   const d = new Date(2026, 8, 16, 12, 0, 0) // 2026-09-16 12:00:00 本地
-  it('带 backendKey：conflict-{key}-{yyyyMMdd-HHmmss}（与 desktop 同构，匹配 READABLE_BACKUP_RE）', () => {
+  it('带 key：conflict-{key}-{yyyyMMdd-HHmmss}（与 desktop 同构，匹配 READABLE_BACKUP_RE）', () => {
     const name = conflictBackupName('webdav', d)
     expect(name).toBe('conflict-webdav-20260916-120000.totpbackup')
     expect(READABLE_BACKUP_RE.test(name)).toBe(true)
   })
-  it('backendKey 缺省：无 backend 段（旧名格式，同样可恢复）', () => {
+  it('缺省：无段（旧名格式，同样可恢复）', () => {
     expect(conflictBackupName(undefined, d)).toBe('conflict-20260916-120000.totpbackup')
   })
 })
@@ -151,7 +199,7 @@ describe('formatAutoStatusText（options App.vue formatAutoStatus 抽出，cloud
     expect(formatAutoStatusText(JSON.stringify({ at: AT, ok: false, summary: '网络错误' }))).toBe('2026-09-17 14:30 失败：网络错误')
   })
   it('ok=null → 跳过：summary（写侧 summary 仅存原因，前缀由格式化拼装）', () => {
-    expect(formatAutoStatusText(JSON.stringify({ at: AT, ok: null, summary: '未启用云目标' }))).toBe('2026-09-17 14:30 跳过：未启用云目标')
+    expect(formatAutoStatusText(JSON.stringify({ at: AT, ok: null, summary: '未启用云源' }))).toBe('2026-09-17 14:30 跳过：未启用云源')
   })
   it('向后兼容：旧 JSON 无 ok 字段 → 按失败渲染（现状语义不变）', () => {
     expect(formatAutoStatusText(JSON.stringify({ at: AT, summary: '旧数据' }))).toBe('2026-09-17 14:30 失败：旧数据')
