@@ -25,14 +25,17 @@ describe('READABLE_BACKUP_RE', () => {
     expect(READABLE_BACKUP_RE.test('conflict-20260913-150405.totpbackup')).toBe(true)
     expect(READABLE_BACKUP_RE.test('conflict-backup.totpbackup')).toBe(false)
   })
-  it('冲突副本允许中间 backend 段（conflict-{backend}-{ts}）；旧名仍可读', () => {
+  it('冲突副本允许多段 sourceId 中间段：旧 backend 单段与 plan16 uuid 五段均可读（审查 C2）', () => {
     expect(READABLE_BACKUP_RE.test('conflict-webdav-20260916-120000.totpbackup')).toBe(true)
     expect(READABLE_BACKUP_RE.test('conflict-20260916-120000.totpbackup')).toBe(true)
+    expect(READABLE_BACKUP_RE.test('conflict-2dc4bf8a-5ca7-4087-8b3e-2f1a4d5c6b7e-20260918-024714.totpbackup')).toBe(true)
   })
-  it('冲突副本中间段只允许一段小写字母数字：双段拒绝、大写拒绝、非法段拒绝', () => {
-    expect(READABLE_BACKUP_RE.test('conflict-x-y-20260916-120000.totpbackup')).toBe(false)
+  it('冲突副本中间段各限小写字母数字：大写拒绝、非法段拒绝、缺时间戳拒绝（防穿越锚定不变）', () => {
     expect(READABLE_BACKUP_RE.test('conflict-WebDav-20260916-120000.totpbackup')).toBe(false)
     expect(READABLE_BACKUP_RE.test('conflict-web_dav-20260916-120000.totpbackup')).toBe(false)
+    expect(READABLE_BACKUP_RE.test('conflict-x-y-20260916-120000.totpbackup')).toBe(true)
+    expect(READABLE_BACKUP_RE.test('conflict-x-y.totpbackup')).toBe(false)
+    expect(READABLE_BACKUP_RE.test('conflict-x-y-20260916-120000.totpbackup/../../evil')).toBe(false)
   })
 })
 

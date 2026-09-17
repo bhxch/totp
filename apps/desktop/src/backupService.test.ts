@@ -198,10 +198,11 @@ describe('readBackupByName（按 sourceId 读取）', () => {
     await expect(readBackupByName('ghost', 'vault-20260916-120000.totpbackup', sources)).rejects.toThrow('未找到该备份目录')
   })
 
-  it('多源冲突副本名（conflict-{sourceId}-{ts}）通过 RE 校验可读；双段名拒绝', async () => {
+  it('多源冲突副本名（conflict-{sourceId}-{ts}）通过 RE 校验可读：旧 backend 单段与 uuid 五段均可恢复（审查 C2）', async () => {
     invokeMock.mockResolvedValue('envelope-text')
     const text = await readBackupByName('a', 'conflict-webdav-20260916-120000.totpbackup', sources)
     expect(text).toBe('envelope-text')
-    await expect(readBackupByName('a', 'conflict-x-y-20260916-120000.totpbackup', sources)).rejects.toThrow('invalid backup name')
+    await expect(readBackupByName('a', 'conflict-2dc4bf8a-5ca7-4087-8b3e-2f1a4d5c6b7e-20260918-024714.totpbackup', sources)).resolves.toBe('envelope-text')
+    await expect(readBackupByName('a', '../evil.totpbackup', sources)).rejects.toThrow('invalid backup name')
   })
 })
