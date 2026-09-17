@@ -174,3 +174,19 @@ ImportCard 预览四组计数：新增 / 完全相同已跳过 / 疑似同账户
 - AEAD 算法可选（XChaCha20 等，避免 WebCrypto 外新依赖与双实现测试面）；
 - 扩展端本地源（chrome.downloads 方案）；
 - envelope v1 读兼容（未发布，直接定稿 v2）。
+
+## 实施附录（plan16 执行追加，2026-09-17 收尾归档）
+
+实施过程中追加的裁定、固有限制与真机验证挂账，逐条一句话归档（出处 commit 见括号）：
+
+- **v1 envelope 弃用后果**：云端旧对象与本地旧 `.totpbackup` 文件均不可解——云侧救济=CloudCard「用当前口令重置云端」重新上传，旧本地文件无法恢复（59cefa9 弃 v1 兼容裁定；救济入口 396320a）。
+- **轮换丢弃 prf/dpapi KEK 源**（数据层方案 a，防「未绑定」误报成「解密失败」死锁）：UI 需引导用户重新绑定 passkey/DPAPI，SecurityCard 已实现轮换重绑提示（bafff29/4ed6b9d）。
+- **changeVaultPassphrase 无旧口令校验**：SecurityCard 档位确认行输错口令会以错口令重 wrap（等效无意改口令），属 core API 固有限制，挂账（T11 审查，4ed6b9d）。
+- **changePassphrase 轮换三写非原子**（vault 密文/保管区重封/security 落盘）：步 2/3 失败后「零写盘即重启」存在锁死窗口，步 1 失败可重试自愈，33cb900 加固后遗留此固有窗口，挂账。
+- **setBackupSecret/forget 不入 commit 队列**：与轮换并发的毫秒级窗口可能丢「记住口令」（无泄漏无锁死），已知残留，33cb900 复核记录。
+- **desktop store 深 ref 根修的真机验证扩大**：store 曾以深 ref 持有导致自动备份/自动云同步/DPAPI 静默解锁/passkey 列表自 plan15 起实效失效，96ea270 以 shallowRef 根修——自动通道属首次真正生效，需真机验证。
+- **系统锁屏挂账**：Windows 系统锁屏（Win+L）真机验证挂账（2db62ef）；mac/Linux 系统锁屏监听挂账；`lock_events.rs:127` 注释「-1 终止泵」与 `as_bool()` 语义不符（-1 实为继续循环，不可达路径），注释修正挂账。
+- **extension 空闲锁定边界**：options 页关闭后空闲锁定不生效（options 存活期调度，计划内边界）；T12 listener await 前销毁竞态（既有模式，672695e）。
+- **T11.5 计划缺口补齐记录**：备份加密档位 `AppSettings.backupKdfProfile` + BackupCard 档位选择器，计划遗漏、执行中补齐（1ec03fb）。
+- **vue-tsc 既有债务**：ui 包约 26 行既有类型偏差 + ImportSchemesApi 未 re-export 等（96ea270 复核记录），后续微任务收口，不阻塞 plan16。
+- **新装首启默认本地源**：自动建 `dir=null`（AppData/backups）默认本地源，与旧版「开箱即用 AppData/backups」行为连续（8fa3057）。

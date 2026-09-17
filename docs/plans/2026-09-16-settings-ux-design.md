@@ -4,6 +4,11 @@
 状态：已定稿（用户逐项确认）
 上游 spec：`docs/plans/2026-09-13-totp-tool-design.md` §6 备份与同步、§7 密钥与解锁体系
 
+> **勘误（2026-09-17，plan16）**：D1「备份口令入库」已被 plan16 反转——备份口令与云凭据改入
+> DEK 保管区（设备侧独立密文键，锁定即不可解），vault 内 `backupSecret` 字段已删除；本文 §3.2
+> 及 D1/D6 中与「备份口令写入 vault」「记住到本库」相关的表述以
+> `docs/plans/2026-09-17-backup-sources-and-crypto-design.md` 为准。
+
 ## 1. 背景与目标
 
 用户评审现有设置体验提出六项调整：
