@@ -1,4 +1,5 @@
 import { createVueStore, type VueStore } from '@totp/ui'
+import { createDekSession } from './dekSession'
 import { createChromeStorage } from './chromeStorage'
 
 /** 共享 chrome.storage.local 适配器：vault 与 icons 同源（popup/options 各自建 IconStore 用） */
@@ -19,10 +20,20 @@ function scheduleSyncPush(s: VueStore): void {
  *  windowId 决定闭包内的 Map 索引——同进程多 store 实例互不泄漏。
  *  onCommittedExtra（纯增量，Task 12）：经队列的全部写路径（commit/commitSettings/加解密 op 等）
  *  成功后在既有 sync-push 调度之后调用——options 页存活期自动云同步的变更通知由此接入；
- *  具名 commit/commitSettings 包装（下方）是 popup 单例路径，popup 无自动云同步 runner，不接 extra */
-export function createExtensionStore(windowId: string, opts: { onCommittedExtra?: () => void } = {}): VueStore {
+ *  具名 commit/commitSettings 包装（下方）是 popup 单例路径，popup 无自动云同步 runner，不接 extra
+ *  dekPersist（plan16 T12）：宿主会话级 DEK 存取（chrome.storage.session）——解锁必写、lock 必清；
+ *  session 区跨扩展上下文共享，popup/options 各自传 createDekSession() 即达成共享解锁态
+ *  （任一端解锁后另一端 initStore 自动恢复解锁；plan16 设计 §1 附带收益，取代原「窗口完全独立」语义） */
+export function createExtensionStore(
+  windowId: string,
+  opts: {
+    onCommittedExtra?: () => void
+    dekPersist?: { get(): Promise<string | null>; set(dek: Uint8Array): Promise<void>; clear(): Promise<void> }
+  } = {},
+): VueStore {
   const s = createVueStore(storageAdapter, {
     windowId,
+    dekPersist: opts.dekPersist,
     registerSync: (cb) =>
       chrome.storage.onChanged.addListener((changes, area) => {
         if (area !== 'local') return
@@ -50,8 +61,10 @@ export async function commitSettings(): Promise<void> {
 }
 
 // ---------- popup 单例 ----------
-/** popup 入口独立 store（windowId='popup'）：与 options 隔离，spec §7 末尾窗口独立解锁 */
-export const store = createExtensionStore('popup')
+/** popup 入口独立 store（windowId='popup'）：与 options 隔离，spec §7 末尾窗口独立解锁。
+ *  dekPersist（plan16 T12）：popup 与 options 是不同上下文但共享同一 session 区——
+ *  必须传才能读到 options 侧解锁写入的 DEK（「options 解锁 popup 即解锁」） */
+export const store = createExtensionStore('popup', { dekPersist: createDekSession() })
 
 export const {
   vault, initStore, registerStorageSync,

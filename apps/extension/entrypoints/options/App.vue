@@ -3,13 +3,20 @@ import { backupFileName, createAutoRunScheduler, createBackupEnvelope, openBacku
 import { CLIPBOARD_CLEAR_DELAY_MS, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, LockScreen, NavigationShell, prfSupported, useTheme, type BackupMode, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { createCloudCredStore, conflictBackupName, formatAutoStatusText } from '../../src/cloudCredStore'
+import { createDekSession } from '../../src/dekSession'
+import { createIdleLockWatcher } from '../../src/lockEnforcer'
 import { createExtensionStore, storageAdapter } from '../../src/store'
 import { markSyncOff, SYNC_STATUS_KEY } from '../../src/syncEngine'
 
 // spec §7 末尾：options 窗口独立解锁——windowId='options' 与 popup 隔离，各持各的 DEK。
+// plan16 T12：dekPersist 接 chrome.storage.session——解锁态 DEK 入会话存储，popup 经共享
+// session 区自动恢复解锁；本页 initStore 时同样从 session DEK 自动解锁（重启浏览器即清）。
 // onCommittedExtra：写提交 → 存活期自动云同步的变更通知（scheduler 在下方定义；写提交只会
 // 发生在挂载后的异步时点，闭包引用无 TDZ 问题）
-const store = createExtensionStore('options', { onCommittedExtra: () => scheduler.notifyChanged() })
+const store = createExtensionStore('options', {
+  onCommittedExtra: () => scheduler.notifyChanged(),
+  dekPersist: createDekSession(),
+})
 const {
   vault, initStore, registerStorageSync,
   locked, hasEncryption, unlock, lock, enableEncryption, disableEncryption, changePassphrase,
@@ -49,13 +56,18 @@ onMounted(async () => {
     // 自动云同步（页面存活期，勘误 §4.1）：读偏好填充缓存后启动调度器；initStore 失败（页面不可用）则不启动
     await refreshCloudAutoPrefs()
     scheduler.start()
+    // idle/锁屏自动锁定（plan16 T12）：initStore 后启动（settings/加密态已就绪，watcher 内部自判 prefs）
+    lockWatcher.start()
   } catch (e) {
     loadError.value = '本地数据读取失败：' + (e instanceof Error ? e.message : String(e))
   }
 })
 
-// 页面卸载即停：清防抖与定时器，stop 后在途 run 不再补跑（彻底静默）
-onUnmounted(() => scheduler.stop())
+// 页面卸载即停：清防抖与定时器，stop 后在途 run 不再补跑（彻底静默）；锁定轮询同停
+onUnmounted(() => {
+  scheduler.stop()
+  lockWatcher.stop()
+})
 
 /**
  * 30s 清剪贴板：统一走 background(alarms+offscreen) 承载（与 popup 一致，重复复制由同名 alarm 覆盖重置）；
@@ -346,6 +358,19 @@ const scheduler = createAutoRunScheduler({
     if (reason === 'interval' && !cloudAutoPrefs.onInterval) return
     await cloudSync.run()
   },
+})
+
+// ---------- idle/锁屏自动锁定（plan16 T12，设计 §1 锁定策略·extension 执行端）----------
+/** 每 tick 现读 settings.lockPrefs（core loadSettings 已归一化）；加密未启用 → null 不动作。
+ *  与 locked 无关：watcher 内部自判（锁定态 tick 无副作用）。store.lock() 已清 dekPersist（T7），
+ *  watcher 只需调 lock 不自清 session。异常经 onError 上报不中断轮询 */
+const lockWatcher = createIdleLockWatcher({
+  getPrefs: async () => {
+    if (!hasEncryption.value) return null
+    return { idleMinutes: settings.lockIdleMinutes, lockOnSystemLock: settings.lockOnSystemLock }
+  },
+  lock: () => store.lock(),
+  onError: (e) => console.warn('[lockWatcher]', e),
 })
 
 const cloudPlatform: CloudPlatform = {
