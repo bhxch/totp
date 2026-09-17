@@ -27,8 +27,11 @@ function backupPlatform(): BackupPlatform {
 /** CloudCard 挂载仅读接口做回填；同步链路成员不被页面路径触达，实现按需补全 */
 function cloudPlatform(): CloudPlatform {
   return {
-    loadCreds: vi.fn(async () => []),
-    saveCreds: vi.fn(async () => {}),
+    loadSources: vi.fn(async () => []),
+    saveSources: vi.fn(async () => {}),
+    saveCred: vi.fn(async () => {}),
+    removeCred: vi.fn(async () => {}),
+    creds: {},
     readVaultJson: vi.fn(() => ''),
     persistDownloaded: vi.fn(async () => {}),
     loadTargetHash: vi.fn(async () => null),

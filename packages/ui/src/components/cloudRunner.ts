@@ -1,15 +1,20 @@
 /**
  * 云自动同步 runner（D6 宿主侧编排，desktop/extension 双端共享；原 desktop cloudRunner 上提）：
- * 把启用的多目标凭据组装为 core syncMultipleTargets 输入并执行。守护与裁定：
+ * 把启用的源+凭据对组装为 core syncMultipleTargets 输入并执行。守护与裁定：
  * - 仅解锁会话内执行（锁定/无 secret 直接 return），与自动备份 runner 同口径；
  * - 冲突副本经 onConflictBackup 落盘（宿主 saveConflictBackup），adopt 分支自动执行、
  *   不弹确认——设计 §4「自动执行结果不打扰」（区别于 CloudCard 手动同步的两步确认）；
  * - 单目标失败由 core 编排隔离（outcome=null + error），仅全程意外抛错才走 onError；
+ * - keep 源 outcome=uploaded（含收敛改写后 uploaded）后执行 enforceRemoteRetention 远端滚动删除，
+ *   结果经 onRetentionDeleted 交宿主记录（deleted=-1=后端不支持，宿主降级提示）；
  * - 已知边界：busy 只防 runner 重入（自动与自动重叠），与 CloudCard 手动同步可能并发，
  *   由两边各自的 hash 回写顺序兜底（后完成者覆盖基线），不引入跨实例锁。
  */
-import { resolveObjectPath, syncMultipleTargets, type CloudBackend, type CloudCred } from '@totp/core'
-import { CLOUD_ACTION_LABEL, type CloudTarget } from './cloudPlatform'
+import {
+  enforceRemoteRetention, resolveObjectPath, resolveTimestampPath, syncMultipleTargets,
+  type BackupSource, type CloudBackend, type CloudCred, type KdfProfile,
+} from '@totp/core'
+import { CLOUD_ACTION_LABEL } from './cloudPlatform'
 
 export interface CloudRunnerDeps {
   /** 锁定态：锁定或无 secret 时自动触发直接跳过 */
@@ -18,15 +23,20 @@ export interface CloudRunnerDeps {
   getSecret(): string | null
   /** 当前 vault JSON 快照 */
   getVaultJson(): string
-  loadCreds(): Promise<CloudTarget[]>
-  loadTargetHash(backend: string): Promise<string | null>
-  saveTargetHash(backend: string, hash: string | null): Promise<void>
+  /** 启用源与其凭据对（宿主装配：元数据自 backupSources、凭据自保管区 credsCache；锁定态凭据缺失自然为空） */
+  loadSources(): Promise<Array<{ source: BackupSource; cred: CloudCred }>>
+  loadTargetHash(sourceId: string): Promise<string | null>
+  saveTargetHash(sourceId: string, hash: string | null): Promise<void>
   /** 凭据 → backend 实例。生产=core 五工厂 dispatch；测试=注入 fake */
   makeBackend(cred: CloudCred): CloudBackend
   /** 采纳云端版本后整体替换本地存储（生产=store.replaceAllOp） */
   persistAdopted(json: string): Promise<void>
-  /** 冲突副本落盘（key=目标 backend 键）；缺省则丢弃副本提示 */
+  /** 冲突副本落盘（key=源 id）；缺省则丢弃副本提示 */
   saveConflictBackup?(key: string, bytes: Uint8Array): void
+  /** KDF 档位（备份设置所选，信封生成用）；缺省 balanced */
+  kdfProfile?: () => KdfProfile
+  /** keep 源滚动删除完成回调（deleted=实际删除份数；-1=后端不支持，宿主降级提示）；缺省忽略 */
+  onRetentionDeleted?(sourceId: string, deleted: number): void
   /** 「上次自动同步」状态记录（design §4.1：desktop 写 localStorage / extension 写 storage.local 的 cloudAutoStatus）。
    *  三态（批 4）：true=成功 / false=失败 / null=跳过（锁定/无 secret/空目标；记录仅来自自动通道——
    *  手动同步走 CloudCard 自身的 platform 链路，不经过本 runner，不会污染手动状态行） */
@@ -58,17 +68,18 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(): Promise<v
     }
     busy = true
     try {
-      const targets = (await deps.loadCreds()).filter((t) => t.enabled)
-      if (targets.length === 0) {
-        deps.recordStatus?.(null, '未启用云目标')
+      const pairs = (await deps.loadSources()).filter((p) => p.source.enabled)
+      if (pairs.length === 0) {
+        deps.recordStatus?.(null, '未启用云源')
         return
       }
       const inputs = await Promise.all(
-        targets.map(async (t) => ({
-          key: t.cred.backend,
-          backend: deps.makeBackend(t.cred),
-          path: resolveObjectPath(t.cred),
-          hash: await deps.loadTargetHash(t.cred.backend),
+        pairs.map(async ({ source, cred }) => ({
+          key: source.id,
+          backend: deps.makeBackend(cred),
+          // keep 源每次写新时间戳文件；overwrite 源写固定对象路径（均经 core 校验/缺省回落）
+          path: source.retention.type === 'keep' ? resolveTimestampPath(cred, new Date()) : resolveObjectPath(cred),
+          hash: await deps.loadTargetHash(source.id),
         })),
       )
       const r = await syncMultipleTargets({
@@ -78,13 +89,24 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(): Promise<v
         onConflictBackup: (key, bytes) => {
           deps.saveConflictBackup?.(key, bytes)
         },
+        profile: deps.kdfProfile?.(),
       })
       // 采纳先于基线回写（审查裁定）：persistAdopted 失败则本轮 hashes 一并不落盘，下轮基线
       // 缺失/为旧值 → 自动重试下载；若先写基线，失败会使下轮全线 in-sync，云端较新版本永远
       // 不再被自动下载（静默僵持无自愈）
       if (r.adopted) await deps.persistAdopted(r.finalVaultJson)
-      // 回写各目标基线：成功目标=新 hash；失败目标（hashes 无键）=null 即删除基线（下轮全量重比）
+      // 回写各源基线：成功目标=新 hash；失败目标（hashes 无键）=null 即删除基线（下轮全量重比）
       for (const t of inputs) await deps.saveTargetHash(t.key, r.hashes[t.key] ?? null)
+      // keep 源滚动删除（基线回写后执行；复用 input.backend 实例，onCredChange 回写口径一致）：
+      // 仅对 outcome=uploaded（上传/收敛回推成功）的源执行——in-sync 无新文件，失败源无可清理依据
+      for (const { source } of pairs) {
+        if (source.retention.type !== 'keep') continue
+        const res = r.results.find((x) => x.key === source.id)
+        if (!res?.outcome || res.outcome.action !== 'uploaded') continue
+        const backend = inputs.find((x) => x.key === source.id)!.backend
+        const deleted = await enforceRemoteRetention(backend, source.retention.n)
+        deps.onRetentionDeleted?.(source.id, deleted)
+      }
       // summary 动作中文化（Minor-6）：与手动同步状态行同口径；单目标失败（outcome=null）记「失败」
       deps.recordStatus?.(true, r.results.map((x) => `${x.key}: ${x.outcome ? CLOUD_ACTION_LABEL[x.outcome.action] : '失败'}`).join('; '))
     } catch (err) {
