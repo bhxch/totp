@@ -5,6 +5,7 @@ import type { BackupAutoPrefs, BackupMode, BackupPlatform } from './backupPlatfo
 import { parseVaultJson } from './parseVaultJson'
 import MdButton from './md/MdButton.vue'
 import MdSegmentedButton from './md/MdSegmentedButton.vue'
+import MdSelect from './md/MdSelect.vue'
 import MdSwitch from './md/MdSwitch.vue'
 import MdTextField from './md/MdTextField.vue'
 
@@ -217,8 +218,15 @@ function onAutoIntervalToggle(v: boolean): void {
   autoPrefs.value = { ...autoPrefs.value, onInterval: v }
   void syncAutoPrefs()
 }
-function onIntervalChange(e: Event): void {
-  autoPrefs.value = { ...autoPrefs.value, intervalMinutes: Number((e.target as HTMLSelectElement).value) }
+/** 定时备份间隔选项（value=分钟数，number 直传回写不再经字符串转换；F6 收口换 MdSelect） */
+const INTERVAL_OPTIONS = [
+  { value: 15, label: '15 分钟' },
+  { value: 60, label: '1 小时' },
+  { value: 360, label: '6 小时' },
+  { value: 1440, label: '每天' },
+]
+function onIntervalChange(v: string | number): void {
+  autoPrefs.value = { ...autoPrefs.value, intervalMinutes: Number(v) }
   void syncAutoPrefs()
 }
 
@@ -287,16 +295,10 @@ async function onResetDir(): Promise<void> {
           <span>定时自动备份</span>
         </div>
         <div class="auto-item">
-          <span>间隔</span>
-          <select
-            class="interval" :value="autoPrefs.intervalMinutes" aria-label="自动备份间隔"
-            @change="onIntervalChange"
-          >
-            <option :value="15">15 分钟</option>
-            <option :value="60">1 小时</option>
-            <option :value="360">6 小时</option>
-            <option :value="1440">每天</option>
-          </select>
+          <MdSelect
+            :model-value="autoPrefs.intervalMinutes" :options="INTERVAL_OPTIONS"
+            label="间隔" aria-label="自动备份间隔" @update:model-value="onIntervalChange"
+          />
         </div>
       </div>
       <span v-if="platform.getAutoStatus" class="auto-status">上次自动备份：{{ autoStatus ?? '暂无' }}</span>
@@ -328,7 +330,6 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .auto-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
 .auto-item { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); }
 .auto-status { font-size: var(--md-sys-typescale-body-small); opacity: .65; }
-.interval { height: 32px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline); background: transparent; color: inherit; font: inherit; font-size: var(--md-sys-typescale-body-medium); padding: 0 6px; }
 .dir-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .dir-value { font-size: var(--md-sys-typescale-body-medium); opacity: .85; }
 .ok { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-medium); }

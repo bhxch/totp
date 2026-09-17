@@ -129,13 +129,14 @@ describe('BackupCard', () => {
     )
   })
 
-  it('间隔 select 变更：以 intervalMinutes=1440 调 setAutoPrefs', async () => {
+  it('间隔 MdSelect（F6 收口）：开弹层点选以 intervalMinutes=1440 调 setAutoPrefs', async () => {
     const p = makePlatform({
       getAutoPrefs: vi.fn(() => ({ onChange: false, onInterval: false, intervalMinutes: 60 })),
       setAutoPrefs: vi.fn(async () => {}),
     })
     const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
-    await w.find('select.interval').setValue('1440')
+    await w.find('button[aria-label="自动备份间隔"]').trigger('click')
+    await w.findAll('[role="option"]').find((o) => o.text() === '每天')!.trigger('click')
     await vi.waitFor(() =>
       expect(p.setAutoPrefs).toHaveBeenLastCalledWith({ onChange: false, onInterval: false, intervalMinutes: 1440 }),
     )

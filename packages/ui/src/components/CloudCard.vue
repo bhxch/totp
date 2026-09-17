@@ -8,6 +8,7 @@ import { parseVaultJson } from './parseVaultJson'
 import MdButton from './md/MdButton.vue'
 import MdCheckbox from './md/MdCheckbox.vue'
 import MdMenu from './md/MdMenu.vue'
+import MdSelect from './md/MdSelect.vue'
 import MdSwitch from './md/MdSwitch.vue'
 import MdTextField from './md/MdTextField.vue'
 
@@ -352,8 +353,15 @@ function onAutoIntervalToggle(v: boolean): void {
   autoPrefs.value = { ...autoPrefs.value, onInterval: v }
   void syncAutoPrefs()
 }
-function onIntervalChange(e: Event): void {
-  autoPrefs.value = { ...autoPrefs.value, intervalMinutes: Number((e.target as HTMLSelectElement).value) }
+/** 定时同步间隔选项（value=分钟数，number 直传回写不再经字符串转换；F6 收口换 MdSelect） */
+const INTERVAL_OPTIONS = [
+  { value: 15, label: '15 分钟' },
+  { value: 60, label: '1 小时' },
+  { value: 360, label: '6 小时' },
+  { value: 1440, label: '每天' },
+]
+function onIntervalChange(v: string | number): void {
+  autoPrefs.value = { ...autoPrefs.value, intervalMinutes: Number(v) }
   void syncAutoPrefs()
 }
 </script>
@@ -434,16 +442,10 @@ function onIntervalChange(e: Event): void {
           <span>定时自动同步</span>
         </div>
         <div class="auto-item">
-          <span>间隔</span>
-          <select
-            class="interval" :value="autoPrefs.intervalMinutes" aria-label="自动同步间隔"
-            @change="onIntervalChange"
-          >
-            <option :value="15">15 分钟</option>
-            <option :value="60">1 小时</option>
-            <option :value="360">6 小时</option>
-            <option :value="1440">每天</option>
-          </select>
+          <MdSelect
+            :model-value="autoPrefs.intervalMinutes" :options="INTERVAL_OPTIONS"
+            label="间隔" aria-label="自动同步间隔" @update:model-value="onIntervalChange"
+          />
         </div>
       </div>
       <span v-if="platform.loadAutoStatus" class="auto-status">上次自动同步：{{ autoStatus ?? '暂无' }}</span>
@@ -480,7 +482,6 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .auto-block { display: flex; flex-direction: column; gap: 4px; }
 .auto-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
 .auto-item { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); }
-.interval { height: 32px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline); background: transparent; color: inherit; font: inherit; font-size: var(--md-sys-typescale-body-medium); padding: 0 6px; }
 .auto-status { font-size: var(--md-sys-typescale-body-small); opacity: .65; }
 .confirm-row { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); flex-wrap: wrap; }
 /* 「添加目标」菜单项（MdMenu 容器自带定位与外观；MdButton text 形收紧为菜单项排版，同 CodesPage ctx-item） */

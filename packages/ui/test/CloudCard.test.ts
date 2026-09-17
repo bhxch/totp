@@ -261,7 +261,9 @@ describe('CloudCard（多目标）', () => {
     await vi.waitFor(() =>
       expect(p.autoPrefs.set).toHaveBeenLastCalledWith({ onChange: true, onInterval: false, intervalMinutes: 60 }),
     )
-    await w.find('select.interval').setValue('1440')
+    // 间隔改 MdSelect（F6）：开弹层点「每天」→ intervalMinutes=1440 回写
+    await w.find('button[aria-label="自动同步间隔"]').trigger('click')
+    await w.findAll('[role="option"]').find((o) => o.text() === '每天')!.trigger('click')
     await vi.waitFor(() =>
       expect(p.autoPrefs.set).toHaveBeenLastCalledWith({ onChange: true, onInterval: false, intervalMinutes: 1440 }),
     )
