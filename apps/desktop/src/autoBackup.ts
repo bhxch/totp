@@ -38,6 +38,9 @@ export interface DesktopAutoRunner {
 
 const DEFAULT_DEBOUNCE_MS = 10_000
 
+/** doBackup 结果 → 中文 summary（Minor-6 中文化；未知结果兜底「已完成」） */
+const BACKUP_RESULT_LABEL: Record<string, string> = { created: '已创建备份', overwritten: '已覆盖备份' }
+
 /** desktop 自动备份 runner（D2）：backup/cloud 双通道各挂一个 core 调度器。
  *  锁定/无 secret/unchanged 的守护全部收敛在 core decideAutoRun（调度触发永不绕过） */
 export function createDesktopAutoRunner(deps: AutoBackupDeps, opts?: { debounceMs?: number }): DesktopAutoRunner {
@@ -75,8 +78,8 @@ export function createDesktopAutoRunner(deps: AutoBackupDeps, opts?: { debounceM
       if (secret === null) return // decideAutoRun 已挡 no-secret；此处窄化满足 TS
       const r = await deps.doBackup(deps.getVaultJson(), secret)
       deps.setLastBackupHash(currentHash)
-      // 状态记录（design §4.1）：summary 取 doBackup 结果（created/overwritten）
-      deps.recordStatus?.(true, `backup: ${typeof r === 'string' ? r : 'done'}`)
+      // 状态记录（design §4.1）：summary 取 doBackup 结果（中文化：created/overwritten）
+      deps.recordStatus?.(true, BACKUP_RESULT_LABEL[typeof r === 'string' ? r : ''] ?? '已完成')
     } catch (err) {
       // 失败也记状态；rethrow 交调度器 onError 兜底（行为不变）
       deps.recordStatus?.(false, (err instanceof Error ? err.message : String(err)).slice(0, 100))

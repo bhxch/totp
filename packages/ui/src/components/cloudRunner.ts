@@ -9,7 +9,7 @@
  *   由两边各自的 hash 回写顺序兜底（后完成者覆盖基线），不引入跨实例锁。
  */
 import { resolveObjectPath, syncMultipleTargets, type CloudBackend, type CloudCred } from '@totp/core'
-import type { CloudTarget } from './cloudPlatform'
+import { CLOUD_ACTION_LABEL, type CloudTarget } from './cloudPlatform'
 
 export interface CloudRunnerDeps {
   /** 锁定态：锁定或无 secret 时自动触发直接跳过 */
@@ -70,7 +70,8 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(): Promise<v
       if (r.adopted) await deps.persistAdopted(r.finalVaultJson)
       // 回写各目标基线：成功目标=新 hash；失败目标（hashes 无键）=null 即删除基线（下轮全量重比）
       for (const t of inputs) await deps.saveTargetHash(t.key, r.hashes[t.key] ?? null)
-      deps.recordStatus?.(true, r.results.map((x) => `${x.key}: ${x.outcome?.action ?? 'failed'}`).join('; '))
+      // summary 动作中文化（Minor-6）：与手动同步状态行同口径；单目标失败（outcome=null）记「失败」
+      deps.recordStatus?.(true, r.results.map((x) => `${x.key}: ${x.outcome ? CLOUD_ACTION_LABEL[x.outcome.action] : '失败'}`).join('; '))
     } catch (err) {
       deps.onError?.(err)
       deps.recordStatus?.(false, errMsg(err).slice(0, 100))

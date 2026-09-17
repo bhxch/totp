@@ -99,13 +99,21 @@ describe('createDesktopAutoRunner（backup 通道）', () => {
     expect(onError).toHaveBeenCalledWith(boom, 'backup')
   })
 
-  it('recordStatus：备份成功写 ok=true（summary 含结果，如 backup: created）', async () => {
+  it('recordStatus：备份成功写 ok=true（summary 中文，如 已创建备份）', async () => {
     const recordStatus = vi.fn()
     const { deps } = makeDeps({ doBackup: vi.fn(async () => 'created'), recordStatus })
     createDesktopAutoRunner(deps).notifyChanged()
     await vi.advanceTimersByTimeAsync(10_000)
     expect(recordStatus).toHaveBeenCalledTimes(1)
-    expect(recordStatus).toHaveBeenCalledWith(true, 'backup: created')
+    expect(recordStatus).toHaveBeenCalledWith(true, '已创建备份')
+  })
+
+  it('recordStatus：覆盖模式成功写「已覆盖备份」', async () => {
+    const recordStatus = vi.fn()
+    const { deps } = makeDeps({ doBackup: vi.fn(async () => 'overwritten'), recordStatus })
+    createDesktopAutoRunner(deps).notifyChanged()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(recordStatus).toHaveBeenCalledWith(true, '已覆盖备份')
   })
 
   it('recordStatus：备份失败写 ok=false（错误消息截断 100 字符），onError 仍收到', async () => {

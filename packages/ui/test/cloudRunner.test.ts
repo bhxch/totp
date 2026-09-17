@@ -171,7 +171,7 @@ describe('createCloudSyncRunner', () => {
     await createCloudSyncRunner(deps).run()
     expect(persistAdopted).toHaveBeenCalledTimes(1)
     expect(persistAdopted).toHaveBeenCalledWith(B)
-    expect(recordStatus).toHaveBeenCalledWith(true, 'webdav: downloaded')
+    expect(recordStatus).toHaveBeenCalledWith(true, 'webdav: 已下载')
   })
 
   it('⑧loadCreds 抛错 → 不向上抛，onError 与 recordStatus(false) 收到', async () => {
@@ -227,7 +227,7 @@ describe('createCloudSyncRunner', () => {
     expect(saveTargetHash).toHaveBeenCalledTimes(1)
   })
 
-  it('⑩成功 summary：逐目标 `key: action` 拼接；冲突副本回调带 key 透传', async () => {
+  it('⑩成功 summary：逐目标 `key: 中文动作` 拼接；冲突副本回调带 key 透传', async () => {
     const b = fakeBackend(await envelopeBytesOf(B, PW))
     const { deps, recordStatus, saveConflictBackup } = makeDeps({
       loadCreds: vi.fn(async () => [{ cred: WEBDAV_CRED, enabled: true }]),
@@ -235,7 +235,7 @@ describe('createCloudSyncRunner', () => {
       makeBackend: () => b,
     })
     await createCloudSyncRunner(deps).run()
-    expect(recordStatus).toHaveBeenCalledWith(true, 'webdav: conflict-resolved')
+    expect(recordStatus).toHaveBeenCalledWith(true, 'webdav: 冲突已解决')
     // jsdom 环境 runner/测试分属不同 realm，expect.any(Uint8Array) 的 instanceof 判定失效 →
     // 改查内部 slot（ArrayBuffer.isView 跨 realm 可靠），字节视图契约不变
     expect(saveConflictBackup).toHaveBeenCalledTimes(1)
