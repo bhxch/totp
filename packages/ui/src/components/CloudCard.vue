@@ -211,10 +211,15 @@ async function onSync(): Promise<void> {
     const inputs = await Promise.all(enabled.map(async (t) => ({
       key: t.cred.backend,
       backend: createCloudBackend(t.cred, (next) => {
-        // GDrive 首推自动建文件回存 fileId / 后端探测回写：更新内存同 backend 项并持久化
+        // GDrive 首推自动建文件回存 fileId / 后端探测回写：更新内存同 backend 项（本会话继续可用）
         const idx = targets.value.findIndex((x) => x.cred.backend === next.backend)
         if (idx >= 0) targets.value[idx] = { ...targets.value[idx]!, cred: next }
-        void p.saveCreds(targets.value).catch((e) => console.warn('[CloudCard] 凭据回存失败:', e))
+        // 持久化=单目标合并（与 desktop/extension runner 同模式）：读已保存列表 → 按 backend 替换
+        // 该项 → 保存，卡内未保存的其他行编辑不外溢落盘；空列表守卫防把瞬时读失败固化为空存储
+        void p.loadCreds().then((saved) => {
+          if (saved.length === 0) return
+          return p.saveCreds(saved.map((t2) => (t2.cred.backend === next.backend ? { ...t2, cred: next } : t2)))
+        }).catch((e) => console.warn('[CloudCard] 凭据回存失败:', e))
       }),
       path: resolveObjectPath(t.cred),
       hash: await p.loadTargetHash(t.cred.backend),

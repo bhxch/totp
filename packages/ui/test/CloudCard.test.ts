@@ -407,6 +407,61 @@ describe('CloudCard（多目标）', () => {
     expect(w.find('.auto-status').text()).toContain('2026-09-16 12:00 成功：gdrive: uploaded')
   })
 
+  it('⑯b onCredChange 单目标合并：saveCreds 收「已保存列表替换单项」，另一行未保存编辑不外溢；内存行 cred 已更新', async () => {
+    const GDRIVE: CloudTarget = { cred: { backend: 'gdrive', accessToken: 'tok' }, enabled: true }
+    const p = makePlatform({ loadCreds: vi.fn().mockResolvedValue([GDRIVE, WEBDAV_TARGET]) })
+    const w = await mountCard(p)
+    // 未保存的半填编辑：展开 webdav 行（第 2 行）改 serverUrl（仅存于卡内内存）
+    await w.findAll('button.target-toggle')[1]!.trigger('click')
+    await w.find('input[placeholder="服务器地址（https://dav.example.com）"]').setValue('https://edited.example.com')
+    // fake 后端：sync 时 gdrive onChange 回存 fileId
+    vi.mocked(createCloudBackend).mockImplementationOnce((cred, onChange) => {
+      if ((cred as { backend: string }).backend === 'gdrive') {
+        onChange!({ backend: 'gdrive', accessToken: 'tok', fileId: 'fid-new' })
+      }
+      return { id: cred.backend, put: async () => {}, get: async () => null, delete: async () => {}, exists: async () => false } as CloudBackend
+    })
+    mockedSync.mockResolvedValue({
+      results: [{ key: 'gdrive', outcome: { action: 'in-sync', hash: 'h1' } }],
+      finalVaultJson: VALID_VAULT,
+      adopted: false,
+      hashes: { gdrive: 'h1' },
+    })
+    await clickSync(w)
+    // 持久化 = 已保存列表替换单项：webdav 保持已保存原值（edited 编辑不外溢落盘）
+    expect(p.saveCreds).toHaveBeenCalledWith([
+      { cred: { backend: 'gdrive', accessToken: 'tok', fileId: 'fid-new' }, enabled: true },
+      WEBDAV_TARGET,
+    ])
+    // 内存：gdrive 行 cred 已回填 fileId、webdav 编辑保留 →「保存凭据」落的是内存整列表
+    await w.find('button.creds-save').trigger('click')
+    await flushPromises()
+    expect(p.saveCreds).toHaveBeenLastCalledWith([
+      { cred: { backend: 'gdrive', accessToken: 'tok', fileId: 'fid-new' }, enabled: true },
+      { ...WEBDAV_TARGET, cred: { ...WEBDAV_TARGET.cred, serverUrl: 'https://edited.example.com' } },
+    ])
+  })
+
+  it('⑯c onCredChange 空列表守卫：loadCreds 返回 [] 时不调 saveCreds（防固化空存储）', async () => {
+    const GDRIVE: CloudTarget = { cred: { backend: 'gdrive', accessToken: 'tok' }, enabled: true }
+    const p = makePlatform({
+      loadCreds: vi.fn().mockResolvedValueOnce([GDRIVE]).mockResolvedValue([]), // 首次回填正常，回存时读空
+    })
+    const w = await mountCard(p)
+    vi.mocked(createCloudBackend).mockImplementationOnce((cred, onChange) => {
+      onChange!({ backend: 'gdrive', accessToken: 'tok', fileId: 'fid-new' })
+      return { id: cred.backend, put: async () => {}, get: async () => null, delete: async () => {}, exists: async () => false } as CloudBackend
+    })
+    mockedSync.mockResolvedValue({
+      results: [{ key: 'gdrive', outcome: { action: 'in-sync', hash: 'h1' } }],
+      finalVaultJson: VALID_VAULT,
+      adopted: false,
+      hashes: { gdrive: 'h1' },
+    })
+    await clickSync(w)
+    expect(p.saveCreds).not.toHaveBeenCalled()
+  })
+
   it('⑰防御路径：loadCreds 回填失败按未存凭据处理；getAutoStatus 失败显示「暂无」；编排抛错提示且不写基线', async () => {
     // 挂载段：loadCreds 拒绝 → 空列表；getAutoStatus 拒绝 → 状态行「暂无」
     const p1 = makePlatform({
