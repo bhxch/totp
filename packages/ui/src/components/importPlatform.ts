@@ -17,7 +17,7 @@ export interface ImportPlatform {
   readImportFileBytes?(): Promise<{ bytes: Uint8Array; name: string } | null>
   /** [可选] WinAuth DPAPI 层解密（base64 密文 → UTF-8 明文），仅桌面端提供；插件端缺失时由 core 逐条 failure「请用桌面版」 */
   decryptDpapi?(b64: string): Promise<string>
-  /** 共享 vault store：解析结果经 store.commit + applyImport 落库 */
+  /** 共享 vault store：解析结果经 store.commit + applyImportPlan（plan16 T10 去重判定树）落库 */
   store: VueStore
 }
 
