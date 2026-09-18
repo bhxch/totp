@@ -480,8 +480,12 @@ const cloudPlatform: CloudPlatform = {
   </template>
 </template>
 
-<style scoped>
+<style>
+/* body 级样式须在非 scoped 块：scoped 会编译为 body[data-v-x] 永不匹配（审查 Minor），
+   与 desktop App.vue 同做法 */
 body { font-family: system-ui, sans-serif; margin: 0; }
+</style>
+<style scoped>
 .error { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); padding: 16px; }
 .migrate-note { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-small); padding: 8px 16px; }
 </style>
