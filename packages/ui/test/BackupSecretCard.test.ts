@@ -43,7 +43,7 @@ describe('BackupSecretCard', () => {
   it('说明文案按保管区语义定稿：desc/remember-hint 不再说「随库存放」，记住开关为「记住（存入保管区）」', () => {
     const w = mountCard(makeStore())
     expect(w.find('.hint.desc').text()).toBe('用于加密本地备份文件与云端同步对象，两者共用；开启记住后存入库旁的加密保管区（受本地主口令保护），解锁库即可用；未记住则锁定或关闭页面后需重新输入。')
-    expect(w.find('.remember-hint').text()).toBe('开启后以密文存入保管区（需已启用加密），解锁库即可用，系统原生解锁方式同样生效。')
+    expect(w.find('.remember-hint').text()).toBe('开启后以密文存入保管区（需已启用加密），解锁库即可用，系统原生解锁方式同样生效；已启用会话后再拨动本开关不会立即生效，随下次「启用会话」生效。')
     expect(w.text()).toContain('记住（存入保管区）')
   })
 

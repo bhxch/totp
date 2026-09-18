@@ -86,7 +86,7 @@ async function onClear(): Promise<void> {
       <MdSwitch v-model="remember" aria-label="记住（存入保管区）" :disabled="!hasEnc" />
       <span>记住（存入保管区）</span>
     </div>
-    <div class="hint remember-hint">开启后以密文存入保管区（需已启用加密），解锁库即可用，系统原生解锁方式同样生效。</div>
+    <div class="hint remember-hint">开启后以密文存入保管区（需已启用加密），解锁库即可用，系统原生解锁方式同样生效；已启用会话后再拨动本开关不会立即生效，随下次「启用会话」生效。</div>
     <div class="actions">
       <MdButton class="secret-save" :disabled="busy" @click="onEnable">启用会话</MdButton>
       <MdButton v-if="sessionSecret" class="secret-clear" variant="tonal" :disabled="busy" @click="onClear">清除</MdButton>
