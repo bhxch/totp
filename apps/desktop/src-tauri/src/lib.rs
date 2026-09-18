@@ -612,6 +612,32 @@ mod tests {
         std::fs::remove_dir_all(&base).ok();
     }
 
+    // 审查 I12：allowed_dir 的 Windows 特有形态（前端对话框/持久化值可能带大小写差异或
+    // verbatim 前缀）必须同样可授权——ensure_within 双侧 canonicalize 归一后比较，两种形态
+    // 均应命中同一目录。仅 Windows 可跑（依赖 NTFS 大小写不敏感与 \\?\ 前缀语义）
+    #[cfg(windows)]
+    #[test]
+    fn remove_backup_file_os_accepts_case_variant_and_verbatim_allowed_dir() {
+        let base = std::env::temp_dir().join("totp_rm_os_case_test");
+        let allowed = base.join("Allowed");
+        std::fs::create_dir_all(&allowed).unwrap();
+        let name = "vault-20260916-120000.totpbackup";
+        // 形态一：allowed_dir 大小写与磁盘真实大小写不同（canonicalize 归一为实际大小写后命中）
+        let target = allowed.join(name);
+        std::fs::write(&target, "x").unwrap();
+        let lowercased = allowed.to_str().unwrap().to_lowercase();
+        remove_backup_file_os(target.to_str().unwrap().into(), lowercased).unwrap();
+        assert!(!target.exists());
+        // 形态二：\\?\ verbatim 前缀形态（canonicalize 的返回形态；对话框路径偶带此前缀）
+        let target2 = allowed.join(name);
+        std::fs::write(&target2, "x").unwrap();
+        let verbatim = std::fs::canonicalize(&allowed).unwrap();
+        assert!(verbatim.to_str().unwrap().starts_with(r"\\?\"));
+        remove_backup_file_os(target2.to_str().unwrap().into(), verbatim.to_str().unwrap().into()).unwrap();
+        assert!(!target2.exists());
+        std::fs::remove_dir_all(&base).ok();
+    }
+
     #[test]
     fn list_backup_files_os_returns_sorted_vault_and_conflict_only() {
         let base = std::env::temp_dir().join("totp_list_os_test");
