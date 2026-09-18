@@ -348,7 +348,8 @@ async function onDelayChange(value: string): Promise<void> {
             @update:model-value="onIdleMinutesChange"
           />
         </div>
-        <div class="opt">
+        <!-- 系统锁屏时锁定：宿主声明不支持（unsupported，如无系统锁屏事件源的端）时隐藏 -->
+        <div v-if="!unsupportedLockPrefs.has('lockOnSystemLock')" class="opt">
           <MdSwitch
             class="lock-syslock" :model-value="lockPrefsState.lockOnSystemLock" aria-label="系统锁屏时锁定"
             @update:model-value="(v: boolean) => onLockPrefChange({ lockOnSystemLock: v })"

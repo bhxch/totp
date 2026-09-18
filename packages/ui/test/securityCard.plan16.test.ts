@@ -243,4 +243,18 @@ describe('SecurityCard plan16：锁定策略偏好', () => {
     expect(w.find('.idle-min').exists()).toBe(true)
     expect(w.find('.lock-syslock').exists()).toBe(true)
   })
+
+  it('unsupported 声明 lockOnSystemLock（审查 I10：desktop mac/Linux 无系统锁屏事件源）→ 隐藏该开关，其余两控件照常渲染与写回', async () => {
+    const lp = makeLockPrefs()
+    const w = mount(SecurityCard, {
+      props: { platform: makePlatform({ lockPrefs: { ...lp.api, unsupported: ['lockOnRestart', 'lockOnSystemLock'] } }) },
+    })
+    await vi.waitFor(() => expect(w.find('.lock-prefs').exists()).toBe(true))
+    expect(w.find('.lock-restart').exists()).toBe(false)
+    expect(w.find('.lock-syslock').exists()).toBe(false) // 系统锁屏开关隐藏
+    expect(w.find('.lock-prefs').text()).not.toContain('系统锁屏时锁定')
+    expect(w.find('.idle-min').exists()).toBe(true) // 空闲控件照常
+    await w.find('.idle-min input').setValue('30')
+    await vi.waitFor(() => expect(lp.api.set).toHaveBeenCalledWith({ lockOnRestart: true, lockIdleMinutes: 30, lockOnSystemLock: true }))
+  })
 })

@@ -10,6 +10,7 @@ import { createDesktopAutoRunner, formatAutoStatusText } from './autoBackup'
 import { createBackupToSources, listBackupsFromSources, readBackupByName, readBackupFileOs, saveConflictBackupToDir, writeBackupFileOs } from './backupService'
 import { decryptDpapiOs, readImportFileBytesOs, readImportFileOs } from './importService'
 import { createIdleLockExecutor } from './idleLock'
+import { lockPrefsUnsupportedKeys } from './lockPrefs'
 import { BACKUP_DIR_KEY, migrateLegacyCloudSources, migrateLegacyLocalSource } from './legacyMigrate'
 import { createTauriFs } from './tauriFs'
 import { osAutoProtectOs, osAutoUnprotectOs } from './tauriSecurity'
@@ -466,13 +467,17 @@ const securityPlatform = computed<SecurityPlatform | null>(() => {
       s.settings.clipboardClearEnabled = v
       await s.commitSettings()
     },
-    // 锁定策略（plan16 T11）：三字段整体覆写进 settings 后持久化（core loadSettings 已归一化）
+    // 锁定策略（plan16 T11）：三字段整体覆写进 settings 后持久化（core loadSettings 已归一化）。
+    // 审查 I10：desktop 无会话级 DEK 存储 → lockOnRestart 全平台无实现支撑（重启必锁）；
+    // 系统锁屏事件源仅 Windows（lock_events WTS），非 Windows 追加声明 lockOnSystemLock——
+    // SecurityCard 按 unsupported 隐藏对应开关防无效设置
     lockPrefs: {
       get: () => ({ lockOnRestart: s.settings.lockOnRestart, lockIdleMinutes: s.settings.lockIdleMinutes, lockOnSystemLock: s.settings.lockOnSystemLock }),
       set: (p) => {
         Object.assign(s.settings, p)
         void s.commitSettings()
       },
+      unsupported: lockPrefsUnsupportedKeys(ua),
     },
   }
 })
