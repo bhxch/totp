@@ -427,8 +427,9 @@ const dpapiOps: DpapiUnlockOps = {
     await s.removeDpapiSourceOp()
     // 审查 M1（C1 遗留）：移除成功后 best-effort 清 keyring DEK 条目（mac/Linux；Windows 为
     // 报错桩，静默忽略）。失败不影响移除主流程——security JSON 已更新，残留条目仅是 OS 凭据
-    // 库卫生问题。mac/Linux keyring 分支未真机验证挂账不变（见 tauriSecurity.ts 头注释）
-    void osAutoForgetOs().catch(() => {})
+    // 库卫生问题。mac/Linux keyring 分支未真机验证挂账不变（见 tauriSecurity.ts 头注释）。
+    // 失败不吞进黑洞：warn 留痕（排查残留条目时需要失败原因），不弹 UI
+    void osAutoForgetOs().catch((e: unknown) => { console.warn('[desktop] keyring 条目清理失败', e) })
   },
 }
 

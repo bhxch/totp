@@ -44,7 +44,9 @@ async function writeOsFile(dirOverride: string, name: string, contents: string):
 
 /** 单目录备份名列表：os 目录走 Rust 白名单命令（已过滤+升序）；null=AppData/backups 走 plugin-fs
  *  readDir（审查 M4：TS 侧同样按 READABLE_BACKUP_RE 过滤——恢复侧「可恢复的备份文件」口径，
- *  与 os 分支白名单一致，防仅后缀 .totpbackup 的陌生文件混入列表） */
+ *  防仅后缀 .totpbackup 的陌生文件混入列表）。两分支过滤并不完全同口径：os 分支在
+ *  valid_backup_name（vault- 前缀白名单）之外对 conflict- 前缀副本放行更宽松（仅要求前缀+
+ *  后缀），默认分支对齐的是读侧 READABLE_BACKUP_RE 单一口径 */
 async function listDirNames(dirOverride: string | null): Promise<string[]> {
   if (dirOverride) return invoke<string[]>('list_backup_files_os', { dir: dirOverride })
   const names = (await readDir(dir, { baseDir: BaseDirectory.AppData })).map((e) => e.name)
