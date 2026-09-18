@@ -8,7 +8,8 @@
  *   → saveSources（id=旧 backend 键）→ 逐源凭据入保管区 → saveSourceRev 基线平移 → 删四旧键。
  * 断言：盘上 vault 密文解出无 backupSecret；保管区密文可解口令+两凭据；backupSources 形状正确；
  * sourceRevs 平移；四个旧键全删；迁移完成态二次运行整段序列零写盘（counting adapter）；
- * 第 2 个凭据 saveCred 抛错中断 → 旧键原样保留 → 重跑收敛（先写新后删旧）。
+ * 第 2 个凭据 saveCred 抛错中断 → 旧键原样保留 → 重跑收敛（先写新后删旧）；
+ * 审查 M5 补两个中断点：①保管区已写但 vault 未剥除 ②基线已平移但旧键未删——均断言重跑收敛。
  */
 import { describe, expect, it } from 'vitest'
 import {
@@ -91,8 +92,10 @@ async function unlockFromDisk(adapter: Adapter): Promise<Uint8Array> {
 }
 
 /** ui store.migrateLegacySecrets 同构（纯 core 版）：vault 内 backupSecret → 保管区（先写新）+ 剥除重加密落盘（后删旧）。
- *  幂等：字段已剥除（legacy undefined）时不写任何键。 */
-async function migrateLegacySecrets(adapter: Adapter, dek: Uint8Array): Promise<void> {
+ *  幂等：字段已剥除（legacy undefined）时不写任何键。
+ *  failAfterBagWrite：中断注入（审查 M5）——保管区已密封落盘后、vault 剥除前抛错，模拟「先写新」与
+ *  「后删旧」两步之间断电；生产同构代码不传此参。 */
+async function migrateLegacySecrets(adapter: Adapter, dek: Uint8Array, failAfterBagWrite?: Error): Promise<void> {
   const raw = await adapter.get(VAULT_KEY)
   if (raw === null) return
   const parsed: unknown = JSON.parse(raw)
@@ -112,6 +115,7 @@ async function migrateLegacySecrets(adapter: Adapter, dek: Uint8Array): Promise<
       await adapter.set(SECRET_BAG_KEY, await sealSecretBag(dek, bag))
     }
   }
+  if (failAfterBagWrite) throw failAfterBagWrite
   if (legacy !== undefined && vaultObj !== null) {
     const stripped = { ...vaultObj }
     delete stripped['backupSecret']
@@ -130,11 +134,13 @@ function makeSaveCred(adapter: Adapter, dek: Uint8Array): (id: string, cred: Clo
 
 /** 宿主 migrateLegacyCloudSources 同构（desktop legacyMigrate.ts / extension cloudCredStore.ts 纯 core 版）：
  *  旧云键 → 源模型（id=旧 backend 键）+ 凭据入保管区 + sourceRevs 平移 + 四旧键删除（先写新后删旧）。
- *  返回本次迁移的源数（无旧键返回 0，不动任何键）。 */
+ *  返回本次迁移的源数（无旧键返回 0，不动任何键）。
+ *  failBeforeCleanup：中断注入（审查 M5）——基线已平移、四旧键未删时抛错，模拟删旧键前中断。 */
 async function migrateLegacyCloudSources(
   adapter: Adapter,
   dek: Uint8Array,
   deps: { saveCred(id: string, cred: CloudCred): Promise<void> },
+  failBeforeCleanup?: Error,
 ): Promise<number> {
   // 读旧凭据：cloudCreds（数组）缺失回退 cloudCred（单对象 → enabled:true）
   let targets: { cred: CloudCred; enabled: boolean }[]
@@ -184,6 +190,7 @@ async function migrateLegacyCloudSources(
     if (legacyRev !== null && first) await saveSourceRev(adapter, first.id, legacyRev)
   }
 
+  if (failBeforeCleanup) throw failBeforeCleanup
   await adapter.delete(CLOUD_CREDS_KEY)
   await adapter.delete(CLOUD_CRED_KEY)
   await adapter.delete(CLOUD_REVS_KEY)
@@ -191,14 +198,16 @@ async function migrateLegacyCloudSources(
   return migrated.length
 }
 
-/** 宿主完整迁移序列：解锁 → migrateLegacySecrets → migrateLegacyCloudSources（App.vue 双汇合点同序） */
+/** 宿主完整迁移序列：解锁 → migrateLegacySecrets → migrateLegacyCloudSources（App.vue 双汇合点同序）。
+ *  fail 透传两个中断点（保管区已写未剥除 / 基线已平移未删旧键），生产同构调用不传。 */
 async function runHostMigration(
   adapter: Adapter,
   deps: { saveCred(id: string, cred: CloudCred): Promise<void> },
+  fail?: { afterBagWrite?: Error; beforeDeleteOldKeys?: Error },
 ): Promise<{ dek: Uint8Array; migrated: number }> {
   const dek = await unlockFromDisk(adapter)
-  await migrateLegacySecrets(adapter, dek)
-  const migrated = await migrateLegacyCloudSources(adapter, dek, deps)
+  await migrateLegacySecrets(adapter, dek, fail?.afterBagWrite)
+  const migrated = await migrateLegacyCloudSources(adapter, dek, deps, fail?.beforeDeleteOldKeys)
   return { dek, migrated }
 }
 
@@ -311,6 +320,69 @@ describe('plan16 迁移端到端（纯 core 模拟宿主序列）', () => {
     await expectMigratedState(adapter, dek, { webdav: WEBDAV, gist: GIST })
     const sources = await loadSources(adapter)
     expect(sources.map((s) => s.id)).toEqual(['webdav', 'gist']) // 无重复
+    expect(await loadSourceRevs(adapter)).toEqual({ webdav: 'hash-w', gist: 'hash-g' })
+  })
+
+  it('中断恢复：保管区已写但 vault 未剥除遗留字段 → 重跑剥除并收敛到一致终态（审查 M5）', async () => {
+    const adapter = makeAdapter()
+    await seedLegacyState(adapter, {
+      [CLOUD_CRED_KEY]: JSON.stringify(WEBDAV),
+      [CLOUD_REV_KEY]: 'legacy-hash',
+    })
+
+    // 中断：保管区密封落盘后、vault 剥除前抛错（先写新与后删旧之间）
+    const boom = new Error('剥除前断电')
+    await expect(
+      runHostMigration(adapter, { saveCred: makeSaveCred(adapter, await unlockFromDisk(adapter)) }, { afterBagWrite: boom }),
+    ).rejects.toThrow('剥除前断电')
+
+    // 中断态：保管区已含口令（先写新生效），vault 密文仍含 backupSecret（未剥除），旧键未动
+    const dekMid = await unlockFromDisk(adapter)
+    const bagMid = await openSecretBag(dekMid, adapter.data[SECRET_BAG_KEY]!)
+    expect(bagMid.backupPassword).toBe(LEGACY_SECRET)
+    const vaultMid = JSON.parse(await decryptVaultWithDek(dekMid, JSON.parse(adapter.data[VAULT_KEY]!))) as Record<string, unknown>
+    expect(vaultMid['backupSecret']).toBe(LEGACY_SECRET)
+    expect(adapter.data[CLOUD_CRED_KEY]).toBe(JSON.stringify(WEBDAV))
+    expect(adapter.data[CLOUD_REV_KEY]).toBe('legacy-hash')
+    expect(await adapter.get(SOURCES_KEY)).toBeNull()
+
+    // 重跑收敛：保管区口令不覆盖（幂等），vault 剥除，云源迁移完成
+    const { dek, migrated } = await runHostMigration(adapter, { saveCred: makeSaveCred(adapter, dekMid) })
+    expect(migrated).toBe(1)
+    await expectMigratedState(adapter, dek, { webdav: WEBDAV })
+    expect(await loadSourceRevs(adapter)).toEqual({ webdav: 'legacy-hash' })
+  })
+
+  it('中断恢复：基线已平移但旧键未删 → 重跑补删旧键并收敛到一致终态（审查 M5）', async () => {
+    const adapter = makeAdapter()
+    const legacyCreds = JSON.stringify([{ cred: WEBDAV, enabled: true }, { cred: GIST, enabled: true }])
+    const legacyRevs = JSON.stringify({ webdav: 'hash-w', gist: 'hash-g' })
+    await seedLegacyState(adapter, {
+      [CLOUD_CREDS_KEY]: legacyCreds,
+      [CLOUD_REVS_KEY]: legacyRevs,
+    })
+
+    // 中断：源/凭据/基线均已写新，四旧键删除前抛错
+    const boom = new Error('删旧键前崩溃')
+    await expect(
+      runHostMigration(adapter, { saveCred: makeSaveCred(adapter, await unlockFromDisk(adapter)) }, { beforeDeleteOldKeys: boom }),
+    ).rejects.toThrow('删旧键前崩溃')
+
+    // 中断态：先写新全部生效（源列表/两凭据/基线平移），旧键四件套原样未删
+    const dekMid = await unlockFromDisk(adapter)
+    expect((await loadSources(adapter)).map((s) => s.id)).toEqual(['webdav', 'gist'])
+    expect(await loadSourceRevs(adapter)).toEqual({ webdav: 'hash-w', gist: 'hash-g' })
+    const bagMid = await openSecretBag(dekMid, adapter.data[SECRET_BAG_KEY]!)
+    expect(bagMid.creds).toEqual({ webdav: WEBDAV, gist: GIST })
+    expect(adapter.data[CLOUD_CREDS_KEY]).toBe(legacyCreds)
+    expect(adapter.data[CLOUD_REVS_KEY]).toBe(legacyRevs)
+
+    // 重跑收敛：源按 id 去重不重复、凭据/基线幂等覆盖、旧键补删
+    const { dek, migrated } = await runHostMigration(adapter, { saveCred: makeSaveCred(adapter, dekMid) })
+    expect(migrated).toBe(2)
+    await expectMigratedState(adapter, dek, { webdav: WEBDAV, gist: GIST })
+    const sources = await loadSources(adapter)
+    expect(sources.map((s) => s.id)).toEqual(['webdav', 'gist'])
     expect(await loadSourceRevs(adapter)).toEqual({ webdav: 'hash-w', gist: 'hash-g' })
   })
 })
