@@ -365,7 +365,9 @@ export function createVueStore(
     return enqueue(async () => {
       if (lockedByWin.get(windowId)) throw new Error('vault locked')
       if (!security.value || !dekByWin.get(windowId)) throw new Error('encryption not enabled')
-      const r = await changeVaultPassphrase(security.value, dekByWin.get(windowId)!, newPassword, { rotateDek: true, ...changeOpts })
+      // rotateDek 缺省 true（设计 §2 裁定改口令即被动轮换）；显式传 undefined 也不得静默关闭轮换
+      // （审查 Minor：{ rotateDek: true, ...changeOpts } 展开顺序会让显式 undefined 覆盖默认值）
+      const r = await changeVaultPassphrase(security.value, dekByWin.get(windowId)!, newPassword, { ...changeOpts, rotateDek: changeOpts.rotateDek ?? true })
       if (r.dek) {
         // 被动轮换（设计 §2）：DEK 已换 → 全库重加密写盘 + 保管区重封。两次数据写盘先行（失败→内存未前进→
         // 下次 commit 以旧 DEK+旧 security 落盘，重试自愈，T7 审查 R3）；成功后才前进内存 DEK，security 落盘作最后提交点

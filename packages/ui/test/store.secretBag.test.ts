@@ -183,6 +183,18 @@ describe('store secretBag', () => {
     expect(await decryptVaultWithDek(oldDek, enc)).toBeDefined() // 旧 DEK 仍可解
   })
 
+  it('changePassphrase 显式 rotateDek: undefined 不静默关闭轮换（默认仍 true）', async () => {
+    const adapter = createMemoryStorage()
+    const s = createVueStore(adapter)
+    await s.initStore()
+    await s.enableEncryption('masterpw')
+    const oldDek = s.getCurrentDek()!
+    await s.changePassphrase('newpw', { rotateDek: undefined, profile: undefined })
+    expect(s.getCurrentDek()).not.toBe(oldDek) // DEK 已轮换
+    const enc = JSON.parse((await adapter.get('vault'))!)
+    await expect(decryptVaultWithDek(oldDek, enc)).rejects.toThrow() // 旧 DEK 解不开新密文
+  })
+
   it('migrateLegacySecrets 幂等：首次迁移写盘（保管区+密文剥除），二次调用零写盘', async () => {
     const base = createMemoryStorage()
     const { adapter, sets } = countingAdapter(base)
