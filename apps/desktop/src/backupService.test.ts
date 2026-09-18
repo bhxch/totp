@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createBackupEnvelope } from '@totp/core'
-import { createBackupToSources, joinBackupPath, listBackupsFromSources, readBackupByName, type BackupSourceInput } from './backupService'
+import { createBackupEnvelope, loadSources, type BackupSource, type StorageAdapter } from '@totp/core'
+import { createBackupToSources, joinBackupPath, listBackupsFromSources, readBackupByName, saveCloudSourcesPreservingLocal, type BackupSourceInput } from './backupService'
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }))
 // 只 mock Tauri invoke/plugin-fs 边界；@totp/core 的文件名与滚动策略用真实现（另一处 mock 掉慢的 KDF）
@@ -151,6 +151,50 @@ describe('createBackupToSources（每源备份）', () => {
     expect(envMock()).not.toHaveBeenCalled()
     expect(invokeMock).not.toHaveBeenCalled()
     expect(fsMocks.writeTextFile).not.toHaveBeenCalled()
+  })
+})
+
+describe('saveCloudSourcesPreservingLocal（审查 I11：云源保存不丢本地源）', () => {
+  const LOCAL: BackupSource = { id: 'loc-1', kind: 'local', name: '本地目录', retention: { type: 'keep', n: 3 }, enabled: true, dir: 'C:\\bk' }
+  const CLOUD1: BackupSource = { id: 'w1', kind: 'webdav', name: '家里', retention: { type: 'overwrite' }, enabled: true }
+  const CLOUD2: BackupSource = { id: 'g1', kind: 'gist', name: '备份 Gist', retention: { type: 'overwrite' }, enabled: false }
+
+  function memAdapter(initial: BackupSource[] = []): StorageAdapter & { dump(): Promise<BackupSource[]> } {
+    const m = new Map<string, string>()
+    const adapter: StorageAdapter = {
+      get: async (k) => m.get(k) ?? null,
+      set: async (k, v) => { m.set(k, v) },
+      delete: async (k) => { m.delete(k) },
+    }
+    return {
+      ...adapter,
+      async dump() { return loadSources(adapter) },
+    }
+  }
+
+  it('云卡提交仅含云源的快照：并发存在的本地源原样保留，云源按提交覆盖', async () => {
+    const adapter = memAdapter()
+    await saveCloudSourcesPreservingLocal(adapter, [LOCAL, CLOUD1]) // 现值：local + 云源（BackupCard 刚写入 local）
+    await saveCloudSourcesPreservingLocal(adapter, [{ ...CLOUD1, name: '家里 WebDAV' }]) // CloudCard 盲写旧场景的快照
+    const list = await adapter.dump()
+    expect(list.find((s) => s.id === 'loc-1')).toEqual(LOCAL) // 本地源元数据不丢
+    expect(list.find((s) => s.id === 'w1')?.name).toBe('家里 WebDAV')
+  })
+
+  it('云源移除（提交列表缺该 id）：该云源被删除，本地源不受影响', async () => {
+    const adapter = memAdapter()
+    await saveCloudSourcesPreservingLocal(adapter, [LOCAL, CLOUD1, CLOUD2])
+    await saveCloudSourcesPreservingLocal(adapter, [CLOUD1]) // CloudCard onConfirmRemove：列表减去 g1
+    const list = await adapter.dump()
+    expect(list.map((s) => s.id)).toEqual(['loc-1', 'w1'])
+  })
+
+  it('新增云源：追加落盘且与既有本地源共存', async () => {
+    const adapter = memAdapter()
+    await saveCloudSourcesPreservingLocal(adapter, [LOCAL])
+    await saveCloudSourcesPreservingLocal(adapter, [CLOUD1, CLOUD2])
+    const list = await adapter.dump()
+    expect(list.map((s) => s.id)).toEqual(['loc-1', 'w1', 'g1'])
   })
 })
 

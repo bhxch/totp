@@ -7,7 +7,7 @@ import { backupFileName, createBackupEnvelope, loadSourceRevs, loadSources, norm
 import { createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type LocalSourceView, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createDesktopAutoRunner, formatAutoStatusText } from './autoBackup'
-import { createBackupToSources, listBackupsFromSources, readBackupByName, readBackupFileOs, saveConflictBackupToDir, writeBackupFileOs } from './backupService'
+import { createBackupToSources, listBackupsFromSources, readBackupByName, readBackupFileOs, saveConflictBackupToDir, saveCloudSourcesPreservingLocal, writeBackupFileOs } from './backupService'
 import { decryptDpapiOs, readImportFileBytesOs, readImportFileOs } from './importService'
 import { createIdleLockExecutor } from './idleLock'
 import { lockPrefsUnsupportedKeys } from './lockPrefs'
@@ -321,7 +321,8 @@ function readAutoStatusText(key: 'backupAutoStatus' | 'cloudAutoStatus'): string
 const cloudPlatform: CloudPlatform = {
   // ---- 源模型成员（plan16 T14；本卡仅消费云源，local 项归 BackupCard）----
   loadSources: async () => (await loadAllSources()).filter((s) => s.kind !== 'local'),
-  saveSources: (list) => saveSources(requireAdapter(), list),
+  // 审查 I11：合并写入——保留并发改动中的本地源（BackupCard 通道），仅覆盖本卡提交的云源列表
+  saveSources: (list) => saveCloudSourcesPreservingLocal(requireAdapter(), list),
   saveCred: (id, cred) => requireStore().saveSourceCredOp(id, cred),
   removeCred: (id) => requireStore().removeSourceCredOp(id),
   // getter 形态：CloudCard 渲染/回调按 id 动态读取（p.creds[id]），锁定清空/解锁装载/保存后即时可见

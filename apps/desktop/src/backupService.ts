@@ -1,9 +1,9 @@
 import { invoke } from '@tauri-apps/api/core'
 import { mkdir, readDir, readTextFile, rename, writeTextFile, BaseDirectory } from '@tauri-apps/plugin-fs'
 import {
-  backupFileName, conflictBackupFileName, createBackupEnvelope, DEFAULT_KDF_PROFILE, OVERWRITE_NAME,
-  READABLE_BACKUP_RE, selectBackupsToKeep,
-  type BackupEnvelope, type KdfProfile, type Retention,
+  backupFileName, conflictBackupFileName, createBackupEnvelope, DEFAULT_KDF_PROFILE, loadSources, OVERWRITE_NAME,
+  READABLE_BACKUP_RE, saveSources, selectBackupsToKeep,
+  type BackupEnvelope, type BackupSource, type KdfProfile, type Retention, type StorageAdapter,
 } from '@totp/core'
 
 const dir = 'backups'
@@ -149,6 +149,17 @@ export async function readBackupByName(sourceId: string, name: string, sources: 
   const dirOverride = src.dir ?? null
   if (dirOverride) return invoke<string>('read_text_file_os', { path: joinBackupPath(dirOverride, name), allowedDir: dirOverride })
   return readTextFile(`${dir}/${name}`, { baseDir: BaseDirectory.AppData })
+}
+
+/** 云源保存的合并写入（审查 I11）：CloudCard 快照仅含云源（loadSources 按 kind!=='local' 过滤），
+ *  盲写 backupSources 整键会把并发改动中的本地源（BackupCard 读-改-写通道）回退为「仅云源快照」
+ *  丢失元数据。语义：读现值，保留「本次提交列表中不存在的 kind==='local' 项」（CloudCard 是云源
+ *  权威视图，云源的增/删/改以提交列表为准——被移除的云源 id 不在列表中即删除），再覆盖本次提交项 */
+export async function saveCloudSourcesPreservingLocal(adapter: StorageAdapter, list: BackupSource[]): Promise<void> {
+  const current = await loadSources(adapter)
+  const submitted = new Set(list.map((s) => s.id))
+  const preserved = current.filter((s) => s.kind === 'local' && !submitted.has(s.id))
+  await saveSources(adapter, [...preserved, ...list])
 }
 
 export async function readBackupFileOs(path: string): Promise<string> {
