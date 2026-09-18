@@ -74,6 +74,10 @@ describe('MdChip', () => {
   it('未选中无 selected 类', () => {
     expect(mount(MdChip, { props: { label: '全部' } }).classes()).not.toContain('md-chip--selected')
   })
+  it('aria-pressed 随 selected 落 true/false（读屏可辨选中态）', () => {
+    expect(mount(MdChip, { props: { label: '工作', selected: true } }).attributes('aria-pressed')).toBe('true')
+    expect(mount(MdChip, { props: { label: '全部' } }).attributes('aria-pressed')).toBe('false')
+  })
 })
 
 describe('MdCard', () => {

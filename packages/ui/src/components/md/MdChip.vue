@@ -3,7 +3,7 @@ withDefaults(defineProps<{ selected?: boolean; label: string }>(), { selected: f
 const emit = defineEmits<{ click: [event: MouseEvent] }>()
 </script>
 <template>
-  <button class="md-chip" :class="{ 'md-chip--selected': selected }" type="button" @click="emit('click', $event)">{{ label }}</button>
+  <button class="md-chip" :class="{ 'md-chip--selected': selected }" type="button" :aria-pressed="selected" @click="emit('click', $event)">{{ label }}</button>
 </template>
 <style scoped>
 .md-chip { border: none; cursor: pointer; border-radius: 8px; padding: 0 16px; height: 32px;
