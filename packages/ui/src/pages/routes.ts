@@ -8,4 +8,6 @@ export const themeRoutes: RouteRecordRaw[] = [
   { path: '/sync', name: 'sync', component: () => import('./SyncPage.vue') },
   { path: '/security', name: 'security', component: () => import('./SecurityPage.vue') },
   { path: '/settings', name: 'settings', component: () => import('./SettingsPage.vue') },
+  // 审查 Minor：catch-all 兜底——错误 hash 深链（如 #/setings）回首页「验证码」，防空白页
+  { path: '/:pathMatch(.*)*', redirect: '/codes' },
 ]

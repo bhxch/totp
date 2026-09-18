@@ -32,6 +32,15 @@ describe('NavigationShell', () => {
     expect(w.findAll('.md-rail__item')).toHaveLength(5)
   })
 
+  it('未匹配路径（catch-all）重定向 /codes（错误 hash 深链兜底）', async () => {
+    const router = makeRouter()
+    await router.push('/setings'); await router.isReady()
+    const w = mount(NavigationShell, { global: { plugins: [router] }, props: { store: stubStore } })
+    expect(router.currentRoute.value.path).toBe('/codes')
+    expect(w.findAll('.md-rail__item')).toHaveLength(5)
+    w.unmount()
+  })
+
   it('router.push(/settings) 后 settings 页拿到 store(pageProps 分发)', async () => {
     const router = makeRouter()
     await router.push('/settings'); await router.isReady()
