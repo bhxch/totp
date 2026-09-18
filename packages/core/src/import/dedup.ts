@@ -3,7 +3,7 @@
 // （secret 维度优先于 issuer+label 维度）。
 import type { OtpEntry, Vault } from '../model'
 import { addEntry, updateEntry } from '../vault'
-import { applyImport, findConflicts, newEntryFromParsed, parsedPatch, type ConflictPolicy } from './conflict'
+import { applyImport, findConflicts, newEntryFromParsed, parsedPatch, resolveTagNames, type ConflictPolicy } from './conflict'
 import type { ParsedEntry } from './types'
 
 export type { ParsedEntry } from './types'
@@ -131,7 +131,9 @@ export function applyImportPlan(
           return
         }
         if (choice === 'add') {
-          out = addEntry(out, newEntryFromParsed(p, crypto.randomUUID(), now))
+          const resolved = resolveTagNames(out, p.tags ?? [])
+          out = resolved.vault
+          out = addEntry(out, newEntryFromParsed(p, crypto.randomUUID(), now, 0, resolved.tagIds))
           stats.added++
           return
         }
@@ -155,9 +157,12 @@ export function applyImportPlan(
         else stats.conflictMerged++
         return
       }
-      default:
-        out = addEntry(out, newEntryFromParsed(p, crypto.randomUUID(), now))
+      default: {
+        const resolved = resolveTagNames(out, p.tags ?? [])
+        out = resolved.vault
+        out = addEntry(out, newEntryFromParsed(p, crypto.randomUUID(), now, 0, resolved.tagIds))
         stats.added++
+      }
     }
   })
   return { vault: out, stats }

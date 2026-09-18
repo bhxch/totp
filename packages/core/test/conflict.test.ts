@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { applyImport, findConflicts } from '../src/import/conflict'
+import { applyImport, findConflicts, newEntryFromParsed } from '../src/import/conflict'
 import type { ParsedEntry } from '../src/import/types'
-import { addEntry, createVault, newEntryFromUri } from '../src/vault'
+import { addEntry, addTag, createVault, newEntryFromUri, updateEntry } from '../src/vault'
 
 const p = (issuer: string, label: string): ParsedEntry => ({
   type: 'totp', issuer, label, secret: 'JBSWY3DPEHPK3PXP', algorithm: 'SHA1', digits: 6, period: 30,
@@ -69,5 +69,42 @@ describe('applyImport', () => {
     const updated2 = after2.entries.find((e) => e.uuid === existing.uuid)!
     expect(updated2.counter).toBe(99)
     expect(updated2.note).toBe('从备份恢复')
+  })
+})
+
+describe('导入 tags 落地（spec §4）', () => {
+  const mkParsed = (issuer: string, label: string, tags?: string[]): ParsedEntry => ({
+    type: 'totp', issuer, label, secret: 'JBSWY3DPEHPK3PXP', algorithm: 'SHA1', digits: 6, period: 30,
+    ...(tags ? { tags } : {}),
+  })
+
+  it('新增条目携带 tags 并自动建入 vault.tags（同名复用）', () => {
+    let v = createVault()
+    const r = addTag(v, '工作')
+    v = r.vault
+    v = applyImport(v, [mkParsed('A', 'a', [' 工作 ', '个人'])], 'skip', new Set())
+    expect(v.tags.map((t) => t.name).sort()).toEqual(['个人', '工作'])
+    expect(v.entries[0]!.tagIds).toHaveLength(2)
+  })
+
+  it('conflict replace：tags 取现有∪导入并集', () => {
+    let v = createVault()
+    const r = addTag(v, '旧标签')
+    v = r.vault
+    v = addEntry(v, newEntryFromParsed(mkParsed('A', 'a'), 'u1', 1))
+    v = updateEntry(v, 'u1', { tagIds: [r.tagId] })
+    const idx = findConflicts(v, [mkParsed('A', 'a', ['导入标签'])])
+    v = applyImport(v, [mkParsed('A', 'a', ['导入标签'])], 'replace', idx)
+    expect(v.entries[0]!.tagIds).toHaveLength(2)
+    expect(v.tags).toHaveLength(2)
+  })
+
+  it('conflict skip：不动（tagIds 原样）', () => {
+    let v = createVault()
+    v = addEntry(v, { ...newEntryFromParsed(mkParsed('A', 'a'), 'u1', 1), tagIds: ['t9'] })
+    const idx = findConflicts(v, [mkParsed('A', 'a', ['x'])])
+    v = applyImport(v, [mkParsed('A', 'a', ['x'])], 'skip', idx)
+    expect(v.entries[0]!.tagIds).toEqual(['t9'])
+    expect(v.tags).toHaveLength(0)
   })
 })

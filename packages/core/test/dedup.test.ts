@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { addEntry, createVault } from '../src/vault'
 import type { Vault } from '../src/model'
-import { applyImportPlan, dedupeWithinFile, planImport, type ParsedEntry } from '../src/import/dedup'
+import { applyImportPlan, dedupeWithinFile, planImport, type ParsedEntry, type SuspectChoice } from '../src/import/dedup'
+import { newEntryFromParsed } from '../src/import/conflict'
 
 const p = (over: Partial<ParsedEntry> = {}): ParsedEntry => ({
   type: 'totp', issuer: 'GitHub', label: 'a@x.com', secret: 'KRSXG5DSM5UQ', algorithm: 'SHA1', digits: 6, period: 30, ...over,
@@ -194,5 +195,35 @@ describe('applyImportPlan', () => {
     const out = applyImportPlan(v, [], plan, new Map(), 'skip')
     expect(out.vault.entries).toEqual(v.entries)
     expect(out.stats).toEqual({ added: 0, replaced: 0, suspectSkipped: 0, identical: 0, conflictSkipped: 0, conflictReplaced: 0, conflictMerged: 0 })
+  })
+})
+
+describe('applyImportPlan tags 落地', () => {
+  const mkParsed = (issuer: string, label: string, tags?: string[]): ParsedEntry => ({
+    type: 'totp', issuer, label, secret: 'JBSWY3DPEHPK3PXP', algorithm: 'SHA1', digits: 6, period: 30,
+    ...(tags ? { tags } : {}),
+  })
+
+  it('new 条目写 tagIds；dedupeWithinFile 与判定键不含 tags', () => {
+    const v0 = createVault()
+    const incoming = [mkParsed('A', 'a', ['工作'])]
+    const plan = planImport(v0, incoming)
+    const res = applyImportPlan(v0, incoming, plan)
+    expect(res.vault.entries[0]!.tagIds).toHaveLength(1)
+    expect(res.vault.tags).toHaveLength(1)
+    // tags 不参与判定：同名同 secret 不同 tags → identical
+    const p1 = mkParsed('A', 'a', ['工作'])
+    const p2 = mkParsed('A', 'a', ['完全不同'])
+    expect(dedupeWithinFile([p1, p2]).removed).toBe(1)
+  })
+
+  it('suspect replace：保留现有 tagIds（parsedPatch 白名单不含 tags）', () => {
+    let v = createVault()
+    v = addEntry(v, { ...newEntryFromParsed(mkParsed('A', 'a'), 'u1', 1), tagIds: ['keep'] })
+    const incoming = { ...mkParsed('A', 'b'), secret: 'JBSWY3DPEHPK3PXP' } // 同 secret → suspect
+    const plan = planImport(v, [incoming])
+    expect(plan.kinds[0]).toBe('suspect')
+    const res = applyImportPlan(v, [incoming], plan, new Map([[0, 'replace' as SuspectChoice]]))
+    expect(res.vault.entries.find((e) => e.uuid === 'u1')!.tagIds).toEqual(['keep'])
   })
 })

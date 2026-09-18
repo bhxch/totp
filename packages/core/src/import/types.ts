@@ -9,6 +9,8 @@ export interface ParsedEntry {
   period: number
   counter?: number
   note?: string
+  /** 源格式分组键映射出的标签名（原始名，仅 trim；无分组键的格式缺省） */
+  tags?: string[]
 }
 
 export interface ImportResult {
