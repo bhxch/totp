@@ -420,9 +420,13 @@ async function onConfirmReset(): Promise<void> {
   }
 }
 
-/** 以卡内最新偏好整体回写平台（每次展开完整对象，连续切换不丢字段） */
+/** 以卡内最新偏好整体回写平台（每次展开完整对象，连续切换不丢字段）；回写失败走 msg 通道而非静默+未处理 rejection */
 async function syncAutoPrefs(): Promise<void> {
-  await props.platform?.autoPrefs.set({ ...autoPrefs.value })
+  try {
+    await props.platform?.autoPrefs.set({ ...autoPrefs.value })
+  } catch (e) {
+    fail(e)
+  }
 }
 function onAutoOnChange(v: boolean): void {
   autoPrefs.value = { ...autoPrefs.value, onChange: v }

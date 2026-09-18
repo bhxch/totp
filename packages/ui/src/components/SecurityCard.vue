@@ -168,14 +168,18 @@ async function onConfirmProfile(): Promise<void> {
   }
 }
 
-/** 锁定策略任一控件变更：内存即时前进 + 完整对象覆写（避免宿主端部分更新歧义） */
+/** 锁定策略任一控件变更：内存即时前进 + 完整对象覆写（避免宿主端部分更新歧义）；写失败走 msg 通道而非静默 */
 async function onLockPrefChange(patch: Partial<LockPrefs>): Promise<void> {
   const lp = props.platform?.lockPrefs
   const cur = lockPrefsState.value
   if (!lp || !cur) return
   const next: LockPrefs = { ...cur, ...patch }
   lockPrefsState.value = next
-  await lp.set(next)
+  try {
+    await lp.set(next)
+  } catch (e) {
+    fail(e)
+  }
 }
 
 /** 空闲分钟输入钳制：≥0 整数，0=禁用 */

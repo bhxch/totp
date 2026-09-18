@@ -100,12 +100,13 @@ describe('BackupCard 备份加密强度档位（plan16 T11.5）', () => {
     await vi.waitFor(() => expect(prof.api.set).toHaveBeenCalledWith('paranoid'))
   })
 
-  it('P7 set 返回 Promise 也可（void | Promise<void> 兼容）：拒绝不外抛', async () => {
+  it('P7 set 返回 Promise 也可（void | Promise<void> 兼容）：拒绝不外抛且错误进 msg 通道', async () => {
     const api = { get: vi.fn(async (): Promise<KdfProfile> => 'balanced'), set: vi.fn(async (): Promise<void> => { throw new Error('write fail') }) }
     const w = await mountCard(makePlatform({ backupKdfProfile: api }))
     await vi.waitFor(() => expect(w.find('.profile-row').exists()).toBe(true))
     await selectOption(w, '更慢更耐暴力破解')
     await flushPromises()
     expect(api.set).toHaveBeenCalledWith('paranoid') // 不因 set 拒绝而抛出
+    expect(w.find('[role="status"]').text()).toContain('write fail') // 错误经 fail() 展示而非静默
   })
 })

@@ -337,11 +337,11 @@ function onIntervalChange(v: string | number): void {
   void syncAutoPrefs()
 }
 
-/** 备份档位变更：内存即时前进 + 回写平台（后续备份/云上传 envelope 按新档位生成） */
+/** 备份档位变更：内存即时前进 + 回写平台（后续备份/云上传 envelope 按新档位生成）；回写失败走 msg 通道而非静默 */
 function onBackupProfileChange(v: string | number): void {
   const next = v as KdfProfile
   backupProfile.value = next
-  void props.platform?.backupKdfProfile?.set(next)
+  Promise.resolve(props.platform?.backupKdfProfile?.set(next)).catch(fail)
 }
 </script>
 

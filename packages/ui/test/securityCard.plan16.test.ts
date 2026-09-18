@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { computed, ref } from 'vue'
 import SecurityCard from '../src/components/SecurityCard.vue'
 import type { LockPrefs, SecurityOps, SecurityPlatform } from '../src/components/securityPlatform'
@@ -206,5 +206,17 @@ describe('SecurityCard plan16：锁定策略偏好', () => {
       props: { platform: makePlatform({ security: makeSecurity({ locked: ref(true) }), lockPrefs: lp.api }) },
     })
     await vi.waitFor(() => expect(w.find('.lock-prefs').exists()).toBe(true))
+  })
+
+  it('set 持久化拒绝 → 错误进 msg 通道（role=status）而非静默+未处理 rejection', async () => {
+    const lp = {
+      get: vi.fn(async (): Promise<LockPrefs> => ({ ...DEFAULT_PREFS })),
+      set: vi.fn(async (): Promise<void> => { throw new Error('偏好写入失败') }),
+    }
+    const w = mount(SecurityCard, { props: { platform: makePlatform({ lockPrefs: lp }) } })
+    await vi.waitFor(() => expect(w.find('.lock-prefs').exists()).toBe(true))
+    await w.find('.lock-restart input').setValue(false)
+    await flushPromises()
+    expect(w.find('[role="status"]').text()).toContain('偏好写入失败')
   })
 })

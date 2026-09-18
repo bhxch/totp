@@ -308,6 +308,21 @@ describe('CloudCard（多源）', () => {
     )
   })
 
+  it('⑫bautoPrefs.set 持久化拒绝 → 错误进 msg 通道（role=status）而非静默+未处理 rejection', async () => {
+    const p = makePlatform({
+      autoPrefs: {
+        get: vi.fn(async () => ({ onChange: false, onInterval: false, intervalMinutes: 60 })),
+        set: vi.fn(async () => { throw new Error('偏好写入失败') }),
+      },
+      loadSources: vi.fn().mockResolvedValue([WEBDAV_SOURCE]),
+      creds: { 's-webdav': WEBDAV_CRED },
+    })
+    const w = await mountCard(p)
+    await w.find('input[aria-label="变更后自动同步"]').setValue(true)
+    await flushPromises()
+    expect(w.find('[role="status"]').text()).toContain('偏好写入失败')
+  })
+
   it('⑬loadAutoStatus：渲染「上次自动同步」文本；未提供则不渲染该行', async () => {
     const p = makePlatform({
       autoPrefs: { get: () => ({ onChange: false, onInterval: false, intervalMinutes: 60 }), set: () => {} },
