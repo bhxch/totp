@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { getBuiltinIcons, type OtpEntry } from '@totp/core'
 import EntryFormDialog from '../src/components/EntryFormDialog.vue'
@@ -59,6 +59,23 @@ describe('EntryFormDialog', () => {
     const cancel = w.findAll('form.entry-form button').find((b) => b.text() === '取消')!
     await cancel.trigger('click')
     expect(w.emitted('close')).toHaveLength(1)
+  })
+
+  it('createTag 透传 EntryForm：内联建 tag 回车创建后自动勾选（CodesPage 接 store.addTagOp）', async () => {
+    const w = mount(EntryFormDialog, {
+      props: {
+        open: true, editing: null, tags: [{ id: 't1', name: '工作' }], icons,
+        createTag: async (name: string) => (name === '银行' ? 't9' : ''),
+      },
+    })
+    // 未透传时内联建行不存在：选择器找不到即失败（RED 口径与实现一致）
+    const newTag = () => w.find('input[aria-label="新标签名称"]')
+    await newTag().setValue('银行')
+    await newTag().trigger('keydown.enter')
+    // 等透传的 createTag 异步 resolve 且 EntryForm 重渲染：新 tag 复选框出现
+    await vi.waitFor(() => expect(w.findAll('input[type="checkbox"]')).toHaveLength(2))
+    const checks = w.findAll('input[type="checkbox"]').map((c) => (c.element as HTMLInputElement).checked)
+    expect(checks).toEqual([false, true]) // t1 未勾、新建 t9 自动勾选
   })
 
   it('Esc 关闭 → emit close', async () => {

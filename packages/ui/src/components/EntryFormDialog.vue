@@ -10,6 +10,8 @@ defineProps<{
   /** 编辑目标；null = 新建。EntryForm 以 uuid 为 key，切换目标时表单重建回填 */
   editing: OtpEntry | null
   tags: Tag[]
+  /** 内联快速建 tag 透传（CodesPage 接 store.addTagOp）；缺省时 EntryForm 不渲染内联建行 */
+  createTag?: (name: string) => Promise<string>
   /** EntryForm 图标数据源（builtin 全集 + stored dataUrl 映射） */
   icons: { builtin: Record<string, BuiltinIcon>; stored: Readonly<Record<string, string>> }
   /** 图标存储：上传/URL 拉取需要写能力；缺省时 EntryForm 隐藏上传与 URL 拉取 */
@@ -26,6 +28,7 @@ const emit = defineEmits<{ save: [data: EntryFormData]; close: [] }>()
       :key="editing?.uuid ?? 'new'"
       :initial="editing"
       :tags="tags"
+      :create-tag="createTag"
       :icons="icons"
       :icon-store="iconStore"
       @save="(data) => emit('save', data)"

@@ -222,6 +222,7 @@ async function contextTogglePin(entry: OtpEntry) {
       :open="creating || editing !== null"
       :editing="editing"
       :tags="store.vault.tags"
+      :create-tag="(name) => store.addTagOp(name)"
       :icons="entryIcons"
       :icon-store="icons ?? undefined"
       @save="onSave"
