@@ -363,6 +363,7 @@ export function createVueStore(
       if (lockedByWin.get(windowId)) throw new Error('vault locked')
       if (!security.value || !dekByWin.get(windowId)) throw new Error('encryption not enabled')
       // 保管区随加密一起退役（设计 §1：明文库无 DEK 可解）：删设备侧键 + 清缓存；会话口令同清（D1 语义反转后口令只存保管区）
+      lastSelfWrite.bag = Date.now() // 删除路径对称开自写窗口（审查修复）：本端删除的 storage 回声不触发 reloadBagFromDisk
       await adapter.delete(SECRET_BAG_KEY)
       bag = emptyBag()
       credsCache.value = {}
