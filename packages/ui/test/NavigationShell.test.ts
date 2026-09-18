@@ -84,11 +84,12 @@ describe('NavigationShell', () => {
   })
 
   it('isNarrow setup 同步测量：matchMedia 命中时首帧即 Tabs 不闪变 Rail（审查 Minor）', async () => {
-    let changeCb: ((e: { matches: boolean }) => void) | null = null
+    // 回调经对象属性持有：裸 let 变量会被 TS 控制流收窄为 never（嵌套函数内赋值不放宽），调用处 TS2349
+    const hooks: { change: ((e: { matches: boolean }) => void) | null } = { change: null }
     const mql = {
       matches: true,
-      addEventListener: (_t: string, cb: (e: { matches: boolean }) => void) => { changeCb = cb },
-      removeEventListener: () => { changeCb = null },
+      addEventListener: (_t: string, cb: (e: { matches: boolean }) => void) => { hooks.change = cb },
+      removeEventListener: () => { hooks.change = null },
     }
     vi.spyOn(window, 'matchMedia').mockReturnValue(mql as unknown as MediaQueryList)
     const router = makeRouter()
@@ -98,7 +99,7 @@ describe('NavigationShell', () => {
     expect(w.find('.md-rail').exists()).toBe(false)
     expect(w.find('.md-tabs').exists()).toBe(true)
     // 断点变化监听仍在：matches 变 false 回宽窗 Rail
-    changeCb?.({ matches: false })
+    hooks.change?.({ matches: false })
     await nextTick()
     expect(w.find('.md-rail').exists()).toBe(true)
     expect(w.find('.md-tabs').exists()).toBe(false)
