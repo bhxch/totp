@@ -33,9 +33,12 @@ async function load() {
 
 onMounted(async () => {
   await load()
-  // mini 常驻隐藏，重新显示时从盘重载（initStore 幂等不刷新内存，故重建 store）
-  await getCurrentWindow().onVisibleChanged(({ payload: visible }) => {
-    if (visible) void load()
+  // mini 常驻隐藏，重新显示时从盘重载（initStore 幂等不刷新内存，故重建 store）。
+  // 修复真实 bug：@tauri-apps/api v2 Window 无 onVisibleChanged（仅 focus/resized/scale 等 7 个
+  // 事件），原调用运行时 TypeError，「重显重载」从未生效——改用 onFocusChanged 近似（payload=是否
+  // 聚焦；mini 显示即是为了查看码值，聚焦≈刚显示，与 App.vue 失焦隐藏同款事件）
+  await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+    if (focused) void load()
   })
 })
 
