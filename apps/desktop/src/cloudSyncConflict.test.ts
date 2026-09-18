@@ -26,6 +26,7 @@ function fakeBackend(initial?: Uint8Array): CloudBackend & { store: Map<string, 
   const store = new Map<string, Uint8Array>()
   if (initial) store.set('totp-backup.totpbackup', initial)
   return {
+    id: 'webdav',
     store,
     async put(_path, data) { store.set('totp-backup.totpbackup', data) },
     async get(path) { return store.get(path) ?? null },
@@ -35,7 +36,7 @@ function fakeBackend(initial?: Uint8Array): CloudBackend & { store: Map<string, 
 }
 
 /** 与 App.vue cloudSync deps 逐字同构的接线（防止接线回退为 .catch 吞错的回归探针） */
-const saveConflictBackup = (key: string, bytes: Uint8Array): Promise<void> => saveConflictBackupToDir(bytes, null, key)
+const saveConflictBackup = (key: string, bytes: Uint8Array) => saveConflictBackupToDir(bytes, null, key)
 
 describe('审查 I9：冲突副本写盘失败传播（desktop 接线）', () => {
   it('saveConflictBackupToDir 拒绝 → 该目标同步失败：不采纳远端、删基线、状态行记失败、云端不被覆盖', async () => {
