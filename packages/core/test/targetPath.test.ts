@@ -51,4 +51,21 @@ describe('keep-n 云源时间戳路径（设计 §3）', () => {
     expect(resolveDirPath({ ...cred, objectPath: 'a\\b\\c.totpbackup' })).toBe('a/b')
     expect(resolveTimestampPath({ ...cred, objectPath: 'a\\b\\c.totpbackup' }, NOW)).toBe('a/b/vault-20260917-123456.totpbackup')
   })
+  it('同目录同秒两次调用：第二次推进一秒不重名；不同目录互不影响（审查 M3）', () => {
+    const collide = { ...cred, objectPath: 'collide/totp-backup.totpbackup' } as const
+    expect(resolveTimestampPath(collide, NOW)).toBe('collide/vault-20260917-123456.totpbackup')
+    expect(resolveTimestampPath(collide, NOW)).toBe('collide/vault-20260917-123457.totpbackup') // 撞名推进一秒
+    expect(resolveTimestampPath(collide, NOW)).toBe('collide/vault-20260917-123458.totpbackup') // 连续三发依次错开
+    // 目录独立计时：另一目录同一 NOW 仍取整秒，不被别目录推进污染
+    expect(resolveTimestampPath({ ...cred, objectPath: 'other/totp-backup.totpbackup' }, NOW)).toBe('other/vault-20260917-123456.totpbackup')
+    // 推进后的名字仍匹配滚动删除/恢复列表正则（格式零变更）
+    const name = resolveTimestampPath(collide, NOW).split('/').pop()!
+    expect(name).toMatch(/^vault-\d{8}-\d{6}\.totpbackup$/)
+  })
+  it('时钟回拨到已签发时刻：同样推进避让（审查 M3）', () => {
+    const rewind = { ...cred, objectPath: 'rewind/totp-backup.totpbackup' } as const
+    const later = new Date(NOW.getTime() + 5000)
+    expect(resolveTimestampPath(rewind, later)).toBe('rewind/vault-20260917-123501.totpbackup')
+    expect(resolveTimestampPath(rewind, NOW)).toBe('rewind/vault-20260917-123502.totpbackup') // 回拨 5s → 推进到上次+1s
+  })
 })

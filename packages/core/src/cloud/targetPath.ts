@@ -14,10 +14,20 @@ export function resolveObjectPath(cred: CloudCred): string {
   return segments.join('/')
 }
 
+/** 各目录上次签发的时间戳（ms）（审查 M3）：精度到秒，同目录两个源同一秒上传会同名互相覆盖——
+ *  同目录撞名时推进一秒避让。选推进而非随机后缀：文件名严格保持 vault-\d{8}-\d{6} 格式，
+ *  BACKUP_NAME_RE/READABLE_BACKUP_RE（滚动删除与恢复列表过滤）零改动全兼容；同进程确定性防撞；
+ *  字典序=时间序的滚动删除排序不变。跨进程/多端残余碰撞概率与旧版相同（需两端同秒上传同目录，可接受）。 */
+const lastIssuedMsByDir = new Map<string, number>()
+
 /** keep-n 云源上传名：对象路径同目录下 vault-{yyyyMMdd-HHmmss}.totpbackup（与本地 backupFileName 同戳格式） */
 export function resolveTimestampPath(cred: CloudCred, now: Date): string {
   const dir = resolveDirPath(cred)
-  const name = backupFileName(now)
+  let ms = now.getTime()
+  const last = lastIssuedMsByDir.get(dir)
+  if (last !== undefined && ms <= last) ms = last + 1000 // 同秒（或时钟回拨到已签发时刻）推进一秒防同名
+  lastIssuedMsByDir.set(dir, ms)
+  const name = backupFileName(new Date(ms))
   return dir ? `${dir}/${name}` : name
 }
 
