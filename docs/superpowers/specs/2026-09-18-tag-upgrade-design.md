@@ -20,6 +20,7 @@
 | 存储兼容策略 | **直接重写，零迁移**——项目未发布，vault JSON 键名一步到位改新，不写读时兼容代码 |
 | 过滤形态 | **统一多选**（popup 与管理页同一交互），行首提供 AND/OR 切换按钮 |
 | 选中态持久化 | **做成设置项**：`rememberTagFilter` 开关（默认关），开则选中集合持久化、跨打开/跨页面保留 |
+| popup 回退语义 | 搜索或 URL 筛选激活且 tag 零命中时**放宽为不按 tag 过滤**并提示；纯 tag 浏览零命中不放宽；CodesPage 始终严格 |
 
 ## §1 数据模型（core）
 
@@ -68,10 +69,29 @@ function filterByTags(entries: OtpEntry[], selectedTagIds: ReadonlySet<string>, 
 
 ### Popup（apps/extension）
 
-- SearchBar 下方插入 `TagFilterRow`。visible 链路：**全库 → 搜索 → tag 过滤 → URL 过滤**。
-- URL 零匹配回退语义修订：从「显示全部」改为「**回退到 tag 过滤后的集合**」——tag 过滤始终被尊重。
+- SearchBar 下方插入 `TagFilterRow`。过滤层：**全库 → 搜索 → tag 过滤 → URL 过滤**，带分级回退（见下）。
 - 选中态行为由设置项控制（见下）；AND/OR 模式始终持久化（偏好属性）。
 - Popup 不做 tag 管理（增删改只在 options 端）。
+- **分级回退**（popup 专用；每级仅在上一级结果为零时生效，回退时给出对应提示）：
+
+  ```
+  base    = 全库 → 搜索
+  tagged  = base → tag 过滤
+  urlSet  = tagged → URL 过滤
+  urlOnly = base → URL 过滤（不含 tag）
+
+  URL 过滤生效时：
+    urlSet 非空  → 显示 urlSet
+    tagged 非空  → 显示 tagged     提示「当前站点无匹配，显示全部」
+    urlOnly 非空 → 显示 urlOnly    提示「当前标签下无匹配，已放宽标签过滤」
+    否则         → 显示 base       提示「当前站点无匹配，显示全部」
+  URL 过滤未生效时：
+    有搜索词且 tagged 为空 → 显示 base   提示「当前标签下无匹配，已放宽标签过滤」
+    其余                   → 显示 tagged（可为空列表）
+  ```
+
+  - **无搜索词且 URL 过滤未生效时不放宽**：纯 tag 浏览零命中如实显示「无匹配结果」，由用户自行调整选择。
+- 管理页 CodesPage **不做**任何 tag/URL 回退，保持严格过滤（空态即「无匹配条目」）——快速取码与浏览管理两场景语义分离。
 
 ### 设置项（core/storage/vaultStore.ts + SettingsPage）
 
@@ -127,7 +147,7 @@ function filterByTags(entries: OtpEntry[], selectedTagIds: ReadonlySet<string>, 
 
 - **core**：tag CRUD（同名复用幂等、remove 清引用）；`filterByTags` any/all + 悬空 id；四导入器 tag 映射（含查表 miss）；conflict replace 并集、skip 不动；dedup 不受影响。
 - **ui**：`TagFilterRow`（多选切换 / AND-OR 按钮禁用态 / 悬空清理）；CodesPage 搜索+tag 组合链路；EntryForm 内联建 tag。
-- **extension**：popup 全链路（搜索 → tag → URL + 零匹配回退尊重 tag 过滤）；`rememberTagFilter` 开/关两种选中态行为。
+- **extension**：popup 全链路分级回退（urlSet 命中 / 站点零匹配回退 tagged / tag 零命中放宽 urlOnly / 放宽后仍零匹配回退 base / 纯 tag 浏览零命中不放宽）；`rememberTagFilter` 开/关两种选中态行为。
 - 收尾：全包 `vue-tsc` + vitest 全绿；用户可见文案「分组」→「标签」全量替换（含 aria-label、title、提示语）。
 
 ## 边界语义速查
@@ -136,7 +156,8 @@ function filterByTags(entries: OtpEntry[], selectedTagIds: ReadonlySet<string>, 
 |---|---|
 | 同名 tag（trim + casefold 相同） | 复用现有，不建第二个 |
 | 条目引用已删除的 tag | removeTag 时已清理；残留悬空 id 视为不命中 |
-| URL 过滤零匹配 | 回退到 tag 过滤后的集合（tag 始终尊重） |
+| URL 过滤零匹配 | popup 回退显示「搜索 → tag」集合（tag 仍尊重）；其余页面不回退 |
+| 搜索/URL 筛选下 tag 零命中 | popup 放宽为不按 tag 过滤并提示；纯 tag 浏览零命中不放宽；CodesPage 不放宽 |
 | 导入 replace 冲突 | tags 并集；skip 不动 |
 | dedup 判重 | 不看 tags |
 | AND/OR 切换 | ≥2 选中才可用；模式全局持久 |
