@@ -220,11 +220,12 @@ export function conflictBackupName(backendKey: string | undefined, now: Date): s
 }
 
 /** 自动状态 JSON → 卡片展示文本（design §4.1）：「YYYY-MM-DD HH:mm 成功/失败/跳过：summary」；
- *  缺字段/坏 JSON/undefined → null（卡片显示「暂无」）。ok=null 渲染「跳过」（写侧 summary 仅存原因，
+ *  缺字段/坏 JSON/空值 → null（卡片显示「暂无」）。ok=null 渲染「跳过」（写侧 summary 仅存原因，
  *  前缀由本函数拼装）；旧 JSON 的 ok 恒为 true/false，照常渲染成功/失败。
  *  与 desktop autoBackup.formatAutoStatusText 同款语义：options App.vue formatAutoStatus 委托本实现，
- *  抽出供三态单测（审查 Minor-2，放 cloudCredStore 因同属 cloud 存储域纯逻辑可测模块） */
-export function formatAutoStatusText(raw: string | undefined): string | null {
+ *  抽出供三态单测（审查 Minor-2，放 cloudCredStore 因同属 cloud 存储域纯逻辑可测模块）。
+ *  入参含 storageAdapter.get 返回的 null（键不存在）：!raw 已统一兜住 null/undefined/空串 */
+export function formatAutoStatusText(raw: string | null | undefined): string | null {
   if (!raw) return null
   try {
     const s = JSON.parse(raw) as { at?: unknown; ok?: unknown; summary?: unknown }

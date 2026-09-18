@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { entryMatchesUrl, getBuiltinIcons, type OtpEntry } from '@totp/core'
+import { entryMatchesUrl, getBuiltinIcons, toOtpDigits, type OtpEntry } from '@totp/core'
 import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, MdCheckbox, MdIconButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, parseUriToEntryData, SearchBar, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, ref } from 'vue'
 import { PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
@@ -195,10 +195,17 @@ function closeForm() {
 
 async function onSave(data: EntryFormData) {
   if (editing.value) {
-    // type 变更时重算 digits（steam→其他保持 5 会显示错位数）；type 未变则不带，保留原值
-    const patch = { ...data } as EntryFormData & { digits?: number }
-    if (data.type !== editing.value.type) patch.digits = data.type === 'steam' ? 5 : 6
-    await updateEntryOp(editing.value.uuid, patch)
+    // type 变更时重算 digits（steam→其他保持 5 会显示错位数）；type 未变沿用表单值。
+    // digits 经 toOtpDigits 收口 number→OtpDigits：表单提交校验（steam=5、其余 6/7/8）已保证
+    // 合法值，此处恒等回传不改运行时行为；?? 默认仅兜 EntryFormData.digits 可选的类型口径
+    // （运行时表单恒携带），替代此前 `{ ...data } as EntryFormData & { digits?: number }` 断言
+    await updateEntryOp(editing.value.uuid, {
+      ...data,
+      digits: toOtpDigits(
+        data.type !== editing.value.type ? (data.type === 'steam' ? 5 : 6) : (data.digits ?? 6),
+        data.type,
+      ),
+    })
   } else {
     // URI 导入预填：表单内未改 type 时携带 URI 中的 algorithm/digits/period/counter
     const carried = prefill.value?.type === data.type ? prefill.value : null
