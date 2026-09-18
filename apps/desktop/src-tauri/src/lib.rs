@@ -494,8 +494,13 @@ pub fn run() {
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_tray_icon_event(|_tray, event| {
-                    if let TrayIconEvent::Click { button: tauri::tray::MouseButton::Left, button_state: tauri::tray::MouseButtonState::Up, .. } = event {
-                        toggle_mini(_tray.app_handle());
+                    if let TrayIconEvent::Click { button, button_state: tauri::tray::MouseButtonState::Up, .. } = event {
+                        match button {
+                            tauri::tray::MouseButton::Left => toggle_mini(_tray.app_handle()),
+                            // 中键直达主窗口，省去右键菜单一步（等价「显示主窗口」）
+                            tauri::tray::MouseButton::Middle => show_main(_tray.app_handle()),
+                            _ => {}
+                        }
                     }
                 })
                 .build(app)?;
