@@ -226,6 +226,20 @@ describe('listBackupsFromSources（聚合列表）', () => {
     const list = await listBackupsFromSources(sources)
     expect(list).toEqual([{ sourceId: 'b', name: 'vault-20260916-140000.totpbackup' }])
   })
+
+  it('M4 默认目录分支同口径过滤：仅后缀 .totpbackup 的非白名单名不混入（与 os 分支一致）', async () => {
+    fsMocks.readDir.mockResolvedValue([
+      { name: 'vault-20260916-140000.totpbackup' },
+      { name: 'evil-20260916-120000.totpbackup' }, // 后缀合法、前缀不在白名单
+      { name: 'conflict-x-20260916-120000.totpbackup' }, // 多段 sourceId 冲突副本：白名单内
+      { name: 'notes.txt' },
+    ])
+    const list = await listBackupsFromSources([{ ...sources[1]! }])
+    expect(list).toEqual([
+      { sourceId: 'b', name: 'vault-20260916-140000.totpbackup' },
+      { sourceId: 'b', name: 'conflict-x-20260916-120000.totpbackup' },
+    ])
+  })
 })
 
 describe('readBackupByName（按 sourceId 读取）', () => {

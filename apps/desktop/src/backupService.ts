@@ -42,11 +42,13 @@ async function writeOsFile(dirOverride: string, name: string, contents: string):
   await invoke('write_text_file_os', { path: joinBackupPath(dirOverride, name), contents, allowedDir: dirOverride })
 }
 
-/** 单目录备份名列表：os 目录走 Rust 白名单命令（已过滤+升序）；null=AppData/backups 走 plugin-fs readDir */
+/** 单目录备份名列表：os 目录走 Rust 白名单命令（已过滤+升序）；null=AppData/backups 走 plugin-fs
+ *  readDir（审查 M4：TS 侧同样按 READABLE_BACKUP_RE 过滤——恢复侧「可恢复的备份文件」口径，
+ *  与 os 分支白名单一致，防仅后缀 .totpbackup 的陌生文件混入列表） */
 async function listDirNames(dirOverride: string | null): Promise<string[]> {
-  return dirOverride
-    ? invoke<string[]>('list_backup_files_os', { dir: dirOverride })
-    : (await readDir(dir, { baseDir: BaseDirectory.AppData })).map((e) => e.name)
+  if (dirOverride) return invoke<string[]>('list_backup_files_os', { dir: dirOverride })
+  const names = (await readDir(dir, { baseDir: BaseDirectory.AppData })).map((e) => e.name)
+  return names.filter((n) => READABLE_BACKUP_RE.test(n))
 }
 
 /** 单源落盘（plan16 前为 createBackupToDir 本体）：overwrite=固定名覆盖；keep=时间戳名+滚动删除。
