@@ -68,4 +68,10 @@ describe('keep-n 云源时间戳路径（设计 §3）', () => {
     expect(resolveTimestampPath(rewind, later)).toBe('rewind/vault-20260917-123501.totpbackup')
     expect(resolveTimestampPath(rewind, NOW)).toBe('rewind/vault-20260917-123502.totpbackup') // 回拨 5s → 推进到上次+1s
   })
+  it('同秒不同毫秒两次调用：取整秒比较后同样推进，不因原始毫秒递增而逃逸（质量审查勘误）', () => {
+    const collideMs = { ...cred, objectPath: 'collidems/totp-backup.totpbackup' } as const
+    // 真实场景：同轮两个 keep 源相隔几百毫秒顺序上传（.2s 与 .8s 同一秒）——毫秒级比较会漏判撞名
+    expect(resolveTimestampPath(collideMs, new Date(NOW.getTime() + 200))).toBe('collidems/vault-20260917-123456.totpbackup')
+    expect(resolveTimestampPath(collideMs, new Date(NOW.getTime() + 800))).toBe('collidems/vault-20260917-123457.totpbackup')
+  })
 })
