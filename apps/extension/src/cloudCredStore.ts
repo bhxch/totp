@@ -76,7 +76,9 @@ function parseLegacySingle(raw: string | null): CloudCred | null {
 /**
  * 旧多目标键 → 源模型 + 保管区迁移（幂等，可重复调用）：
  * 1. 读旧凭据：cloudCreds（数组）缺失回退 cloudCred（单对象 → [{cred, enabled:true}]）；
- *    两者都无 → 直接返回 0（幂等出口，不动任何键）；坏 JSON → 返回 0 且保留旧键（读不出 = 不删）。
+ *    两者都无 → 无凭据可迁出口，revs 孤儿键顺带清理后返回 0（审查修复：中断形态收敛）；
+ *    cloudCreds 为合法空配置（'[]'）→ 删自身与 revs 孤儿后返回 0（审查修复）；坏 JSON →
+ *    返回 0 且保留旧键（读不出 = 不删，防数据丢失）。
  * 2. 构造 BackupSource[]：id=旧 backend 键（保基线兼容——旧 sourceRevs 之前的 cloudRevs 键即 backend 名）、
  *    kind=cred.backend、name=BACKEND_LABEL、retention overwrite（旧模型无每源保留策略）、enabled 原值；
  *    与盘上已有源按 id 去重后追加（中断重跑 / 用户已建同 backend 源时不重复）。
@@ -98,14 +100,30 @@ export async function migrateLegacySources(
     if (parsed.state === 'ok') {
       targets = parsed.targets
     } else {
-      const single = parseLegacySingle(await adapter.get(CLOUD_CRED_KEY))
-      if (single === null) return 0 // 单对象缺失或不可解析：无源可迁，不删键
+      const rawSingle = await adapter.get(CLOUD_CRED_KEY)
+      if (rawSingle === null) {
+        // cloudCreds/cloudCred 双缺失（审查修复）：无凭据可迁的确定性出口——revs 孤儿键顺带清理
+        // （纯 hash 基线，新模型无凭据可迁即无消费方），否则中断形态重跑永不收敛、宿主「待迁移」提示永驻
+        await adapter.delete(CLOUD_REVS_KEY)
+        await adapter.delete(CLOUD_REV_KEY)
+        return 0
+      }
+      const single = parseLegacySingle(rawSingle)
+      if (single === null) return 0 // 单对象存在但不可解析：读不出 = 不删（防数据丢失，含 revs 保守保留）
       targets = [{ cred: single, enabled: true }]
     }
   } catch {
     return 0 // storage 读取异常：按无旧键出口，下轮重试
   }
-  if (targets.length === 0) return 0
+  if (targets.length === 0) {
+    // cloudCreds 为已读出的合法空配置（如 '[]'）（审查修复）：无任何凭据内容，删除零风险；
+    // 连同 revs 孤儿键一并清理——幂等早退不收敛则提示永驻。cloudCred 单对象键不在本出口处理
+    // （数组存在时旧 loadCreds 语义不回退单对象，其是否待迁移由下轮 missing 出口判定）
+    await adapter.delete(CLOUD_CREDS_KEY)
+    await adapter.delete(CLOUD_REVS_KEY)
+    await adapter.delete(CLOUD_REV_KEY)
+    return 0
+  }
 
   // targets 按 backend 去重（审查 Minor：旧 cloudCreds 数组内同 backend 重复项——
   // 原实现会写入重复 id 源）；首现胜（凭据与 enabled 均取首现项）
@@ -177,11 +195,15 @@ export function retentionDeletedNote(name: string, deleted: number): string | nu
   return deleted > 0 ? `${name} 清理 ${deleted} 份旧云备份` : `${name} 后端不支持远端清理`
 }
 
-/** 旧多目标键（cloudCreds/cloudCred/cloudRevs/cloudRev）是否仍存在于 storage
- *  （审查 I6：迁移被跳过/失败后旧键滞留——宿主据此置 UI 提示，告知启用加密后将自动迁移；
- *  成功迁移后旧键已删，本函数自然返回 false，提示随之消失）。任一键读到即 true；读取异常按 false */
+/** 旧凭据键（cloudCreds/cloudCred）是否仍存在于 storage（审查 I6：迁移被跳过/失败后宿主据此置
+ *  UI 提示，告知启用加密后将自动迁移；成功迁移后旧键已删，本函数自然返回 false，提示随之消失）。
+ *  审查修复：只判凭据键——孤儿 revs 键（cloudRevs/cloudRev，纯 hash 基线）对新模型无影响、
+ *  不构成「待迁移配置」，由 migrateLegacySources 的无凭据可迁出口顺带清理，否则
+ *  「cloudCreds 已删、cloudRevs 残留」的中断形态重跑永不收敛、提示每次挂载重新置位。
+ *  凭据键坏 JSON 滞留防数据丢失维持现状（提示在但迁移不跑，键读不出绝不删）。
+ *  任一键读到即 true；读取异常按 false */
 export async function hasLegacyCloudKeys(adapter: StorageAdapter): Promise<boolean> {
-  for (const key of [CLOUD_CREDS_KEY, CLOUD_CRED_KEY, CLOUD_REVS_KEY, CLOUD_REV_KEY]) {
+  for (const key of [CLOUD_CREDS_KEY, CLOUD_CRED_KEY]) {
     if ((await adapter.get(key).catch(() => null)) !== null) return true
   }
   return false

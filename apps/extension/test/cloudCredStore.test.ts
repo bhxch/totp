@@ -179,6 +179,42 @@ describe('migrateLegacySources（旧多目标键 → 源模型 + 保管区）', 
     expect(saveCred).toHaveBeenCalledWith('webdav', WEBDAV)
     expect(saveCred).toHaveBeenCalledWith('gist', GIST)
   })
+
+  it('⑩revs 孤儿残留（凭据键已删）→ hasLegacyCloudKeys false 且迁移出口清空孤儿键（审查修复）', async () => {
+    // 中断形态：cloudCreds 已删、cloudRevs 残留——重跑无凭据可迁，孤儿键此前永不清理、提示永驻
+    adapter.data[CLOUD_REVS_KEY] = JSON.stringify({ webdav: 'w-hash' })
+    adapter.data[CLOUD_REV_KEY] = 'legacy-hash'
+    expect(await hasLegacyCloudKeys(adapter)).toBe(false) // 判据只含凭据键，不误报「待迁移」
+
+    await expect(migrateLegacySources(adapter, { saveCred: vi.fn() })).resolves.toBe(0)
+    expect(adapter.data[CLOUD_REVS_KEY]).toBeUndefined() // 孤儿键已清空（重跑收敛）
+    expect(adapter.data[CLOUD_REV_KEY]).toBeUndefined()
+  })
+
+  it("⑪cloudCreds='[]' 合法空配置 → 迁移出口删自身与 revs 孤儿，hasLegacyCloudKeys 收敛为 false（审查修复）", async () => {
+    adapter.data[CLOUD_CREDS_KEY] = '[]'
+    adapter.data[CLOUD_REVS_KEY] = JSON.stringify({ webdav: 'w-hash' })
+    expect(await hasLegacyCloudKeys(adapter)).toBe(true) // 键尚在（迁移前为真）
+
+    await expect(migrateLegacySources(adapter, { saveCred: vi.fn() })).resolves.toBe(0)
+    expect(adapter.data[CLOUD_CREDS_KEY]).toBeUndefined() // 合法空配置删除零风险
+    expect(adapter.data[CLOUD_REVS_KEY]).toBeUndefined()
+    expect(await hasLegacyCloudKeys(adapter)).toBe(false) // 提示收敛，不再每次挂载重新置位
+  })
+
+  it('⑫坏 JSON 防数据丢失维持现状：cloudCreds 坏 → 旧键全保留（含 revs），单对象坏 → cloudCred/revs 保留', async () => {
+    adapter.data[CLOUD_CREDS_KEY] = '{not-json'
+    adapter.data[CLOUD_REVS_KEY] = JSON.stringify({ webdav: 'w-hash' })
+    await expect(migrateLegacySources(adapter, { saveCred: vi.fn() })).resolves.toBe(0)
+    expect(adapter.data[CLOUD_CREDS_KEY]).toBe('{not-json') // 读不出 = 不删
+    expect(adapter.data[CLOUD_REVS_KEY]).toBe(JSON.stringify({ webdav: 'w-hash' }))
+
+    delete adapter.data[CLOUD_CREDS_KEY]
+    adapter.data[CLOUD_CRED_KEY] = '{bad'
+    await expect(migrateLegacySources(adapter, { saveCred: vi.fn() })).resolves.toBe(0)
+    expect(adapter.data[CLOUD_CRED_KEY]).toBe('{bad')
+    expect(adapter.data[CLOUD_REVS_KEY]).toBe(JSON.stringify({ webdav: 'w-hash' })) // 保守保留
+  })
 })
 
 describe('loadSourcesImpl/saveSourcesImpl（core 包装）', () => {
@@ -196,15 +232,21 @@ describe('loadSourcesImpl/saveSourcesImpl（core 包装）', () => {
 })
 
 describe('hasLegacyCloudKeys（审查 I6：迁移跳过/失败后宿主据此置 UI 提示）', () => {
-  it('无旧键 → false；四旧键任一存在 → true；迁移成功（旧键全删）后 → false', async () => {
+  it('无旧键 → false；凭据键（cloudCreds/cloudCred）任一存在 → true；迁移成功（旧键全删）后 → false', async () => {
     await expect(hasLegacyCloudKeys(adapter)).resolves.toBe(false)
-    // 任一旧键滞留即 true（覆盖「仅 cloudCred 单对象」「仅 revs 键」等部分滞留形态）
+    // 任一凭据键滞留即 true
     adapter.data[CLOUD_CRED_KEY] = JSON.stringify(WEBDAV)
     await expect(hasLegacyCloudKeys(adapter)).resolves.toBe(true)
-    for (const k of [CLOUD_CREDS_KEY, CLOUD_REVS_KEY, CLOUD_REV_KEY]) adapter.data[k] = 'x'
+    adapter.data[CLOUD_CREDS_KEY] = '[]'
     await expect(hasLegacyCloudKeys(adapter)).resolves.toBe(true)
-    // 模拟迁移成功出口：旧键全删 → false（legacyNote 提示随之消失）
-    for (const k of [CLOUD_CREDS_KEY, CLOUD_CRED_KEY, CLOUD_REVS_KEY, CLOUD_REV_KEY]) delete adapter.data[k]
+    // 模拟迁移成功出口：凭据键全删 → false（legacyNote 提示随之消失）
+    for (const k of [CLOUD_CREDS_KEY, CLOUD_CRED_KEY]) delete adapter.data[k]
+    await expect(hasLegacyCloudKeys(adapter)).resolves.toBe(false)
+  })
+
+  it('孤儿 revs 键不构成「待迁移配置」→ false（审查修复：判据只含凭据键）', async () => {
+    adapter.data[CLOUD_REVS_KEY] = JSON.stringify({ webdav: 'w-hash' })
+    adapter.data[CLOUD_REV_KEY] = 'legacy-hash'
     await expect(hasLegacyCloudKeys(adapter)).resolves.toBe(false)
   })
 
