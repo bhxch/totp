@@ -14,6 +14,12 @@ describe('RevealDialog', () => {
     expect(w.find('.md-dialog').exists()).toBe(false)
   })
 
+  it('entry=null 时 headline 兜底为「密钥」（不渲染 undefined 字样）', () => {
+    const w = mount(RevealDialog, { props: { open: true, entry: null } })
+    expect(w.find('.md-dialog__headline').text()).toBe('密钥')
+    expect(w.text()).not.toContain('undefined')
+  })
+
   it('headline「{issuer} — 密钥」；密钥呈前 4…后 4 遮蔽形态，不渲染完整 secret', () => {
     const w = mount(RevealDialog, { props: { open: true, entry } })
     expect(w.find('.md-dialog__headline').text()).toBe('GitHub — 密钥')
