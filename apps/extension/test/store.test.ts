@@ -62,6 +62,15 @@ beforeEach(() => {
   delete (globalThis as unknown as { chrome?: unknown }).chrome
 })
 
+describe('extension store op 导出（Tag 13 换名收口）', () => {
+  it('导出 addTagOp/renameTagOp/removeTagOp（原 addGroupOp 族随 vault.groups→tags 换名）', async () => {
+    const ops = await import('../src/store')
+    expect(typeof ops.addTagOp).toBe('function')
+    expect(typeof ops.renameTagOp).toBe('function')
+    expect(typeof ops.removeTagOp).toBe('function')
+  })
+})
+
 describe('extension store registerSync 映射（审查 I7）', () => {
   it('onChanged 含 secretBag 键 → 透传触发 reloadBagFromDisk，credsCache 前进到远端内容', async () => {
     const c = installChrome()

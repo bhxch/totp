@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { entryMatchesUrl, getBuiltinIcons, toOtpDigits, type OtpEntry } from '@totp/core'
-import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, MdCheckbox, MdIconButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, parseUriToEntryData, SearchBar, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
-import { computed, onMounted, ref } from 'vue'
+import { getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
+import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, MdCheckbox, MdIconButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, parseUriToEntryData, resolvePopupVisible, SearchBar, TagFilterRow, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
+import { computed, onMounted, ref, watch } from 'vue'
 import { PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
 import { storageAdapter } from '../../src/store'
 import {
-  addEntryOp, commitSettings, initStore, locked, registerStorageSync, removeEntryOp, settings, store, updateEntryOp, vault,
+  addEntryOp, addTagOp, commitSettings, initStore, locked, registerStorageSync, removeEntryOp, settings, store, updateEntryOp, vault,
 } from '../../src/store'
 
 const icons = createIconStore(storageAdapter)
@@ -20,7 +20,6 @@ const loaded = ref(false)
 const error = ref('')
 const query = ref('')
 const tabUrl = ref<string | null>(null)
-const filterOn = computed(() => settings.urlFilterEnabled)
 
 onMounted(async () => {
   try {
@@ -28,6 +27,10 @@ onMounted(async () => {
     // 主题接线:initStore 成功后挂 useTheme(设置已加载为真实值;首帧属性由 html 内联脚本负责)
     useTheme(store)
     registerStorageSync()
+    // rememberTagFilter 恢复补偿：setup 早于 initStore，上方 selectedTagIds 初始化读到的是默认值；
+    // 盘上设置载入后（Object.assign 同一 reactive 对象）在此补读一次（与 options CodesPage 同语义）。
+    // 仅在确有已存选中时赋值：空→空赋值也会触发持久化 watch，省去一次冗余 settings 落盘
+    if (settings.rememberTagFilter && settings.lastTagFilterIds.length > 0) selectedTagIds.value = [...settings.lastTagFilterIds]
     await icons.init()
   } catch (e) {
     error.value = '本地数据读取失败：' + (e instanceof Error ? e.message : String(e))
@@ -56,16 +59,38 @@ const { codes } = useOtpCodes(sorted)
 /** EntryForm 图标数据源：builtin 全集 + store 内 stored/url dataUrl 映射 */
 const entryIcons = computed(() => ({ builtin: getBuiltinIcons(), stored: icons.icons }))
 
-const matched = computed(() => (tabUrl.value ? sorted.value.filter((e) => entryMatchesUrl(e, tabUrl.value!)) : []))
-const visible = computed(() => {
-  const q = query.value.trim().toLowerCase()
-  const base = q
-    ? sorted.value.filter((e) => `${e.issuer} ${e.label} ${e.note ?? ''}`.toLowerCase().includes(q))
-    : sorted.value
-  if (!filterOn.value || !tabUrl.value) return base
-  return matched.value.length > 0 ? matched.value.filter((e) => base.includes(e)) : base
+const filterOn = computed(() => settings.urlFilterEnabled)
+/** 标签筛选选中态：rememberTagFilter 开启时自 settings 恢复并回写（spec §3） */
+const selectedTagIds = ref<string[]>(settings.rememberTagFilter ? [...settings.lastTagFilterIds] : [])
+const tagMode = computed(() => settings.tagFilterMode)
+async function setTagMode(m: TagFilterMode) {
+  settings.tagFilterMode = m
+  await commitSettings()
+}
+watch(selectedTagIds, (ids) => {
+  if (!settings.rememberTagFilter) return
+  settings.lastTagFilterIds = [...ids]
+  void commitSettings()
 })
-const filterFallback = computed(() => filterOn.value && !!tabUrl.value && matched.value.length === 0)
+// 悬空 tag 清理：tag 被删/同步变更后从选中集合剔除（联动持久化 watch 一并落盘）
+watch(
+  () => vault.tags.map((t) => t.id),
+  (ids) => {
+    const next = selectedTagIds.value.filter((id) => ids.includes(id))
+    if (next.length !== selectedTagIds.value.length) selectedTagIds.value = next
+  },
+)
+
+/** 四级回退链（spec §3）：搜索 → tag → URL 分级放宽；tabUrl 仅 http(s)（onMounted 既有判定） */
+const filterResult = computed(() => resolvePopupVisible({
+  entries: sorted.value,
+  query: query.value,
+  selectedTagIds: new Set(selectedTagIds.value),
+  tagMode: settings.tagFilterMode,
+  urlFilterActive: filterOn.value && !!tabUrl.value,
+  tabUrl: tabUrl.value,
+}))
+const visible = computed(() => filterResult.value.visible)
 const toggleFilter = async () => {
   settings.urlFilterEnabled = !settings.urlFilterEnabled
   await commitSettings()
@@ -274,11 +299,17 @@ async function copy(entry: OtpEntry) {
 
     <SearchBar v-model="query" />
 
+    <TagFilterRow
+      v-if="vault.tags.length > 0" class="tag-row"
+      :tags="vault.tags" v-model:selected-ids="selectedTagIds"
+      :mode="tagMode" @update:mode="setTagMode"
+    />
+
     <div class="filter-row" v-if="tabUrl">
       <!-- M3 MdCheckbox(审查 X10):原 UA 原生 checkbox 深色 scheme 下未选中即深灰填充,即「复选框底色偏深」根因 -->
       <MdCheckbox :model-value="filterOn" label="按当前站点过滤" @update:model-value="toggleFilter" />
-      <span v-if="filterFallback" class="hint">当前站点无匹配，显示全部</span>
-      <span v-else-if="filterOn" class="hint">匹配 {{ matched.length }} 条</span>
+      <span v-if="filterResult.hint" class="hint">{{ filterResult.hint }}</span>
+      <span v-else-if="filterOn && filterResult.urlMatchCount > 0" class="hint">匹配 {{ filterResult.urlMatchCount }} 条</span>
     </div>
 
     <!-- 错误提示置于 details 外常显：?uri= 回调报错时 details 默认折叠，放内部会静默不可见 -->
@@ -291,7 +322,7 @@ async function copy(entry: OtpEntry) {
       </div>
     </details>
 
-    <EntryForm v-if="creating || editing" :key="editing?.uuid ?? (prefill ? `prefill-${formKey}` : 'new')" :initial="editing ?? prefill" :groups="vault.groups" :icons="entryIcons" :icon-store="icons" @save="onSave" @cancel="closeForm" />
+    <EntryForm v-if="creating || editing" :key="editing?.uuid ?? (prefill ? `prefill-${formKey}` : 'new')" :initial="editing ?? prefill" :tags="vault.tags" :create-tag="addTagOp" :icons="entryIcons" :icon-store="icons" @save="onSave" @cancel="closeForm" />
 
     <div v-if="loaded && sorted.length === 0" class="empty">暂无条目，点击右上角「＋ 添加」录入。</div>
     <div v-else-if="loaded && visible.length === 0" class="empty">无匹配结果</div>
@@ -341,6 +372,7 @@ h1 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .error { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); }
 .copied-banner { font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-primary); background: var(--md-sys-color-primary-container); border-radius: 6px; padding: 4px 8px; margin: 0 4px; }
 .filter-row { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-small); padding: 0 4px; }
+.tag-row { padding: 0 4px; }
 .otpauth-import { font-size: var(--md-sys-typescale-body-medium); padding: 0 4px; }
 .otpauth-import summary { cursor: pointer; opacity: .8; }
 .otpauth-import textarea { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 6px 8px; font-family: inherit; resize: vertical; }
