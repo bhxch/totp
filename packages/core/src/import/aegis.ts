@@ -2,7 +2,7 @@ import { scrypt } from 'hash-wasm'
 import { aesGcmDecrypt, base64ToBytes } from '../crypto/aesgcm'
 import { hexToBytes } from '../encoding/hex'
 import {
-  normalizeAlgorithm, normalizeSecret, normalizeType, toPositiveNumber,
+  asObject, normalizeAlgorithm, normalizeSecret, normalizeType, toPositiveNumber,
 } from './normalize'
 import type { ImportResult, ParsedEntry } from './types'
 
@@ -33,7 +33,7 @@ function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
 
 // type/algorithm/数值规整 helpers 已迁出至 ./normalize（M10 收敛）
 /** Aegis entry → ParsedEntry；secret 缺失视为单条损坏（进 failures） */
-function parseEntry(raw: unknown, index: number): ParsedEntry | { error: string } {
+function parseEntry(raw: unknown, index: number, groups: Map<string, string>): ParsedEntry | { error: string } {
   if (raw === null || typeof raw !== 'object') return { error: `条目 ${index} 非对象` }
   const entry = raw as Record<string, unknown>
   const info = (entry.info ?? {}) as Record<string, unknown>
@@ -60,19 +60,35 @@ function parseEntry(raw: unknown, index: number): ParsedEntry | { error: string 
   const counter = Number(info.counter)
   if (Number.isFinite(counter) && counter >= 0) parsed.counter = counter
   if (typeof entry.note === 'string' && entry.note !== '') parsed.note = entry.note
+  if (typeof entry.groupid === 'string') {
+    const tagName = groups.get(entry.groupid)
+    if (tagName) parsed.tags = [tagName]
+  }
   return parsed
 }
 
 /** Aegis db（明文 JSON 对象）→ ImportResult，单条损坏进 failures */
 function parseDbEntries(db: unknown): ImportResult {
   if (db === null || typeof db !== 'object') throw new Error('Aegis 文件结构非法：缺少 db 对象')
-  const entries = (db as Record<string, unknown>).entries
+  const dbObj = db as Record<string, unknown>
+  const entries = dbObj.entries
   if (!Array.isArray(entries)) throw new Error('Aegis 文件结构非法：缺少 db.entries 数组')
+
+  // db.groups: [{uuid, name}] → groupid 查表（spec §4）；缺 groups/条目缺 groupid 均合法
+  const groups = new Map<string, string>()
+  if (Array.isArray(dbObj.groups)) {
+    for (const g of dbObj.groups) {
+      const o = asObject(g)
+      if (o && typeof o.uuid === 'string' && typeof o.name === 'string' && o.name.trim() !== '') {
+        groups.set(o.uuid, o.name)
+      }
+    }
+  }
 
   const parsed: ParsedEntry[] = []
   const failures: ImportResult['failures'] = []
   entries.forEach((raw, index) => {
-    const res = parseEntry(raw, index)
+    const res = parseEntry(raw, index, groups)
     if ('error' in res) failures.push({ index, message: res.error })
     else parsed.push(res)
   })

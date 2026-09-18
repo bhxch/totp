@@ -69,6 +69,21 @@ describe('importTwoFas', () => {
     // I27：空 services 数组不再静默落 generic，明确报「无条目」
     expect(() => importTwoFas('{"schemaVersion": 4, "services": []}')).toThrow(/无条目/)
   })
+
+  it('groups[].id + service.groupId 映射为 tags', () => {
+    const text = JSON.stringify({
+      schemaVersion: 4,
+      groups: [{ id: 'g1', name: '工作', isExpanded: true }],
+      services: [
+        { name: 'GitHub', secret: 'JBSWY3DPEHPK3PXP', groupId: 'g1', otp: { account: 'me', tokenType: 'TOTP' } },
+        { name: 'GitLab', secret: 'JBSWY3DPEHPK3PXP', otp: { account: 'me', tokenType: 'TOTP' } },
+      ],
+    })
+    const res = importTwoFas(text)
+    expect(res.failures).toHaveLength(0)
+    expect(res.entries[0]!.tags).toEqual(['工作'])
+    expect(res.entries[1]!.tags).toBeUndefined()
+  })
 })
 
 // ---------- Bitwarden（BitwardenImporter.java：items[].login.totp 为 otpauth URI；本工具扩展裸 base32 secret） ----------
@@ -117,6 +132,20 @@ describe('importBitwarden', () => {
         JSON.stringify({ encrypted: true, encKeyValidation_DO_NOT_EDIT: 'v', data: { items: [] } }),
       ),
     ).toThrow(/已加密/)
+  })
+
+  it('folders[].id + item.folderId 映射为 tags', () => {
+    const text = JSON.stringify({
+      folders: [{ id: 'f1', name: '工作' }],
+      items: [
+        { name: 'GitHub', folderId: 'f1', login: { totp: 'JBSWY3DPEHPK3PXP' } },
+        { name: 'GitLab', login: { totp: 'JBSWY3DPEHPK3PXP' } },
+      ],
+    })
+    const res = importBitwarden(text)
+    expect(res.failures).toHaveLength(0)
+    expect(res.entries[0]!.tags).toEqual(['工作'])
+    expect(res.entries[1]!.tags).toBeUndefined()
   })
 })
 

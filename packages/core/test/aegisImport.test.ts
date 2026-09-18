@@ -41,6 +41,24 @@ describe('importAegisPlaintext', () => {
   it('结构非法：缺少 db.entries 报结构化错误', () => {
     expect(() => importAegisPlaintext('{}')).toThrow('结构非法')
   })
+  it('db.groups + 条目 groupid 映射为 tags；查表 miss 静默丢弃', () => {
+    const text = JSON.stringify({
+      version: 3, header: {},
+      db: {
+        groups: [{ uuid: 'g1', name: '工作' }],
+        entries: [
+          { type: 'totp', name: 'GitHub:me', info: { secret: 'JBSWY3DPEHPK3PXP' }, groupid: 'g1' },
+          { type: 'totp', name: 'GitLab:me', info: { secret: 'JBSWY3DPEHPK3PXP' }, groupid: 'missing' },
+          { type: 'totp', name: 'No:group', info: { secret: 'JBSWY3DPEHPK3PXP' } },
+        ],
+      },
+    })
+    const res = importAegisPlaintext(text)
+    expect(res.failures).toHaveLength(0)
+    expect(res.entries[0]!.tags).toEqual(['工作'])
+    expect(res.entries[1]!.tags).toBeUndefined()
+    expect(res.entries[2]!.tags).toBeUndefined()
+  })
 })
 
 describe('importAegisEncrypted', () => {

@@ -65,6 +65,17 @@ export function importTwoFas(text: string): ImportResult {
   if (!Array.isArray(obj.services)) throw new Error('2FAS 文件结构非法：缺少 services 数组')
   if (obj.services.length === 0) throw new Error('2FAS 导出无条目：services 数组为空')
 
+  // groups: [{id, name}]；service.groupId → name 查表（spec §4）
+  const groupMap = new Map<string, string>()
+  if (Array.isArray(obj.groups)) {
+    for (const g of obj.groups) {
+      const o = asObject(g)
+      if (o && typeof o.id === 'string' && typeof o.name === 'string' && o.name.trim() !== '') {
+        groupMap.set(o.id, o.name)
+      }
+    }
+  }
+
   return collectEntries(obj.services, (raw, index) => {
     const service = asObject(raw)
     if (!service) return { error: `条目 ${index} 非对象` }
@@ -83,6 +94,8 @@ export function importTwoFas(text: string): ImportResult {
       (typeof otp.issuer === 'string' ? otp.issuer : '')
     const label = typeof otp.account === 'string' ? otp.account : ''
     const algorithm = normalizeAlgorithm(otp.algorithm)
+    const groupName = typeof service.groupId === 'string' ? groupMap.get(service.groupId) : undefined
+    const tags = groupName ? { tags: [groupName] } : {}
 
     const tokenType = typeof otp.tokenType === 'string' ? otp.tokenType : null
     if (tokenType === null || tokenType === 'TOTP') {
@@ -94,6 +107,7 @@ export function importTwoFas(text: string): ImportResult {
         algorithm,
         digits: toPositiveNumber(otp.digits, 6),
         period: toPositiveNumber(otp.period, 30),
+        ...tags,
       }
     }
     if (tokenType === 'HOTP') {
@@ -106,10 +120,11 @@ export function importTwoFas(text: string): ImportResult {
         digits: toPositiveNumber(otp.digits, 6),
         counter: toNonNegativeNumber(otp.counter, 0),
         period: 30,
+        ...tags,
       }
     }
     if (tokenType === 'STEAM') {
-      return steamEntry(secret, issuer, label)
+      return { ...steamEntry(secret, issuer, label), ...tags }
     }
     return { error: `条目 ${index} 未知 tokenType: ${tokenType}` }
   })
@@ -133,6 +148,17 @@ export function importBitwarden(text: string): ImportResult {
   }
   if (!Array.isArray(obj.items)) throw new Error('Bitwarden 文件结构非法：缺少 items 数组')
 
+  // folders: [{id, name}]；item.folderId → name 查表（spec §4）
+  const folderMap = new Map<string, string>()
+  if (Array.isArray(obj.folders)) {
+    for (const f of obj.folders) {
+      const o = asObject(f)
+      if (o && typeof o.id === 'string' && typeof o.name === 'string' && o.name.trim() !== '') {
+        folderMap.set(o.id, o.name)
+      }
+    }
+  }
+
   return collectEntries(obj.items, (raw, index) => {
     const item = asObject(raw)
     if (!item) return { error: `条目 ${index} 非对象` }
@@ -143,15 +169,17 @@ export function importBitwarden(text: string): ImportResult {
     const issuer = typeof item.name === 'string' ? item.name : ''
     const label = login && typeof login.username === 'string' ? login.username : ''
     const note = typeof item.notes === 'string' && item.notes !== '' ? item.notes : undefined
+    const folderName = item && typeof item.folderId === 'string' ? folderMap.get(item.folderId) : undefined
+    const tags = folderName ? { tags: [folderName] } : {}
 
     if (totp.startsWith('steam://')) {
       const secret = steamAuthority(totp)
       if (!isBase32(secret)) return { error: `条目 ${index} steam secret 非法` }
-      return { ...steamEntry(secret, 'Steam', 'Steam account'), note }
+      return { ...steamEntry(secret, 'Steam', 'Steam account'), note, ...tags }
     }
     if (totp.startsWith('otpauth://')) {
       try {
-        return { ...parseOtpUri(totp), issuer, label, note }
+        return { ...parseOtpUri(totp), issuer, label, note, ...tags }
       } catch {
         return { error: `条目 ${index} totp 非法 otpauth URI` }
       }
@@ -167,6 +195,7 @@ export function importBitwarden(text: string): ImportResult {
         digits: 6,
         period: 30,
         note,
+        ...tags,
       }
     }
     return { error: `条目 ${index} totp 非法（非 URI 且非 base32）` }

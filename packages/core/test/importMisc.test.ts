@@ -214,6 +214,17 @@ describe('importAndOtp', () => {
     // 模拟二进制加密备份被文本管道读入（迭代数头 + 随机字节）
     expect(() => importAndOtp('\u0000\u0000\u03e8\u0000saltnonces....')).toThrow(/加密/)
   })
+
+  it('条目 tags 数组直接映射（过滤非字符串与空白项）', () => {
+    const text = JSON.stringify([
+      { type: 'TOTP', label: 'GitHub - me', secret: 'JBSWY3DPEHPK3PXP', algorithm: 'SHA1', digits: 6, period: 30, tags: ['工作', ' ', 42] },
+      { type: 'TOTP', label: 'GitLab - me', secret: 'JBSWY3DPEHPK3PXP', algorithm: 'SHA1', digits: 6, period: 30 },
+    ])
+    const res = importAndOtp(text)
+    expect(res.failures).toHaveLength(0)
+    expect(res.entries[0]!.tags).toEqual(['工作'])
+    expect(res.entries[1]!.tags).toBeUndefined()
+  })
 })
 
 // ---------- sniffFormat 扩展 ----------

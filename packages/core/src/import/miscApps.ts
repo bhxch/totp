@@ -320,20 +320,25 @@ function convertAndOtpEntry(obj: Record<string, unknown>, index: number): Parsed
   const labelRes = andOtpIssuerLabel(obj)
   if ('error' in labelRes) return { error: `条目 ${index} ${labelRes.error}` }
 
+  // andOTP 条目自带 tags: string[]（明文导出即标签数组）；非字符串/空白项过滤（spec §4）
+  const tagList = Array.isArray(obj.tags)
+    ? obj.tags.filter((t): t is string => typeof t === 'string' && t.trim() !== '')
+    : []
+  const tagField = tagList.length > 0 ? { tags: tagList } : {}
   const algorithm = normalizeAlgorithm(obj.algorithm)
   const digits = toPositiveNumber(obj.digits, 6)
 
   if (type === 'totp') {
     if (obj.period === null || obj.period === undefined) return { error: `条目 ${index} 缺少 period` }
-    return { type: 'totp', ...labelRes, secret, algorithm, digits, period: toPositiveNumber(obj.period, 30) }
+    return { type: 'totp', ...labelRes, secret, algorithm, digits, period: toPositiveNumber(obj.period, 30), ...tagField }
   }
   if (type === 'hotp') {
     if (obj.counter === null || obj.counter === undefined) return { error: `条目 ${index} 缺少 counter` }
-    return { type: 'hotp', ...labelRes, secret, algorithm, digits, period: 30, counter: toNonNegativeNumber(obj.counter, 0) }
+    return { type: 'hotp', ...labelRes, secret, algorithm, digits, period: 30, counter: toNonNegativeNumber(obj.counter, 0), ...tagField }
   }
   if (type === 'steam') {
     // SteamInfo(secret, algo, digits, optInt("period", 30))；本仓库口径 steam digits=5
-    return { ...steamEntry(secret, labelRes.issuer, labelRes.label), algorithm }
+    return { ...steamEntry(secret, labelRes.issuer, labelRes.label), algorithm, ...tagField }
   }
   return { error: `条目 ${index} 不支持的 type: ${obj.type}` }
 }
