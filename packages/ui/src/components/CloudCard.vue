@@ -4,7 +4,7 @@ import {
   DEFAULT_OBJECT_PATH, enforceRemoteRetention, pushEnvelope, resolveObjectPath, resolveTimestampPath, syncMultipleTargets,
 } from '@totp/core'
 import { computed, onMounted, ref } from 'vue'
-import { createCloudBackend } from './cloudPlatform'
+import { CLOUD_ACTION_LABEL, createCloudBackend } from './cloudPlatform'
 import type { CloudAutoPrefs, CloudPlatform } from './cloudPlatform'
 import { parseVaultJson } from './parseVaultJson'
 import MdButton from './md/MdButton.vue'
@@ -242,9 +242,6 @@ async function onSaveCreds(): Promise<void> {
   }
 }
 
-const ACTION_LABEL: Record<string, string> = {
-  uploaded: '已上传', downloaded: '已下载', 'conflict-resolved': '冲突已解决', 'in-sync': '已是最新',
-}
 const trunc = (s: string, n = 60) => (s.length > n ? `${s.slice(0, n)}…` : s)
 
 /**
@@ -307,7 +304,7 @@ async function onSync(): Promise<void> {
         await p.saveTargetHash(res.key, null) // 失败源删基线，下轮全量重比
         continue
       }
-      statusMap.value[res.key] = ACTION_LABEL[res.outcome.action] ?? res.outcome.action
+      statusMap.value[res.key] = CLOUD_ACTION_LABEL[res.outcome.action] ?? res.outcome.action
       if (res.convergeError) statusMap.value[res.key] += `（收敛回推失败：${trunc(res.convergeError)}）`
       // keep 源上传成功（含收敛改写后的 uploaded）→ 远端滚动删除超额旧份，结果附到状态行：
       // deleted>0 显示清理份数；-1=后端不支持自动清理，提示累积风险与替代选项；0=未超额不刷屏。
