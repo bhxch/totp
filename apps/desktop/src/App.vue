@@ -343,6 +343,10 @@ const cloudPlatform: CloudPlatform = {
  *  状态写盘前拼入 summary 并清空，不跨轮残留） */
 let retentionNotes: string[] = []
 
+/** 源 id→名称进程内缓存（审查 I4：runner sourceName 同步解析显示名用）；runner 每轮 loadSources
+ *  装配时刷新（summary/onRetentionDeleted 均在其后，缓存必已就绪）；取不到回退 id */
+const cloudSourceNames = new Map<string, string>()
+
 /** 自动云同步 runner（D6，ui 共享实现，desktop/extension 同一编排；plan16 T14 源口径）：
  *  loadSources 装配「启用云源 × 保管区凭据」对（无凭据的源跳过——锁定态 credsCache 为空自然全跳过）；
  *  冲突副本已由 onConflictBackup 落盘，故 adopt 分支自动执行、不弹确认——裁定来源=设计 §4
@@ -354,7 +358,9 @@ const cloudSync = createCloudSyncRunner({
   getVaultJson: () => JSON.stringify(store.value?.vault ?? null),
   loadSources: async () => {
     const s = requireStore()
-    return (await loadAllSources())
+    const all = await loadAllSources()
+    for (const x of all) cloudSourceNames.set(x.id, x.name)
+    return all
       .filter((x) => x.kind !== 'local') // 云通道只装配云源（本地源归 BackupCard 通道）
       .map((x) => ({ source: x, cred: s.credsCache.value[x.id] }))
       .filter((p): p is { source: BackupSource; cred: CloudCred } => p.cred !== undefined)
@@ -367,8 +373,9 @@ const cloudSync = createCloudSyncRunner({
     void saveConflictBackupToDir(bytes, null, key).catch(() => {})
   },
   kdfProfile: () => kdfProfileOf(),
-  onRetentionDeleted: (sourceId, deleted) => {
-    retentionNotes.push(deleted >= 0 ? `${sourceId} 清理 ${deleted} 份旧云备份` : `${sourceId} 后端不支持远端清理`)
+  sourceName: (id) => cloudSourceNames.get(id) ?? id,
+  onRetentionDeleted: (name, deleted) => {
+    retentionNotes.push(deleted >= 0 ? `${name} 清理 ${deleted} 份旧云备份` : `${name} 后端不支持远端清理`)
   },
   recordStatus: (ok, summary) => {
     const notes = retentionNotes.join('；')

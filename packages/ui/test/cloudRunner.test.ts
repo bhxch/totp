@@ -415,4 +415,28 @@ describe('createCloudSyncRunner', () => {
     await expect(createCloudSyncRunner(deps).run()).resolves.toBeUndefined()
     expect(onRetentionDeleted).not.toHaveBeenCalled()
   })
+
+  it('⑮csourceName 提供时 summary 与 onRetentionDeleted 用显示名（新建源 uuid 不上屏）；缺省回退源 id（见⑦⑮）', async () => {
+    const b = fakeBackend()
+    b.listBackups = async () => ['vault-1.totpbackup'] // keep=2 超额删 0 份 → deleted=0 仍回调
+    const { deps, recordStatus, onRetentionDeleted } = makeDeps({
+      loadSources: vi.fn(async () => [
+        { source: source('src-uuid-1', { name: '家里 WebDAV', retention: { type: 'keep', n: 2 } }), cred: WEBDAV_CRED },
+      ]),
+      makeBackend: () => b,
+      sourceName: (id) => ({ 'src-uuid-1': '家里 WebDAV' })[id] ?? id,
+    })
+    await createCloudSyncRunner(deps).run()
+    expect(recordStatus).toHaveBeenCalledWith(true, '家里 WebDAV: 已上传')
+    expect(onRetentionDeleted).toHaveBeenCalledWith('家里 WebDAV', 0)
+  })
+
+  it('⑮dsourceName 返回 undefined 时仍回退源 id（?? 回退分支）', async () => {
+    const { deps, recordStatus } = makeDeps({
+      loadSources: vi.fn(async () => [{ source: source('s1'), cred: WEBDAV_CRED }]),
+      sourceName: () => undefined as unknown as string, // 强制走 ?? 回退分支
+    })
+    await createCloudSyncRunner(deps).run()
+    expect(recordStatus).toHaveBeenCalledWith(true, 's1: 已上传')
+  })
 })

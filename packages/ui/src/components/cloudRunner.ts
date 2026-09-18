@@ -36,8 +36,12 @@ export interface CloudRunnerDeps {
   saveConflictBackup?(key: string, bytes: Uint8Array): void
   /** KDF 档位（备份设置所选，信封生成用）；缺省 balanced */
   kdfProfile?: () => KdfProfile
-  /** keep 源滚动删除完成回调（deleted=实际删除份数；-1=后端不支持，宿主降级提示）；缺省忽略 */
+  /** keep 源滚动删除完成回调（sourceId=显示名（deps.sourceName 解析，缺省回退源 id）；deleted=实际删除
+   *  份数；-1=后端不支持，宿主降级提示）；缺省忽略 */
   onRetentionDeleted?(sourceId: string, deleted: number): void
+  /** 源 id → 显示名（审查 I4：宿主从源列表取 name，取不到回退 id）。recordStatus summary 与
+   *  onRetentionDeleted 提示统一用显示名，避免新建源的 uuid 直接上屏；缺省直接用源 id */
+  sourceName?(id: string): string
   /** 「上次自动同步」状态记录（design §4.1：desktop 写 localStorage / extension 写 storage.local 的 cloudAutoStatus）。
    *  三态（批 4）：true=成功 / false=失败 / null=跳过（锁定/无 secret/空目标；记录仅来自自动通道——
    *  手动同步走 CloudCard 自身的 platform 链路，不经过本 runner，不会污染手动状态行） */
@@ -53,6 +57,8 @@ function errMsg(err: unknown): string {
 }
 
 export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(): Promise<void> } {
+  /** 显示名解析：sourceName 提供时用宿主名称，否则回退源 id（审查 I4） */
+  const displayName = (id: string): string => deps.sourceName?.(id) ?? id
   async function run(): Promise<void> {
     if (busy) return
     // 跳过态可观测（批 4 裁定）：锁定/无 secret/空目标是「用户需要知道的原因」，return 前记 null 跳过态。
@@ -109,13 +115,14 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(): Promise<v
         const backend = inputs.find((x) => x.key === source.id)!.backend
         try {
           const deleted = await enforceRemoteRetention(backend, source.retention.n)
-          deps.onRetentionDeleted?.(source.id, deleted)
+          deps.onRetentionDeleted?.(displayName(source.id), deleted)
         } catch {
           // 不进 onError（区别于编排层意外）：清理失败下轮同步自动重试
         }
       }
-      // summary 动作中文化（Minor-6）：与手动同步状态行同口径；单目标失败（outcome=null）记「失败」
-      deps.recordStatus?.(true, r.results.map((x) => `${x.key}: ${x.outcome ? CLOUD_ACTION_LABEL[x.outcome.action] : '失败'}`).join('; '))
+      // summary 动作中文化（Minor-6）：与手动同步状态行同口径；单目标失败（outcome=null）记「失败」；
+      // 源显示名（审查 I4）：sourceName 提供时用名称，新建源 uuid 不上屏
+      deps.recordStatus?.(true, r.results.map((x) => `${displayName(x.key)}: ${x.outcome ? CLOUD_ACTION_LABEL[x.outcome.action] : '失败'}`).join('; '))
     } catch (err) {
       deps.onError?.(err)
       deps.recordStatus?.(false, errMsg(err).slice(0, 100))

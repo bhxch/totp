@@ -351,6 +351,10 @@ async function downloadConflictBackup(bytes: Uint8Array, backendKey?: string): P
  *  状态写盘前拼入 summary 并清空，不跨轮残留） */
 let retentionNotes: string[] = []
 
+/** 源 id→名称进程内缓存（审查 I4：runner sourceName 同步解析显示名用）；runner 每轮 loadSources
+ *  装配时刷新（summary/onRetentionDeleted 均在其后，缓存必已就绪）；取不到回退 id */
+const cloudSourceNames = new Map<string, string>()
+
 /** 存活期自动云同步 runner（D6，ui 共享实现，与 desktop 同一编排；plan16 T13 源口径）：
  *  loadSources 装配「启用云源 × 保管区凭据」对（无凭据的源跳过——锁定态 credsCache 为空自然全跳过）；
  *  GDrive 首推凭据回存由 CloudCard 手动通道持有（runner deps 新口径不含 onCredChange） */
@@ -360,6 +364,7 @@ const cloudSync = createCloudSyncRunner({
   getVaultJson: () => JSON.stringify(store.vault),
   loadSources: async () => {
     const sources = await loadSourcesImpl(storageAdapter)
+    for (const s of sources) cloudSourceNames.set(s.id, s.name)
     return sources
       .filter((s) => s.kind !== 'local') // 云卡通道只装配云源（本地源归 BackupCard，extension 无）
       .map((s) => ({ source: s, cred: store.credsCache.value[s.id] }))
@@ -374,8 +379,9 @@ const cloudSync = createCloudSyncRunner({
   },
   // KDF 档位（备份设置所选）：云上传/冲突副本 envelope 生成口径与本地备份一致
   kdfProfile: () => settings.backupKdfProfile,
-  onRetentionDeleted: (sourceId, deleted) => {
-    retentionNotes.push(deleted >= 0 ? `${sourceId} 清理 ${deleted} 份旧云备份` : `${sourceId} 后端不支持远端清理`)
+  sourceName: (id) => cloudSourceNames.get(id) ?? id,
+  onRetentionDeleted: (name, deleted) => {
+    retentionNotes.push(deleted >= 0 ? `${name} 清理 ${deleted} 份旧云备份` : `${name} 后端不支持远端清理`)
   },
   // 状态记录不 await：storage 写失败不影响同步主流程。ok 三态（批 4）：true/false/null（跳过）
   recordStatus: (ok: boolean | null, summary) => {
