@@ -60,7 +60,7 @@ describe('BackupCard 本地源列表（plan16 T9）', () => {
     expect(w2.findAll('button').some((b) => b.text() === '添加目录…')).toBe(false)
   })
 
-  it('L2 retention 编辑即时回写 saveLocalSource：切保留最近落 {keep,3}、份数改 5 落 {keep,5}、0 钳 1、切回覆盖落 overwrite', async () => {
+  it('L2 retention 编辑回写：切保留最近落 {keep,3}；份数逐键（input）不落盘、change 落 {keep,5}、0 钳 1、切回覆盖落 overwrite', async () => {
     const p = makePlatform({
       listLocalSources: vi.fn(async () => [src({ id: 's1', retention: { type: 'overwrite' } })]),
       saveLocalSource: vi.fn(async () => {}),
@@ -74,6 +74,14 @@ describe('BackupCard 本地源列表（plan16 T9）', () => {
     const n = w.find('input[aria-label="保留份数"]')
     expect(n.exists()).toBe(true)
     expect((n.element as HTMLInputElement).value).toBe('3')
+    // 逐键（input）只更新内存不落盘（同 onName 模式），blur（change）才落盘
+    await n.setValue('30')
+    await flushPromises()
+    const callsAfterChange = vi.mocked(p.saveLocalSource!).mock.calls.length
+    await n.trigger('input') // 再键入不 blur：不落盘
+    await flushPromises()
+    expect(vi.mocked(p.saveLocalSource!).mock.calls.length).toBe(callsAfterChange)
+    // blur（change）落盘：改 5 落 {keep,5}
     await n.setValue('5')
     await vi.waitFor(() => expect(p.saveLocalSource).toHaveBeenLastCalledWith(expect.objectContaining({ retention: { type: 'keep', n: 5 } })))
     // 非法输入钳下限 1（与 T8 CloudCard 口径一致）

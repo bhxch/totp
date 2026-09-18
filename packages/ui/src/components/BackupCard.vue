@@ -174,10 +174,13 @@ function onRetentionType(s: LocalSourceView, v: string | number): void {
   s.retention = v === 'keep' ? { type: 'keep', n: 3 } : { type: 'overwrite' }
   void persistSource(s)
 }
-/** keep 份数输入 → 源 retention：空串/非数字回落 3（与本地源默认一致），数字钳下限 1 */
+/** keep 份数输入 → 源 retention：空串/非数字回落 3（与本地源默认一致），数字钳下限 1。
+ *  update:model-value 只更新内存（逐键不落盘，同 onName），change（blur/回车）才落盘（审查 Minor） */
 function onKeepN(s: LocalSourceView, v: string | number): void {
   const parsed = v === '' ? NaN : Number(v)
   s.retention = { type: 'keep', n: Number.isFinite(parsed) ? Math.max(1, Math.round(parsed)) : 3 }
+}
+function onKeepNCommit(s: LocalSourceView): void {
   void persistSource(s)
 }
 
@@ -372,7 +375,7 @@ function onBackupProfileChange(v: string | number): void {
             <MdTextField
               v-if="s.retention.type === 'keep'" class="keep-n"
               :model-value="String(s.retention.n)" type="number" label="保留份数" aria-label="保留份数"
-              @update:model-value="onKeepN(s, $event)"
+              @update:model-value="onKeepN(s, $event)" @change="onKeepNCommit(s)"
             />
           </div>
         </div>
