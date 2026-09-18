@@ -50,6 +50,9 @@ export interface SyncWithCloudOpts {
   onConflictBackup?: (bytes: Uint8Array) => string | null | void | Promise<string | null | void>
   /** KDF 档位（设计 §2）：本次上传/冲突副本 envelope 的生成档位；缺省 balanced */
   profile?: KdfProfile
+  /** 编译期防误传哨兵（类型为 never）：单目标 syncWithCloud 不接受 onCredChange——凭据回写（如
+   *  gdrive 首推回存 fileId）由宿主 runner 层负责，编排层不感知凭据；调用方误传此属性会在类型
+   *  检查期报错，防止误以为本层会处理凭据变更 */
   onCredChange?: never
 }
 
