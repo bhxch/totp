@@ -36,7 +36,10 @@ export interface AppSettings {
   themeMode: ThemeMode
   /** 主题种子色 id(packages/ui theme/palettes.json 定义);core 仅做格式校验 */
   themeColor: string
-  /** 锁定策略（设计 §1）：重启即锁（DEK 持久化关闭；false=浏览器会话内保持解锁） */
+  /** 锁定策略（设计 §1）：「重启后保持锁定」开关。勘误（审查 Minor）：当前两端重启均天然锁定——
+   *  desktop 的 DEK 仅内存级、extension 的 DEK 存宿主会话存储（浏览器退出必清），重启即锁由 DEK
+   *  生命周期决定而非本开关；false 的「浏览器会话内保持解锁」暂无实现支撑，字段仅持久化保留
+   *  （extension 已声明不支持并在 UI 隐藏该控件） */
   lockOnRestart: boolean
   /** 空闲超时锁定分钟数；0=禁用 */
   lockIdleMinutes: number

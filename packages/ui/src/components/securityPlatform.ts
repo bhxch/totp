@@ -87,5 +87,8 @@ export interface SecurityPlatform {
     get(): LockPrefs | Promise<LockPrefs>
     /** 任一控件变更即以完整对象覆写（避免宿主端部分更新歧义） */
     set(p: LockPrefs): void | Promise<void>
+    /** [可选] 该端不支持的偏好键（审查 Minor：如 extension 的 lockOnRestart 无实现支撑）——
+     *  SecurityCard 隐藏对应控件防无效设置；缺省=三控件全渲染（desktop 现状，按端降级由 T6 调整） */
+    unsupported?: ReadonlyArray<keyof LockPrefs>
   }
 }

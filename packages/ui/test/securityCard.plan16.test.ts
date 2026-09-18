@@ -219,4 +219,28 @@ describe('SecurityCard plan16：锁定策略偏好', () => {
     await flushPromises()
     expect(w.find('[role="status"]').text()).toContain('偏好写入失败')
   })
+
+  it('unsupported 声明 lockOnRestart（审查 Minor：ext 无效果开关）→ 隐藏该控件，其余两控件照常渲染与写回', async () => {
+    const lp = makeLockPrefs()
+    const w = mount(SecurityCard, {
+      props: { platform: makePlatform({ lockPrefs: { ...lp.api, unsupported: ['lockOnRestart'] } }) },
+    })
+    await vi.waitFor(() => expect(w.find('.lock-prefs').exists()).toBe(true))
+    expect(w.find('.lock-restart').exists()).toBe(false) // 重启开关隐藏
+    expect(w.find('.lock-prefs').text()).not.toContain('重启后保持锁定')
+    expect(w.find('.idle-min').exists()).toBe(true) // 其余两控件照常
+    expect(w.find('.lock-syslock').exists()).toBe(true)
+    // 其余控件写回仍是完整对象（lockOnRestart 保持 get 原值，宿主 set 语义不变）
+    await w.find('.lock-syslock input').setValue(false)
+    await vi.waitFor(() => expect(lp.api.set).toHaveBeenCalledWith({ lockOnRestart: true, lockIdleMinutes: 0, lockOnSystemLock: false }))
+  })
+
+  it('unsupported 未声明（desktop 现状）→ 三控件全渲染不回归', async () => {
+    const lp = makeLockPrefs()
+    const w = mount(SecurityCard, { props: { platform: makePlatform({ lockPrefs: lp.api }) } })
+    await vi.waitFor(() => expect(w.find('.lock-prefs').exists()).toBe(true))
+    expect(w.find('.lock-restart').exists()).toBe(true)
+    expect(w.find('.idle-min').exists()).toBe(true)
+    expect(w.find('.lock-syslock').exists()).toBe(true)
+  })
 })

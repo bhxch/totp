@@ -217,13 +217,16 @@ const securityPlatform: SecurityPlatform = {
     settings.popupCloseDelayMs = ms
     await commitSettings()
   },
-  // 锁定策略（plan16 T11）：三字段整体覆写进 settings 后持久化（core loadSettings 已归一化）
+  // 锁定策略（plan16 T11）：三字段整体覆写进 settings 后持久化（core loadSettings 已归一化）。
+  // 审查 Minor：lockOnRestart 在 ext 无效果（DEK 存 chrome.storage.session，浏览器退出必清，
+  // 两取值行为一致）——显式声明不支持，SecurityCard 隐藏「重启后保持锁定」控件防无效设置
   lockPrefs: {
     get: () => ({ lockOnRestart: settings.lockOnRestart, lockIdleMinutes: settings.lockIdleMinutes, lockOnSystemLock: settings.lockOnSystemLock }),
     set: (p) => {
       Object.assign(settings, p)
       void commitSettings()
     },
+    unsupported: ['lockOnRestart'],
   },
 }
 

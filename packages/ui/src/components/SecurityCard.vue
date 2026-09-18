@@ -74,6 +74,9 @@ const pwAgeDays = computed<number | null>(() => {
 
 const lockPrefsState = ref<LockPrefs | null>(null)
 
+/** 该端不支持的锁定偏好键（宿主声明）：对应控件隐藏防无效设置（缺省空集=三控件全渲染） */
+const unsupportedLockPrefs = computed(() => new Set(props.platform?.lockPrefs?.unsupported ?? []))
+
 onMounted(() => {
   const pk = passkeyOps.value
   if (pk) {
@@ -328,7 +331,8 @@ async function onDelayChange(value: string): Promise<void> {
       <!-- 锁定策略区（plan16 设计 §1；仅已启用加密且宿主提供 lockPrefs 时渲染，锁定态也可改——settings 写入不依赖 DEK） -->
       <div v-if="hasEnc && platform.lockPrefs && lockPrefsState" class="lock-prefs">
         <h3>锁定策略</h3>
-        <div class="opt">
+        <!-- 重启后保持锁定：仅对有会话保持能力的端有意义，宿主声明不支持（unsupported）时隐藏 -->
+        <div v-if="!unsupportedLockPrefs.has('lockOnRestart')" class="opt">
           <MdSwitch
             class="lock-restart" :model-value="lockPrefsState.lockOnRestart" aria-label="重启后保持锁定"
             @update:model-value="(v: boolean) => onLockPrefChange({ lockOnRestart: v })"
