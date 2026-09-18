@@ -87,6 +87,15 @@ describe('导入 tags 落地（spec §4）', () => {
     expect(v.entries[0]!.tagIds).toHaveLength(2)
   })
 
+  it('批内重名 tag（trim 等价）去重：tagIds 唯一且复用现有 id', () => {
+    let v = createVault()
+    const r = addTag(v, '工作')
+    v = r.vault
+    v = applyImport(v, [mkParsed('A', 'a', ['工作', ' 工作 '])], 'skip', new Set())
+    expect(v.entries[0]!.tagIds).toEqual([r.tagId])
+    expect(v.tags).toHaveLength(1)
+  })
+
   it('conflict replace：tags 取现有∪导入并集', () => {
     let v = createVault()
     const r = addTag(v, '旧标签')

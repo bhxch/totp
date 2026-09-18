@@ -66,7 +66,7 @@ export function resolveTagNames(v: Vault, names: readonly string[]): { vault: Va
     if (!name) continue
     const r = addTag(out, name)
     out = r.vault
-    ids.push(r.tagId)
+    if (!ids.includes(r.tagId)) ids.push(r.tagId) // 同一批内 trim 等价名复用同一 tag，id 去重
   }
   return { vault: out, tagIds: ids }
 }
