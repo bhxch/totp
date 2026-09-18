@@ -599,7 +599,7 @@ const hasDuplicateNames = computed(() => {
     <div v-if="pendingRemove" class="confirm-row remove-confirm-row">
       <!-- 锁定态无法立即删除保管区凭据（缓存为空不误触未解锁 reject）：如实提示改由解锁后对账清理 -->
       <span v-if="sessionSecret">移除源「{{ sourceName(pendingRemove) }}」？已保存的凭据将从本机删除，云端对象不受影响。</span>
-      <span v-else>移除源「{{ sourceName(pendingRemove) }}」？当前为锁定状态，已保存的凭据无法立即删除，将在下次解锁后自动清理；云端对象不受影响。</span>
+      <span v-else>移除源「{{ sourceName(pendingRemove) }}」？本机保存的凭据缓存暂不可用，将随下次解锁对账自动清理；云端对象不受影响。</span>
       <MdButton danger :disabled="busy" @click="onConfirmRemove">确认移除</MdButton>
       <MdButton variant="text" :disabled="busy" @click="onCancelRemove">取消</MdButton>
     </div>

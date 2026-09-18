@@ -502,7 +502,7 @@ describe('CloudCard（多源）', () => {
     const w = await mountCard(p, null)
     await w.findAll('button.target-remove')[0]!.trigger('click')
     expect(w.find('.confirm-row').exists()).toBe(true) // 走确认而非直接删
-    expect(w.text()).toContain('将在下次解锁后自动清理')
+    expect(w.text()).toContain('将随下次解锁对账自动清理')
     await w.findAll('button').find((b) => b.text() === '确认移除')!.trigger('click')
     await flushPromises()
     expect(p.saveSources).toHaveBeenCalledWith([])
