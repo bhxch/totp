@@ -82,6 +82,9 @@ export interface BackupSourcesResult {
   okCount: number
   /** 失败源明细（source=显示名，error=异常消息；此前被 catch 吞掉的错误详情） */
   failed: Array<{ source: string; error: string }>
+  /** 本次实际备份的 vault JSON 快照（审查 M3：自动通道以落盘内容计基线 hash，
+   *  消除「先算 hash 后备份」窗口内 vault 再变导致基线新于落盘内容的错位） */
+  vaultJson: string
   /** 中文摘要（文案与旧版逐字一致，手动备份卡直接展示；自动通道 recordStatus 复用） */
   summary: string
 }
@@ -93,7 +96,7 @@ export interface BackupSourcesResult {
  */
 export async function createBackupToSources(sources: BackupSourceInput[], vaultJson: string, password: string, profile: KdfProfile = DEFAULT_KDF_PROFILE): Promise<BackupSourcesResult> {
   const enabled = sources.filter((s) => s.enabled)
-  if (enabled.length === 0) return { outcome: 'empty', okCount: 0, failed: [], summary: '未配置启用的备份目录' }
+  if (enabled.length === 0) return { outcome: 'empty', okCount: 0, failed: [], vaultJson, summary: '未配置启用的备份目录' }
   const contents = JSON.stringify(await createBackupEnvelope(vaultJson, password, profile), null, 2)
   const ok: string[] = []
   const failed: Array<{ source: string; error: string }> = []
@@ -106,13 +109,13 @@ export async function createBackupToSources(sources: BackupSourceInput[], vaultJ
     }
   }
   if (failed.length === 0) {
-    return { outcome: 'ok', okCount: ok.length, failed, summary: `已备份到 ${ok.length} 个目录（${ok.join('、')}）` }
+    return { outcome: 'ok', okCount: ok.length, failed, vaultJson, summary: `已备份到 ${ok.length} 个目录（${ok.join('、')}）` }
   }
   const failedNames = failed.map((f) => f.source).join('、')
   if (ok.length === 0) {
-    return { outcome: 'failed', okCount: 0, failed, summary: `备份失败：${failedNames}` }
+    return { outcome: 'failed', okCount: 0, failed, vaultJson, summary: `备份失败：${failedNames}` }
   }
-  return { outcome: 'partial', okCount: ok.length, failed, summary: `已备份到 ${ok.length} 个目录（${ok.join('、')}）；失败：${failedNames}` }
+  return { outcome: 'partial', okCount: ok.length, failed, vaultJson, summary: `已备份到 ${ok.length} 个目录（${ok.join('、')}）；失败：${failedNames}` }
 }
 
 /** 云同步冲突副本：本地 vault JSON 字节写 backups/conflict-{ts}.totpbackup（不参与滚动删除），返回文件名。

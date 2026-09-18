@@ -244,10 +244,10 @@ const auto = createDesktopAutoRunner({
       localStorage.setItem(LAST_BACKUP_HASH_KEY, h)
     } catch { /* hash 持久化失败仅影响去重，不阻塞 */ }
   },
-  doBackup: async (json, secret) => {
-    // plan16 T14：全部启用本地源各按 retention 落盘；审查 I8：返回结构化成败结果，
-    // runner 据此决定基线推进与状态记录（部分失败不推进基线，下轮自动重试）
-    return createBackupToSources(await loadAllSources(), json, secret, kdfProfileOf())
+  doBackup: async (secret) => {
+    // plan16 T14：全部启用本地源各按 retention 落盘；审查 I8：返回结构化成败结果（部分失败
+    // 不推进基线）；审查 M3：vault 快照在此单次取得并随结果返回，runner 以落盘内容计基线 hash
+    return createBackupToSources(await loadAllSources(), JSON.stringify(store.value?.vault ?? null), secret, kdfProfileOf())
   },
   // Task 11：desktop 云多目标编排接入（cloudSync 在下方定义；busy 防重入内建于 runner）
   doCloudSync: () => cloudSync.run(),

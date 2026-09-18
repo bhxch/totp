@@ -13,14 +13,16 @@ export interface AutoBackupDeps {
   isLocked(): boolean
   /** 会话备份口令（null=无，decideAutoRun 的 no-secret 守护源） */
   getSecret(): string | null
-  /** 当前 vault JSON 快照（未锁定时才被读取） */
+  /** 当前 vault JSON 快照（unchanged 判定用；备份本体由 doBackup 内部单次取快照，见 M3） */
   getVaultJson(): string
   backupPrefs(): AutoChannelPrefs
   /** 云通道偏好；null=本端无云能力（desktop 云多目标编排 Task 11 接入前恒 null） */
   cloudPrefs(): AutoChannelPrefs | null
   getLastBackupHash(): string | null
   setLastBackupHash(h: string): void
-  doBackup(json: string, secret: string): Promise<BackupSourcesResult>
+  /** 备份执行（审查 M3）：secret 由 runner 传入，vault 快照由实现内部单次取得并随
+   *  BackupSourcesResult.vaultJson 返回——runner 以落盘内容计基线 hash，消除先算后备份的窗口 */
+  doBackup(secret: string): Promise<BackupSourcesResult>
   /** 云同步（Task 11 接入多目标编排；接入前宿主传 no-op） */
   doCloudSync(): Promise<unknown>
   /** 摘要函数注入：desktop 用 core sha256Hex(TextEncoder(vaultJson))，测试用轻量实现 */
@@ -104,9 +106,11 @@ export function createDesktopAutoRunner(deps: AutoBackupDeps, opts?: { debounceM
       // 审查 I8：doBackup 返回结构化成败结果，基线推进与状态记录按 outcome 如实处理——
       // 仅全部启用源成功才写 lastBackupHash（部分/全部失败不写基线，下轮同内容也会重试，
       // 不再出现「recordStatus(true, 备份失败：X)」自相矛盾 + unchanged 跳过致静默停摆）
-      const r = await deps.doBackup(deps.getVaultJson(), secret)
+      const r = await deps.doBackup(secret)
       if (r.outcome === 'ok') {
-        deps.setLastBackupHash(currentHash)
+        // 审查 M3：基线以实际落盘内容（doBackup 内部单次快照）计 hash——decisionHash 判定与
+        // 落盘之间 vault 再变时，基线不会新于落盘内容（下轮照常重跑，不会漏备份）
+        deps.setLastBackupHash(await deps.sha256Hex(r.vaultJson))
         deps.recordStatus?.(true, r.summary)
         return
       }

@@ -4,8 +4,9 @@ import { createDesktopAutoRunner, formatAutoStatusText, type AutoBackupDeps } fr
 const JSON1 = '{"vault":1}'
 const HASH1 = `hash(${JSON1})`
 
-/** doBackup 全部成功结果（I8 结构化返回形态；可逐字段覆写构造 partial/failed/empty） */
-const OK_RESULT = { outcome: 'ok' as const, okCount: 1, failed: [], summary: '已备份到 1 个目录（家里）' }
+/** doBackup 全部成功结果（I8 结构化返回形态；可逐字段覆写构造 partial/failed/empty）。
+ *  vaultJson=JSON1：M3 后基线以实际落盘内容计 hash → sha256Hex(JSON1)=HASH1 */
+const OK_RESULT = { outcome: 'ok' as const, okCount: 1, failed: [], vaultJson: JSON1, summary: '已备份到 1 个目录（家里）' }
 
 /** 基线 deps：解锁、有 secret、onChange=true、无 lastHash（可逐项覆写）。
  *  同时返回关键 mock 引用；over 未覆盖时二者同引用，覆盖后以 deps 上的为准 */
@@ -45,8 +46,20 @@ describe('createDesktopAutoRunner（backup 通道）', () => {
     createDesktopAutoRunner(deps).notifyChanged()
     await vi.advanceTimersByTimeAsync(10_000)
     expect(doBackup).toHaveBeenCalledTimes(1)
-    expect(doBackup).toHaveBeenCalledWith(JSON1, 'sec')
+    expect(doBackup).toHaveBeenCalledWith('sec') // M3：vault 快照由 doBackup 内部单次取得，只传 secret
     expect(setLastBackupHash).toHaveBeenCalledWith(HASH1)
+  })
+
+  it('M3 基线以实际落盘内容计 hash：doBackup 期间 vault 再变不误标新基线', async () => {
+    const JSON2 = '{"vault":2}'
+    const HASH2 = `hash(${JSON2})`
+    const { deps, setLastBackupHash } = makeDeps({
+      // doBackup 内部取到的是变化后的 JSON2（decisionHash 快照 JSON1 与落盘内容错位的场景）
+      doBackup: vi.fn(async () => ({ ...OK_RESULT, vaultJson: JSON2 })),
+    })
+    createDesktopAutoRunner(deps).notifyChanged()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(setLastBackupHash).toHaveBeenCalledWith(HASH2)
   })
 
   it('内容未变：lastHash===currentHash → 不调 doBackup', async () => {
@@ -124,7 +137,7 @@ describe('createDesktopAutoRunner（backup 通道）', () => {
   it('I8 部分失败（outcome=partial）：基线不动 + recordStatus(false, 失败明细)', async () => {
     const recordStatus = vi.fn()
     const { deps, setLastBackupHash } = makeDeps({
-      doBackup: vi.fn(async () => ({ outcome: 'partial' as const, okCount: 1, failed: [{ source: '家里', error: 'disk full' }], summary: '已备份到 1 个目录（办公室）；失败：家里' })),
+      doBackup: vi.fn(async () => ({ outcome: 'partial' as const, okCount: 1, failed: [{ source: '家里', error: 'disk full' }], vaultJson: JSON1, summary: '已备份到 1 个目录（办公室）；失败：家里' })),
       recordStatus,
     })
     createDesktopAutoRunner(deps).notifyChanged()
@@ -137,7 +150,7 @@ describe('createDesktopAutoRunner（backup 通道）', () => {
   it('I8 全部失败（outcome=failed）：基线不动 + recordStatus(false, 失败名单)', async () => {
     const recordStatus = vi.fn()
     const { deps, setLastBackupHash } = makeDeps({
-      doBackup: vi.fn(async () => ({ outcome: 'failed' as const, okCount: 0, failed: [{ source: '家里', error: 'disk full' }], summary: '备份失败：家里' })),
+      doBackup: vi.fn(async () => ({ outcome: 'failed' as const, okCount: 0, failed: [{ source: '家里', error: 'disk full' }], vaultJson: JSON1, summary: '备份失败：家里' })),
       recordStatus,
     })
     createDesktopAutoRunner(deps).notifyChanged()
@@ -149,7 +162,7 @@ describe('createDesktopAutoRunner（backup 通道）', () => {
   it('I8 无启用源（outcome=empty）：基线不动 + recordStatus(null, 提示)', async () => {
     const recordStatus = vi.fn()
     const { deps, setLastBackupHash } = makeDeps({
-      doBackup: vi.fn(async () => ({ outcome: 'empty' as const, okCount: 0, failed: [], summary: '未配置启用的备份目录' })),
+      doBackup: vi.fn(async () => ({ outcome: 'empty' as const, okCount: 0, failed: [], vaultJson: JSON1, summary: '未配置启用的备份目录' })),
       recordStatus,
     })
     createDesktopAutoRunner(deps).notifyChanged()
@@ -159,7 +172,7 @@ describe('createDesktopAutoRunner（backup 通道）', () => {
   })
 
   it('I8 基线不动后同内容下轮仍重试（不被 unchanged 跳过，自愈通道）', async () => {
-    const doBackup = vi.fn(async () => ({ outcome: 'failed' as const, okCount: 0, failed: [{ source: '家里', error: 'disk full' }], summary: '备份失败：家里' }))
+    const doBackup = vi.fn(async () => ({ outcome: 'failed' as const, okCount: 0, failed: [{ source: '家里', error: 'disk full' }], vaultJson: JSON1, summary: '备份失败：家里' }))
     const { deps, setLastBackupHash } = makeDeps({ doBackup })
     const runner = createDesktopAutoRunner(deps)
     runner.notifyChanged()
