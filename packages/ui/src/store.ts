@@ -6,7 +6,7 @@ import {
   type AppSettings, type CloudCred, type KekSource, type KdfProfile, type OtpEntry, type SecretBagContent,
   type SecuritySettings, type StorageAdapter, type Vault,
 } from '@totp/core'
-import { computed, reactive, ref, toRaw } from 'vue'
+import { computed, reactive, ref, toRaw, type Ref } from 'vue'
 
 export function createVueStore(
   adapter: StorageAdapter,
@@ -37,10 +37,13 @@ export function createVueStore(
   // security 是数据（盘上唯一真相），所有窗口共享；dek/locked 是解锁态，按 windowId 索引
   const dekByWin = new Map<string, Uint8Array | null>()
   const lockedByWin = new Map<string, boolean>()
-  const lockedByWinRef = new Map<string, ReturnType<typeof ref<boolean>>>()
+  // 显式标注 Ref<boolean>：不可写 ReturnType<typeof ref<boolean>>——ref 的无参重载使该类型
+  // 解析为 Ref<boolean | undefined>，污染 locked/backupSecret 联合（宿主 SecurityPlatform 等接口
+  // 要求非 undefined，vue-tsc 接入后连爆 6 处）
+  const lockedByWinRef = new Map<string, Ref<boolean>>()
   // 会话备份口令（设计 D1）：与 dek 同级、同生命周期——按 windowId 隔离，lock 清空、解锁自动装载
   const backupSecretByWin = new Map<string, string | null>()
-  const backupSecretRefByWin = new Map<string, ReturnType<typeof ref<string | null>>>()
+  const backupSecretRefByWin = new Map<string, Ref<string | null>>()
   // DEK 保管区（设计 §1）当前明文缓存：备份口令 + 各源云凭据，仅解锁态有效；lock 清空
   let bag: SecretBagContent = emptyBag()
   /** bag.creds 的响应式只读镜像（组件渲染源列表凭据态用；写走 saveSourceCredOp/removeSourceCredOp） */
