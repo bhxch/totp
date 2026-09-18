@@ -453,7 +453,7 @@ describe('自动通道明文内容 hash 门（审查 I1 最小闭环）', () => 
     await runner.run() // 内容仍为 A → 门短路
     expect(loadSources).toHaveBeenCalledTimes(1) // 门在 loadSources 之前
     expect(backends).toHaveLength(1) // 未再建 backend
-    expect(recordStatus).toHaveBeenLastCalledWith(null, '内容无变化，跳过')
+    expect(recordStatus).toHaveBeenLastCalledWith(null, '内容无变化') // 「跳过：」前缀由宿主 formatAutoStatusText 拼装，summary 不重复
   })
 
   it('门②内容变化 → 正常同步并刷新基线；同内容再跑又跳过', async () => {
@@ -471,7 +471,7 @@ describe('自动通道明文内容 hash 门（审查 I1 最小闭环）', () => 
     expect(recordStatus).toHaveBeenLastCalledWith(true, 's1: 已上传')
     await runner.run() // 基线已随成功刷到 B
     expect(loadSources).toHaveBeenCalledTimes(2)
-    expect(recordStatus).toHaveBeenLastCalledWith(null, '内容无变化，跳过')
+    expect(recordStatus).toHaveBeenLastCalledWith(null, '内容无变化')
   })
 
   it('门③手动模式不设门：内容无变化 run("manual") 照常同步（成功后基线随之刷新）', async () => {
@@ -500,5 +500,60 @@ describe('自动通道明文内容 hash 门（审查 I1 最小闭环）', () => 
     await runner.run() // 内容未变但基线未建立 → 照常同步
     expect(loadSources).toHaveBeenCalledTimes(2)
     expect(recordStatus).toHaveBeenLastCalledWith(true, 's1: 已上传')
+  })
+
+  it('门⑤部分失败不被门吸收：双目标一败一成（outcome=null）→ summary 仍记 true 但基线置 null，下轮同内容全量重试', async () => {
+    const bad = fakeBackend()
+    bad.get = async () => {
+      throw new Error('网络错误')
+    }
+    const good = fakeBackend()
+    const created: CloudBackend[] = [] // over 覆盖 makeBackend 后 makeDeps 的 backends 不再填充，自建计数
+    const { deps, loadSources, recordStatus, saveTargetHash } = makeDeps({
+      loadSources: vi.fn(async () => [
+        { source: source('s-bad', { kind: 'gist' }), cred: GIST_CRED },
+        { source: source('s-good'), cred: WEBDAV_CRED },
+      ]),
+      makeBackend: (cred) => {
+        const b = cred.backend === 'gist' ? bad : good
+        created.push(b)
+        return b
+      },
+    })
+    const runner = createCloudSyncRunner(deps)
+    await runner.run()
+    // core 编排不抛错：整体仍记成功 summary（失败源记「失败」），失败源删基线
+    expect(recordStatus).toHaveBeenLastCalledWith(true, 's-bad: 失败; s-good: 已上传')
+    expect(saveTargetHash).toHaveBeenCalledWith('s-bad', null)
+    // 基线被置 null → 下轮同内容不被门短路，重建 backend 全流程重试
+    await runner.run()
+    expect(loadSources).toHaveBeenCalledTimes(2)
+    expect(created).toHaveLength(4) // 每轮两源各建一个
+    // 第二轮 good 源远端已有首轮信封，动作随远端形态可能变化（uploaded/downloaded 等），不精确断言；
+    // 只断言仍按编排结果记 ok=true 而非被门跳过（ok=null）
+    expect(vi.mocked(recordStatus).mock.calls.at(-1)![0]).toBe(true)
+  })
+
+  it('门⑥收敛回推失败（convergeError）同样置 null 基线：下轮不被门短路重试', async () => {
+    const remoteB = fakeBackend(await envelopeBytesOf(B, PW)) // gist 源云端存较新 B
+    const stuck = fakeBackend()
+    stuck.put = async () => {
+      throw new Error('写入失败')
+    }
+    const { deps, loadSources, recordStatus } = makeDeps({
+      getVaultJson: () => A,
+      loadSources: vi.fn(async () => [
+        { source: source('s-conv', { kind: 'gist' }), cred: GIST_CRED },
+        { source: source('s-stuck'), cred: WEBDAV_CRED },
+      ]),
+      loadTargetHash: vi.fn(async (id: string) => (id === 's-conv' ? 'stale' : null)),
+      makeBackend: (cred) => (cred.backend === 'gist' ? remoteB : stuck),
+    })
+    const runner = createCloudSyncRunner(deps)
+    await runner.run()
+    // s-conv conflict-resolved 采纳 B；s-stuck 上传失败且收敛回推也失败（convergeError，outcome 保持 null）
+    expect(recordStatus).toHaveBeenLastCalledWith(true, 's-conv: 冲突已解决; s-stuck: 失败')
+    await runner.run() // 基线置 null → 下轮照常重试
+    expect(loadSources).toHaveBeenCalledTimes(2)
   })
 })

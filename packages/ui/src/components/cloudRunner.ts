@@ -64,11 +64,12 @@ function errMsg(err: unknown): string {
 
 export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto' | 'manual'): Promise<void> } {
   /**
-   * 自动通道明文内容 hash 门基线（审查 I1 最小闭环）：上次自动同步成功时的 sha256(vaultJson)。
-   * 实例内存级——宿主页存活期生效，跨会话/页面重开首次仍会同步一次（最小闭环边界）；
-   * 仅同步成功路径更新（以 core 收敛后的最终内容为准：无采纳=入参快照，采纳=persistAdopted
-   * 落地的云端版本），失败不更新，下轮同内容仍会重试。手动通道不设门但成功后同样刷新基线，
-   * 手动推完的内容后续自动 tick 无需重传。
+   * 自动通道明文内容 hash 门基线（审查 I1 最小闭环）：上次「全部目标确定结果」自动同步时的
+   * sha256(vaultJson)。实例内存级——宿主页存活期生效，跨会话/页面重开首次仍会同步一次（最小闭环
+   * 边界）；仅全部目标 outcome 非 null 且无 convergeError 时刷新（以 core 收敛后的最终内容为准：
+   * 无采纳=入参快照，采纳=persistAdopted 落地的云端版本），存在部分失败/收敛失败置 null 强制下轮
+   * 全流程重试，catch 意外同样不刷新。手动通道不设门但成功后同样刷新基线，手动推完的内容后续
+   * 自动 tick 无需重传。
    */
   let lastAutoVaultHash: string | null = null
   /** 显示名解析：sourceName 提供时用宿主名称，否则回退源 id（审查 I4） */
@@ -93,7 +94,7 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
       // 自动通道内容门（审查 I1）：已有基线且明文内容未变 → 不发起任何同步（连 loadSources 都不进，
       // 零网络请求），记 null 跳过态；manual 不设门（对齐设计「手动不跳过」）
       if (mode === 'auto' && lastAutoVaultHash !== null && (await sha256Hex(encoder.encode(vaultJson))) === lastAutoVaultHash) {
-        deps.recordStatus?.(null, '内容无变化，跳过')
+        deps.recordStatus?.(null, '内容无变化')
         return
       }
       const pairs = (await deps.loadSources()).filter((p) => p.source.enabled)
@@ -143,9 +144,12 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
       }
       // summary 动作中文化（Minor-6）：与手动同步状态行同口径；单目标失败（outcome=null）记「失败」；
       // 源显示名（审查 I4）：sourceName 提供时用名称，新建源 uuid 不上屏。
-      // 内容门基线在成功路径末尾刷新（manual 同样刷新——手动已把该内容推上云，后续自动 tick 无需重传）；
-      // 失败走 catch 不更新，下轮同内容仍会重试
-      lastAutoVaultHash = await sha256Hex(encoder.encode(r.finalVaultJson))
+      // 内容门基线刷新裁定（复审必修）：core 对单目标失败（outcome=null）与收敛回推失败（convergeError）
+      // 均不抛错，仅当全部目标拿到确定结果（outcome 非 null 且无 convergeError）才以 finalVaultJson 刷新
+      // 基线；否则置 null——下轮不被门短路，失败目标按「删基线全量重比」既有自愈重试，防部分失败被门
+      // 吸收成静默僵死。全程意外走 catch 同样不刷新（catch 内不动基线，保持 null/旧值语义）
+      const allSettled = r.results.every((x) => x.outcome !== null && !x.convergeError)
+      lastAutoVaultHash = allSettled ? await sha256Hex(encoder.encode(r.finalVaultJson)) : null
       deps.recordStatus?.(true, r.results.map((x) => `${displayName(x.key)}: ${x.outcome ? CLOUD_ACTION_LABEL[x.outcome.action] : '失败'}`).join('; '))
     } catch (err) {
       deps.onError?.(err)
