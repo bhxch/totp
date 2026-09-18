@@ -6,7 +6,7 @@
     "build": "wxt build",
     "dev": "wxt",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
     "@totp/core": "workspace:*",
@@ -20,6 +20,7 @@
     "@wxt-dev/module-vue": "^1.0.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0",
+    "vue-tsc": "^2.2.12",
     "wxt": "^0.19.0"
   }
 }
