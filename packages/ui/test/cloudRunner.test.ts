@@ -144,7 +144,7 @@ describe('createCloudSyncRunner', () => {
   it('⑤path=resolveObjectPath(cred)：objectPath 自定义（含反斜杠）透传为归一路径', async () => {
     const b = fakeBackend()
     const { deps } = makeDeps({
-      loadSources: vi.fn(async () => [{ source: source('s1', { objectPath: 'custom/dir\\bk.json' }), cred: { ...WEBDAV_CRED, objectPath: 'custom/dir\\bk.json' } }]),
+      loadSources: vi.fn(async () => [{ source: source('s1'), cred: { ...WEBDAV_CRED, objectPath: 'custom/dir\\bk.json' } }]),
       makeBackend: () => b,
     })
     await createCloudSyncRunner(deps).run()
@@ -303,7 +303,7 @@ describe('createCloudSyncRunner', () => {
     b.listBackups = async () => [...b.store.keys()]
     const { deps, onRetentionDeleted } = makeDeps({
       loadSources: vi.fn(async () => [
-        { source: source('s-keep', { retention: { type: 'keep', n: 2 }, objectPath: 'dir/totp-backup.totpbackup' }), cred: { ...WEBDAV_CRED, objectPath: 'dir/totp-backup.totpbackup' } },
+        { source: source('s-keep', { retention: { type: 'keep', n: 2 } }), cred: { ...WEBDAV_CRED, objectPath: 'dir/totp-backup.totpbackup' } },
       ]),
       makeBackend: () => b,
     })

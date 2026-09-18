@@ -30,6 +30,13 @@ describe('BackupSource 存取', () => {
     await a.set('backupSources', JSON.stringify([src(), { id: 'bad' }]))
     await expect(loadSources(a)).resolves.toHaveLength(1)
   })
+  it('loadSources：旧数据残留源级 objectPath 死字段 → 宽容接受不拒绝（审查 M4 已移除该字段）', async () => {
+    const a = createMemoryStorage()
+    // 历史版本源级 objectPath 无消费方（实际用凭据保管区 cred.objectPath），旧数据多余字段被宽容忽略
+    await a.set('backupSources', JSON.stringify([src(), { ...src(), id: 's2', objectPath: 'legacy/bk.totpbackup' }]))
+    expect(await loadSources(a)).toHaveLength(2)
+    expect(isBackupSource({ ...src(), objectPath: 'legacy/bk.totpbackup' })).toBe(true)
+  })
   it('loadSources/loadSourceRevs：adapter.get 抛错 → 空、不抛', async () => {
     const bad: StorageAdapter = {
       get: async () => { throw new Error('storage unavailable') },

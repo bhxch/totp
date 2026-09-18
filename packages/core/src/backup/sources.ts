@@ -12,8 +12,6 @@ export interface BackupSource {
   name: string
   retention: Retention
   enabled: boolean
-  /** 云源对象路径（缺省回落 DEFAULT_OBJECT_PATH，沿 resolveObjectPath 校验） */
-  objectPath?: string
   /** 本地源目录；null/缺省=应用数据 backups 目录 */
   dir?: string | null
 }

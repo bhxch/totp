@@ -108,7 +108,7 @@ describe('CloudCard（多源）', () => {
     mockedSync.mockResolvedValue(EMPTY_RESULT)
     const p = makePlatform({
       loadSources: vi.fn().mockResolvedValue([
-        { ...WEBDAV_SOURCE, objectPath: 'custom\\dir.totpbackup' },
+        WEBDAV_SOURCE,
         GIST_SOURCE,
       ]),
       creds: { 's-webdav': { ...WEBDAV_CRED, objectPath: 'custom\\dir.totpbackup' }, 's-gist': GIST_CRED },

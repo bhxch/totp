@@ -208,7 +208,7 @@ describe('CloudCard（源列表 plan16 T8）', () => {
     })
     const cred = { ...WEBDAV_CRED, objectPath: 'dir/totp-backup.totpbackup' }
     const p = makePlatform({
-      loadSources: vi.fn().mockResolvedValue([src({ id: 'k1', name: '滚动', retention: { type: 'keep', n: 2 }, objectPath: 'dir/totp-backup.totpbackup' })]),
+      loadSources: vi.fn().mockResolvedValue([src({ id: 'k1', name: '滚动', retention: { type: 'keep', n: 2 } })]),
       creds: { k1: cred },
     })
     const w = await mountCard(p)
