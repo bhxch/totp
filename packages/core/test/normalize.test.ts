@@ -1,9 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import {
   asObject, collectEntries, normalizeAlgorithm, normalizeSecret, normalizeType, steamEntry,
-  toNonNegativeNumber, toPositiveNumber,
+  toNonNegativeNumber, toOtpDigits, toPositiveNumber,
 } from '../src/import/normalize'
 import type { ImportResult, ParsedEntry } from '../src/import/types'
+
+describe('toOtpDigits', () => {
+  it('6/7/8 恒等；steam 恒 5；其余钳 6', () => {
+    expect(toOtpDigits(6, 'totp')).toBe(6)
+    expect(toOtpDigits(7, 'totp')).toBe(7)
+    expect(toOtpDigits(8, 'hotp')).toBe(8)
+    expect(toOtpDigits(6, 'steam')).toBe(5)
+    expect(toOtpDigits(8, 'steam')).toBe(5)
+    expect(toOtpDigits(5, 'totp')).toBe(6)
+    expect(toOtpDigits(9, 'totp')).toBe(6)
+    expect(toOtpDigits(Number.NaN, 'totp')).toBe(6)
+  })
+})
 
 describe('normalize helpers', () => {
   it('normalizeSecret: trim/uppercase/whitespace removed', () => {

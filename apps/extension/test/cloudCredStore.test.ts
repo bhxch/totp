@@ -303,5 +303,6 @@ describe('formatAutoStatusText（options App.vue formatAutoStatus 抽出，cloud
     expect(formatAutoStatusText(JSON.stringify({ at: AT, ok: true, summary: '' }))).toBeNull() // 空 summary
     expect(formatAutoStatusText('{bad json')).toBeNull()
     expect(formatAutoStatusText(undefined)).toBeNull()
+    expect(formatAutoStatusText(null)).toBeNull() // storageAdapter 键不存在时现实传参
   })
 })
