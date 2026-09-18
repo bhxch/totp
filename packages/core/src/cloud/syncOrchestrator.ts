@@ -37,6 +37,10 @@ export interface CloudSyncOutcome {
   envelopeJson?: string
 }
 
+/** 冲突副本回调返回值：文件名（回填 outcome.conflictBackup）/ null（无副本）/ void（fire-and-forget），
+ *  同步或经 Promise。此前在 syncOrchestrator / multiTarget / ui cloudRunner 三处逐字重复（T6 审查） */
+export type ConflictBackupResult = string | null | void | Promise<string | null | void>
+
 export interface SyncWithCloudOpts {
   backend: CloudBackend
   path: string
@@ -47,7 +51,7 @@ export interface SyncWithCloudOpts {
   /** 上次已知云端内容 hash（cloudRev）；null 表示从未接云 */
   localHash: string | null
   /** 冲突分支回调：把本地内容持久化为加密冲突副本（参数为 envelope JSON 字节，可被 openBackupEnvelope 恢复），可返回文件名（回填到 outcome.conflictBackup）。 */
-  onConflictBackup?: (bytes: Uint8Array) => string | null | void | Promise<string | null | void>
+  onConflictBackup?: (bytes: Uint8Array) => ConflictBackupResult
   /** KDF 档位（设计 §2）：本次上传/冲突副本 envelope 的生成档位；缺省 balanced */
   profile?: KdfProfile
   /** 编译期防误传哨兵（类型为 never）：单目标 syncWithCloud 不接受 onCredChange——凭据回写（如

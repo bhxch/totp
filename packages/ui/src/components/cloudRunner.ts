@@ -17,7 +17,7 @@
  */
 import {
   enforceRemoteRetention, resolveObjectPath, resolveTimestampPath, sha256Hex, syncMultipleTargets,
-  type BackupSource, type CloudBackend, type CloudCred, type KdfProfile,
+  type BackupSource, type CloudBackend, type CloudCred, type ConflictBackupResult, type KdfProfile,
 } from '@totp/core'
 import { CLOUD_ACTION_LABEL } from './cloudPlatform'
 
@@ -40,7 +40,7 @@ export interface CloudRunnerDeps {
    *  经 core 编排 await 链传播——该目标记为失败（不采纳远端、不回推覆盖云端），本地旧内容
    *  在无副本落盘的情况下不被覆盖；fire-and-forget（void）保持旧行为。返回文件名（desktop
    *  saveConflictBackupToDir 的形态）时随该目标 outcome.conflictBackup 透传，编排层不消费 */
-  saveConflictBackup?(key: string, bytes: Uint8Array): string | null | void | Promise<string | null | void>
+  saveConflictBackup?(key: string, bytes: Uint8Array): ConflictBackupResult
   /** KDF 档位（备份设置所选，信封生成用）；缺省 balanced */
   kdfProfile?: () => KdfProfile
   /** keep 源滚动删除完成回调（sourceId=显示名（deps.sourceName 解析，缺省回退源 id）；deleted=实际删除

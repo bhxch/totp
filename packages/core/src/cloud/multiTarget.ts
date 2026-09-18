@@ -13,7 +13,7 @@
  * packages/ui/src/components/cloudRunner.ts；desktop 云通道经 autoBackup 委托同一 runner）；
  * 编排层保留该分支仅为测试/mock 形态（远端存明文）下的短路。
  */
-import { pushEnvelope, syncWithCloud } from './syncOrchestrator'
+import { pushEnvelope, syncWithCloud, type ConflictBackupResult } from './syncOrchestrator'
 import type { KdfProfile } from '../backup/envelope'
 import type { CloudBackend } from './backend'
 
@@ -58,7 +58,7 @@ export async function syncMultipleTargets(opts: {
   targets: CloudTargetInput[]
   vaultJson: string
   password: string
-  onConflictBackup?: (key: string, bytes: Uint8Array) => string | null | void | Promise<string | null | void>
+  onConflictBackup?: (key: string, bytes: Uint8Array) => ConflictBackupResult
   /** KDF 档位（设计 §2）：透传给全部上传/收敛回推/冲突副本 envelope 生成；缺省 balanced */
   profile?: KdfProfile
 }): Promise<MultiTargetSyncResult> {
