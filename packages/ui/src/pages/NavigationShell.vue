@@ -12,6 +12,9 @@ import type { IconStore } from '../iconStore'
 import type { VueStore } from '../store'
 import { NAV_ICONS } from './navIcons'
 
+/** 窄窗断点查询串（<600px）：isNarrow 初值测量与 change 监听共用同一 Media Query */
+const NARROW_MQ = '(max-width: 599px)'
+
 // props = 旧单页 全量(旧单页 的 enableCopy 属列表行为,不属于壳)+
 // railActions;均可缺省,popup 等窄宿主零影响。
 const props = withDefaults(defineProps<{
@@ -56,13 +59,13 @@ const active = computed(() => String(route.name ?? ''))
 /** 窄窗(<600px)用顶部 Tabs。审查 Minor：setup 同步测量初值（原 onMounted 才测，窄窗首帧
  *  先渲染 Rail 再闪变 Tabs）；本组件纯 CSR，缺 matchMedia 的环境兜底宽窗渲染 Rail */
 const isNarrow = ref(
-  typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 599px)').matches,
+  typeof window.matchMedia === 'function' && window.matchMedia(NARROW_MQ).matches,
 )
 let mql: MediaQueryList | null = null
 const onMqlChange = (e: MediaQueryListEvent) => { isNarrow.value = e.matches }
 onMounted(() => {
   if (typeof window.matchMedia !== 'function') return
-  mql = window.matchMedia('(max-width: 599px)')
+  mql = window.matchMedia(NARROW_MQ)
   mql.addEventListener('change', onMqlChange)
 })
 onBeforeUnmount(() => { mql?.removeEventListener('change', onMqlChange); mql = null })
