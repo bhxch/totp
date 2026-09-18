@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CloudBackend } from '../src/cloud/backend'
-import { createBackupEnvelope } from '../src/backup/envelope'
+import { createBackupEnvelope, openBackupEnvelope } from '../src/backup/envelope'
 import { sha256Hex, syncWithCloud } from '../src/cloud/syncOrchestrator'
 
 const PATH = 'totp-backup.totpbackup'
@@ -71,7 +71,11 @@ describe('syncWithCloud', () => {
     expect(backend.putCount).toBe(1)
   })
 
-  it('远端字节与本地 vault 内容一致 → in-sync（不依赖 cloudRev），不写云端，且不返回 envelopeJson', async () => {
+  it('in-sync 分支契约（仅 mock 形态短路，生产不可达）：远端字节==本地明文 → in-sync（不依赖 cloudRev）不写云端', async () => {
+    // 勘误（2026-09-18 审查）：本用例为 syncWithCloud in-sync 分支的纯契约单测——mock 远端存明文
+    // 才能触发该分支。生产形态远端恒为 envelope 密文，密文摘要 ≠ 本地明文摘要，判据永不相等、
+    // 分支不可达，编排层并无「内容未变→跳过」去重；生产去重由宿主自动通道的明文内容 hash 门
+    // 承担（cloudRunner/desktop autoBackup，属后续任务）。下一用例为 envelope 真实形态的现状行为。
     const bytes = ENC.encode(LOCAL_VAULT)
     const backend = mockBackend(bytes)
     const out = await syncWithCloud({
@@ -86,6 +90,26 @@ describe('syncWithCloud', () => {
     // in-sync 不再返回 envelopeJson：其语义为密文/明文混用，调用方需要时应自行 backend.get
     expect(out.envelopeJson).toBeUndefined()
     expect(backend.putCount).toBe(0)
+  })
+
+  it('远端为 envelope 且内容与基线一致 → 现状走 uploaded 重传（in-sync 生产不可达，去重由宿主门承担）', async () => {
+    // 真实形态：远端恒为 envelope 密文。即使解密后内容与本地完全一致，密文摘要 ≠ 本地明文摘要，
+    // 判据不可达 → 现状每轮全量重传；该路径的去重修复由宿主明文 hash 门承担（后续任务）
+    const { bytes, hash } = await putRemoteEnvelope(LOCAL_VAULT, PASSWORD)
+    const backend = mockBackend(bytes)
+    const out = await syncWithCloud({
+      backend,
+      path: PATH,
+      vaultJson: LOCAL_VAULT,
+      password: PASSWORD,
+      localHash: hash, // 基线与远端字节一致（「远端未变」），仍因内容判据失效而重传
+    })
+    expect(out.action).toBe('uploaded')
+    expect(backend.putCount).toBe(1)
+    // 重传后远端仍可同口令解开为本地 vault，基线为新信封字节摘要
+    const env = JSON.parse(new TextDecoder().decode(backend.store.get(PATH)!))
+    expect(await openBackupEnvelope(env, PASSWORD)).toBe(LOCAL_VAULT)
+    expect(out.hash).toBe(await sha256Hex(backend.store.get(PATH)!))
   })
 
   it('本地较新（远端 == cloudRev 且 != 本地内容）→ uploaded：put 一次，云端可解开为本地 vault', async () => {
