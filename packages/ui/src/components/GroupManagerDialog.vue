@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Group } from '@totp/core'
-import { ref, watch } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 import type { VueStore } from '../store'
 import MdButton from './md/MdButton.vue'
 import MdDialog from './md/MdDialog.vue'
@@ -58,6 +58,11 @@ async function removeGroup(g: Group) {
   if (confirmTimer) clearTimeout(confirmTimer)
   confirmTimer = setTimeout(() => (confirmingDelete.value = null), 3000)
 }
+// 卸载兜底清确认定时器（open watch 只覆盖关闭路径；组件销毁时挂起回调不再触发响应式写入）
+onBeforeUnmount(() => {
+  if (confirmTimer) clearTimeout(confirmTimer)
+  confirmTimer = null
+})
 </script>
 
 <template>
