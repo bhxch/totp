@@ -3,7 +3,7 @@ import type { BackupSource, CloudCred } from '@totp/core'
 import {
   DEFAULT_OBJECT_PATH, enforceRemoteRetention, pushEnvelope, resolveObjectPath, resolveTimestampPath, syncMultipleTargets,
 } from '@totp/core'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { CLOUD_ACTION_LABEL, createCloudBackend } from './cloudPlatform'
 import type { CloudAutoPrefs, CloudPlatform } from './cloudPlatform'
 import { parseVaultJson } from './parseVaultJson'
@@ -145,12 +145,14 @@ function removeTarget(id: string): void {
     : -1
 }
 
-/** 移除入口：空白凭据源直接删（凭据从未持久化过，不需要 removeCred）；非空走行内两步确认 */
+/** 移除入口：空白凭据源直接删（凭据从未持久化过，不需要 removeCred）；非空走行内两步确认。
+ * 锁定态例外：保管区密文不可解、creds 缓存为空，卡片无法区分「从未保存过」与「保存过但缓存空」，
+ * 一律走两步确认（防误删已配置源），移除后的遗留凭据由解锁装载时的孤儿对账清理（见 reconcileOrphanCreds）。 */
 function askRemove(id: string): void {
   const s = sources.value.find((x) => x.id === id)
   if (!s) return
   const draft = credDrafts.value[id]
-  if (isBlankCred(draft ?? blankCred(s.kind as BackendId))) {
+  if (props.sessionSecret && isBlankCred(draft ?? blankCred(s.kind as BackendId))) {
     removeTarget(id)
     return
   }
@@ -166,7 +168,7 @@ function onCancelRemove(): void {
 /**
  * 确认移除：源元数据=当前内存列表减去该项（与「保存凭据」持久化内存列表的既有语义一致）；
  * 凭据仅在平台凭据缓存中存在时调 removeCred（未保存过的空白源跳过——锁定态缓存为空也不误触
- * 未解锁 reject），云端对象不受影响。
+ * 未解锁 reject，此时遗留凭据由解锁装载时的孤儿对账清理，见 reconcileOrphanCreds），云端对象不受影响。
  * 持久化先于内存变更：saveSources 成功才 removeTarget，失败则内存/磁盘天然一致
  * （不会出现「内存已删、盘上仍在」的失配导致重进页面该源复活），错误经既有 fail 通道提示。
  */
@@ -193,11 +195,32 @@ function fail(e: unknown): void {
   msgKind.value = 'err'
 }
 
+/** 源列表是否已从平台装载成功：孤儿对账的前置条件（loadSources 失败按空列表回落时无权威可依，绝不对账） */
+const sourcesLoaded = ref(false)
+
+/**
+ * 孤儿凭据对账（审查 I5-② 兜底）：以现存源列表为唯一权威，把 creds 缓存中「无对应源」的条目
+ * 逐个 removeCred 清理——覆盖锁定态移除源后遗留的已存凭据、removeCred 失败残留等场景。
+ * 误删防护：仅删「确认无对应源」的条目；添加流程中的草稿 id 必在源列表内（addTarget 先入列表），
+ * 且凭据只在源存在于列表时才会写入 creds，天然不入孤儿集合；源列表装载失败时不对账。
+ */
+async function reconcileOrphanCreds(): Promise<void> {
+  const p = props.platform
+  if (!p || !sourcesLoaded.value) return
+  for (const id of Object.keys(p.creds)) {
+    if (sources.value.some((s) => s.id === id)) continue
+    try {
+      await p.removeCred(id)
+    } catch { /* 单条失败不阻塞其余（锁定竞态等）；下次解锁装载重新对账 */ }
+  }
+}
+
 onMounted(async () => {
   const p = props.platform
   if (!p) return
   try {
     sources.value = await p.loadSources()
+    sourcesLoaded.value = true
   } catch {
     sources.value = [] // 回填失败按未存源处理
   }
@@ -205,6 +228,7 @@ onMounted(async () => {
     const saved = p.creds[s.id]
     credDrafts.value[s.id] = saved ? { ...saved } : blankCred(s.kind as BackendId)
   }
+  void reconcileOrphanCreds() // 挂载时已解锁（creds 已装载）即对账；锁定态 creds 为空自然跳过
   if (p.autoPrefs) {
     try {
       autoPrefs.value = { ...(await p.autoPrefs.get()) } // await 兼容同步返回（desktop）
@@ -218,6 +242,10 @@ onMounted(async () => {
     }
   }
 })
+
+// 挂载后解锁（或锁定清空）：宿主 creds 为 credsCache 只读视图（getter→ref），解锁装载换新引用即触发
+// 对账——锁定态移除源遗留的凭据在此被清（creds 与源列表同以解锁后最新值判定，锁定态空缓存为 no-op）
+watch(() => props.platform?.creds, () => { void reconcileOrphanCreds() })
 
 /**
  * 保存凭据：源元数据整列表落盘 + 逐源把编辑副本写入保管区（含禁用源——凭据与启用态独立，
@@ -569,7 +597,9 @@ const hasDuplicateNames = computed(() => {
       <MdButton variant="text" :disabled="busy" @click="onCancelReset">取消</MdButton>
     </div>
     <div v-if="pendingRemove" class="confirm-row remove-confirm-row">
-      <span>移除源「{{ sourceName(pendingRemove) }}」？已保存的凭据将从本机删除，云端对象不受影响。</span>
+      <!-- 锁定态无法立即删除保管区凭据（缓存为空不误触未解锁 reject）：如实提示改由解锁后对账清理 -->
+      <span v-if="sessionSecret">移除源「{{ sourceName(pendingRemove) }}」？已保存的凭据将从本机删除，云端对象不受影响。</span>
+      <span v-else>移除源「{{ sourceName(pendingRemove) }}」？当前为锁定状态，已保存的凭据无法立即删除，将在下次解锁后自动清理；云端对象不受影响。</span>
       <MdButton danger :disabled="busy" @click="onConfirmRemove">确认移除</MdButton>
       <MdButton variant="text" :disabled="busy" @click="onCancelRemove">取消</MdButton>
     </div>

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { ref } from 'vue'
 import type { VueWrapper } from '@vue/test-utils'
 
 vi.mock('@totp/core', async (importOriginal) => {
@@ -490,6 +491,59 @@ describe('CloudCard（多源）', () => {
     await flushPromises()
     expect((w.find('button.cloud-sync').element as HTMLButtonElement).disabled).toBe(false)
     expect(w.findAll('.target')).toHaveLength(0)
+  })
+
+  it('⑱g锁定态移除源：不再因空白草稿直接删，走两步确认并提示凭据将在下次解锁后自动清理', async () => {
+    // 锁定态形态：sessionSecret=null、creds 缓存空（保管区密文不可解，无法区分「从未保存」与「缓存空」）
+    const p = makePlatform({
+      loadSources: vi.fn().mockResolvedValue([WEBDAV_SOURCE]),
+      creds: {},
+    })
+    const w = await mountCard(p, null)
+    await w.findAll('button.target-remove')[0]!.trigger('click')
+    expect(w.find('.confirm-row').exists()).toBe(true) // 走确认而非直接删
+    expect(w.text()).toContain('将在下次解锁后自动清理')
+    await w.findAll('button').find((b) => b.text() === '确认移除')!.trigger('click')
+    await flushPromises()
+    expect(p.saveSources).toHaveBeenCalledWith([])
+    expect(p.removeCred).not.toHaveBeenCalled() // 缓存空不调，遗留凭据交解锁后对账
+    expect(w.findAll('.target')).toHaveLength(0)
+  })
+
+  it('⑱h孤儿凭据对账：解锁装载（creds 缓存换引用）后，无对应源的条目被清理，现存源凭据不误删', async () => {
+    const credsRef = ref<Record<string, CloudCred>>({}) // 初始空=锁定态形态
+    const p = {
+      ...makePlatform({ loadSources: vi.fn().mockResolvedValue([WEBDAV_SOURCE]) }),
+      get creds() { return credsRef.value }, // 模拟宿主 getter→credsCache(ref) 形态
+    }
+    const w = await mountCard(p)
+    expect(p.removeCred).not.toHaveBeenCalled()
+    // 模拟解锁装载：advanceBag 换新引用，含孤儿 orphan 与现存源 s-webdav 的凭据
+    credsRef.value = { 's-webdav': WEBDAV_CRED, orphan: GIST_CRED }
+    await flushPromises()
+    expect(p.removeCred).toHaveBeenCalledTimes(1)
+    expect(p.removeCred).toHaveBeenCalledWith('orphan')
+    expect(p.removeCred).not.toHaveBeenCalledWith('s-webdav')
+    expect(w.findAll('.target')).toHaveLength(1) // 源列表不受对账影响
+  })
+
+  it('⑱h2孤儿对账-挂载时已解锁：creds 中无对应源条目按现存源列表清理', async () => {
+    const p = makePlatform({
+      loadSources: vi.fn().mockResolvedValue([WEBDAV_SOURCE]),
+      creds: { 's-webdav': WEBDAV_CRED, orphan: GIST_CRED },
+    })
+    await mountCard(p)
+    expect(p.removeCred).toHaveBeenCalledTimes(1)
+    expect(p.removeCred).toHaveBeenCalledWith('orphan')
+  })
+
+  it('⑱h3孤儿对账-误删防护：loadSources 失败按空列表回落时不对账（无权威可依，不清 creds）', async () => {
+    const p = makePlatform({
+      loadSources: vi.fn().mockRejectedValue(new Error('读盘失败')),
+      creds: { orphan: WEBDAV_CRED },
+    })
+    await mountCard(p)
+    expect(p.removeCred).not.toHaveBeenCalled()
   })
 
   it('⑯gdrive 首推回存：后端 onChange 携新凭据（fileId）按 sourceId 更新编辑副本并 saveCred 持久化', async () => {
