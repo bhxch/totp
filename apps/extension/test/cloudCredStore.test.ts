@@ -10,7 +10,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { READABLE_BACKUP_RE, SOURCE_REVS_KEY, SOURCES_KEY, type CloudCred, type StorageAdapter } from '@totp/core'
-import { conflictBackupName, formatAutoStatusText, loadSourcesImpl, migrateLegacySources, saveSourcesImpl } from '../src/cloudCredStore'
+import { conflictBackupName, formatAutoStatusText, hasLegacyCloudKeys, loadSourcesImpl, migrateLegacySources, saveSourcesImpl } from '../src/cloudCredStore'
 
 const CLOUD_CRED_KEY = 'cloudCred'
 const CLOUD_CREDS_KEY = 'cloudCreds'
@@ -173,6 +173,27 @@ describe('loadSourcesImpl/saveSourcesImpl（core 包装）', () => {
     await expect(loadSourcesImpl(adapter)).resolves.toEqual([])
     adapter.data[SOURCES_KEY] = '{bad'
     await expect(loadSourcesImpl(adapter)).resolves.toEqual([])
+  })
+})
+
+describe('hasLegacyCloudKeys（审查 I6：迁移跳过/失败后宿主据此置 UI 提示）', () => {
+  it('无旧键 → false；四旧键任一存在 → true；迁移成功（旧键全删）后 → false', async () => {
+    await expect(hasLegacyCloudKeys(adapter)).resolves.toBe(false)
+    // 任一旧键滞留即 true（覆盖「仅 cloudCred 单对象」「仅 revs 键」等部分滞留形态）
+    adapter.data[CLOUD_CRED_KEY] = JSON.stringify(WEBDAV)
+    await expect(hasLegacyCloudKeys(adapter)).resolves.toBe(true)
+    for (const k of [CLOUD_CREDS_KEY, CLOUD_REVS_KEY, CLOUD_REV_KEY]) adapter.data[k] = 'x'
+    await expect(hasLegacyCloudKeys(adapter)).resolves.toBe(true)
+    // 模拟迁移成功出口：旧键全删 → false（legacyNote 提示随之消失）
+    for (const k of [CLOUD_CREDS_KEY, CLOUD_CRED_KEY, CLOUD_REVS_KEY, CLOUD_REV_KEY]) delete adapter.data[k]
+    await expect(hasLegacyCloudKeys(adapter)).resolves.toBe(false)
+  })
+
+  it('storage 读取异常按 false（不因瞬态 IO 误报提示）', async () => {
+    adapter.get = async () => {
+      throw new Error('IO error')
+    }
+    await expect(hasLegacyCloudKeys(adapter)).resolves.toBe(false)
   })
 })
 

@@ -2,7 +2,7 @@
 import { backupFileName, createAutoRunScheduler, createBackupEnvelope, loadSourceRevs, normalizeSchemes, openBackupEnvelope, OVERWRITE_NAME, randomBytes, saveSourceRev, SCHEMES_KEY, type BackupEnvelope, type BackupSource, type CloudCred, type ImportScheme, type Retention, type Vault } from '@totp/core'
 import { CLIPBOARD_CLEAR_DELAY_MS, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, LockScreen, NavigationShell, prfSupported, useTheme, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { conflictBackupName, formatAutoStatusText, loadSourcesImpl, migrateLegacySources, saveSourcesImpl } from '../../src/cloudCredStore'
+import { conflictBackupName, formatAutoStatusText, hasLegacyCloudKeys, loadSourcesImpl, migrateLegacySources, saveSourcesImpl } from '../../src/cloudCredStore'
 import { createDekSession } from '../../src/dekSession'
 import { createIdleLockWatcher } from '../../src/lockEnforcer'
 import { createExtensionStore, storageAdapter } from '../../src/store'
@@ -47,10 +47,15 @@ const schemesApi: ImportSchemesApi = {
 const loadError = ref('')
 /** plan16 T13 迁移提示：本次挂载/解锁迁移了 N 个旧云目标时显示（幂等重跑=0 不再提示） */
 const migrateNote = ref('')
+/** 审查 I6：迁移被跳过/失败后旧键仍滞留 storage 时的 UI 提示（与 migrateNote 同层展示）。
+ *  未启用加密的用户迁移链走不通（saveCred 需 DEK），若无此提示云目标会静默消失、无任何解释；
+ *  下次运行成功迁移（旧键删除）后检测自然为 false，提示消失 */
+const legacyNote = ref('')
 
 /** 旧数据迁移编排（plan16 T13，幂等可重复跑）：vault.backupSecret → 保管区（store op）→
  *  旧云多目标键 → 源模型 + 保管区凭据。仅解锁态执行（保管区写入需 DEK）；未启用加密时
- *  saveCred 守护抛错 → 旧键保留（先写新后删旧），待启用加密后任一次重跑自愈。 */
+ *  saveCred 守护抛错 → 旧键保留（先写新后删旧），待启用加密后任一次重跑自愈。
+ *  审查 I6：跳过/失败不以 console.warn 收场——旧键仍在则置 legacyNote 给用户可见的出口 */
 async function runLegacyMigrations(): Promise<void> {
   if (store.locked.value) return
   try {
@@ -60,6 +65,10 @@ async function runLegacyMigrations(): Promise<void> {
   } catch (e) {
     console.warn('[migrate] 旧数据迁移失败（旧键保留，解锁后重试）', e)
   }
+  // 成功迁移后旧键已删 → 检测为 false 提示自然消失；仍滞留（跳过/失败）→ 提示置位
+  legacyNote.value = (await hasLegacyCloudKeys(storageAdapter))
+    ? '检测到旧版云同步配置：启用加密后将自动迁移到新模型'
+    : ''
 }
 
 onMounted(async () => {
@@ -456,8 +465,10 @@ const cloudPlatform: CloudPlatform = {
   <template v-else>
     <div v-if="loadError" class="error">{{ loadError }}</div>
     <template v-else>
-      <!-- 迁移提示与主体并列（非互斥）：一次性提示，下次挂载重跑迁移=0 后不再出现 -->
+      <!-- 迁移提示与主体并列（非互斥）：一次性提示，下次挂载重跑迁移=0 后不再出现；
+           legacyNote（审查 I6）：迁移跳过/失败且旧键仍在时提示，成功迁移后消失 -->
       <div v-if="migrateNote" class="migrate-note">{{ migrateNote }}</div>
+      <div v-if="legacyNote" class="migrate-note">{{ legacyNote }}</div>
       <!-- 同构五页:与桌面同一 Shell(无 railActions → 设置页不渲染桌面专属项;传 syncPlatform → 渲染扩展专属项) -->
       <NavigationShell :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :sync-platform="syncPlatform" :cloud-platform="cloudPlatform" :icons="icons" :schemes-api="schemesApi" @copy="copyToClipboard" />
     </template>

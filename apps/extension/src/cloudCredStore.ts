@@ -151,6 +151,16 @@ export async function migrateLegacySources(
   return migrated.length
 }
 
+/** 旧多目标键（cloudCreds/cloudCred/cloudRevs/cloudRev）是否仍存在于 storage
+ *  （审查 I6：迁移被跳过/失败后旧键滞留——宿主据此置 UI 提示，告知启用加密后将自动迁移；
+ *  成功迁移后旧键已删，本函数自然返回 false，提示随之消失）。任一键读到即 true；读取异常按 false */
+export async function hasLegacyCloudKeys(adapter: StorageAdapter): Promise<boolean> {
+  for (const key of [CLOUD_CREDS_KEY, CLOUD_CRED_KEY, CLOUD_REVS_KEY, CLOUD_REV_KEY]) {
+    if ((await adapter.get(key).catch(() => null)) !== null) return true
+  }
+  return false
+}
+
 // ---------- 冲突副本命名 / 自动状态格式化（本任务不变面） ----------
 
 /** 多目标冲突副本名：conflict-{backendKey}-{yyyyMMdd-HHmmss}.totpbackup——与 desktop backupService
