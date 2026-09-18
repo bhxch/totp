@@ -27,7 +27,8 @@ export default defineConfig({
       ? {
           // 稳定 ID：Firefox 临时加载与协议处理器注册需要固定扩展身份
           // TODO 发布前改为自有 ID（example.local 占位）— Mozilla addons 提交要求稳定 ID 不能与他人冲突
-          browser_specific_settings: { gecko: { id: 'totp-tools@example.local' } },
+          // strict_min_version 115+（审查 Minor）：chrome.storage.session 需 Firefox 115（MV2 下亦同）
+          browser_specific_settings: { gecko: { id: 'totp-tools@example.local', strict_min_version: '115.0' } },
           protocol_handlers: [
             // WXT 将 entrypoints/popup/index.html 输出为根目录 popup.html，uriTemplate 必须指向实际产物路径
             { protocol: 'ext+otpauth', name: 'TOTP 验证码工具', uriTemplate: '/popup.html?uri=%s' },
