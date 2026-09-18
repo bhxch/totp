@@ -82,9 +82,9 @@ function filterByTags(entries: OtpEntry[], selectedTagIds: ReadonlySet<string>, 
 
   URL 过滤生效时：
     urlSet 非空  → 显示 urlSet
-    tagged 非空  → 显示 tagged     提示「当前站点无匹配，显示全部」
+    tagged 非空  → 显示 tagged     提示「当前站点无匹配，显示标签内结果」
     urlOnly 非空 → 显示 urlOnly    提示「当前标签下无匹配，已放宽标签过滤」
-    否则         → 显示 base       提示「当前站点无匹配，显示全部」
+    否则         → 显示 base       提示「当前站点与标签均无匹配，显示全部」
   URL 过滤未生效时：
     有搜索词且 tagged 为空 → 显示 base   提示「当前标签下无匹配，已放宽标签过滤」
     其余                   → 显示 tagged（可为空列表）
