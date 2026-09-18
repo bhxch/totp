@@ -48,6 +48,15 @@ watch(selectedTagIds, (ids) => {
   props.store.settings.lastTagFilterIds = [...ids]
   void props.store.commitSettings()
 })
+// options 端 store 初始化晚于本组件挂载，settings 首次装载后恢复持久化选中（与 popup 补偿行同型）
+watch(
+  () => props.store.settings.lastTagFilterIds,
+  (ids) => {
+    if (!props.store.settings.rememberTagFilter) return
+    if (selectedTagIds.value.length > 0) return // 会话内已有选择不覆盖
+    if (ids.length > 0) selectedTagIds.value = [...ids]
+  },
+)
 /** reveal：列表点击「🔑」后弹 RevealDialog 显前 4 + 后 4（避免列表常驻明文） */
 const revealing = ref<OtpEntry | null>(null)
 /** 标签管理弹层：chips「管理标签」触发（同时向宿主 emit open-tags 保留契约） */

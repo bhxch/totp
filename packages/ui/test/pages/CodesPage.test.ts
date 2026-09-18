@@ -155,6 +155,39 @@ describe('CodesPage 标签筛选（spec §3 管理页）', () => {
     await w.find('.md-dialog__scrim').trigger('click')
     expect(w.find('.md-dialog').exists()).toBe(false)
   })
+
+  it('options 时序（store 初始化晚于挂载）：settings 装载后恢复持久化选中（T13 缺陷修复）', async () => {
+    // seed store 落数据：tag 入 vault、settings 预写持久化选中——共享同一 memory storage 模拟上次会话
+    const storage = createMemoryStorage()
+    const seed = createVueStore(storage)
+    await seed.initStore()
+    const tid = await seed.addTagOp('工作')
+    await storage.set('settings', JSON.stringify({ rememberTagFilter: true, lastTagFilterIds: [tid] }))
+    // options 时序：先 mount（settings 尚未装载，setup 初始化读到默认值）再 initStore
+    const s = createVueStore(storage)
+    const w = mount(CodesPage, { props: { store: s } })
+    await s.initStore()
+    // 补偿 watch 恢复：「工作」chip 处于选中态
+    await vi.waitFor(() => {
+      const c = w.findAll('button.md-chip').find((x) => x.text() === '工作')
+      expect(c?.classes()).toContain('md-chip--selected')
+    })
+  })
+
+  it('options 时序：rememberTagFilter 关闭时不恢复持久化选中（T13 缺陷修复）', async () => {
+    const storage = createMemoryStorage()
+    const seed = createVueStore(storage)
+    await seed.initStore()
+    const tid = await seed.addTagOp('工作')
+    // rememberTagFilter 缺省 false：即使盘上有 lastTagFilterIds 也不恢复
+    await storage.set('settings', JSON.stringify({ lastTagFilterIds: [tid] }))
+    const s = createVueStore(storage)
+    const w = mount(CodesPage, { props: { store: s } })
+    await s.initStore()
+    await vi.waitFor(() => expect(w.text()).toContain('工作')) // chip 渲染（tags 已装载）
+    const c = w.findAll('button.md-chip').find((x) => x.text() === '工作')!
+    expect(c.classes()).not.toContain('md-chip--selected')
+  })
 })
 
 describe('CodesPage FAB 新建入口', () => {
