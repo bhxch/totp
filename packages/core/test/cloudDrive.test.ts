@@ -110,6 +110,20 @@ describe('Google Drive 后端', () => {
     expect(fetchMock).toHaveBeenCalledOnce() // 无 parents GET、无 POST——主对象直传
   })
 
+  it('put：已有 fileId + 时间戳 path 但主对象已删（parents 404）→ 抛中文错误中止，不落 root 成孤儿（审查勘误）', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const u = new URL(String(url))
+      if (init!.method === 'GET' && u.pathname === '/drive/v3/files/fid9' && u.searchParams.get('fields') === 'parents') {
+        return new Response(null, { status: 404 }) // fileId 指向的文件已被删
+      }
+      throw new Error(`意外请求：${init!.method} ${url}`) // 任何 POST/PATCH 均为意外——绝不静默上传
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok', fileId: 'fid9', objectPath: 'dir/sub/totp-backup.totpbackup' })
+    await expect(backend.put('dir/sub/vault-20260101-000000.totpbackup', BYTES)).rejects.toThrow('Google Drive 主文件已不存在（fileId 失效）')
+    expect(fetchMock).toHaveBeenCalledOnce() // 仅 parents 探测——无 POST files.create、无 media 上传
+  })
+
   it('put：无 fileId + 时间戳 path（首推即 keep）→ 先建立主对象并回存凭据，再同目录新建时间戳文件', async () => {
     const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
       const u = new URL(String(url))

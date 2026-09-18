@@ -118,7 +118,13 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
       // 先按既有「首推自动创建」语义建立主对象（承载 overwrite 域的 get/exists/listBackups）。
       if (!fileId) await uploadMedia(await createFile(resolveObjectPath(cred)), data)
       const parent = await primaryParent()
-      const id = await createFileRaw(base, parent === null ? undefined : [parent])
+      // 主对象已删（审查勘误）：落点目录未知即上传会静默落 root 成孤儿（从此不被
+      // listBackups/delete/恢复任何域管理、每轮累积）——明确报错中止，引导用户修复 fileId，
+      // 与 overwrite 分流下 PATCH 已删 fileId 会抛 HTTP 404 的行为对齐。
+      if (parent === null) {
+        throw new Error('Google Drive 主文件已不存在（fileId 失效），无法确定 keep 备份落点目录：请重新授权云备份或删除该源凭据后重新配置')
+      }
+      const id = await createFileRaw(base, [parent])
       await uploadMedia(id, data)
     },
     async get(path) {
