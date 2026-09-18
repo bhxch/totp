@@ -1,16 +1,27 @@
 # plan13–plan16 全代码审查报告（2026-09-18）
 
-## 状态：3 个 Critical 已修复 ✅（Important/Minor 待后续批次）
+## 状态：全部修复 ✅（3 Critical 当日修 + 14 Important / 31 Minor 子代理驱动批次修毕，终审 READY）
 
-2026-09-18 审查当日，3 个 Critical 已原子提交修复并通过回归：
+2026-09-18 审查当日完成全部修复：
 
-| # | 修复提交 | 回归证据 |
-|---|---|---|
-| C3 空闲锁定阈值 | `6384672` | ext 47/47 绿（含阈值透传与降级 2 新用例）+ typecheck |
-| C2 冲突副本名 | `6315b2e` | core 474/474 绿 + desktop 64/64 绿（含 uuid 用例） |
-| C1 keyring 明文落盘 | `c219286` | `cargo check` exit 0（mac/Linux 分支 cfg 门控，语法经编译解析） |
+**第一批：3 Critical + N1**（`6384672`/`6315b2e`/`c219286`，回归 core 474/ext 47/desktop 64 绿 + cargo check）。
 
-N1（firefox 缺 idle 权限）已随 C3 在 `lockEnforcer.start()` 加存在性守卫降级；wxt 权限注入按端拆分留待后续（需 firefox 产物实测）。14 项 Important 与 Minor 未在本轮处理，见正文。
+**第二批：子代理驱动修复批次**（`f5ca131..c480cb8`，64 提交，8 任务串行执行，每任务实现者+规格审查+质量审查三段、审查不过即返工，最终整批终审 READY）：
+
+| 任务 | 范围 | 关键修复 | 终态回归 |
+|---|---|---|---|
+| T1 core 云同步语义 | I1 注释+M1 决胜规则(改设计对齐代码,用户裁决)+M2 分页+M5/M6+in-sync 测试重写 | 7 提交（含 gdrive fields 语法 Critical 勘误 79ce7fa） | core 481 绿 |
+| T2 core gdrive/路径 | I2 keep 上传新建分流+I3 删除域圈定+M3 取整秒防撞名+M4 objectPath 删除 | 6 提交（含毫秒逃逸/404 孤儿两处审查勘误） | core 490 绿 |
+| T3 ui runner/卡片 | I4 sourceName 显示名+I1 宿主 hash 门(最小闭环)+8 Minor | 12 提交（含部分失败自愈 dfee8b3） | ui 528 绿 |
+| T4 ui 移除源 | I5 先持久化+孤儿对账 | 2 提交+文案顺手修正 | ui 533 绿 |
+| T5 extension | I6 迁移提示+I7 secretBag 跨上下文+4 Minor | 11 提交（含 legacyNote 永驻勘误 d81a7f5） | ext 60 绿 |
+| T6 desktop | I8 失败结构化+I9 冲突副本传播+I10 锁定降级+I11 saveSources 合并+I12 测试+4 Minor | 10 提交 | desktop 76 绿+cargo 7 绿 |
+| T7 重设计遗留 | I14 复制 URI 上抛+6 Minor | 10 提交（含 typecheck 门红勘误 cdfe2c9） | ui 548 绿 |
+| T8 vue-tsc 门 | I13 三包接入+37 处浮出错全修（含真实 bug：MiniApp onVisibleChanged 运行时 TypeError 从未生效）+3 打磨 | 9 提交 | 四包 vue-tsc 绿+1174 绿 |
+
+**不修项（均有记录理由）**：R1-M7（SettingsPage #fff，M3 审查已裁决调色板圆点例外）、R5-M5（GDrive fileId 不回存，报告自述仅记录已知开销）、M1 决胜规则按用户裁决改设计文档对齐代码（`d35f787`）。
+
+**整批终审结论（f5ca131..c480cb8）**：报告 3C+14I+31M 无一遗漏（2 项有意不修已记录）；跨批一致性 4 项接缝核查通过；全量回归 core 491 + ui 548 + ext 60 + desktop 76 = **1175 全绿** + 四包 vue-tsc typecheck 绿 + cargo check/test 绿；两处高风险抽样深查（hash 门 allSettled、gdrive put 分流）无隐藏回归。
 
 ## 范围与方法
 
