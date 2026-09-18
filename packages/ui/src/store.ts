@@ -11,7 +11,7 @@ import { computed, reactive, ref, toRaw } from 'vue'
 export function createVueStore(
   adapter: StorageAdapter,
   opts: {
-    registerSync?: (cb: (payload: { vault?: boolean; settings?: boolean }) => void) => void
+    registerSync?: (cb: (payload: { vault?: boolean; settings?: boolean; secretBag?: boolean }) => void) => void
     /** 队列内写操作（commit/commitSettings/enable/disable/changePassphrase 等 op）成功后的统一回调：
      *  extension 场景用于触发浏览器同步推送调度，保证所有写路径无遗漏（desktop 不传则零行为） */
     onCommitted?: () => void
@@ -31,7 +31,7 @@ export function createVueStore(
   const vault = reactive<Vault>({ version: 1, entries: [], groups: [], updatedAt: 0 })
   const settings = reactive<AppSettings>({ ...DEFAULT_SETTINGS })
   let inited = false
-  const lastSelfWrite = { vault: 0, settings: 0 }
+  const lastSelfWrite = { vault: 0, settings: 0, bag: 0 }
   let queue: Promise<void> = Promise.resolve()
   // 加密态按 windowId 隔离：spec §7 末尾「窗口独立解锁」——一个窗口 unlock 不应让另一个窗口同时解锁
   // security 是数据（盘上唯一真相），所有窗口共享；dek/locked 是解锁态，按 windowId 索引
@@ -108,6 +108,23 @@ export function createVueStore(
     setSessionBackupSecret(bag.backupPassword || null)
     credsCache.value = { ...bag.creds }
     bagStoredRef.value = bag.backupPassword !== ''
+  }
+
+  /** 保管区密封写盘统一出口（审查 I7）：记录自写窗口——本端写盘触发的 storage 回声
+   *  不应触发 reloadBagFromDisk 重读自己刚写的内容（对齐 vault 的 lastSelfWrite 模式） */
+  async function sealBagToDisk(dek: Uint8Array): Promise<void> {
+    lastSelfWrite.bag = Date.now()
+    await adapter.set(SECRET_BAG_KEY, await sealSecretBag(dek, bag))
+  }
+
+  /** 远端保管区变更重读（审查 I7）：解锁态从盘重读 bag 并前进内存视图（复用 advanceBag 路径）；
+   *  锁定态忽略——bag 缓存与 DEK 同生命周期（锁定即清空），远端变更等下次解锁经
+   *  applyDekAndUnlock 重装载，锁定态下消费远端 bag 会混入本窗口 DEK 解不开的密文（即使可解
+   *  也是无 DEK 态持明文秘密，违背锁定语义）。无 DEK（未启用加密）同忽略 */
+  async function reloadBagFromDisk(): Promise<void> {
+    const dek = dekByWin.get(windowId)
+    if (lockedByWin.get(windowId) || !dek) return
+    advanceBag(await loadBagFromDisk(dek))
   }
 
   function readRawVault(): Promise<unknown> {
@@ -305,6 +322,10 @@ export function createVueStore(
       if (payload.settings && Date.now() - lastSelfWrite.settings >= suppressMs) {
         loadSettings(adapter).then((s) => Object.assign(settings, s)).catch(() => {})
       }
+      // 保管区远端变更（审查 I7）：自写窗口内的通知视为自身回声跳过；否则解锁态重读前进内存视图
+      if (payload.secretBag && Date.now() - lastSelfWrite.bag >= suppressMs) {
+        void reloadBagFromDisk().catch(() => {})
+      }
     })
   }
 
@@ -373,7 +394,7 @@ export function createVueStore(
         // 下次 commit 以旧 DEK+旧 security 落盘，重试自愈，T7 审查 R3）；成功后才前进内存 DEK，security 落盘作最后提交点
         lastSelfWrite.vault = Date.now()
         await adapter.set(VAULT_KEY, JSON.stringify(await encryptVaultWithDek(r.dek, JSON.stringify(vault))))
-        await adapter.set(SECRET_BAG_KEY, await sealSecretBag(r.dek, bag))
+        await sealBagToDisk(r.dek) // 保管区重封（新 DEK 写盘前 dekByWin 尚未前进，显式传入）
         dekByWin.set(windowId, r.dek)
         void opts.dekPersist?.set(r.dek)
       }
@@ -489,7 +510,7 @@ export function createVueStore(
       if (!security.value) throw new Error('需先启用加密才能记住备份口令')
       if (lockedByWin.get(windowId)) throw new Error('解锁后才能记住备份口令')
       bag.backupPassword = trimmed
-      await adapter.set(SECRET_BAG_KEY, await sealSecretBag(dekByWin.get(windowId)!, bag))
+      await sealBagToDisk(dekByWin.get(windowId)!)
       bagStoredRef.value = true
     }
   }
@@ -500,7 +521,7 @@ export function createVueStore(
     setSessionBackupSecret(null)
     if (security.value && !lockedByWin.get(windowId)) {
       bag.backupPassword = ''
-      await adapter.set(SECRET_BAG_KEY, await sealSecretBag(dekByWin.get(windowId)!, bag))
+      await sealBagToDisk(dekByWin.get(windowId)!)
       bagStoredRef.value = false
     }
   }
@@ -511,7 +532,7 @@ export function createVueStore(
       if (lockedByWin.get(windowId)) throw new Error('vault locked')
       if (!security.value || !dekByWin.get(windowId)) throw new Error('需先启用加密才能保存云凭据')
       bag.creds[id] = cred
-      await adapter.set(SECRET_BAG_KEY, await sealSecretBag(dekByWin.get(windowId)!, bag))
+      await sealBagToDisk(dekByWin.get(windowId)!)
       credsCache.value = { ...bag.creds }
     })
   }
@@ -522,7 +543,7 @@ export function createVueStore(
       if (lockedByWin.get(windowId)) throw new Error('vault locked')
       if (!security.value || !dekByWin.get(windowId)) throw new Error('需先启用加密才能保存云凭据')
       delete bag.creds[id]
-      await adapter.set(SECRET_BAG_KEY, await sealSecretBag(dekByWin.get(windowId)!, bag))
+      await sealBagToDisk(dekByWin.get(windowId)!)
       credsCache.value = { ...bag.creds }
     })
   }
@@ -542,7 +563,7 @@ export function createVueStore(
     }
     if (typeof legacy === 'string' && legacy && !bag.backupPassword) {
       bag.backupPassword = legacy
-      await adapter.set(SECRET_BAG_KEY, await sealSecretBag(dekByWin.get(windowId)!, bag))
+      await sealBagToDisk(dekByWin.get(windowId)!)
       setSessionBackupSecret(legacy)
       bagStoredRef.value = true
     }
@@ -609,6 +630,8 @@ export function createVueStore(
     bagStored,
     /** 保管区凭据只读镜像（sourceId → CloudCred；锁定清空，解锁自动装载；写走 saveSourceCredOp/removeSourceCredOp） */
     credsCache,
+    /** 远端保管区变更重读（审查 I7）：解锁态从盘重读前进内存视图；锁定/无 DEK 忽略。宿主 registerSync 透传 secretBag 键时由 registerStorageSync 自动调用 */
+    reloadBagFromDisk,
     setBackupSecret, forgetBackupSecret,
     /** 保存/移除源云凭据入保管区（解锁+加密守护，密封写盘） */
     saveSourceCredOp, removeSourceCredOp,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  createMemoryStorage, decryptVaultWithDek, encryptVaultWithDek, openSecretBag, randomBytes, SECRET_BAG_KEY,
+  createMemoryStorage, decryptVaultWithDek, encryptVaultWithDek, openSecretBag, randomBytes, sealSecretBag, SECRET_BAG_KEY,
   SECURITY_KEY, bytesToBase64, base64ToBytes,
   type CloudCred, type SecuritySettings, type StorageAdapter, type Vault,
 } from '@totp/core'
@@ -266,5 +266,125 @@ describe('store secretBag', () => {
     expect(persist.value()).not.toBeNull()
     expect(persist.value()).not.toBe(oldPersisted) // 新 DEK 已持久化
     expect(base64ToBytes(persist.value()!)).toEqual(s.getCurrentDek()!)
+  })
+
+  // ---- 审查 I7：secretBag 跨上下文变更感知 ----
+
+  /** 模拟远端上下文写入保管区：以 store 当前 DEK 封存一份新 bag 密文落盘（sealSecretBag 返回值即落盘原文，等价另一页写入） */
+  async function writeRemoteBag(adapter: StorageAdapter, dek: Uint8Array, content: { backupPassword?: string; creds?: Record<string, CloudCred> }): Promise<void> {
+    await adapter.set(SECRET_BAG_KEY, await sealSecretBag(dek, { backupPassword: content.backupPassword ?? '', creds: content.creds ?? {} }))
+  }
+
+  it('I7-①解锁态远端变更重读生效：notify(secretBag) 后 credsCache/会话口令前进到远端内容', async () => {
+    const adapter = createMemoryStorage()
+    let notify: ((p: { secretBag?: boolean }) => void) | null = null
+    const s = createVueStore(adapter, { registerSync: (cb) => { notify = cb }, selfWriteSuppressMs: 0 })
+    await s.initStore()
+    s.registerStorageSync()
+    await s.enableEncryption('masterpw')
+    await s.saveSourceCredOp('src-1', webdavCred)
+    expect(s.credsCache.value['src-1']).toEqual(webdavCred)
+
+    const dek = s.getCurrentDek()!
+    const gistCred: CloudCred = { backend: 'gist', token: 't', gistId: 'g' }
+    // 远端覆盖 bag：src-1 凭据更新 + 新增 src-2 + 备份口令变化
+    await writeRemoteBag(adapter, dek, { backupPassword: 'remote-pw', creds: { 'src-1': { ...webdavCred, password: 'p-remote' }, 'src-2': gistCred } })
+    notify!({ secretBag: true })
+    await flush()
+    expect(s.credsCache.value).toEqual({ 'src-1': { ...webdavCred, password: 'p-remote' }, 'src-2': gistCred })
+    expect(s.backupSecret.value).toBe('remote-pw')
+    expect(s.bagStored.value).toBe(true)
+  })
+
+  it('I7-②锁定态远端变更忽略：bag 缓存保持空、会话口令不复活', async () => {
+    const adapter = createMemoryStorage()
+    let notify: ((p: { secretBag?: boolean }) => void) | null = null
+    const s = createVueStore(adapter, { registerSync: (cb) => { notify = cb }, selfWriteSuppressMs: 0 })
+    await s.initStore()
+    s.registerStorageSync()
+    await s.enableEncryption('masterpw')
+    const dek = s.getCurrentDek()!
+    s.lock()
+    expect(s.locked.value).toBe(true)
+    // 锁定后远端写入 bag 并通知：锁定态不消费（bag 缓存与 DEK 同生命周期，解锁路径重装载）
+    await writeRemoteBag(adapter, dek, { backupPassword: 'remote-pw', creds: { 'src-1': webdavCred } })
+    notify!({ secretBag: true })
+    await flush()
+    expect(s.credsCache.value).toEqual({})
+    expect(s.backupSecret.value).toBeNull()
+    expect(s.bagStored.value).toBe(false)
+    // 解锁后经 applyDekAndUnlock 装载远端内容（远端变更不丢失）
+    await s.unlock('masterpw')
+    expect(s.credsCache.value['src-1']).toEqual(webdavCred)
+  })
+
+  it('I7-③自写抑制：本端写保管区后窗口内的通知不触发重读（自己刚写的内容不回读覆盖内存）', async () => {
+    const adapter = createMemoryStorage()
+    let notify: ((p: { secretBag?: boolean }) => void) | null = null
+    const s = createVueStore(adapter, { registerSync: (cb) => { notify = cb }, selfWriteSuppressMs: 60_000 })
+    await s.initStore()
+    s.registerStorageSync()
+    await s.enableEncryption('masterpw')
+    await s.saveSourceCredOp('src-1', webdavCred)
+    // 自写后窗口内：改盘上 bag（模拟窗口内到达的回声+他端交错写）再通知 → 被抑制，内存不被盘上内容覆盖
+    const dek = s.getCurrentDek()!
+    const gistCred: CloudCred = { backend: 'gist', token: 't', gistId: 'g' }
+    await writeRemoteBag(adapter, dek, { creds: { 'src-2': gistCred } })
+    notify!({ secretBag: true })
+    await flush()
+    expect(s.credsCache.value).toEqual({ 'src-1': webdavCred }) // 未被远端内容覆盖
+  })
+
+  it('I7-④saveSourceCredOp/removeSourceCredOp/setBackupSecret(remember)/forget 写盘均开自写窗口', async () => {
+    const adapter = createMemoryStorage()
+    let notify: ((p: { secretBag?: boolean }) => void) | null = null
+    const s = createVueStore(adapter, { registerSync: (cb) => { notify = cb }, selfWriteSuppressMs: 60_000 })
+    await s.initStore()
+    s.registerStorageSync()
+    await s.enableEncryption('masterpw')
+    const dek = s.getCurrentDek()!
+    const gistCred: CloudCred = { backend: 'gist', token: 't', gistId: 'g' }
+    // 每个写路径后：盘上换成远端内容 → 通知应被抑制（内存保持本端状态）
+    await s.setBackupSecret('bpw', true)
+    await writeRemoteBag(adapter, dek, { creds: { 'src-2': gistCred } })
+    notify!({ secretBag: true })
+    await flush()
+    expect(s.backupSecret.value).toBe('bpw') // 未被远端（无口令）覆盖
+    expect(s.credsCache.value['src-2']).toBeUndefined()
+
+    await s.saveSourceCredOp('src-1', webdavCred)
+    await writeRemoteBag(adapter, dek, { creds: { 'src-9': gistCred } })
+    notify!({ secretBag: true })
+    await flush()
+    expect(s.credsCache.value['src-9']).toBeUndefined()
+
+    await s.removeSourceCredOp('src-1')
+    await writeRemoteBag(adapter, dek, { creds: { 'src-9': gistCred } })
+    notify!({ secretBag: true })
+    await flush()
+    expect(s.credsCache.value['src-9']).toBeUndefined()
+
+    await s.forgetBackupSecret()
+    await writeRemoteBag(adapter, dek, { backupPassword: 'remote', creds: {} })
+    notify!({ secretBag: true })
+    await flush()
+    expect(s.backupSecret.value).toBeNull() // 未被远端口令复活
+    expect(s.bagStored.value).toBe(false)
+  })
+
+  it('I7-⑤reloadBagFromDisk 直接调用：解锁态生效；未启用加密（无 DEK）忽略不抛', async () => {
+    const adapter = createMemoryStorage()
+    const s = createVueStore(adapter)
+    await s.initStore()
+    // 未启用加密：无 DEK，直接调用应安全忽略
+    await expect(s.reloadBagFromDisk()).resolves.toBeUndefined()
+    expect(s.credsCache.value).toEqual({})
+    // 解锁态：写远端 bag 后直接调用生效
+    await s.enableEncryption('masterpw')
+    const dek = s.getCurrentDek()!
+    const gistCred: CloudCred = { backend: 'gist', token: 't', gistId: 'g' }
+    await writeRemoteBag(adapter, dek, { creds: { 'src-2': gistCred } })
+    await s.reloadBagFromDisk()
+    expect(s.credsCache.value['src-2']).toEqual(gistCred)
   })
 })

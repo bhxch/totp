@@ -29,15 +29,20 @@ export function createExtensionStore(
   opts: {
     onCommittedExtra?: () => void
     dekPersist?: { get(): Promise<string | null>; set(dek: Uint8Array): Promise<void>; clear(): Promise<void> }
+    /** 自写抑制窗口透传（ui createVueStore 同名参数，默认 500）；测试注入 0 验证远端通知即时生效 */
+    selfWriteSuppressMs?: number
   } = {},
 ): VueStore {
   const s = createVueStore(storageAdapter, {
     windowId,
     dekPersist: opts.dekPersist,
+    selfWriteSuppressMs: opts.selfWriteSuppressMs,
     registerSync: (cb) =>
       chrome.storage.onChanged.addListener((changes, area) => {
         if (area !== 'local') return
-        cb({ vault: !!changes['vault'], settings: !!changes['settings'] })
+        // secretBag（审查 I7）：另一上下文（popup/options）写保管区 → 本上下文重读前进内存视图，
+        // 否则两个 options 页并发写保管区可丢失先写者数据
+        cb({ vault: !!changes['vault'], settings: !!changes['settings'], secretBag: !!changes['secretBag'] })
       }),
     onCommitted: () => {
       scheduleSyncPush(s)
