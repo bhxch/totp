@@ -65,6 +65,81 @@ describe('Google Drive 后端', () => {
     expect(onCredChange).not.toHaveBeenCalled()
   })
 
+  it('put：已有 fileId + 时间戳 path（keep 源）→ 同父目录新建文件，绝不 PATCH 主文件、不回写 fileId（审查 I2）', async () => {
+    let created = 0
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const u = new URL(String(url))
+      if (init!.method === 'GET' && u.pathname === '/drive/v3/files/fid9' && u.searchParams.get('fields') === 'parents') {
+        return jsonRes({ parents: ['pid1'] })
+      }
+      if (init!.method === 'POST' && u.origin + u.pathname === 'https://www.googleapis.com/drive/v3/files') {
+        // 新建文件落主对象同一父目录，name 为时间戳 basename，mimeType 限定 envelope
+        const body = JSON.parse(init!.body as string) as { name: string; mimeType?: string; parents?: string[] }
+        expect(body.name).toMatch(/^vault-\d{8}-\d{6}\.totpbackup$/)
+        expect(body).toEqual({ name: body.name, mimeType: 'application/json', parents: ['pid1'] })
+        return jsonRes({ id: `tsfile${++created}` })
+      }
+      if (init!.method === 'PATCH' && /^https:\/\/www\.googleapis\.com\/upload\/drive\/v3\/files\/tsfile\d\?uploadType=media$/.test(String(url))) {
+        expect(new TextDecoder().decode(init!.body as Uint8Array)).toBe('hello')
+        return new Response(null, { status: 200 })
+      }
+      throw new Error(`意外请求：${init!.method} ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const onCredChange = vi.fn()
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok', fileId: 'fid9', objectPath: 'dir/sub/totp-backup.totpbackup' }, { onCredChange })
+    await backend.put('dir/sub/vault-20260101-000000.totpbackup', BYTES)
+    // 第二轮 keep 上传：fileId 未被时间戳文件劫持，仍走新建——keep 语义不退化 overwrite
+    await backend.put('dir/sub/vault-20260102-000000.totpbackup', BYTES)
+    expect(onCredChange).not.toHaveBeenCalled() // 新 fileId 不覆盖主凭据
+    expect(fetchMock.mock.calls.filter(([, i]) => i!.method === 'POST')).toHaveLength(2)
+    for (const [url] of fetchMock.mock.calls) {
+      expect(String(url)).not.toBe('https://www.googleapis.com/upload/drive/v3/files/fid9?uploadType=media') // 绝不 PATCH 主文件
+    }
+  })
+
+  it('put：已有 fileId 且 path basename == 主对象名 → 仍直接 PATCH 主文件（overwrite 语义不变）', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      expect(init!.method).toBe('PATCH')
+      expect(String(url)).toBe('https://www.googleapis.com/upload/drive/v3/files/fid9?uploadType=media')
+      return new Response(null, { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok', fileId: 'fid9', objectPath: 'dir/sub/totp-backup.totpbackup' })
+    await backend.put('dir/sub/totp-backup.totpbackup', BYTES)
+    expect(fetchMock).toHaveBeenCalledOnce() // 无 parents GET、无 POST——主对象直传
+  })
+
+  it('put：无 fileId + 时间戳 path（首推即 keep）→ 先建立主对象并回存凭据，再同目录新建时间戳文件', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const u = new URL(String(url))
+      if (init!.method === 'POST' && u.origin + u.pathname === 'https://www.googleapis.com/drive/v3/files') {
+        const body = JSON.parse(init!.body as string) as { name: string; parents?: string[] }
+        if (body.name === PATH) return jsonRes({ id: 'main1' }) // 主对象：首推自动创建（无 parents）
+        expect(body).toEqual({ name: 'vault-20260101-000000.totpbackup', mimeType: 'application/json', parents: ['pidX'] })
+        return jsonRes({ id: 'tsfile1' })
+      }
+      if (init!.method === 'PATCH' && String(url) === 'https://www.googleapis.com/upload/drive/v3/files/main1?uploadType=media') {
+        return new Response(null, { status: 200 })
+      }
+      if (init!.method === 'GET' && u.pathname === '/drive/v3/files/main1' && u.searchParams.get('fields') === 'parents') {
+        return jsonRes({ parents: ['pidX'] })
+      }
+      if (init!.method === 'PATCH' && String(url) === 'https://www.googleapis.com/upload/drive/v3/files/tsfile1?uploadType=media') {
+        return new Response(null, { status: 200 })
+      }
+      throw new Error(`意外请求：${init!.method} ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const onCredChange = vi.fn()
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok' }, { onCredChange })
+    await backend.put('vault-20260101-000000.totpbackup', BYTES)
+    // fileId 只指向主对象：仅主对象创建回存凭据
+    expect(onCredChange).toHaveBeenCalledTimes(1)
+    expect(onCredChange).toHaveBeenCalledWith({ backend: 'gdrive', accessToken: 'tok', fileId: 'main1' })
+    expect(fetchMock).toHaveBeenCalledTimes(5) // POST main → PATCH main → GET parents → POST ts → PATCH ts
+  })
+
   it('put：创建文件失败（非 2xx）抛中文错误', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 403 })))
     const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok' })

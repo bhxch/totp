@@ -24,20 +24,41 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
   const objectBasename = resolveObjectPath(cred).split('/').pop()!
   const basenameOf = (p: string) => p.split('/').filter((s) => s !== '').pop() ?? p
 
-  const createFile = async (name: string): Promise<string> => {
+  /** 在 Drive 新建文件（显式 mimeType=application/json：让 queryIdByName 的 mimeType 限定只匹配加密
+   *  envelope 文件，防止用户同名文档被误当作备份命中；parents 限定落点目录）。只返回新 id，
+   *  不触碰 fileId——keep 时间戳文件绝不劫持主对象指针（审查 I2）。 */
+  const createFileRaw = async (name: string, parents?: string[]): Promise<string> => {
     const res = await cloudFetch(LABEL, `${DRIVE_API}/files`, {
       method: 'POST',
       headers: { ...auth, 'Content-Type': 'application/json' },
       // 显式 mimeType=application/json:让 queryIdByName 的 mimeType 限定只匹配加密 envelope 文件,
       // 防止用户同名文档(如 txt/json)被误当作备份命中而覆盖上传内容
-      body: JSON.stringify({ name, mimeType: 'application/json' }),
+      body: JSON.stringify(parents ? { name, mimeType: 'application/json', parents } : { name, mimeType: 'application/json' }),
     })
     ensureHttpOk(LABEL, res) // HTTP 层错误（如 401/403/5xx）由 ensureHttpOk 抛 "Google Drive xxx"，前缀与业务字段缺失错误区分
     const json = (await res.json()) as { id?: string }
     if (!json.id) throw new Error('Google Drive 业务字段缺失：files.create 响应缺少文件 id')
-    fileId = json.id
-    opts.onCredChange?.({ ...cred, fileId })
-    return fileId
+    return json.id
+  }
+
+  /** 主对象创建并采纳（首推自动建立 vault 文件）：回写 fileId + onCredChange。仅主对象走此路径。 */
+  const createFile = async (name: string): Promise<string> => {
+    const id = await createFileRaw(name)
+    fileId = id
+    opts.onCredChange?.({ ...cred, fileId: id })
+    return id
+  }
+
+  /** 主对象所在父目录——listBackups 圈列域、异名 delete 查询域、keep 新建落点三者同源，
+   *  保证「删除域 ⊆ 列表域」（审查 I3）。无 fileId → 'root'（Drive 根目录别名）；
+   *  主对象已删（404）→ null（域未知，调用方宁可不删不可误删）。 */
+  const primaryParent = async (): Promise<string | null> => {
+    if (!fileId) return 'root'
+    const res = await cloudFetch(LABEL, `${DRIVE_API}/files/${fileId}?fields=parents`, { method: 'GET', headers: auth })
+    if (res.status === 404) return null
+    ensureHttpOk(LABEL, res)
+    const json = (await res.json()) as { parents?: string[] }
+    return json.parents?.[0] ?? 'root'
   }
 
   /** 按 name + mimeType 查询文件 id（排除回收站），取首个匹配。
@@ -82,7 +103,20 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
   return {
     id: 'gdrive',
     async put(path, data) {
-      await uploadMedia(fileId ?? (await createFile(path)), data)
+      const base = basenameOf(path)
+      if (base === objectBasename) {
+        // overwrite 目标（与主对象同名）：PATCH 主文件（无 fileId 首推先建立主对象并回存凭据）
+        await uploadMedia(fileId ?? (await createFile(path)), data)
+        return
+      }
+      // keep-n 时间戳目标（审查 I2）：绝不 PATCH 主文件——否则 keep 语义静默退化 overwrite，
+      // 且会覆盖用户主 vault 文档。改在主对象同一父目录新建时间戳文件；新 id 不回写凭据
+      // （fileId 只指向主对象，回写则下轮 put 又变 overwrite）。主对象尚未建立（首推即 keep）时
+      // 先按既有「首推自动创建」语义建立主对象（承载 overwrite 域的 get/exists/listBackups）。
+      if (!fileId) await uploadMedia(await createFile(resolveObjectPath(cred)), data)
+      const parent = await primaryParent()
+      const id = await createFileRaw(base, parent === null ? undefined : [parent])
+      await uploadMedia(id, data)
     },
     async get(path) {
       const id = fileId ?? (await queryIdByName(path))
