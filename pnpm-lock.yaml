@@ -51,15 +51,15 @@ importers:
       '@tauri-apps/cli':
         specifier: ^2.0.0
         version: 2.11.4
+      '@vitejs/plugin-vue':
+        specifier: ^5.1.0
+        version: 5.2.4(vite@5.4.21(@types/node@22.20.2))(vue@3.5.42(typescript@5.9.3))
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
       vite:
         specifier: ^5.4.0
         version: 5.4.21(@types/node@22.20.2)
-      vite-plugin-vue:
-        specifier: npm:@vitejs/plugin-vue@^5.1.0
-        version: '@vitejs/plugin-vue@5.2.4(vite@5.4.21(@types/node@22.20.2))(vue@3.5.42(typescript@5.9.3))'
       vitest:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.20.2)(jsdom@25.0.1)
