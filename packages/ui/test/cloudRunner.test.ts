@@ -440,3 +440,65 @@ describe('createCloudSyncRunner', () => {
     expect(recordStatus).toHaveBeenCalledWith(true, 's1: 已上传')
   })
 })
+
+describe('自动通道明文内容 hash 门（审查 I1 最小闭环）', () => {
+  it('门①内容无变化：首轮同步成功后，自动重跑跳过（recordStatus null）且不发起 loadSources、不建 backend（零网络请求）', async () => {
+    const { deps, loadSources, recordStatus, backends } = makeDeps({
+      loadSources: vi.fn(async () => [{ source: source('s1'), cred: WEBDAV_CRED }]),
+    })
+    const runner = createCloudSyncRunner(deps)
+    await runner.run()
+    expect(loadSources).toHaveBeenCalledTimes(1)
+    expect(recordStatus).toHaveBeenLastCalledWith(true, 's1: 已上传')
+    await runner.run() // 内容仍为 A → 门短路
+    expect(loadSources).toHaveBeenCalledTimes(1) // 门在 loadSources 之前
+    expect(backends).toHaveLength(1) // 未再建 backend
+    expect(recordStatus).toHaveBeenLastCalledWith(null, '内容无变化，跳过')
+  })
+
+  it('门②内容变化 → 正常同步并刷新基线；同内容再跑又跳过', async () => {
+    let json = A
+    const { deps, loadSources, recordStatus, backends } = makeDeps({
+      getVaultJson: () => json,
+      loadSources: vi.fn(async () => [{ source: source('s1'), cred: WEBDAV_CRED }]),
+    })
+    const runner = createCloudSyncRunner(deps)
+    await runner.run()
+    json = B
+    await runner.run()
+    expect(loadSources).toHaveBeenCalledTimes(2)
+    expect(backends).toHaveLength(2)
+    expect(recordStatus).toHaveBeenLastCalledWith(true, 's1: 已上传')
+    await runner.run() // 基线已随成功刷到 B
+    expect(loadSources).toHaveBeenCalledTimes(2)
+    expect(recordStatus).toHaveBeenLastCalledWith(null, '内容无变化，跳过')
+  })
+
+  it('门③手动模式不设门：内容无变化 run("manual") 照常同步（成功后基线随之刷新）', async () => {
+    const { deps, loadSources, recordStatus } = makeDeps({
+      loadSources: vi.fn(async () => [{ source: source('s1'), cred: WEBDAV_CRED }]),
+    })
+    const runner = createCloudSyncRunner(deps)
+    await runner.run()
+    await runner.run('manual')
+    expect(loadSources).toHaveBeenCalledTimes(2)
+    expect(recordStatus).toHaveBeenLastCalledWith(true, 's1: 已上传')
+  })
+
+  it('门④失败不更新基线：首轮失败后同内容下轮仍重试（不跳过）', async () => {
+    let fail = true
+    const { deps, loadSources, recordStatus } = makeDeps({
+      loadSources: vi.fn(async () => {
+        if (fail) throw new Error('凭据读取失败')
+        return [{ source: source('s1'), cred: WEBDAV_CRED }]
+      }),
+    })
+    const runner = createCloudSyncRunner(deps)
+    await runner.run()
+    expect(recordStatus).toHaveBeenLastCalledWith(false, '凭据读取失败')
+    fail = false
+    await runner.run() // 内容未变但基线未建立 → 照常同步
+    expect(loadSources).toHaveBeenCalledTimes(2)
+    expect(recordStatus).toHaveBeenLastCalledWith(true, 's1: 已上传')
+  })
+})

@@ -9,10 +9,14 @@
  *   结果经 onRetentionDeleted 交宿主记录（deleted=-1=后端不支持，宿主降级提示）；清理全程逐源
  *   try/catch 隔离，失败不影响该源上传结果与其余源（下轮重试）；
  * - 已知边界：busy 只防 runner 重入（自动与自动重叠），与 CloudCard 手动同步可能并发，
- *   由两边各自的 hash 回写顺序兜底（后完成者覆盖基线），不引入跨实例锁。
+ *   由两边各自的 hash 回写顺序兜底（后完成者覆盖基线），不引入跨实例锁；
+ * - 明文内容 hash 门（审查 I1 最小闭环）：core in-sync 判据生产不可达（远端恒为 envelope 密文，
+ *   见 core multiTarget 头注释勘误），自动通道在本 runner 内做内容级门——上次自动同步成功时的
+ *   sha256(vaultJson) 与当前相同则不发起任何同步（实例内存级，宿主页存活期生效，跨会话/页面重开
+ *   首次仍会同步一次）；手动通道（run('manual')）不设门，对齐设计「手动不跳过」。
  */
 import {
-  enforceRemoteRetention, resolveObjectPath, resolveTimestampPath, syncMultipleTargets,
+  enforceRemoteRetention, resolveObjectPath, resolveTimestampPath, sha256Hex, syncMultipleTargets,
   type BackupSource, type CloudBackend, type CloudCred, type KdfProfile,
 } from '@totp/core'
 import { CLOUD_ACTION_LABEL } from './cloudPlatform'
@@ -43,7 +47,7 @@ export interface CloudRunnerDeps {
    *  onRetentionDeleted 提示统一用显示名，避免新建源的 uuid 直接上屏；缺省直接用源 id */
   sourceName?(id: string): string
   /** 「上次自动同步」状态记录（design §4.1：desktop 写 localStorage / extension 写 storage.local 的 cloudAutoStatus）。
-   *  三态（批 4）：true=成功 / false=失败 / null=跳过（锁定/无 secret/空目标；记录仅来自自动通道——
+   *  三态（批 4）：true=成功 / false=失败 / null=跳过（锁定/无 secret/空目标/内容无变化；记录仅来自自动通道——
    *  手动同步走 CloudCard 自身的 platform 链路，不经过本 runner，不会污染手动状态行） */
   recordStatus?(ok: boolean | null, summary: string): void
   onError?(err: unknown): void
@@ -52,14 +56,24 @@ export interface CloudRunnerDeps {
 /** 模块级防重入标志：run 在途时再次 run 直接 return（自动与自动重叠防护） */
 let busy = false
 
+const encoder = new TextEncoder()
+
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
-export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(): Promise<void> } {
+export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto' | 'manual'): Promise<void> } {
+  /**
+   * 自动通道明文内容 hash 门基线（审查 I1 最小闭环）：上次自动同步成功时的 sha256(vaultJson)。
+   * 实例内存级——宿主页存活期生效，跨会话/页面重开首次仍会同步一次（最小闭环边界）；
+   * 仅同步成功路径更新（以 core 收敛后的最终内容为准：无采纳=入参快照，采纳=persistAdopted
+   * 落地的云端版本），失败不更新，下轮同内容仍会重试。手动通道不设门但成功后同样刷新基线，
+   * 手动推完的内容后续自动 tick 无需重传。
+   */
+  let lastAutoVaultHash: string | null = null
   /** 显示名解析：sourceName 提供时用宿主名称，否则回退源 id（审查 I4） */
   const displayName = (id: string): string => deps.sourceName?.(id) ?? id
-  async function run(): Promise<void> {
+  async function run(mode: 'auto' | 'manual' = 'auto'): Promise<void> {
     if (busy) return
     // 跳过态可观测（批 4 裁定）：锁定/无 secret/空目标是「用户需要知道的原因」，return 前记 null 跳过态。
     // summary 仅存原因文本，不携带「跳过：」前缀——前缀由宿主格式化按 ok=null 拼装（label 拼装职责单一）。
@@ -75,6 +89,13 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(): Promise<v
     }
     busy = true
     try {
+      const vaultJson = deps.getVaultJson()
+      // 自动通道内容门（审查 I1）：已有基线且明文内容未变 → 不发起任何同步（连 loadSources 都不进，
+      // 零网络请求），记 null 跳过态；manual 不设门（对齐设计「手动不跳过」）
+      if (mode === 'auto' && lastAutoVaultHash !== null && (await sha256Hex(encoder.encode(vaultJson))) === lastAutoVaultHash) {
+        deps.recordStatus?.(null, '内容无变化，跳过')
+        return
+      }
       const pairs = (await deps.loadSources()).filter((p) => p.source.enabled)
       if (pairs.length === 0) {
         deps.recordStatus?.(null, '未启用云源')
@@ -91,7 +112,7 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(): Promise<v
       )
       const r = await syncMultipleTargets({
         targets: inputs,
-        vaultJson: deps.getVaultJson(),
+        vaultJson,
         password: secret,
         onConflictBackup: (key, bytes) => {
           deps.saveConflictBackup?.(key, bytes)
@@ -121,7 +142,10 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(): Promise<v
         }
       }
       // summary 动作中文化（Minor-6）：与手动同步状态行同口径；单目标失败（outcome=null）记「失败」；
-      // 源显示名（审查 I4）：sourceName 提供时用名称，新建源 uuid 不上屏
+      // 源显示名（审查 I4）：sourceName 提供时用名称，新建源 uuid 不上屏。
+      // 内容门基线在成功路径末尾刷新（manual 同样刷新——手动已把该内容推上云，后续自动 tick 无需重传）；
+      // 失败走 catch 不更新，下轮同内容仍会重试
+      lastAutoVaultHash = await sha256Hex(encoder.encode(r.finalVaultJson))
       deps.recordStatus?.(true, r.results.map((x) => `${displayName(x.key)}: ${x.outcome ? CLOUD_ACTION_LABEL[x.outcome.action] : '失败'}`).join('; '))
     } catch (err) {
       deps.onError?.(err)
