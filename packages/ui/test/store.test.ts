@@ -11,7 +11,7 @@ function flush(): Promise<void> { return new Promise((r) => setTimeout(r, 0)) }
 describe('createVueStore', () => {
   it('initStore 后 vault/settings 从 adapter 加载；重复调用幂等', async () => {
     const adapter = createMemoryStorage()
-    await adapter.set('vault', JSON.stringify({ version: 1, entries: [], groups: [], updatedAt: 5 }))
+    await adapter.set('vault', JSON.stringify({ version: 2, entries: [], tags: [], updatedAt: 5 }))
     const s = createVueStore(adapter)
     await s.initStore()
     expect(s.vault.updatedAt).toBe(5)
@@ -48,7 +48,7 @@ describe('createVueStore', () => {
     await s.initStore()
     s.registerStorageSync()
     // 对端写入
-    await adapter.set('vault', JSON.stringify({ version: 1, entries: [{ uuid: 'x' }], groups: [], updatedAt: 9 }))
+    await adapter.set('vault', JSON.stringify({ version: 2, entries: [{ uuid: 'x' }], tags: [], updatedAt: 9 }))
     notify!({ vault: true })
     await flush()
     expect(s.vault.updatedAt).toBe(9)
@@ -59,7 +59,7 @@ describe('createVueStore', () => {
     expect(s.vault.updatedAt).toBe(9) // 未被吞掉的抑制不应改变——本轮自写是 settings，vault 窗口未开
     // 自写 vault 后窗口内抑制
     await s.commit((v) => ({ ...v, updatedAt: 10 }))
-    await adapter.set('vault', JSON.stringify({ version: 1, entries: [], groups: [], updatedAt: 11 }))
+    await adapter.set('vault', JSON.stringify({ version: 2, entries: [], tags: [], updatedAt: 11 }))
     notify!({ vault: true })
     await flush()
     expect(s.vault.updatedAt).toBe(10) // 500ms 内抑制了对端值
@@ -69,7 +69,7 @@ describe('createVueStore', () => {
     const adapter = createMemoryStorage()
     const s = createVueStore(adapter)
     await s.initStore()
-    const next = { version: 1 as const, entries: [{ uuid: 'r' }], groups: [], updatedAt: 42 }
+    const next = { version: 2 as const, entries: [{ uuid: 'r' }], tags: [], updatedAt: 42 }
     await s.replaceAllOp(next as unknown as Vault)
     expect(s.vault.updatedAt).toBe(42)
     expect(JSON.parse((await adapter.get('vault'))!).entries[0]).toEqual({ uuid: 'r' })
@@ -174,7 +174,7 @@ describe('createVueStore', () => {
     expect(b.locked.value).toBe(true)
     b.registerStorageSync()
     // 模拟远端 disableEncryption 后的明文落盘
-    await adapter.set('vault', JSON.stringify({ version: 1, entries: [{ uuid: 'x' }], groups: [], updatedAt: 9 }))
+    await adapter.set('vault', JSON.stringify({ version: 2, entries: [{ uuid: 'x' }], tags: [], updatedAt: 9 }))
     notify!({ vault: true })
     await flush()
     expect(b.locked.value).toBe(true)
@@ -207,7 +207,7 @@ describe('createVueStore', () => {
     b.registerStorageSync()
     // 模拟 background pull 落盘远端（设备 A 独立加密 pwA、rev 更高者胜）后的状态
     const remote = await setupVaultEncryption(
-      JSON.stringify({ version: 1, entries: [{ uuid: 'a' }], groups: [], updatedAt: 7 }),
+      JSON.stringify({ version: 2, entries: [{ uuid: 'a' }], tags: [], updatedAt: 7 }),
       'pwA',
     )
     await adapter.set(SECURITY_KEY, JSON.stringify(remote.security))
@@ -538,7 +538,7 @@ describe('DPAPI 解锁来源（plan11 Task3）', () => {
     await expect(createVueStore(a1).initStore()).rejects.toThrow('vault corrupted')
     // 盘上 security 坏 JSON → 保守视为未启用加密（回到明文模型），不抛
     const a2 = createMemoryStorage()
-    await a2.set('vault', JSON.stringify({ version: 1, entries: [], groups: [], updatedAt: 1 }))
+    await a2.set('vault', JSON.stringify({ version: 2, entries: [], tags: [], updatedAt: 1 }))
     await a2.set(SECURITY_KEY, '{bad')
     const s2 = createVueStore(a2)
     await s2.initStore()

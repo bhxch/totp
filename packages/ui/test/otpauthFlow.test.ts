@@ -11,7 +11,7 @@ describe('parseUriToEntryData', () => {
     expect(r.data).toEqual({
       uuid: '', type: 'totp', issuer: 'GitHub', label: 'me@ex.com', secret: 'JBSWY3DPEHPK3PXP',
       algorithm: 'SHA256', digits: 8, period: 60,
-      note: '', groupIds: [], matchRules: [], order: 0, createdAt: 0,
+      note: '', tagIds: [], matchRules: [], order: 0, createdAt: 0,
     })
     const initial: OtpEntry = r.data // 可直接作 EntryForm initial
     expect(initial.uuid).toBe('')

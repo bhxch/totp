@@ -151,7 +151,7 @@ describe('store backupSecret（保管区）', () => {
     await b.initStore()
     expect(b.locked.value).toBe(false)
     expect(b.backupSecret.value).toBe('pw') // 解密填充时同步装载保管区口令
-    expect(b.vault.groups).toEqual(s.vault.groups)
+    expect(b.vault.tags).toEqual(s.vault.tags)
   })
 
   it('migrateLegacySecrets：旧 vault 密文 backupSecret → 保管区 + 从密文剥除；bag 已有口令时仅剥除', async () => {
@@ -161,7 +161,7 @@ describe('store backupSecret（保管区）', () => {
     await s.enableEncryption('masterpw')
     const dek = s.getCurrentDek()!
     // 盘上放置遗留密文（vault JSON 带 backupSecret 字段，T2 前旧库形态）
-    const legacyVault = { version: 1, entries: [], groups: [], updatedAt: 1, backupSecret: 'oldpw' }
+    const legacyVault = { version: 2, entries: [], tags: [], updatedAt: 1, backupSecret: 'oldpw' }
     await adapter.set('vault', JSON.stringify(await encryptVaultWithDek(dek, JSON.stringify(legacyVault))))
     s.lock()
     await s.unlock('masterpw') // replaceVault 自然丢弃遗留字段（内存无残留）
@@ -186,7 +186,7 @@ describe('store backupSecret（保管区）', () => {
     await s.enableEncryption('masterpw')
     const dek = s.getCurrentDek()!
     // 造半失败态（enableEncryption 中途崩溃形态）：security 在、盘上 vault 为明文且带遗留字段
-    const legacyPlain = { version: 1, entries: [], groups: [], updatedAt: 1, backupSecret: 'oldpw' }
+    const legacyPlain = { version: 2, entries: [], tags: [], updatedAt: 1, backupSecret: 'oldpw' }
     await adapter.set('vault', JSON.stringify(legacyPlain))
     s.lock()
     await s.unlock('masterpw') // 宽容接受明文

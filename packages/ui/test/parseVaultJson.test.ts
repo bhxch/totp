@@ -12,7 +12,7 @@ function mkTotp(over: Record<string, unknown> = {}): Record<string, unknown> {
     algorithm: 'SHA1',
     digits: 6,
     period: 30,
-    groupIds: [],
+    tagIds: [],
     order: 0,
     createdAt: 0,
     ...over,
@@ -21,7 +21,7 @@ function mkTotp(over: Record<string, unknown> = {}): Record<string, unknown> {
 
 /** 装一份完整合法 vault 字符串 */
 function vaultJson(entries: unknown[]): string {
-  return JSON.stringify({ version: 1, entries, groups: [], updatedAt: 0 })
+  return JSON.stringify({ version: 2, entries, tags: [], updatedAt: 0 })
 }
 
 describe('parseVaultJson 结构校验', () => {
@@ -36,15 +36,22 @@ describe('parseVaultJson 结构校验', () => {
   })
 
   it('缺 version 抛错', () => {
-    expect(() => parseVaultJson(JSON.stringify({ entries: [], groups: [] }))).toThrow('备份内容不是有效的 vault 数据')
+    expect(() => parseVaultJson(JSON.stringify({ entries: [], tags: [] }))).toThrow('备份内容不是有效的 vault 数据')
   })
 
-  it('缺 groups 抛错（防止 replaceVault 半途抛错污染 commit 队列）', () => {
-    expect(() => parseVaultJson(JSON.stringify({ version: 1, entries: [] }))).toThrow('备份内容不是有效的 vault 数据')
+  it('缺 tags 抛错（防止 replaceVault 半途抛错污染 commit 队列）', () => {
+    expect(() => parseVaultJson(JSON.stringify({ version: 2, entries: [] }))).toThrow('备份内容不是有效的 vault 数据')
   })
 
   it('非 JSON 抛错', () => {
     expect(() => parseVaultJson('not json')).toThrow()
+  })
+
+  it('version 2 校验：version!==2 或缺 tags 抛错', () => {
+    const base = { updatedAt: 0, entries: [], tags: [] }
+    expect(() => parseVaultJson(JSON.stringify({ ...base, version: 1 }))).toThrow()
+    expect(() => parseVaultJson(JSON.stringify({ ...base, version: 2, tags: undefined }))).toThrow()
+    expect(parseVaultJson(JSON.stringify({ ...base, version: 2 })).version).toBe(2)
   })
 })
 

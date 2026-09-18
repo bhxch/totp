@@ -203,7 +203,7 @@ describe('store secretBag', () => {
     await s.enableEncryption('masterpw')
     const dek = s.getCurrentDek()!
     // 遗留密文（T2 前旧库形态：vault JSON 带 backupSecret）
-    const legacyVault: Vault & { backupSecret: string } = { version: 1, entries: [], groups: [], updatedAt: 1, backupSecret: 'oldpw' }
+    const legacyVault: Vault & { backupSecret: string } = { version: 2, entries: [], tags: [], updatedAt: 1, backupSecret: 'oldpw' }
     await adapter.set('vault', JSON.stringify(await encryptVaultWithDek(dek, JSON.stringify(legacyVault))))
     s.lock()
     const before = sets()

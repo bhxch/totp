@@ -24,7 +24,7 @@ export function parseUriToEntryData(uri: string): ParseUriResult {
         period: p.period,
         ...(p.counter !== undefined ? { counter: p.counter } : {}),
         note: '',
-        groupIds: [],
+        tagIds: [],
         matchRules: [],
         order: 0,
         createdAt: 0,

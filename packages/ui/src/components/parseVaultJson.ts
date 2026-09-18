@@ -1,6 +1,6 @@
 import type { HashAlgorithm, OtpEntry, Vault } from '@totp/core'
 
-/** 恢复统一流程第 1 步产物校验：version===1 且 entries/groups 是数组（缺 groups 会在 replaceVault 半途抛错污染 commit 队列）。
+/** 恢复统一流程第 1 步产物校验：version===2 且 entries/tags 是数组（缺 tags 会在 replaceVault 半途抛错污染 commit 队列）。
  *  BackupCard（文件恢复）与 CloudCard（云端下载采用）共用同一份恢复语义。
  *  每条目再做一次语义校验（type/digits/algorithm/period/counter + secret base32 形态）——任何一条不合法都直接抛错，
  *  调用方必须在拿不到合法 Vault 时中止流程，不得调用 replaceAllOp 写入半成品。 */
@@ -8,7 +8,7 @@ export function parseVaultJson(json: string): Vault {
   const parsed: unknown = JSON.parse(json)
   if (typeof parsed !== 'object' || parsed === null) throw new Error('备份内容不是有效的 vault 数据')
   const v = parsed as Vault
-  if (v.version !== 1 || !Array.isArray(v.entries) || !Array.isArray(v.groups)) throw new Error('备份内容不是有效的 vault 数据')
+  if (v.version !== 2 || !Array.isArray(v.entries) || !Array.isArray(v.tags)) throw new Error('备份内容不是有效的 vault 数据')
   v.entries.forEach((e, i) => validateEntry(e, i))
   return v
 }
@@ -55,8 +55,8 @@ function validateEntry(e: unknown, index: number): asserts e is OtpEntry {
     throw new Error(`${at} period 必须为 ≥1 的数字`)
   }
 
-  if (!Array.isArray(o.groupIds) || o.groupIds.some((g) => typeof g !== 'string')) {
-    throw new Error(`${at} groupIds 必须为字符串数组`)
+  if (!Array.isArray(o.tagIds) || o.tagIds.some((g) => typeof g !== 'string')) {
+    throw new Error(`${at} tagIds 必须为字符串数组`)
   }
 
   if (typeof o.order !== 'number') throw new Error(`${at} order 必须为数字`)

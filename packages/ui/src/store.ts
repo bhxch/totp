@@ -1,7 +1,7 @@
 import {
-  DEFAULT_SETTINGS, SECRET_BAG_KEY, SECURITY_KEY, VAULT_KEY, addEntry, addGroup, addPrfSource, base64ToBytes, bytesToBase64,
+  DEFAULT_SETTINGS, SECRET_BAG_KEY, SECURITY_KEY, VAULT_KEY, addEntry, addPrfSource, addTag, base64ToBytes, bytesToBase64,
   changeVaultPassphrase, createVault, decryptVaultWithDek, emptyBag, encryptVaultWithDek, isEncryptedVault, kekSourcesOf,
-  loadSettings, openSecretBag, removeEntry, removeGroup, removeKekSource, renameGroup, reorderEntries, saveSettings, saveVault,
+  loadSettings, openSecretBag, removeEntry, removeKekSource, removeTag, renameTag, reorderEntries, saveSettings, saveVault,
   sealSecretBag, setupVaultEncryption, unlockVaultEncryption, updateEntry, withDpapiSource,
   type AppSettings, type CloudCred, type KekSource, type KdfProfile, type OtpEntry, type SecretBagContent,
   type SecuritySettings, type StorageAdapter, type Vault,
@@ -28,7 +28,7 @@ export function createVueStore(
 ) {
   const suppressMs = opts.selfWriteSuppressMs ?? 500
   const windowId = opts.windowId ?? 'main'
-  const vault = reactive<Vault>({ version: 1, entries: [], groups: [], updatedAt: 0 })
+  const vault = reactive<Vault>({ version: 2, entries: [], tags: [], updatedAt: 0 })
   const settings = reactive<AppSettings>({ ...DEFAULT_SETTINGS })
   let inited = false
   const lastSelfWrite = { vault: 0, settings: 0, bag: 0 }
@@ -85,7 +85,7 @@ export function createVueStore(
     vault.version = v.version
     vault.updatedAt = v.updatedAt
     vault.entries.splice(0, vault.entries.length, ...v.entries)
-    vault.groups.splice(0, vault.groups.length, ...v.groups)
+    vault.tags.splice(0, vault.tags.length, ...v.tags)
     // backupSecret 字段已随 T2 从 Vault 模型删除（保管区接管）：源 JSON 里的遗留字段在此自然丢弃
   }
 
@@ -647,9 +647,17 @@ export function createVueStore(
     addEntryOp: (entry: OtpEntry) => commit((v) => addEntry(v, entry)),
     updateEntryOp: (uuid: string, patch: Partial<Omit<OtpEntry, 'uuid'>>) => commit((v) => updateEntry(v, uuid, patch)),
     removeEntryOp: (uuid: string) => commit((v) => removeEntry(v, uuid)),
-    addGroupOp: (name: string) => commit((v) => addGroup(v, name)),
-    renameGroupOp: (id: string, name: string) => commit((v) => renameGroup(v, id, name)),
-    removeGroupOp: (id: string) => commit((v) => removeGroup(v, id)),
+    /** 建 tag 并回传 id（同名幂等复用）：EntryForm 内联建 tag 自动勾选依赖此返回值 */
+    addTagOp: (name: string): Promise<string> => {
+      let tagId = ''
+      return commit((v) => {
+        const r = addTag(v, name)
+        tagId = r.tagId
+        return r.vault
+      }).then(() => tagId)
+    },
+    renameTagOp: (id: string, name: string) => commit((v) => renameTag(v, id, name)),
+    removeTagOp: (id: string) => commit((v) => removeTag(v, id)),
     reorderOp: (uuids: string[]) => commit((v) => reorderEntries(v, uuids)),
     // 整体替换（恢复备份/导入）：replaceVault 用 splice 逐项拷入，保证响应式与深拷贝语义
     replaceAllOp: (v: Vault) => commit(() => v),
