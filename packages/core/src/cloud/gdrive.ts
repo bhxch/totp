@@ -63,10 +63,13 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
 
   /** 按 name + mimeType 查询文件 id（排除回收站），取首个匹配。
    *  单引号按 Drive 查询语法转义为 \'，防 name 含 ' 时破坏 q 字符串（注入风险）。
+   *  parent 可选约束（审查 I3）：异名 delete 必传（与 listBackups 圈列域同源，防双 gdrive 源同名文件互删）；
+   *  主对象解析（get/exists）不传——主对象名即 objectPath 全串，全 Drive 查询无歧义。
    *  writeBack=false：纯查询（滚动删除异名目标用），命中结果不回写 fileId——防主对象指针被时间戳文件劫持。 */
-  const queryIdByName = async (name: string, writeBack = true): Promise<string | null> => {
+  const queryIdByName = async (name: string, writeBack = true, parent?: string): Promise<string | null> => {
     const safe = name.replace(/'/g, "\\'")
-    const q = `name='${safe}' and mimeType='application/json' and trashed=false`
+    const parentClause = parent === undefined ? '' : ` and '${parent.replace(/'/g, "\\'")}' in parents`
+    const q = `name='${safe}' and mimeType='application/json'${parentClause} and trashed=false`
     const res = await cloudFetch(LABEL, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id,name,mimeType)`, {
       method: 'GET',
       headers: auth,
@@ -130,8 +133,16 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
       // 主对象保护（keep-n 滚动删除激活了本路径）：cred.fileId 指向云端主 vault 对象，仅当删除目标与
       // objectPath 同 basename 时才可删 fileId；时间戳等异名目标改按名查询删除同名文件（writeBack=false），
       // 查不到（404/空）静默返回——宁可不删不可误删主对象。
-      const sameTarget = basenameOf(path) === objectBasename
-      const id = sameTarget ? (fileId ?? (await queryIdByName(path))) : (await queryIdByName(path, false))
+      let id: string | null
+      if (basenameOf(path) === objectBasename) {
+        id = fileId ?? (await queryIdByName(path))
+      } else {
+        // 异名查询按 parent 圈域（审查 I3）：删除域与 listBackups 列表域同源，双源同名文件互不越界；
+        // 主对象已删（parent 未知）→ 域无法圈定，静默返回（宁可不删不可误删）
+        const parent = await primaryParent()
+        if (parent === null) return
+        id = await queryIdByName(path, false, parent)
+      }
       if (!id) return
       const res = await cloudFetch(LABEL, `${DRIVE_API}/files/${id}`, { method: 'DELETE', headers: auth })
       ensureHttpOk(LABEL, res)
@@ -142,14 +153,8 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
     async listBackups() {
       // keep-n（设计 §3）：cred.fileId 是文件非目录——先取其 parents，再列同父下 vault-*；
       // 无 fileId（首推未发生）按 Drive 根目录别名 'root' 列；目标文件已删（404）父目录未知，返回空（宁可不删不可误删）。
-      let parent = 'root'
-      if (fileId) {
-        const res = await cloudFetch(LABEL, `${DRIVE_API}/files/${fileId}?fields=parents`, { method: 'GET', headers: auth })
-        if (res.status === 404) return []
-        ensureHttpOk(LABEL, res)
-        const json = (await res.json()) as { parents?: string[] }
-        parent = json.parents?.[0] ?? 'root'
-      }
+      const parent = await primaryParent()
+      if (parent === null) return []
       // 单引号按 Drive 查询语法转义，防注入（与 queryIdByName 同款）
       const safe = parent.replace(/'/g, "\\'")
       const q = `'${safe}' in parents and name contains 'vault-' and trashed=false`

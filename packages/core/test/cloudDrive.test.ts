@@ -195,15 +195,19 @@ describe('Google Drive 后端', () => {
   it('delete：fileId 已设且目标异名（keep-n 时间戳名）→ 按名查 id 删同名文件，绝不触碰 files/{fileId}，不回写 fileId', async () => {
     const onCredChange = vi.fn()
     const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
-      const u = String(url)
-      if (init!.method === 'GET' && u.startsWith('https://www.googleapis.com/drive/v3/files?')) {
-        // 按名查询的 name 与 put 的创建名同串（完整 path），非主对象名
-        expect(decodeURIComponent(new URL(u).searchParams.get('q')!)).toBe(
-          `name='dir/sub/vault-20260101-000000.totpbackup' and mimeType='application/json' and trashed=false`,
+      const u = new URL(String(url))
+      if (init!.method === 'GET' && u.pathname === '/drive/v3/files/fid9' && u.searchParams.get('fields') === 'parents') {
+        return jsonRes({ parents: ['pid1'] })
+      }
+      if (init!.method === 'GET' && u.pathname === '/drive/v3/files') {
+        // 按名查询的 name 与 put 的创建名同串（完整 path），非主对象名；q 带 parent 约束（审查 I3 删除域=列表域）
+        expect(decodeURIComponent(u.searchParams.get('q')!)).toBe(
+          `name='dir/sub/vault-20260101-000000.totpbackup' and mimeType='application/json' and 'pid1' in parents and trashed=false`,
         )
+        expect(u.searchParams.get('fields')).toBe('files(id,name,mimeType)')
         return jsonRes({ files: [{ id: 'tsfile1' }] })
       }
-      if (init!.method === 'DELETE' && u === 'https://www.googleapis.com/drive/v3/files/tsfile1') {
+      if (init!.method === 'DELETE' && String(url) === 'https://www.googleapis.com/drive/v3/files/tsfile1') {
         return new Response(null, { status: 204 })
       }
       throw new Error(`意外请求：${init!.method} ${u}`)
@@ -211,15 +215,47 @@ describe('Google Drive 后端', () => {
     vi.stubGlobal('fetch', fetchMock)
     const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok', fileId: 'fid9', objectPath: 'dir/sub/totp-backup.totpbackup' }, { onCredChange })
     await backend.delete('dir/sub/vault-20260101-000000.totpbackup')
-    // 仅 list + DELETE tsfile1 两次请求——绝不出现 files/fid9 的 DELETE（主 vault 对象保护）
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    // parents + list + DELETE tsfile1 三次请求——绝不出现 files/fid9 的 DELETE（主 vault 对象保护）
+    expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(onCredChange).not.toHaveBeenCalled() // 异名查询不劫持主对象指针
   })
 
-  it('delete：异名目标按名查不到 → 静默返回（宁可不删），不发 DELETE', async () => {
-    const fetchMock = vi.fn(async () => jsonRes({ files: [] }))
+  it('delete：双 gdrive 源同名时间戳文件只删本 parent 的（审查 I3 删除域 ⊆ 列表域）', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const u = new URL(String(url))
+      if (init!.method === 'GET' && u.pathname === '/drive/v3/files/fid9' && u.searchParams.get('fields') === 'parents') {
+        return jsonRes({ parents: ['pidA'] })
+      }
+      if (init!.method === 'GET' && u.pathname === '/drive/v3/files') {
+        // q 必须含 parent 约束：同名文件在 pidA/pidB 两个目录都存在，查询只允许圈定本 parent——
+        // 无约束时全 Drive 查 files[0] 可能命中另一源的文件互删
+        expect(decodeURIComponent(u.searchParams.get('q')!)).toBe(
+          `name='vault-20260101-000000.totpbackup' and mimeType='application/json' and 'pidA' in parents and trashed=false`,
+        )
+        return jsonRes({ files: [{ id: 'tsfile-pidA' }] }) // 真实 API：pidB 下同名文件不会出现在此结果
+      }
+      if (init!.method === 'DELETE' && String(url) === 'https://www.googleapis.com/drive/v3/files/tsfile-pidA') {
+        return new Response(null, { status: 204 })
+      }
+      throw new Error(`意外请求：${init!.method} ${u}`)
+    })
     vi.stubGlobal('fetch', fetchMock)
     const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok', fileId: 'fid9' })
+    await backend.delete('vault-20260101-000000.totpbackup')
+    expect(fetchMock).toHaveBeenCalledTimes(3) // parents → list（pidA 域）→ DELETE tsfile-pidA
+  })
+
+  it('delete：异名目标按名查不到 → 静默返回（宁可不删），不发 DELETE', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      const u = new URL(String(url))
+      // 无 fileId：parent 回落 Drive 根别名 'root'（与 listBackups 圈列域同源）
+      expect(decodeURIComponent(u.searchParams.get('q')!)).toBe(
+        `name='vault-20260101-000000.totpbackup' and mimeType='application/json' and 'root' in parents and trashed=false`,
+      )
+      return jsonRes({ files: [] })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok' })
     await backend.delete('vault-20260101-000000.totpbackup')
     expect(fetchMock).toHaveBeenCalledOnce()
   })
