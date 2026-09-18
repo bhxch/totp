@@ -226,7 +226,7 @@ describe('CodesPage reveal / 右键菜单 / pinned（自 旧单页 C16 迁移）
     expect(w.find('.md-menu').exists()).toBe(false)
   })
 
-  it('右键「复制 URI」调用剪贴板写入 otpauth:// 并关闭菜单', async () => {
+  it('右键「复制 URI」emit copy 携带 otpauth:// 载荷并关闭菜单（审查 I14：不直写剪贴板，由宿主 @copy 写入并纳入清除链路）', async () => {
     const s = await storeWithTwo()
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.assign(navigator, { clipboard: { writeText } })
@@ -234,8 +234,10 @@ describe('CodesPage reveal / 右键菜单 / pinned（自 旧单页 C16 迁移）
     await w.find('.otp-item').trigger('contextmenu', { clientX: 10, clientY: 10 })
     const copyBtn = w.findAll('.md-menu button').find((b) => b.text() === '复制 URI')!
     await copyBtn.trigger('click')
-    expect(writeText).toHaveBeenCalledTimes(1)
-    const uri = String(writeText.mock.calls[0]![0])
+    // 不经 navigator.clipboard 直写（宿主 30s 清除链只挂 @copy，直写会绕过清除）
+    expect(writeText).not.toHaveBeenCalled()
+    expect(w.emitted('copy')).toHaveLength(1)
+    const uri = String(w.emitted('copy')![0]![0])
     expect(uri).toMatch(/^otpauth:\/\/totp\/A:a\?secret=JBSWY3DPEHPK3PXP&issuer=A$/)
     expect(w.find('.md-menu').exists()).toBe(false)
   })

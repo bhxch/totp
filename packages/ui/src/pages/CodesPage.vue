@@ -134,8 +134,11 @@ function contextEdit(entry: OtpEntry) {
   creating.value = false
   closeContextMenu()
 }
-/** 复制 otpauth URI 到剪贴板（与应用导入路径兼容：base32 + 算法/位数/周期/counter 全保留） */
-async function contextCopyUri(entry: OtpEntry) {
+/** 复制 otpauth URI（与应用导入路径兼容：base32 + 算法/位数/周期/counter 全保留）。
+ *  审查 I14：URI 含完整 secret 明文，剪贴板写入必须上抛 emit('copy', uri) 由宿主执行
+ *  （desktop clearer 链 / options scheduleClipboardClear 均 @copy 挂清除），不得直写
+ *  navigator.clipboard 绕过 30s 自动清除；与验证码复制同通道，宿主对载荷统一写剪贴板+调度清除 */
+function contextCopyUri(entry: OtpEntry) {
   const params = new URLSearchParams()
   params.set('secret', entry.secret.replace(/\s+/g, ''))
   if (entry.algorithm !== 'SHA1') params.set('algorithm', entry.algorithm)
@@ -144,12 +147,7 @@ async function contextCopyUri(entry: OtpEntry) {
   if (entry.type === 'hotp' && typeof entry.counter === 'number') params.set('counter', String(entry.counter))
   if (entry.issuer) params.set('issuer', entry.issuer)
   const label = entry.issuer ? `${encodeURIComponent(entry.issuer)}:${encodeURIComponent(entry.label)}` : encodeURIComponent(entry.label)
-  const uri = `otpauth://${entry.type}/${label}?${params.toString()}`
-  try {
-    await navigator.clipboard.writeText(uri)
-  } catch {
-    /* 剪贴板不可用时静默；用户可改用复制验证码路径 */
-  }
+  emit('copy', `otpauth://${entry.type}/${label}?${params.toString()}`)
   closeContextMenu()
 }
 async function contextTogglePin(entry: OtpEntry) {
