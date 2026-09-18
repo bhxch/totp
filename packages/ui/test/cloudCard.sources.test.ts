@@ -105,6 +105,22 @@ describe('CloudCard（源列表 plan16 T8）', () => {
     expect((w.find('input[placeholder="服务器地址（https://dav.example.com）"]').element as HTMLInputElement).value).toBe('')
   })
 
+  it('S1b 同名提示按 (kind, name) 分组查重：同 kind 同名才提示；同 kind 异名/不同 kind 同名均不提示', async () => {
+    const hasHint = (t: string) => t.includes('同名源请用「名称」区分')
+    const w1 = await mountCard(makePlatform({
+      loadSources: vi.fn().mockResolvedValue([src({ id: 'a1', name: '家里' }), src({ id: 'a2', name: '公司' })]),
+    }))
+    expect(hasHint(w1.text())).toBe(false) // 同 kind 异名：名称可区分，不提示
+    const w2 = await mountCard(makePlatform({
+      loadSources: vi.fn().mockResolvedValue([src({ id: 'a1', name: '备份' }), src({ id: 'a2', kind: 'gist', name: '备份' })]),
+    }))
+    expect(hasHint(w2.text())).toBe(false) // 不同 kind 同名：后端类型已可区分，不提示
+    const w3 = await mountCard(makePlatform({
+      loadSources: vi.fn().mockResolvedValue([src({ id: 'a1', name: '备份' }), src({ id: 'a2', name: '备份' })]),
+    }))
+    expect(hasHint(w3.text())).toBe(true) // 同 kind 同名：无法区分，提示改名
+  })
+
   it('S2 添加源生成 crypto.randomUUID 的源（默认名=后端名、覆盖策略、enabled 开）', async () => {
     const restore = stubUuid('00000000-0000-4000-8000-000000000001')
     try {

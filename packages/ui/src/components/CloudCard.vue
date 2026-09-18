@@ -443,8 +443,16 @@ function onIntervalChange(v: string | number): void {
   autoPrefs.value = { ...autoPrefs.value, intervalMinutes: Number(v) }
   void syncAutoPrefs()
 }
-/** 源名称是否已自定义（同 kind 多份区分用；与默认后端名相同时不强提示） */
-const hasCustomNames = computed(() => new Set(sources.value.map((s) => s.name)).size > 1)
+/** 同 (kind, name) 组内出现重复名称才提示（审查 Minor）：同名源无法凭名称区分需改名；
+ *  不同 kind 同名/各源异名均无需提示（原判定「任两源不同名即提示」与文案语义相反） */
+const hasDuplicateNames = computed(() => {
+  const counts = new Map<string, number>()
+  for (const s of sources.value) {
+    const k = `${s.kind}\n${s.name}`
+    counts.set(k, (counts.get(k) ?? 0) + 1)
+  }
+  return [...counts.values()].some((n) => n > 1)
+})
 </script>
 
 <template>
@@ -523,7 +531,7 @@ const hasCustomNames = computed(() => new Set(sources.value.map((s) => s.name)).
       <MdButton class="cloud-sync" :disabled="busy || !sessionSecret || pendingAdopt !== null || pendingReset !== null || pendingRemove !== null" @click="onSync">立即同步</MdButton>
     </div>
     <p v-if="!sessionSecret" class="hint">先在上方设置备份口令。</p>
-    <p v-if="hasCustomNames" class="hint">同名源请用「名称」区分（同类型可添加多份）。</p>
+    <p v-if="hasDuplicateNames" class="hint">同名源请用「名称」区分（同类型可添加多份）。</p>
     <div v-if="platform.autoPrefs" class="auto-block">
       <p class="hint">自动执行前会与上次内容比对，无变化则跳过写入。</p>
       <div class="auto-row">
