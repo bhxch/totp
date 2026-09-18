@@ -53,13 +53,21 @@ export function createOneDriveBackend(cred: OneDriveCred): CloudBackend {
       const item = (await res.json()) as { parentReference?: { id?: string } }
       const parentId = item.parentReference?.id
       if (!parentId) return []
-      const children = await cloudFetch(LABEL, `${GRAPH}/me/drive/items/${encodeURIComponent(parentId)}/children`, { method: 'GET', headers: auth })
-      ensureHttpOk(LABEL, children)
-      const json = (await children.json()) as { value?: Array<{ name?: string }> }
-      return (json.value ?? [])
-        .map((f) => f.name ?? '')
-        .filter((n) => BACKUP_NAME_RE.test(n))
-        .map((n) => (dir ? `${dir}/${n}` : n))
+      // 分页续传（审查 M2）：Graph children 单页有限，响应含 @odata.nextLink 时按链接续拉聚合
+      // （nextLink 为绝对 URL 原样透传）；上限 10 页防服务端异常失控。
+      const out: string[] = []
+      let url: string | null = `${GRAPH}/me/drive/items/${encodeURIComponent(parentId)}/children`
+      for (let page = 0; url !== null && page < 10; page++) {
+        const children = await cloudFetch(LABEL, url, { method: 'GET', headers: auth })
+        ensureHttpOk(LABEL, children)
+        const json = (await children.json()) as { value?: Array<{ name?: string }>; '@odata.nextLink'?: string }
+        for (const f of json.value ?? []) {
+          const n = f.name ?? ''
+          if (BACKUP_NAME_RE.test(n)) out.push(dir ? `${dir}/${n}` : n)
+        }
+        url = json['@odata.nextLink'] ?? null
+      }
+      return out
     },
   }
 }

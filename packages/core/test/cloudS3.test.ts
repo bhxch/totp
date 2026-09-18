@@ -316,6 +316,37 @@ describe('S3 后端（默认 AWS endpoint，virtual-host style）', () => {
     expect(await backend.listBackups!()).toEqual(['dir/vault-20260101-000000.totpbackup'])
   })
 
+  it('listBackups：NextContinuationToken 分页续传聚合两页，continuation-token 参与签名（审查 M2）', async () => {
+    const cred = { ...CRED, objectPath: 'dir/totp-backup.totpbackup' }
+    const page1 = `<ListBucketResult>
+<Contents><Key>dir/vault-20260101-000000.totpbackup</Key></Contents>
+<NextContinuationToken>tok/1+abc==</NextContinuationToken>
+</ListBucketResult>`
+    const page2 = `<ListBucketResult>
+<Contents><Key>dir/vault-20260202-000000.totpbackup</Key></Contents>
+<Contents><Key>dir/notes.txt</Key></Contents>
+</ListBucketResult>`
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      expect(init!.method).toBe('GET')
+      const u = new URL(String(url))
+      if (u.searchParams.get('continuation-token') === null) return new Response(page1, { status: 200 })
+      // 第二页带第一页返回的不透明 token 原样透传
+      expect(u.searchParams.get('continuation-token')).toBe('tok/1+abc==')
+      return new Response(page2, { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createS3Backend(cred, OPTS)
+    // 两页聚合完整；第二页无 NextContinuationToken 续拉终止
+    expect(await backend.listBackups!()).toEqual(['dir/vault-20260101-000000.totpbackup', 'dir/vault-20260202-000000.totpbackup'])
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    // continuation-token 作为 canonical query 参与第二页签名（编码后按键名排序在 list-type 之前）
+    const tokenQuery = 'continuation-token=tok%2F1%2Babc%3D%3D&list-type=2&prefix=dir%2F'
+    const tokenUrl = `https://mybucket.s3.us-east-1.amazonaws.com/?${tokenQuery}`
+    expect((fetchMock.mock.calls[1]![1]!.headers as Record<string, string>).Authorization).toBe(
+      expectedS3Authorization('GET', tokenUrl, undefined, cred, tokenQuery),
+    )
+  })
+
   it('listBackups：非 2xx 抛中文错误', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 403 })))
     const backend = createS3Backend(CRED, OPTS)

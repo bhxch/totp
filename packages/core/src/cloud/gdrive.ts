@@ -119,13 +119,26 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
       // 单引号按 Drive 查询语法转义，防注入（与 queryIdByName 同款）
       const safe = parent.replace(/'/g, "\\'")
       const q = `'${safe}' in parents and name contains 'vault-' and trashed=false`
-      const list = await cloudFetch(LABEL, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(name)`, {
-        method: 'GET',
-        headers: auth,
-      })
-      ensureHttpOk(LABEL, list)
-      const json = (await list.json()) as { files?: Array<{ name?: string }> }
-      return (json.files ?? []).map((f) => f.name ?? '').filter((n) => BACKUP_NAME_RE.test(n))
+      // 分页续传（审查 M2）：响应含 nextPageToken 时带 pageToken 续拉聚合；fields 需显式含
+      // nextPageToken（Drive 带 fields 时只返回所列字段）；上限 10 页防服务端异常失控。
+      const out: string[] = []
+      let pageToken: string | undefined
+      for (let page = 0; page < 10; page++) {
+        const tokenQs = pageToken === undefined ? '' : `&pageToken=${encodeURIComponent(pageToken)}`
+        const list = await cloudFetch(LABEL, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(name,nextPageToken)${tokenQs}`, {
+          method: 'GET',
+          headers: auth,
+        })
+        ensureHttpOk(LABEL, list)
+        const json = (await list.json()) as { files?: Array<{ name?: string }>; nextPageToken?: string }
+        for (const f of json.files ?? []) {
+          const n = f.name ?? ''
+          if (BACKUP_NAME_RE.test(n)) out.push(n)
+        }
+        pageToken = json.nextPageToken
+        if (pageToken === undefined) break
+      }
+      return out
     },
   }
 }

@@ -186,18 +186,26 @@ export function createS3Backend(cred: S3Cred, opts: S3BackendOptions = {}): Clou
       // Key 末段过滤备份名后返回 dir/name——与 delete 的 keyOf 入参同域（prefix 由 keyOf 负责拼回，返回值含 prefix
       // 会双重前缀打在不存在的 key 上，幂等 204 虚报成功）；无 dir 时裸名。
       // delete 对已不存在的 key 返 204（S3 幂等语义）：目标若在列表后、删除前被并发清掉，会多计一次成功，属可接受偏差。
+      // 分页续传（审查 M2）：单页最多 1000 键，响应含 NextContinuationToken 时带 continuation-token 续拉聚合；
+      // token 为不透明值原样透传（canonical query 编码由 buildCanonicalQueryString 负责）；上限 10 页防服务端异常失控。
       const dir = resolveDirPath(cred)
       const scope = [prefix, dir].filter((s): s is string => !!s)
       const listPrefix = scope.length === 0 ? '' : `${scope.join('/')}/`
-      const query: Record<string, string> = { 'list-type': '2', prefix: listPrefix }
-      const url = `${endpoint}${pathStyle ? `/${cred.bucket}` : ''}/?${buildCanonicalQueryString(query)}`
-      const res = await cloudFetch(LABEL, url, { method: 'GET', headers: await signedHeadersOf('GET', url, undefined, query) })
-      ensureHttpOk(LABEL, res)
-      const xml = await res.text()
       const out: string[] = []
-      for (const m of xml.matchAll(/<Key>([^<]+)<\/Key>/g)) {
-        const name = m[1]!.split('/').pop() ?? ''
-        if (BACKUP_NAME_RE.test(name)) out.push(dir ? `${dir}/${name}` : name)
+      let token: string | null = null
+      for (let page = 0; page < 10; page++) {
+        const query: Record<string, string> = { 'list-type': '2', prefix: listPrefix }
+        if (token !== null) query['continuation-token'] = token
+        const url = `${endpoint}${pathStyle ? `/${cred.bucket}` : ''}/?${buildCanonicalQueryString(query)}`
+        const res = await cloudFetch(LABEL, url, { method: 'GET', headers: await signedHeadersOf('GET', url, undefined, query) })
+        ensureHttpOk(LABEL, res)
+        const xml = await res.text()
+        for (const m of xml.matchAll(/<Key>([^<]+)<\/Key>/g)) {
+          const name = m[1]!.split('/').pop() ?? ''
+          if (BACKUP_NAME_RE.test(name)) out.push(dir ? `${dir}/${name}` : name)
+        }
+        token = /<NextContinuationToken>([^<]+)<\/NextContinuationToken>/.exec(xml)?.[1] ?? null
+        if (token === null) break
       }
       return out
     },

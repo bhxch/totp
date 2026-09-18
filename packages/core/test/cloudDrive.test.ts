@@ -232,7 +232,7 @@ describe('Google Drive 后端', () => {
       }
       if (u.origin + u.pathname === 'https://www.googleapis.com/drive/v3/files') {
         expect(decodeURIComponent(u.searchParams.get('q')!)).toBe(`'pid1' in parents and name contains 'vault-' and trashed=false`)
-        expect(u.searchParams.get('fields')).toBe('files(name)')
+        expect(u.searchParams.get('fields')).toBe('files(name,nextPageToken)')
         return jsonRes({ files: [
           { name: 'vault-20260101-000000.totpbackup' },
           { name: 'vault-20260202-000000.totpbackup' },
@@ -247,6 +247,28 @@ describe('Google Drive 后端', () => {
     const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok', fileId: 'fid9' })
     expect(await backend.listBackups!()).toEqual(['vault-20260101-000000.totpbackup', 'vault-20260202-000000.totpbackup'])
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('listBackups：nextPageToken 分页续传聚合两页（审查 M2）', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const u = new URL(String(url))
+      if (u.origin + u.pathname === 'https://www.googleapis.com/drive/v3/files/fid9' && u.searchParams.get('fields') === 'parents') {
+        return jsonRes({ parents: ['pid1'] })
+      }
+      if (u.origin + u.pathname === 'https://www.googleapis.com/drive/v3/files') {
+        if (u.searchParams.get('pageToken') === null) {
+          return jsonRes({ files: [{ name: 'vault-20260101-000000.totpbackup' }], nextPageToken: 'tok/2+a==' })
+        }
+        expect(u.searchParams.get('pageToken')).toBe('tok/2+a==')
+        return jsonRes({ files: [{ name: 'vault-20260202-000000.totpbackup' }, { name: 'notes.txt' }] })
+      }
+      throw new Error(`意外请求：${init!.method} ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok', fileId: 'fid9' })
+    // 两页聚合完整；第二页无 token 续拉终止
+    expect(await backend.listBackups!()).toEqual(['vault-20260101-000000.totpbackup', 'vault-20260202-000000.totpbackup'])
+    expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
   it('listBackups：无 fileId 列 root；目标文件 404 → 空数组；非 2xx 抛中文错误', async () => {
@@ -371,6 +393,30 @@ describe('OneDrive 后端', () => {
     // 返回与 put/get/delete 同域的完整路径（dir/name）——子目录 cred 下裸名会删错层
     expect(await backend.listBackups!()).toEqual(['dir/sub/vault-20260101-000000.totpbackup', 'dir/sub/vault-20260202-000000.totpbackup'])
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('listBackups：@odata.nextLink 分页续传聚合两页（审查 M2）', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const u = String(url)
+      if (u === `${GRAPH}/me/drive/root:/totp-backup.totpbackup:?select=parentReference`) {
+        return jsonRes({ parentReference: { id: 'pid1' } })
+      }
+      if (u === `${GRAPH}/me/drive/items/pid1/children`) {
+        return jsonRes({
+          value: [{ name: 'vault-20260101-000000.totpbackup' }],
+          '@odata.nextLink': `${GRAPH}/me/drive/items/pid1/children?$skiptoken=1`,
+        })
+      }
+      if (u === `${GRAPH}/me/drive/items/pid1/children?$skiptoken=1`) {
+        return jsonRes({ value: [{ name: 'vault-20260202-000000.totpbackup' }, { name: 'notes.txt' }] })
+      }
+      throw new Error(`意外请求：${init!.method} ${u}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createOneDriveBackend({ backend: 'onedrive', accessToken: 'tok' })
+    // nextLink 续拉一页聚合完整；第二页无 nextLink 终止
+    expect(await backend.listBackups!()).toEqual(['vault-20260101-000000.totpbackup', 'vault-20260202-000000.totpbackup'])
+    expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
   it('listBackups：item 404 → 空数组；缺 parentReference.id → 空数组；非 2xx 抛中文错误', async () => {
