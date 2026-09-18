@@ -120,12 +120,14 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
       const safe = parent.replace(/'/g, "\\'")
       const q = `'${safe}' in parents and name contains 'vault-' and trashed=false`
       // 分页续传（审查 M2）：响应含 nextPageToken 时带 pageToken 续拉聚合；fields 需显式含
-      // nextPageToken（Drive 带 fields 时只返回所列字段）；上限 10 页防服务端异常失控。
+      // nextPageToken（Drive 带 fields 时只返回所列字段）——它是 FileList 顶层字段，必须放括号外
+      // 逗号分隔（files(name),nextPageToken）：括号内子选择器遇未知字段真实 API 返 400
+      // Invalid field selection（质量审查勘误）。上限 10 页防服务端异常失控。
       const out: string[] = []
       let pageToken: string | undefined
       for (let page = 0; page < 10; page++) {
-        const tokenQs = pageToken === undefined ? '' : `&pageToken=${encodeURIComponent(pageToken)}`
-        const list = await cloudFetch(LABEL, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(name,nextPageToken)${tokenQs}`, {
+        const tokenQs = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''
+        const list = await cloudFetch(LABEL, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(name),nextPageToken${tokenQs}`, {
           method: 'GET',
           headers: auth,
         })
@@ -136,7 +138,7 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
           if (BACKUP_NAME_RE.test(n)) out.push(n)
         }
         pageToken = json.nextPageToken
-        if (pageToken === undefined) break
+        if (!pageToken) break // 容忍缺失/空串 nextPageToken（空串续拉会打出无效请求）
       }
       return out
     },

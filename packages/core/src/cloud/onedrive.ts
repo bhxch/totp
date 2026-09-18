@@ -65,7 +65,7 @@ export function createOneDriveBackend(cred: OneDriveCred): CloudBackend {
           const n = f.name ?? ''
           if (BACKUP_NAME_RE.test(n)) out.push(dir ? `${dir}/${n}` : n)
         }
-        url = json['@odata.nextLink'] ?? null
+        url = json['@odata.nextLink'] || null // 容忍缺失/空串 nextLink（空串续拉会打出无效请求）
       }
       return out
     },

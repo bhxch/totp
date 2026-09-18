@@ -232,7 +232,8 @@ describe('Google Drive 后端', () => {
       }
       if (u.origin + u.pathname === 'https://www.googleapis.com/drive/v3/files') {
         expect(decodeURIComponent(u.searchParams.get('q')!)).toBe(`'pid1' in parents and name contains 'vault-' and trashed=false`)
-        expect(u.searchParams.get('fields')).toBe('files(name,nextPageToken)')
+        // nextPageToken 是 FileList 顶层字段：必须放括号外逗号分隔，括号内子选择器遇未知字段真实 API 返 400
+        expect(u.searchParams.get('fields')).toBe('files(name),nextPageToken')
         return jsonRes({ files: [
           { name: 'vault-20260101-000000.totpbackup' },
           { name: 'vault-20260202-000000.totpbackup' },
@@ -256,6 +257,9 @@ describe('Google Drive 后端', () => {
         return jsonRes({ parents: ['pid1'] })
       }
       if (u.origin + u.pathname === 'https://www.googleapis.com/drive/v3/files') {
+        // fields 形状防回归（质量审查勘误）：nextPageToken 为 FileList 顶层字段，须在括号外逗号分隔——
+        // 错写成 files(name,nextPageToken) 会被真实 API 以 400 Invalid field selection 拒绝
+        expect(u.searchParams.get('fields')).toBe('files(name),nextPageToken')
         if (u.searchParams.get('pageToken') === null) {
           return jsonRes({ files: [{ name: 'vault-20260101-000000.totpbackup' }], nextPageToken: 'tok/2+a==' })
         }
