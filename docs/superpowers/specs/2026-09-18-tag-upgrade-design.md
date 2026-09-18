@@ -141,6 +141,7 @@ function filterByTags(entries: OtpEntry[], selectedTagIds: ReadonlySet<string>, 
 ## §5 波及面确认（无需改动项）
 
 - 备份/云同步/桌面端：vault JSON 经 envelope 整体透传，无 groups 显式引用，键名变化自动随行；桌面与扩展共用 ui/core，自动生效。
+- **零迁移的已知后果（终审补记）**：开发机残留的 v1 旧盘（`groups` 键）加载时会在 `replaceVault` 处因 `v.tags` undefined 硬失败（initStore 报「本地数据读取失败」），`parseVaultJson` 亦严格拒绝 version≠2 备份——发布前重置存储即可，勿误判为 bug。
 - matchRules、图标、PRF、加密层、剪贴板清理均不涉及。
 
 ## §6 测试
