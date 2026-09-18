@@ -1,3 +1,4 @@
+import { SECRET_BAG_KEY } from '@totp/core'
 import { createVueStore, type VueStore } from '@totp/ui'
 import { createDekSession } from './dekSession'
 import { createChromeStorage } from './chromeStorage'
@@ -41,8 +42,8 @@ export function createExtensionStore(
       chrome.storage.onChanged.addListener((changes, area) => {
         if (area !== 'local') return
         // secretBag（审查 I7）：另一上下文（popup/options）写保管区 → 本上下文重读前进内存视图，
-        // 否则两个 options 页并发写保管区可丢失先写者数据
-        cb({ vault: !!changes['vault'], settings: !!changes['settings'], secretBag: !!changes['secretBag'] })
+        // 否则两个 options 页并发写保管区可丢失先写者数据（键名取 core SECRET_BAG_KEY 常量防漂移）
+        cb({ vault: !!changes['vault'], settings: !!changes['settings'], secretBag: !!changes[SECRET_BAG_KEY] })
       }),
     onCommitted: () => {
       scheduleSyncPush(s)
