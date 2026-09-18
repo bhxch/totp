@@ -160,6 +160,25 @@ describe('migrateLegacySources（旧多目标键 → 源模型 + 保管区）', 
     await migrateLegacySources(adapter, { saveCred: vi.fn() })
     expect(JSON.parse(adapter.data[SOURCE_REVS_KEY]!)).toEqual({ webdav: 'w-hash' })
   })
+
+  it('⑨旧数组内同 backend 重复项 → 整体按 id 去重单源（审查 Minor），凭据只写一次、返回数准确', async () => {
+    adapter.data[CLOUD_CREDS_KEY] = JSON.stringify([
+      { cred: WEBDAV, enabled: true },
+      { cred: { ...WEBDAV, password: 'p2' }, enabled: false }, // 同 backend 重复项（首现胜）
+      { cred: GIST, enabled: true },
+    ])
+    const saveCred = vi.fn().mockResolvedValue(undefined)
+
+    await expect(migrateLegacySources(adapter, { saveCred })).resolves.toBe(2) // 去重后实际迁移数
+    expect(JSON.parse(adapter.data[SOURCES_KEY]!)).toEqual([
+      { id: 'webdav', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true },
+      { id: 'gist', kind: 'gist', name: 'GitHub Gist', retention: { type: 'overwrite' }, enabled: true },
+    ])
+    // 凭据按去重后的源各写一次（首现凭据胜）
+    expect(saveCred).toHaveBeenCalledTimes(2)
+    expect(saveCred).toHaveBeenCalledWith('webdav', WEBDAV)
+    expect(saveCred).toHaveBeenCalledWith('gist', GIST)
+  })
 })
 
 describe('loadSourcesImpl/saveSourcesImpl（core 包装）', () => {

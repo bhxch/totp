@@ -107,20 +107,38 @@ export async function migrateLegacySources(
   }
   if (targets.length === 0) return 0
 
-  // 构造源并与已有源按 id 去重（已有同 id=中断重跑或用户自建，元数据不覆盖）
+  // targets 按 backend 去重（审查 Minor：旧 cloudCreds 数组内同 backend 重复项——
+  // 原实现会写入重复 id 源）；首现胜（凭据与 enabled 均取首现项）
+  const deduped: LegacyTarget[] = []
+  const seenBackends = new Set<string>()
+  for (const t of targets) {
+    if (!seenBackends.has(t.cred.backend)) {
+      seenBackends.add(t.cred.backend)
+      deduped.push(t)
+    }
+  }
   const existing = await loadSources(adapter)
-  const migrated: BackupSource[] = targets.map((t) => ({
+  const migrated: BackupSource[] = deduped.map((t) => ({
     id: t.cred.backend,
     kind: t.cred.backend,
     name: BACKEND_LABEL[t.cred.backend] ?? t.cred.backend,
     retention: { type: 'overwrite' },
     enabled: t.enabled,
   }))
-  const merged = [...existing, ...migrated.filter((m) => !existing.some((e) => e.id === m.id))]
+  // 源列表整体按 id 去重（保留首现：existing 优先）——覆盖中断重跑/用户已建同 backend 源场景
+  const mergedIds = new Set<string>()
+  const merged: BackupSource[] = []
+  for (const s of [...existing, ...migrated]) {
+    if (!mergedIds.has(s.id)) {
+      mergedIds.add(s.id)
+      merged.push(s)
+    }
+  }
 
-  // 先写新（源列表 → 凭据 → 基线），全部成功才删旧；任一步抛错旧键保留
+  // 先写新（源列表 → 凭据 → 基线），全部成功才删旧；任一步抛错旧键保留。
+  // 凭据按去重后的 targets 全量重放（含 existing 已有同 id 源——中断重跑自愈依赖覆盖写幂等）
   await saveSources(adapter, merged)
-  for (const t of targets) await deps.saveCred(t.cred.backend, t.cred)
+  for (const t of deduped) await deps.saveCred(t.cred.backend, t.cred)
 
   let revs: Record<string, string> | null = null
   try {
