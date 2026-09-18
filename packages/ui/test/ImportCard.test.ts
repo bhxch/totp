@@ -25,7 +25,7 @@ function mkPlatform(store: Awaited<ReturnType<typeof readyStore>>) {
 }
 
 describe('ImportCard', () => {
-  it('idle 首屏说明：自动识别提示 + 支持格式分组（details/summary 结构，3 组 li）', async () => {
+  it('idle 首屏说明：自动识别提示 + 支持格式清单（details/summary 结构，3 组 li）', async () => {
     const store = await readyStore()
     const w = mount(ImportCard, { props: { platform: mkPlatform(store) } })
     expect(w.text()).toContain('自动识别')

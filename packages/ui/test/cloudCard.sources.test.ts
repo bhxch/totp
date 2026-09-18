@@ -105,7 +105,7 @@ describe('CloudCard（源列表 plan16 T8）', () => {
     expect((w.find('input[placeholder="服务器地址（https://dav.example.com）"]').element as HTMLInputElement).value).toBe('')
   })
 
-  it('S1b 同名提示按 (kind, name) 分组查重：同 kind 同名才提示；同 kind 异名/不同 kind 同名均不提示', async () => {
+  it('S1b 同名提示按 (kind, name) 归类查重：同 kind 同名才提示；同 kind 异名/不同 kind 同名均不提示', async () => {
     const hasHint = (t: string) => t.includes('同名源请用「名称」区分')
     const w1 = await mountCard(makePlatform({
       loadSources: vi.fn().mockResolvedValue([src({ id: 'a1', name: '家里' }), src({ id: 'a2', name: '公司' })]),

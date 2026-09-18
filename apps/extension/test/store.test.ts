@@ -63,7 +63,7 @@ beforeEach(() => {
 })
 
 describe('extension store op 导出（Tag 13 换名收口）', () => {
-  it('导出 addTagOp/renameTagOp/removeTagOp（原 addGroupOp 族随 vault.groups→tags 换名）', async () => {
+  it('导出 addTagOp/renameTagOp/removeTagOp', async () => {
     const ops = await import('../src/store')
     expect(typeof ops.addTagOp).toBe('function')
     expect(typeof ops.renameTagOp).toBe('function')

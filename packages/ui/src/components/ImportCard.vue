@@ -212,7 +212,7 @@ async function deleteScheme(): Promise<void> {
   }
 }
 
-/** 方案下拉 MdSelect 选项：占位空值 + 推荐/其他平铺（原生 optgroup 分组在 listbox 语义中不保留，顺序不变） */
+/** 方案下拉 MdSelect 选项：占位空值 + 推荐/其他平铺（原生 optgroup 的归类展示在 listbox 语义中不保留，顺序不变） */
 const schemeOptions = computed<Array<{ value: string; label: string }>>(() => [
   { value: '', label: '选择方案…' },
   ...recommended.value.map((s) => ({ value: s.id, label: s.name })),
