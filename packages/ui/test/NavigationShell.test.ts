@@ -8,13 +8,14 @@ import NavigationShell from '../src/pages/NavigationShell.vue'
 import { themeRoutes } from '../src/pages/routes'
 
 // SettingsPage 真实现(Task 11)消费 settings/useTheme:stub 补外观区所需
-// 最小字段与 commitSettings;CodesPage 真实现(Task 9)消费 vault.entries/groups。
+// 最小字段与 commitSettings;CodesPage 真实现消费 vault.entries/tags 与标签筛选三设置。
 const stubStore = {
-  vault: { entries: [], groups: [] },
+  vault: { entries: [], tags: [] },
   settings: {
     themeMode: 'auto', themeColor: 'blue',
     urlFilterEnabled: true, blurHideEnabled: false, clipboardClearEnabled: true,
     popupCloseDelayMs: 2000, syncEnabled: false,
+    tagFilterMode: 'any', rememberTagFilter: false, lastTagFilterIds: [],
   },
   commitSettings: vi.fn(async () => {}),
 } as never

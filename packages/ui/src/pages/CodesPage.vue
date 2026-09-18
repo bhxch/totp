@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { getBuiltinIcons, toOtpDigits, type OtpEntry } from '@totp/core'
+import { filterByTags, getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
 import { computed, ref, watch } from 'vue'
 import { useOtpCodes } from '../composables/useOtpCodes'
 import { iconView, type IconStore } from '../iconStore'
 import type { VueStore } from '../store'
 import EntryFormDialog from '../components/EntryFormDialog.vue'
-import GroupManagerDialog from '../components/GroupManagerDialog.vue'
+import TagFilterRow from '../components/TagFilterRow.vue'
+import TagManagerDialog from '../components/TagManagerDialog.vue'
 import MdButton from '../components/md/MdButton.vue'
 import MdCard from '../components/md/MdCard.vue'
 import MdChip from '../components/md/MdChip.vue'
@@ -24,7 +25,7 @@ const props = withDefaults(defineProps<{
   icons?: IconStore | null
 }>(), { icons: null })
 
-const emit = defineEmits<{ copy: [code: string]; 'open-groups': [] }>()
+const emit = defineEmits<{ copy: [code: string]; 'open-tags': [] }>()
 
 const query = ref('')
 /** I49：搜 secret 开关（默认关闭，开启后过滤会包含 secret 串匹配；用户主动启用避免密钥常驻列表） */
@@ -32,12 +33,25 @@ const searchSecret = ref(false)
 const editing = ref<OtpEntry | null>(null)
 const creating = ref(false)
 const confirmingDelete = ref<string | null>(null)
-/** 分组筛选：null=全部；指向已删分组的悬空 id 由 watch 兜底自动回 null */
-const groupFilter = ref<string | null>(null)
+/** 标签筛选：多选集合 + any/all 模式（模式存 settings 全局共享；spec §3） */
+const selectedTagIds = ref<string[]>(
+  props.store.settings.rememberTagFilter ? [...props.store.settings.lastTagFilterIds] : [],
+)
+const tagMode = computed(() => props.store.settings.tagFilterMode)
+async function setTagMode(m: TagFilterMode) {
+  props.store.settings.tagFilterMode = m
+  await props.store.commitSettings()
+}
+// rememberTagFilter 开启：选中集合持久化（popup 与管理页共享同一份）
+watch(selectedTagIds, (ids) => {
+  if (!props.store.settings.rememberTagFilter) return
+  props.store.settings.lastTagFilterIds = [...ids]
+  void props.store.commitSettings()
+})
 /** reveal：列表点击「🔑」后弹 RevealDialog 显前 4 + 后 4（避免列表常驻明文） */
 const revealing = ref<OtpEntry | null>(null)
-/** 分组管理弹层：chips「管理分组」触发（同时向宿主 emit open-groups 保留 Task 9 契约） */
-const groupsOpen = ref(false)
+/** 标签管理弹层：chips「管理标签」触发（同时向宿主 emit open-tags 保留契约） */
+const tagsOpen = ref(false)
 /** 右键菜单：菜单位置、目标条目与右键所在元素（trigger 传 MdMenu 供 Esc 关闭回焦；.otp-item 有
  *  tabindex=0 可聚焦，回焦有效） */
 const contextMenu = ref<{ x: number; y: number; entry: OtpEntry; trigger: HTMLElement | null } | null>(null)
@@ -54,7 +68,7 @@ const sorted = computed(() =>
 const { codes } = useOtpCodes(sorted)
 /** EntryForm 图标数据源：builtin 全集 + store 内 stored/url dataUrl 映射 */
 const entryIcons = computed(() => ({ builtin: getBuiltinIcons(), stored: props.icons?.icons ?? {} }))
-/** 可见列表：搜索过滤（issuer/label/note，I49 可选 secret）→ 分组筛选（groupIds 包含判定） */
+/** 可见列表：搜索过滤（issuer/label/note，I49 可选 secret）→ 标签筛选（filterByTags，any/all 模式） */
 const visible = computed(() => {
   const q = query.value.trim().toLowerCase()
   let list = sorted.value
@@ -68,14 +82,15 @@ const visible = computed(() => {
       return false
     })
   }
-  const gf = groupFilter.value
-  if (gf !== null) list = list.filter((e) => e.groupIds.includes(gf))
-  return list
+  return filterByTags(list, new Set(selectedTagIds.value), props.store.settings.tagFilterMode)
 })
-/** 兜底：分组被删除（分组管理/远端同步）后 groupFilter 悬空 → 自动回「全部」 */
+/** 兜底：tag 被删除（管理弹层/远端同步）后从选中集合剔除 */
 watch(
-  () => props.store.vault.groups.map((g) => g.id),
-  (ids) => { if (groupFilter.value !== null && !ids.includes(groupFilter.value)) groupFilter.value = null },
+  () => props.store.vault.tags.map((t) => t.id),
+  (ids) => {
+    const next = selectedTagIds.value.filter((id) => ids.includes(id))
+    if (next.length !== selectedTagIds.value.length) selectedTagIds.value = next
+  },
 )
 
 async function onSave(data: EntryFormData) {
@@ -167,17 +182,14 @@ async function contextTogglePin(entry: OtpEntry) {
     <MdCard class="codes-card">
       <h2>条目（{{ store.vault.entries.length }}）</h2>
       <SearchBar v-model="query" v-model:search-secret="searchSecret" />
-      <!-- 分组筛选 chips：全部 / 各分组（按 vault.groups 顺序）/ 管理分组（打开 GroupManagerDialog 并 emit open-groups） -->
-      <div class="chips-row" role="group" aria-label="分组筛选">
-        <MdChip label="全部" :selected="groupFilter === null" @click="groupFilter = null" />
-        <MdChip
-          v-for="g in store.vault.groups"
-          :key="g.id"
-          :label="g.name"
-          :selected="groupFilter === g.id"
-          @click="groupFilter = groupFilter === g.id ? null : g.id"
+      <!-- 标签筛选：多选 chips + 行首 AND/OR 切换（TagFilterRow）；「管理标签」打开 TagManagerDialog -->
+      <div class="chips-row">
+        <TagFilterRow
+          v-if="store.vault.tags.length > 0"
+          :tags="store.vault.tags" v-model:selected-ids="selectedTagIds"
+          :mode="tagMode" @update:mode="setTagMode"
         />
-        <MdChip label="管理分组" @click="groupsOpen = true; emit('open-groups')" />
+        <MdChip label="管理标签" @click="tagsOpen = true; emit('open-tags')" />
       </div>
       <div v-if="sorted.length === 0" class="empty">暂无条目，点击右下「添加」录入。</div>
       <div v-else-if="visible.length === 0" class="empty">无匹配条目</div>
@@ -209,7 +221,7 @@ async function contextTogglePin(entry: OtpEntry) {
     <EntryFormDialog
       :open="creating || editing !== null"
       :editing="editing"
-      :groups="store.vault.groups"
+      :tags="store.vault.tags"
       :icons="entryIcons"
       :icon-store="icons ?? undefined"
       @save="onSave"
@@ -219,8 +231,8 @@ async function contextTogglePin(entry: OtpEntry) {
     <!-- reveal 对话框：仅在被请求时显前 4 + 后 4 形态的密钥；Esc/遮罩/「关闭」按钮关闭 -->
     <RevealDialog :open="revealing !== null" :entry="revealing" @close="closeReveal" />
 
-    <!-- 分组管理对话框：chips「管理分组」触发 -->
-    <GroupManagerDialog :open="groupsOpen" :store="store" @close="groupsOpen = false" />
+    <!-- 标签管理对话框：chips「管理标签」触发 -->
+    <TagManagerDialog :open="tagsOpen" :store="store" @close="tagsOpen = false" />
 
     <!-- 右键菜单：MdMenu 负责定位/越界钳制/Esc 关闭；点别处关闭（绑定在 .row @click）。
          triggerEl=右键所在条目（tabindex=0 可聚焦），Esc 关闭后焦点回该条目 -->

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
-import { createMemoryStorage, newEntryFromUri } from '@totp/core'
+import { createMemoryStorage, newEntryFromUri, type OtpEntry } from '@totp/core'
 import { createVueStore } from '../../src/store'
 import CodesPage from '../../src/pages/CodesPage.vue'
 
@@ -78,70 +78,79 @@ describe('CodesPage I49 搜 secret 开关（自 旧单页 迁移）', () => {
   })
 })
 
-describe('CodesPage 分组筛选 chips', () => {
-  /** 准备 2 分组 + 各含 1 条条目的 store（A→工作，B→生活） */
-  async function storeWithGroups() {
-    const s = createVueStore(createMemoryStorage())
-    await s.initStore()
-    await s.addGroupOp('工作')
-    await s.addGroupOp('生活')
-    const gidWork = s.vault.groups[0]!.id
-    await s.addEntryOp(newEntryFromUri('otpauth://totp/A:a?secret=JBSWY3DPEHPK3PXP', 1))
-    await s.addEntryOp(newEntryFromUri('otpauth://totp/B:b?secret=JBSWY3DPEHPK3PXP', 2))
-    await s.updateEntryOp(s.vault.entries[0]!.uuid, { groupIds: [gidWork] })
-    return { s, gidWork }
+describe('CodesPage 标签筛选（spec §3 管理页）', () => {
+  /** 空白底座条目（issuer=GitHub 供文本断言；tagIds 由用例按需覆盖） */
+  function baseEntry(label: string): OtpEntry {
+    return {
+      uuid: label, type: 'totp', issuer: 'GitHub', label, secret: 'JBSWY3DPEHPK3PXP',
+      algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 0,
+    }
+  }
+
+  const twoTags = async (s: ReturnType<typeof createVueStore>) => {
+    const r1 = await s.addTagOp('工作')
+    await s.addTagOp('个人')
+    await s.addEntryOp({ ...baseEntry('a'), tagIds: [r1] })
   }
 
   function chip(w: ReturnType<typeof mount>, label: string) {
-    return w.findAll('.md-chip').find((c) => c.text() === label)!
+    return w.findAll('button.md-chip').find((c) => c.text() === label)!
   }
 
-  it('渲染「全部」+ 各分组 + 「管理分组」；默认「全部」选中', async () => {
-    const { s } = await storeWithGroups()
+  it('多选 any：命中任一选中标签；切「全部」模式后需命中全部选中', async () => {
+    const s = createVueStore(createMemoryStorage())
+    await s.initStore()
+    await twoTags(s)
     const w = mount(CodesPage, { props: { store: s } })
-    await vi.waitFor(() => expect(w.findAll('.md-chip').length).toBeGreaterThanOrEqual(3))
-    const labels = w.findAll('.md-chip').map((c) => c.text())
-    expect(labels).toEqual(['全部', '工作', '生活', '管理分组'])
-    expect(chip(w, '全部').classes()).toContain('md-chip--selected')
-    expect(chip(w, '工作').classes()).not.toContain('md-chip--selected')
+    await vi.waitFor(() => expect(w.text()).toContain('GitHub'))
+    const chips = w.findAll('button.md-chip')
+    await chips.find((c) => c.text() === '工作')!.trigger('click')
+    expect(w.text()).toContain('GitHub') // 条目带「工作」，any 命中 → 显示
+    await chips.find((c) => c.text() === '个人')!.trigger('click')
+    expect(w.text()).toContain('GitHub') // any 语义：命中任一选中标签即仍显示
+    // 选中 ≥2 后模式切换自动可用：切「全部」（all）→ 条目仅带「工作」→ 隐藏
+    await w.find('button.mode-toggle').trigger('click')
+    expect(w.text()).not.toContain('GitHub')
   })
 
-  it('选某分组 chip 后仅显示该组条目；点「全部」恢复全量', async () => {
-    const { s } = await storeWithGroups()
+  it('rememberTagFilter 开启时选中集合写入 settings；关闭时不写', async () => {
+    const s = createVueStore(createMemoryStorage())
+    await s.initStore()
+    await s.addTagOp('工作')
+    s.settings.rememberTagFilter = true
     const w = mount(CodesPage, { props: { store: s } })
-    await vi.waitFor(() => expect(w.findAll('.otp-item')).toHaveLength(2))
-    await chip(w, '工作').trigger('click')
-    const texts = w.findAll('.otp-item').map((i) => i.text())
-    expect(texts).toHaveLength(1)
-    expect(texts[0]).toContain('A')
-    expect(chip(w, '工作').classes()).toContain('md-chip--selected')
-    // 回「全部」
-    await chip(w, '全部').trigger('click')
-    expect(w.findAll('.otp-item')).toHaveLength(2)
-    expect(chip(w, '全部').classes()).toContain('md-chip--selected')
+    await vi.waitFor(() => expect(w.text()).toContain('全部'))
+    await w.findAll('button.md-chip').find((c) => c.text() === '工作')!.trigger('click')
+    await vi.waitFor(() => expect(s.settings.lastTagFilterIds).toHaveLength(1))
+    s.settings.rememberTagFilter = false
+    await w.findAll('button.md-chip').find((c) => c.text() === '全部')!.trigger('click')
+    expect(s.settings.lastTagFilterIds).toHaveLength(1) // 关闭后不再写
   })
 
-  it('选中分组被删除后自动回「全部」（悬空 filter 兜底）', async () => {
-    const { s, gidWork } = await storeWithGroups()
+  it('tag 被删除后选中集合剔除悬空 id（回到「全部」）', async () => {
+    const s = createVueStore(createMemoryStorage())
+    await s.initStore()
+    const tid = await s.addTagOp('临时')
+    await s.addTagOp('留存') // 保底 1 个 tag：删除「临时」后筛选行仍渲染（TagFilterRow v-if tags.length>0），可断言「全部」选中态
     const w = mount(CodesPage, { props: { store: s } })
-    await vi.waitFor(() => expect(w.findAll('.otp-item')).toHaveLength(2))
-    await chip(w, '工作').trigger('click')
-    expect(w.findAll('.otp-item')).toHaveLength(1)
-    // 删除「工作」分组（Task 10 GroupManagerDialog / 远端同步路径）
-    await s.removeGroupOp(gidWork)
-    await vi.waitFor(() => expect(s.vault.groups.find((g) => g.id === gidWork)).toBeUndefined())
-    // groupFilter 自动回 null：两条都显示，「全部」chip 选中
-    await vi.waitFor(() => expect(w.findAll('.otp-item')).toHaveLength(2))
-    expect(chip(w, '全部').classes()).toContain('md-chip--selected')
+    await vi.waitFor(() => expect(w.text()).toContain('临时'))
+    await w.findAll('button.md-chip').find((c) => c.text() === '临时')!.trigger('click')
+    expect(chip(w, '临时').classes()).toContain('md-chip--selected')
+    await s.removeTagOp(tid)
+    await vi.waitFor(() => expect(w.text()).not.toContain('临时'))
+    // 悬空 id 已从选中集合剔除 → 「全部」chip 回选中态；留存 tag 未被误选
+    await vi.waitFor(() => expect(chip(w, '全部').classes()).toContain('md-chip--selected'))
+    expect(chip(w, '留存').classes()).not.toContain('md-chip--selected')
   })
 
-  it('点「管理分组」emit open-groups 并打开 GroupManagerDialog，遮罩关闭', async () => {
-    const { s } = await storeWithGroups()
+  it('点「管理标签」emit open-tags 并打开 TagManagerDialog，遮罩关闭', async () => {
+    const s = createVueStore(createMemoryStorage())
+    await s.initStore()
     const w = mount(CodesPage, { props: { store: s } })
-    await chip(w, '管理分组').trigger('click')
-    expect(w.emitted('open-groups')).toHaveLength(1)
+    await chip(w, '管理标签').trigger('click')
+    expect(w.emitted('open-tags')).toHaveLength(1)
     expect(w.find('.md-dialog').exists()).toBe(true)
-    expect(w.find('.md-dialog__headline').text()).toBe('分组管理')
+    expect(w.find('.md-dialog__headline').text()).toBe('标签管理')
     // 点遮罩关闭
     await w.find('.md-dialog__scrim').trigger('click')
     expect(w.find('.md-dialog').exists()).toBe(false)

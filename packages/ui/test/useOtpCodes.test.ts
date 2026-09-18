@@ -5,7 +5,7 @@ import type { OtpEntry } from '@totp/core'
 
 const entry: OtpEntry = {
   uuid: 'a', type: 'totp', issuer: 'GitHub', label: 'me@ex.com', secret: 'JBSWY3DPEHPK3PXP',
-  algorithm: 'SHA1', digits: 6, period: 30, groupIds: [], order: 0, createdAt: 0,
+  algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 0,
 }
 
 describe('useOtpCodes', () => {

@@ -21,7 +21,7 @@ import type { CloudPlatform } from '../src/components/cloudPlatform'
 const mockedSync = vi.mocked(syncMultipleTargets)
 const mockedPush = vi.mocked(pushEnvelope)
 
-const VALID_VAULT = JSON.stringify({ version: 1, entries: [], groups: [], updatedAt: 0 })
+const VALID_VAULT = JSON.stringify({ version: 2, entries: [], tags: [], updatedAt: 0 })
 const EMPTY_RESULT = { results: [], finalVaultJson: VALID_VAULT, adopted: false, hashes: {} }
 
 const WEBDAV_CRED: CloudCred = { backend: 'webdav', serverUrl: 'https://dav.example.com', username: 'alice', password: 'davpw' }

@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import BackupCard from '../src/components/BackupCard.vue'
 import type { BackupAutoPrefs, BackupPlatform, LocalSourceView } from '../src/components/backupPlatform'
 
-const VALID_VAULT = JSON.stringify({ version: 1, entries: [], groups: [], updatedAt: 0 })
+const VALID_VAULT = JSON.stringify({ version: 2, entries: [], tags: [], updatedAt: 0 })
 
 /** mock platform 工厂：必选件打底（plan16 T9：createBackup 返回中文摘要），用例按需覆盖/追加可选成员 */
 function makePlatform(over: Partial<BackupPlatform> = {}): BackupPlatform {
@@ -93,9 +93,9 @@ describe('BackupCard', () => {
     expect(w.find('.fallback-pw').exists()).toBe(true)
   })
 
-  it('恢复内容缺 groups：不进入确认流程、不调用 replaceAllOp 并显示错误（不误入回退区）', async () => {
+  it('恢复内容缺 tags：不进入确认流程、不调用 replaceAllOp 并显示错误（不误入回退区）', async () => {
     const p = makePlatform({
-      restoreFromPicker: vi.fn(async () => ({ json: JSON.stringify({ version: 1, entries: [] }) })),
+      restoreFromPicker: vi.fn(async () => ({ json: JSON.stringify({ version: 2, entries: [] }) })),
       replaceAllOp: vi.fn(async () => {}),
     })
     const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'a' } })
