@@ -1,9 +1,9 @@
-import type { Group, OtpEntry, Vault } from './model'
+import type { OtpEntry, Tag, Vault } from './model'
 import { toOtpDigits } from './import/normalize'
 import { parseOtpUri } from './otp/uri'
 
 export function createVault(): Vault {
-  return { version: 1, entries: [], groups: [], updatedAt: 0 }
+  return { version: 2, entries: [], tags: [], updatedAt: 0 }
 }
 
 function withVault(v: Vault, patch: Partial<Vault>): Vault {
@@ -23,19 +23,29 @@ export function updateEntry(v: Vault, uuid: string, patch: Partial<Omit<OtpEntry
   return withVault(v, { entries: v.entries.map((e) => (e.uuid === uuid ? { ...e, ...patch } : e)) })
 }
 
-export function addGroup(v: Vault, name: string): Vault {
-  const group: Group = { id: crypto.randomUUID(), name, order: v.groups.length }
-  return withVault(v, { groups: [...v.groups, group] })
+// 同名唯一键：trim + 大小写不敏感（spec §1）
+const tagKey = (name: string): string => name.trim().toLowerCase()
+
+/** 建 tag：同名（trim+casefold）幂等复用返回现有 id；创建时名称 trim 落库 */
+export function addTag(v: Vault, name: string): { vault: Vault; tagId: string } {
+  const existing = v.tags.find((t) => tagKey(t.name) === tagKey(name))
+  if (existing) return { vault: v, tagId: existing.id }
+  const tag: Tag = { id: crypto.randomUUID(), name: name.trim() }
+  return { vault: withVault(v, { tags: [...v.tags, tag] }), tagId: tag.id }
 }
 
-export function renameGroup(v: Vault, id: string, name: string): Vault {
-  return withVault(v, { groups: v.groups.map((g) => (g.id === id ? { ...g, name } : g)) })
+/** ensure 语义与 addTag 重合（幂等复用即 ensure），导出别名供导入/表单路径使用 */
+export const ensureTag = addTag
+
+/** 重命名只改名不做重名合并（保持引用稳定；重名收敛仅在创建路径） */
+export function renameTag(v: Vault, id: string, name: string): Vault {
+  return withVault(v, { tags: v.tags.map((t) => (t.id === id ? { ...t, name: name.trim() } : t)) })
 }
 
-export function removeGroup(v: Vault, id: string): Vault {
+export function removeTag(v: Vault, id: string): Vault {
   return withVault(v, {
-    groups: v.groups.filter((g) => g.id !== id),
-    entries: v.entries.map((e) => (e.groupIds.includes(id) ? { ...e, groupIds: e.groupIds.filter((g) => g !== id) } : e)),
+    tags: v.tags.filter((t) => t.id !== id),
+    entries: v.entries.map((e) => (e.tagIds.includes(id) ? { ...e, tagIds: e.tagIds.filter((t) => t !== id) } : e)),
   })
 }
 
@@ -58,7 +68,7 @@ export function newEntryFromUri(uri: string, nowMs: number = Date.now()): OtpEnt
     digits: toOtpDigits(p.digits, p.type),
     period: p.period,
     ...(p.counter !== undefined ? { counter: p.counter } : {}),
-    groupIds: [],
+    tagIds: [],
     order: 0,
     createdAt: nowMs,
   }

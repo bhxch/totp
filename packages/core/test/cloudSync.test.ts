@@ -5,8 +5,8 @@ import { sha256Hex, syncWithCloud } from '../src/cloud/syncOrchestrator'
 
 const PATH = 'totp-backup.totpbackup'
 const PASSWORD = '口令123'
-const LOCAL_VAULT = JSON.stringify({ version: 1, entries: [{ uuid: 'local' }], groups: [], updatedAt: 1 })
-const REMOTE_VAULT = JSON.stringify({ version: 1, entries: [{ uuid: 'remote' }], groups: [], updatedAt: 2 })
+const LOCAL_VAULT = JSON.stringify({ version: 2, entries: [{ uuid: 'local' }], tags: [], updatedAt: 1 })
+const REMOTE_VAULT = JSON.stringify({ version: 2, entries: [{ uuid: 'remote' }], tags: [], updatedAt: 2 })
 const ENC = new TextEncoder()
 
 /** 内存 mock 后端：记录 put 次数以便断言分支不写云端 */

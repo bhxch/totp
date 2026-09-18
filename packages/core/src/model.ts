@@ -19,22 +19,21 @@ export interface OtpEntry {
   note?: string
   icon?: IconRef
   matchRules?: MatchRule[]
-  groupIds: string[]
+  tagIds: string[]
   order: number
   createdAt: number
   /** 是否置顶：列表渲染时优先；缺省 false（向后兼容旧 vault） */
   pinned?: boolean
 }
 
-export interface Group {
+export interface Tag {
   id: string
   name: string
-  order: number
 }
 
 export interface Vault {
-  version: 1
+  version: 2
   entries: OtpEntry[]
-  groups: Group[]
+  tags: Tag[]
   updatedAt: number
 }

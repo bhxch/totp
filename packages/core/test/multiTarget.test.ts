@@ -6,8 +6,8 @@ import type { CloudBackend } from '../src/cloud/backend'
 
 const PATH = 'p'
 const PW = 'pw'
-const A = JSON.stringify({ version: 1, entries: [{ label: 'A' }], groups: [], updatedAt: 1 })
-const B = JSON.stringify({ version: 1, entries: [{ label: 'B' }], groups: [], updatedAt: 2 })
+const A = JSON.stringify({ version: 2, entries: [{ label: 'A' }], tags: [], updatedAt: 1 })
+const B = JSON.stringify({ version: 2, entries: [{ label: 'B' }], tags: [], updatedAt: 2 })
 const bytesOf = (s: string) => new TextEncoder().encode(s)
 
 /** 内存 fake 后端：多目标各持独立 store，可预置初始内容；putCount 供断言收敛轮是否重推 */

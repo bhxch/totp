@@ -9,7 +9,7 @@ const p = (over: Partial<ParsedEntry> = {}): ParsedEntry => ({
 const seeded = () =>
   addEntry(createVault(), {
     uuid: 'u1', type: 'totp', issuer: 'GitHub', label: 'a@x.com', secret: 'KRSXG5DSM5UQ',
-    algorithm: 'SHA1', digits: 6, period: 30, groupIds: [], order: 0, createdAt: 1,
+    algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 1,
   })
 
 describe('dedupeWithinFile：文件内完全重复行合并', () => {
@@ -61,14 +61,14 @@ describe('planImport 判定树', () => {
   it('identical 判定不受 note 差异影响（existing 带 note 仍判 identical）', () => {
     const v = addEntry(createVault(), {
       uuid: 'u1', type: 'totp', issuer: 'GitHub', label: 'a@x.com', secret: 'KRSXG5DSM5UQ',
-      algorithm: 'SHA1', digits: 6, period: 30, note: '本地笔记', groupIds: [], order: 0, createdAt: 1,
+      algorithm: 'SHA1', digits: 6, period: 30, note: '本地笔记', tagIds: [], order: 0, createdAt: 1,
     })
     expect(planImport(v, [p()]).kinds[0]).toBe('identical')
   })
   it('counter 参与 identical 键：HOTP counter 不同 → 降级 suspect', () => {
     const v = addEntry(createVault(), {
       uuid: 'u1', type: 'hotp', issuer: 'Api', label: 'token', secret: 'KRSXG5DSM5UQ',
-      algorithm: 'SHA1', digits: 6, period: 30, counter: 1, groupIds: [], order: 0, createdAt: 1,
+      algorithm: 'SHA1', digits: 6, period: 30, counter: 1, tagIds: [], order: 0, createdAt: 1,
     })
     const plan = planImport(v, [p({ type: 'hotp', period: 0, counter: 2 })])
     expect(plan.kinds[0]).toBe('suspect')
@@ -80,7 +80,7 @@ describe('planImport 判定树', () => {
 })
 
 describe('applyImportPlan', () => {
-  it('identical 恒跳过；suspect 决策默认 skip、add 新增、replace 按 targetUuid 覆盖保留 uuid/order/groupIds', () => {
+  it('identical 恒跳过；suspect 决策默认 skip、add 新增、replace 按 targetUuid 覆盖保留 uuid/order/tagIds', () => {
     const v = seeded()
     const inc = [p(), p({ label: 'renamed@x.com', period: 60 })]
     const plan = planImport(v, inc)
@@ -120,15 +120,15 @@ describe('applyImportPlan', () => {
     expect(addedEntry.label).toBe('renamed@x.com')
     expect(out.stats.added).toBe(1)
   })
-  it('suspect replace：解析明确字段被覆盖，uuid/order/groupIds 与本地 note 保留', () => {
+  it('suspect replace：解析明确字段被覆盖，uuid/order/tagIds 与本地 note 保留', () => {
     // 直接构造 Vault 字面量以保留 order=7（addEntry 会强制重算 order）
     const v: Vault = {
-      version: 1,
+      version: 2,
       updatedAt: 1,
-      groups: [],
+      tags: [],
       entries: [{
         uuid: 'u1', type: 'totp', issuer: 'GitHub', label: 'a@x.com', secret: 'KRSXG5DSM5UQ',
-        algorithm: 'SHA1', digits: 6, period: 30, note: '本地笔记', groupIds: ['g1'], order: 7, createdAt: 1,
+        algorithm: 'SHA1', digits: 6, period: 30, note: '本地笔记', tagIds: ['t1'], order: 7, createdAt: 1,
       }],
     }
     // secret+algorithm 保持与现有相同（suspect 前提），仅 label/period/digits 有差异
@@ -139,7 +139,7 @@ describe('applyImportPlan', () => {
     const updated = out.vault.entries[0]!
     expect(updated.uuid).toBe('u1')
     expect(updated.order).toBe(7)
-    expect(updated.groupIds).toEqual(['g1'])
+    expect(updated.tagIds).toEqual(['t1'])
     expect(updated.note).toBe('本地笔记')
     expect(updated.label).toBe('renamed@x.com')
     expect(updated.period).toBe(60)

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createBackupEnvelope, isBackupEnvelope, KDF_PROFILES, openBackupEnvelope } from '../src/backup/envelope'
 import { base64ToBytes, bytesToBase64 } from '../src/crypto/aesgcm'
 
-const vaultJson = JSON.stringify({ version: 1, entries: [{ uuid: 'a' }], groups: [], updatedAt: 1 })
+const vaultJson = JSON.stringify({ version: 2, entries: [{ uuid: 'a' }], tags: [], updatedAt: 1 })
 
 describe('envelope v2', () => {
   it('创建→口令正确解开原文（v2 结构往返）', async () => {

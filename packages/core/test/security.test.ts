@@ -6,7 +6,7 @@ import {
 import { unlockWithPrf } from '../src/security/multiKek'
 import { bytesToBase64, randomBytes } from '../src/crypto/aesgcm'
 
-const vaultJson = JSON.stringify({ version: 1, entries: [{ uuid: 'a' }], groups: [], updatedAt: 1 })
+const vaultJson = JSON.stringify({ version: 2, entries: [{ uuid: 'a' }], tags: [], updatedAt: 1 })
 
 describe('securityStore', () => {
   it('setup→unlock→encrypt/decrypt 往返', async () => {

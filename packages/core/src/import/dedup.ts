@@ -10,8 +10,8 @@ export type { ParsedEntry } from './types'
 
 // ===== 键规范化 =====
 // 裁定：判定键只含导入来源明确的字段（type|issuer|label|secret|algorithm|digits|period|counter），
-// 不含 note/createdAt/order/groupIds——note 是用户本地字段，导入源不该用它判定相同；
-// createdAt/order/groupIds 是 vault 管理字段，与内容相同性无关。键统一 trim+大小写不敏感。
+// 不含 note/createdAt/order/tagIds——note 是用户本地字段，导入源不该用它判定相同；
+// createdAt/order/tagIds 是 vault 管理字段，与内容相同性无关。键统一 trim+大小写不敏感。
 const norm = (x: unknown): string => String(x).trim().toLowerCase()
 
 type KeyFields = Pick<ParsedEntry, 'type' | 'issuer' | 'label' | 'secret' | 'algorithm' | 'digits' | 'period' | 'counter'>
@@ -104,7 +104,7 @@ export interface ApplyImportPlanResult {
 }
 
 // 按预览计划落库：identical 恒跳过；suspect 按 choices（缺省 skip；add=新增；replace=按 targetUuid 覆盖，
-// 白名单复用 conflict.ts 的 parsedPatch，保留 uuid/order/groupIds 及未提供的 note/counter）；
+// 白名单复用 conflict.ts 的 parsedPatch，保留 uuid/order/tagIds 及未提供的 note/counter）；
 // conflict 沿用 ConflictPolicy——单条复用 applyImport，保证 replace/merge 语义与既有导入路径完全一致；
 // new 正常新增。
 export function applyImportPlan(

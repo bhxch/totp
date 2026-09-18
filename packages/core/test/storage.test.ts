@@ -25,7 +25,7 @@ describe('vaultStore', () => {
     const v = addEntry(createVault(), newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP'))
     await saveVault(s, v)
     expect(await loadVault(s)).toEqual(v)
-    expect(JSON.parse((await s.get(VAULT_KEY))!).version).toBe(1)
+    expect(JSON.parse((await s.get(VAULT_KEY))!).version).toBe(2)
   })
 
   it('损坏数据抛 vault corrupted', async () => {

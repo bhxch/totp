@@ -22,7 +22,7 @@ export function newEntryFromParsed(p: ParsedEntry, uuid: string, nowMs: number, 
     period: p.period,
     ...(p.counter !== undefined ? { counter: p.counter } : {}),
     ...(p.note !== undefined ? { note: p.note } : {}),
-    groupIds: [],
+    tagIds: [],
     order,
     createdAt: nowMs,
   }
@@ -57,7 +57,7 @@ export function parsedPatch(p: ParsedEntry, nowMs: number): Partial<Omit<OtpEntr
   }
 }
 
-// 纯函数：非冲突条目全部新增；冲突条目按策略 skip=不动 / replace=覆盖（保留 uuid/order/groupIds/createdAt/未在 patch 中出现的字段如 note/counter）/ merge=照常新增并存
+// 纯函数：非冲突条目全部新增；冲突条目按策略 skip=不动 / replace=覆盖（保留 uuid/order/tagIds/createdAt/未在 patch 中出现的字段如 note/counter）/ merge=照常新增并存
 export function applyImport(v: Vault, entries: ParsedEntry[], policy: ConflictPolicy, conflictIdx: Set<number>): Vault {
   const now = Date.now()
   let out = v
