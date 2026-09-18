@@ -571,7 +571,8 @@ const hasDuplicateNames = computed(() => {
           <div v-else-if="isOneDriveDraft(d)" class="fields">
             <MdTextField v-model="d.accessToken" type="password" label="Access Token（Microsoft Graph）" placeholder="Access Token（Microsoft Graph）" autocomplete="new-password" />
           </div>
-          <MdTextField :model-value="d.objectPath ?? ''" label="目标文件路径" :placeholder="DEFAULT_OBJECT_PATH" aria-label="目标文件路径" :disabled="busy" @update:model-value="d.objectPath = $event.trim()" />
+          <!-- v-if="d" 兼作类型窄化：v-for 单元素 d 在守卫链外无 undefined 窄化，vue-tsc 会报 TS18048 -->
+          <MdTextField v-if="d" :model-value="d.objectPath ?? ''" label="目标文件路径" :placeholder="DEFAULT_OBJECT_PATH" aria-label="目标文件路径" :disabled="busy" @update:model-value="d.objectPath = $event.trim()" />
         </template>
       </template>
       <span v-if="statusFor(s.id)" class="target-status">{{ statusFor(s.id) }}</span>
