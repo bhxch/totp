@@ -13,7 +13,7 @@ import { createIdleLockExecutor } from './idleLock'
 import { lockPrefsUnsupportedKeys } from './lockPrefs'
 import { BACKUP_DIR_KEY, migrateLegacyCloudSources, migrateLegacyLocalSource } from './legacyMigrate'
 import { createTauriFs } from './tauriFs'
-import { osAutoProtectOs, osAutoUnprotectOs } from './tauriSecurity'
+import { osAutoForgetOs, osAutoProtectOs, osAutoUnprotectOs } from './tauriSecurity'
 
 // store 必须浅包装（T14 审查根修）：深 ref 会对值做 reactive 深代理，代理 get 对嵌套
 // ref/computed 成员自动解包——闭包 `store.value.locked.value` / 组件 prop `props.store.X.value`
@@ -425,6 +425,10 @@ const dpapiOps: DpapiUnlockOps = {
     const s = store.value
     if (!s) throw new Error('数据尚未就绪')
     await s.removeDpapiSourceOp()
+    // 审查 M1（C1 遗留）：移除成功后 best-effort 清 keyring DEK 条目（mac/Linux；Windows 为
+    // 报错桩，静默忽略）。失败不影响移除主流程——security JSON 已更新，残留条目仅是 OS 凭据
+    // 库卫生问题。mac/Linux keyring 分支未真机验证挂账不变（见 tauriSecurity.ts 头注释）
+    void osAutoForgetOs().catch(() => {})
   },
 }
 

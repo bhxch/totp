@@ -437,6 +437,28 @@ fn os_auto_unprotect(_wrapped_b64: String) -> Result<String, String> {
     entry.get_password().map_err(|e| e.to_string())
 }
 
+// 审查 M1（C1 遗留）：移除原生自动解锁来源时同步删除 keyring 中的 DEK 条目——
+// removeDpapiSourceOp 仅改 security JSON，keyring 条目（service "totp-desktop"/
+// account "dek"）解除绑定后会永久残留。条目不存在（NoEntry）不算失败（幂等移除）；
+// 其他错误如实上抛由前端 best-effort 处理。Windows/其余平台无独立可删除条目
+// （DPAPI 密文随 security.json 删除即消失），报错桩同 dpapi 桩风格
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tauri::command]
+fn os_auto_forget() -> Result<(), String> {
+    let entry = keyring::Entry::new("totp-desktop", "dek").map_err(|e| e.to_string())?;
+    match entry.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[tauri::command]
+fn os_auto_forget() -> Result<(), String> {
+    Err("当前平台无 keyring DEK 条目可删除".into())
+}
+
 // 其余平台报错桩（同 dpapi 桩风格）
 #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 #[tauri::command]
@@ -547,6 +569,7 @@ pub fn run() {
             dpapi_unprotect,
             os_auto_protect,
             os_auto_unprotect,
+            os_auto_forget,
             set_global_shortcut
         ])
         // build+run（回调形态）：RunEvent::Exit 时注销系统锁屏监听（plan16 T15）；

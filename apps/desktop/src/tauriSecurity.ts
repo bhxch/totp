@@ -37,3 +37,10 @@ export async function osAutoUnprotectOs(wrappedB64: string): Promise<Uint8Array>
   if (bytes.length !== DEK_LENGTH) throw new Error('DEK must be 32 bytes')
   return bytes
 }
+
+/** 删除 keyring 中的 DEK 条目（macOS Keychain / Linux Secret Service；审查 M1：移除原生自动
+ *  解锁来源时清理残留，条目不存在幂等成功）。Windows/其余平台为报错桩（DPAPI 无独立条目）——
+ *  调用方按 best-effort 处理，失败不影响移除主流程 */
+export async function osAutoForgetOs(): Promise<void> {
+  await invoke('os_auto_forget')
+}
