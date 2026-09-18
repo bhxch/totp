@@ -109,17 +109,46 @@ describe('syncMultipleTargets', () => {
     expect(r.hashes['fake2']).toBe(await sha256Hex(b2.store.get(PATH)!))
   })
 
-  it('全部 in-sync → 不重写（in-sync 需远端字节即本地明文内容）', async () => {
-    const aHash = await sha256Hex(bytesOf(A))
-    const b = fakeBackend(bytesOf(A))
+  it('远端存 envelope 且内容与基线一致 → 现状走 uploaded 重传（in-sync 判据生产不可达，去重由宿主门承担）', async () => {
+    // 生产形态：远端恒为 envelope 密文。in-sync 分支判据 remoteHash === sha256(vaultJson) 拿密文摘要
+    // 与本地明文摘要比较，永不相等——本用例锁定现状行为：基线一致也全量重传（审查建议 5：远端 mock
+    // 一律用 envelope 密文，防「远端存明文」假 in-sync 回归）。该路径的去重修复由宿主自动通道的
+    // 明文内容 hash 门承担（cloudRunner/desktop autoBackup，属后续任务）
+    const remote = await envelopeBytesOf(A, PW)
+    const b = fakeBackend(remote)
     const r = await syncMultipleTargets({
-      targets: [{ key: 'k', backend: b, path: PATH, hash: aHash }],
+      targets: [{ key: 'k', backend: b, path: PATH, hash: await sha256Hex(remote) }],
       vaultJson: A,
       password: PW,
     })
     expect(r.adopted).toBe(false)
-    expect(r.results[0]!.outcome!.action).toBe('in-sync')
-    expect(r.hashes['k']).toBe(aHash)
+    expect(r.results[0]!.outcome!.action).toBe('uploaded')
+    expect(b.putCount).toBe(1)
+    // 重传后远端可解开为 A，基线为新信封字节摘要
+    await expectOpensTo(b.store.get(PATH)!, PW, A)
+    expect(r.hashes['k']).toBe(await sha256Hex(b.store.get(PATH)!))
+  })
+
+  it('双目标远端均 envelope 且各自基线一致 → 两目标各自 uploaded，编排层无内容级去重（现状防回归哨兵）', async () => {
+    // envelope 含随机盐：两目标密文字节不同但内容同为 A；各自基线均与远端一致仍各重传一次
+    // （编排层无「未变→跳过」短路），去重由宿主明文 hash 门承担（后续任务）
+    const r1 = await envelopeBytesOf(A, PW)
+    const r2 = await envelopeBytesOf(A, PW)
+    const b1 = fakeBackend(r1)
+    const b2 = fakeBackend(r2)
+    const r = await syncMultipleTargets({
+      targets: [
+        { key: 'k1', backend: b1, path: PATH, hash: await sha256Hex(r1) },
+        { key: 'k2', backend: b2, path: PATH, hash: await sha256Hex(r2) },
+      ],
+      vaultJson: A,
+      password: PW,
+    })
+    expect(r.adopted).toBe(false)
+    expect(r.results[0]!.outcome!.action).toBe('uploaded')
+    expect(r.results[1]!.outcome!.action).toBe('uploaded')
+    expect(b1.putCount).toBe(1)
+    expect(b2.putCount).toBe(1)
   })
 
   it('单目标失败不阻断：失败目标 outcome 为 null 且带 error，成功目标正常 uploaded', async () => {
@@ -239,13 +268,13 @@ describe('syncMultipleTargets', () => {
     expect(Object.keys(r.hashes)).toEqual(['good'])
   })
 
-  it('in-sync 目标在 adopted 终局被回推（基线持旧内容 hash ≠ 赢家）', async () => {
-    const aHash = await sha256Hex(bytesOf(A))
-    const b1 = fakeBackend(bytesOf(A))
+  it('基线一致目标（envelope 重传态）在 adopted 终局被回推（基线 ≠ 赢家）', async () => {
+    const r1 = await envelopeBytesOf(A, PW)
+    const b1 = fakeBackend(r1)
     const b2 = fakeBackend(await envelopeBytesOf(B, PW))
     const r = await syncMultipleTargets({
       targets: [
-        { key: 't1', backend: b1, path: PATH, hash: aHash },
+        { key: 't1', backend: b1, path: PATH, hash: await sha256Hex(r1) },
         { key: 't2', backend: b2, path: PATH, hash: null },
       ],
       vaultJson: A,
@@ -253,10 +282,15 @@ describe('syncMultipleTargets', () => {
     })
     expect(r.adopted).toBe(true)
     expect(r.finalVaultJson).toBe(B)
-    // t1 原为 in-sync（持旧 A），基线 ≠ 赢家 → 回推 B 且 outcome 改写 uploaded，基线为回推后现字节摘要
+    // t1 远端为 envelope(A) 且基线一致：pass1 现状仍重传（无内容级短路，去重由宿主门承担），
+    // 基线变为新信封摘要 ≠ 赢家 → 收敛回推 B 且 outcome 改写 uploaded，基线为回推后现字节摘要
+    expect(b1.putCount).toBe(2)
     expect(r.results[0]!.outcome!.action).toBe('uploaded')
     expect(r.hashes['t1']).toBe(await sha256Hex(b1.store.get(PATH)!))
     await expectOpensTo(b1.store.get(PATH)!, PW, B)
+    // 采纳源 t2 基线已等于赢家（downloaded 的 hash 即远端字节摘要）→ 收敛轮跳过，不被重推
+    expect(b2.putCount).toBe(0)
+    expect(r.hashes['t2']).toBe(await sha256Hex(b2.store.get(PATH)!))
   })
 
   it('空 targets 数组 → adopted=false、finalVaultJson 为入参、results/hashes 为空', async () => {
