@@ -36,8 +36,10 @@ export interface CloudRunnerDeps {
   makeBackend(cred: CloudCred): CloudBackend
   /** 采纳云端版本后整体替换本地存储（生产=store.replaceAllOp） */
   persistAdopted(json: string): Promise<void>
-  /** 冲突副本落盘（key=源 id）；缺省则丢弃副本提示 */
-  saveConflictBackup?(key: string, bytes: Uint8Array): void
+  /** 冲突副本落盘（key=源 id）；缺省则丢弃副本提示。审查 I9：返回 Promise 时 rejection
+   *  经 core 编排 await 链传播——该目标记为失败（不采纳远端、不回推覆盖云端），本地旧内容
+   *  在无副本落盘的情况下不被覆盖；fire-and-forget（void）保持旧行为 */
+  saveConflictBackup?(key: string, bytes: Uint8Array): void | Promise<void>
   /** KDF 档位（备份设置所选，信封生成用）；缺省 balanced */
   kdfProfile?: () => KdfProfile
   /** keep 源滚动删除完成回调（sourceId=显示名（deps.sourceName 解析，缺省回退源 id）；deleted=实际删除
@@ -115,9 +117,9 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
         targets: inputs,
         vaultJson,
         password: secret,
-        onConflictBackup: (key, bytes) => {
-          deps.saveConflictBackup?.(key, bytes)
-        },
+        // 审查 I9：saveConflictBackup 的 Promise 原样交回 core（syncWithCloud await 该回调），
+        // 写盘拒绝 → 该目标同步失败（outcome=null + error），防止无本地副本时照常采纳远端并回推
+        onConflictBackup: (key, bytes) => deps.saveConflictBackup?.(key, bytes),
         profile: deps.kdfProfile?.(),
       })
       // 采纳先于基线回写（审查裁定）：persistAdopted 失败则本轮 hashes 一并不落盘，下轮基线

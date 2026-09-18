@@ -373,9 +373,9 @@ const cloudSync = createCloudSyncRunner({
   saveTargetHash: (id, h) => saveSourceRev(requireAdapter(), id, h),
   makeBackend: (cred) => createCloudBackend(cred),
   persistAdopted: (json) => replaceAllOps(JSON.parse(json) as Vault),
-  saveConflictBackup: (key, bytes) => {
-    void saveConflictBackupToDir(bytes, null, key).catch(() => {})
-  },
+  // 审查 I9：Promise 原样交回 runner/core（syncWithCloud await 冲突回调）——写盘失败让该目标
+  // 同步失败（recordStatus 记失败），不再静默吞掉后照常采纳远端并回推覆盖云端旧版本
+  saveConflictBackup: (key, bytes) => saveConflictBackupToDir(bytes, null, key),
   kdfProfile: () => kdfProfileOf(),
   sourceName: (id) => cloudSourceNames.get(id) ?? id,
   onRetentionDeleted: (name, deleted) => {

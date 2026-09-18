@@ -439,6 +439,23 @@ describe('createCloudSyncRunner', () => {
     await createCloudSyncRunner(deps).run()
     expect(recordStatus).toHaveBeenCalledWith(true, 's1: 已上传')
   })
+
+  it('⑯审查 I9 冲突副本落盘拒绝 → 该目标失败：不采纳远端、删基线下轮重试、云端旧版本不被回推覆盖', async () => {
+    const b = fakeBackend(await envelopeBytesOf(B, PW)) // 远端=B ≠ 本地 A → conflict 分支
+    const { deps, persistAdopted, saveTargetHash, recordStatus, onError } = makeDeps({
+      loadSources: vi.fn(async () => [{ source: source('s1'), cred: WEBDAV_CRED }]),
+      loadTargetHash: vi.fn(async () => 'stale'),
+      makeBackend: () => b,
+      // 宿主返回 rejected promise（Promise 原样经 runner 交回 core await 链，不再 fire-and-forget 吞错）
+      saveConflictBackup: vi.fn(() => Promise.reject(new Error('磁盘写入失败'))),
+    })
+    await expect(createCloudSyncRunner(deps).run()).resolves.toBeUndefined()
+    expect(persistAdopted).not.toHaveBeenCalled() // 本地不被远端覆盖（无副本保护时不采纳）
+    expect(saveTargetHash).toHaveBeenCalledWith('s1', null) // 该目标失败 → 删基线，下轮全量重比
+    expect([...b.store.keys()]).toEqual([PATH]) // 单目标无采纳 → 无收敛回推，云端旧版本原样保留
+    expect(recordStatus).toHaveBeenCalledWith(true, 's1: 失败') // 目标级失败标注（既有部分失败 summary 语义）
+    expect(onError).not.toHaveBeenCalled() // 单目标失败由 core 编排隔离，不上溢
+  })
 })
 
 describe('自动通道明文内容 hash 门（审查 I1 最小闭环）', () => {
