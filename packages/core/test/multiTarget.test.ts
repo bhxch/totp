@@ -112,8 +112,8 @@ describe('syncMultipleTargets', () => {
   it('远端存 envelope 且内容与基线一致 → 现状走 uploaded 重传（in-sync 判据生产不可达，去重由宿主门承担）', async () => {
     // 生产形态：远端恒为 envelope 密文。in-sync 分支判据 remoteHash === sha256(vaultJson) 拿密文摘要
     // 与本地明文摘要比较，永不相等——本用例锁定现状行为：基线一致也全量重传（审查建议 5：远端 mock
-    // 一律用 envelope 密文，防「远端存明文」假 in-sync 回归）。该路径的去重修复由宿主自动通道的
-    // 明文内容 hash 门承担（cloudRunner/desktop autoBackup，属后续任务）
+    // 一律用 envelope 密文，防「远端存明文」假 in-sync 回归）。该路径的去重已由宿主自动通道的
+    // 明文内容 hash 门承担（cloudRunner，见 packages/ui/src/components/cloudRunner.ts）
     const remote = await envelopeBytesOf(A, PW)
     const b = fakeBackend(remote)
     const r = await syncMultipleTargets({
@@ -131,7 +131,7 @@ describe('syncMultipleTargets', () => {
 
   it('双目标远端均 envelope 且各自基线一致 → 两目标各自 uploaded，编排层无内容级去重（现状防回归哨兵）', async () => {
     // envelope 含随机盐：两目标密文字节不同但内容同为 A；各自基线均与远端一致仍各重传一次
-    // （编排层无「未变→跳过」短路），去重由宿主明文 hash 门承担（后续任务）
+    // （编排层无「未变→跳过」短路），去重已由宿主明文 hash 门承担（见 cloudRunner hash 门）
     const r1 = await envelopeBytesOf(A, PW)
     const r2 = await envelopeBytesOf(A, PW)
     const b1 = fakeBackend(r1)

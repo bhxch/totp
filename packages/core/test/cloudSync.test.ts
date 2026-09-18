@@ -74,8 +74,8 @@ describe('syncWithCloud', () => {
   it('in-sync 分支契约（仅 mock 形态短路，生产不可达）：远端字节==本地明文 → in-sync（不依赖 cloudRev）不写云端', async () => {
     // 勘误（2026-09-18 审查）：本用例为 syncWithCloud in-sync 分支的纯契约单测——mock 远端存明文
     // 才能触发该分支。生产形态远端恒为 envelope 密文，密文摘要 ≠ 本地明文摘要，判据永不相等、
-    // 分支不可达，编排层并无「内容未变→跳过」去重；生产去重由宿主自动通道的明文内容 hash 门
-    // 承担（cloudRunner/desktop autoBackup，属后续任务）。下一用例为 envelope 真实形态的现状行为。
+    // 分支不可达，编排层并无「内容未变→跳过」去重；生产去重已由宿主自动通道的明文内容 hash 门
+    // 落地（cloudRunner，见 packages/ui/src/components/cloudRunner.ts）。下一用例为 envelope 真实形态的现状行为。
     const bytes = ENC.encode(LOCAL_VAULT)
     const backend = mockBackend(bytes)
     const out = await syncWithCloud({
@@ -94,7 +94,8 @@ describe('syncWithCloud', () => {
 
   it('远端为 envelope 且内容与基线一致 → 现状走 uploaded 重传（in-sync 生产不可达，去重由宿主门承担）', async () => {
     // 真实形态：远端恒为 envelope 密文。即使解密后内容与本地完全一致，密文摘要 ≠ 本地明文摘要，
-    // 判据不可达 → 现状每轮全量重传；该路径的去重修复由宿主明文 hash 门承担（后续任务）
+    // 判据不可达 → 现状每轮全量重传；该路径的去重已由宿主明文 hash 门承担（cloudRunner，见
+    // packages/ui/src/components/cloudRunner.ts）
     const { bytes, hash } = await putRemoteEnvelope(LOCAL_VAULT, PASSWORD)
     const backend = mockBackend(bytes)
     const out = await syncWithCloud({
