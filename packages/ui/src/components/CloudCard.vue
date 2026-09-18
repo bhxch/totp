@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { BackupSource, CloudCred } from '@totp/core'
+import type { BackupSource, CloudCred, GDriveCred, GistCred, OneDriveCred, S3Cred, WebdavCred } from '@totp/core'
 import {
   DEFAULT_OBJECT_PATH, enforceRemoteRetention, pushEnvelope, resolveObjectPath, resolveTimestampPath, syncMultipleTargets,
 } from '@totp/core'
@@ -112,6 +112,25 @@ function addTarget(b: BackendId): void {
 /** 凭据是否空白（除 backend 外所有字段均为空串/undefined）：空白行从未持久化过 */
 function isBlankCred(cred: CloudCred): boolean {
   return Object.entries(cred).every(([k, v]) => k === 'backend' || v === undefined || v === '')
+}
+
+/** 按 backend 判别的凭据守卫：模板各类型字段区经局部变量 + 守卫窄化联合（草稿 kind 与源
+ *  kind 恒一致——blankCred/addTarget/loadSources 均按源 kind 造副本），替代 v-if 对联合
+ *  类型无法传递的 kind 判定（credDrafts[s.id] 每次索引独立求值，模板条件不参与窄化） */
+function isWebdavDraft(d: CloudCred | undefined): d is WebdavCred {
+  return d?.backend === 'webdav'
+}
+function isS3Draft(d: CloudCred | undefined): d is S3Cred {
+  return d?.backend === 's3'
+}
+function isGistDraft(d: CloudCred | undefined): d is GistCred {
+  return d?.backend === 'gist'
+}
+function isGDriveDraft(d: CloudCred | undefined): d is GDriveCred {
+  return d?.backend === 'gdrive'
+}
+function isOneDriveDraft(d: CloudCred | undefined): d is OneDriveCred {
+  return d?.backend === 'onedrive'
 }
 
 /** 保留策略二选（MdSegmentedButton 选项） */
@@ -426,7 +445,8 @@ async function onConfirmReset(): Promise<void> {
   // 空白草稿（用户清空后未保存）回落已存凭据：与 onSync 的 isBlankCred 守护同口径，
   // 防止用空白凭据构造 backend 发请求只换来网络错
   const draft = s ? credDrafts.value[s.id] : undefined
-  const cred = s ? (draft && !isBlankCred(draft) ? draft : p.creds[s.id]) : undefined
+  // p 非空先行（类型层：p 可能为 null；运行时本卡 platform null 整卡不渲染，此处不触达）
+  const cred = p && s ? (draft && !isBlankCred(draft) ? draft : p.creds[s.id]) : undefined
   if (!p || !s || !cred || !props.sessionSecret) {
     pendingReset.value = null
     return
@@ -514,39 +534,44 @@ const hasDuplicateNames = computed(() => {
             />
           </div>
         </div>
-        <div v-if="s.kind === 'webdav'" class="fields">
-          <MdTextField v-model="credDrafts[s.id]!.serverUrl" label="服务器地址" placeholder="服务器地址（https://dav.example.com）" autocomplete="off" />
-          <MdTextField v-model="credDrafts[s.id]!.username" label="用户名" placeholder="用户名" autocomplete="off" />
-          <MdTextField v-model="credDrafts[s.id]!.password" type="password" label="应用密码" placeholder="应用密码" autocomplete="new-password" />
-        </div>
-        <div v-else-if="s.kind === 's3'" class="fields">
-          <MdTextField v-model="credDrafts[s.id]!.region" label="Region" placeholder="Region（如 us-east-1）" autocomplete="off" />
-          <MdTextField v-model="credDrafts[s.id]!.bucket" label="Bucket" placeholder="Bucket" autocomplete="off" />
-          <MdTextField v-model="credDrafts[s.id]!.accessKeyId" label="AccessKeyId" placeholder="AccessKeyId" autocomplete="off" />
-          <MdTextField v-model="credDrafts[s.id]!.secretAccessKey" type="password" label="SecretAccessKey" placeholder="SecretAccessKey" autocomplete="new-password" />
-          <MdTextField v-model="credDrafts[s.id]!.sessionToken" type="password" label="STS SessionToken（可选）" placeholder="STS SessionToken（可选）" autocomplete="new-password" />
-          <MdTextField v-model="credDrafts[s.id]!.endpoint" label="Endpoint" placeholder="Endpoint（可选，如 http://localhost:9000）" autocomplete="off" />
-          <MdTextField v-model="credDrafts[s.id]!.prefix" label="Key 前缀（可选）" placeholder="Key 前缀（可选）" autocomplete="off" />
-          <MdCheckbox
-            :model-value="!!credDrafts[s.id]!.forcePathStyle" :disabled="busy" label="强制 path-style（兼容老 bucket / 自建 S3）"
-            aria-label="强制 path-style（兼容老 bucket / 自建 S3）" @update:model-value="credDrafts[s.id]!.forcePathStyle = $event"
-          />
-        </div>
-        <div v-else-if="s.kind === 'gist'" class="fields">
-          <MdTextField v-model="credDrafts[s.id]!.token" type="password" label="GitHub Token" placeholder="GitHub Token" autocomplete="new-password" />
-          <MdTextField v-model="credDrafts[s.id]!.gistId" label="Gist ID" placeholder="Gist ID" autocomplete="off" />
-          <MdCheckbox
-            :model-value="!!credDrafts[s.id]!.public" :disabled="busy" label="公开 gist（public）"
-            aria-label="公开 gist（public）" @update:model-value="credDrafts[s.id]!.public = $event"
-          />
-          <p v-if="credDrafts[s.id]!.public" class="warn" role="alert">当前 gist 为 public，备份内容会暴露在公开页，建议改为 secret gist</p>
-        </div>
-        <div v-else-if="s.kind === 'gdrive'" class="fields">
-          <MdTextField v-model="credDrafts[s.id]!.accessToken" type="password" label="Access Token（Google OAuth）" placeholder="Access Token（Google OAuth）" autocomplete="new-password" />
-        </div>
-        <div v-else class="fields">
-          <MdTextField v-model="credDrafts[s.id]!.accessToken" type="password" label="Access Token（Microsoft Graph）" placeholder="Access Token（Microsoft Graph）" autocomplete="new-password" />
-        </div>
+        <!-- 草稿经单元素 v-for 提取局部变量 d，各类型字段区用 backend 守卫窄化联合（见 script isXxxDraft） -->
+        <template v-for="d in [credDrafts[s.id]]" :key="s.id">
+          <div v-if="isWebdavDraft(d)" class="fields">
+            <MdTextField v-model="d.serverUrl" label="服务器地址" placeholder="服务器地址（https://dav.example.com）" autocomplete="off" />
+            <MdTextField v-model="d.username" label="用户名" placeholder="用户名" autocomplete="off" />
+            <MdTextField v-model="d.password" type="password" label="应用密码" placeholder="应用密码" autocomplete="new-password" />
+          </div>
+          <div v-else-if="isS3Draft(d)" class="fields">
+            <MdTextField v-model="d.region" label="Region" placeholder="Region（如 us-east-1）" autocomplete="off" />
+            <MdTextField v-model="d.bucket" label="Bucket" placeholder="Bucket" autocomplete="off" />
+            <MdTextField v-model="d.accessKeyId" label="AccessKeyId" placeholder="AccessKeyId" autocomplete="off" />
+            <MdTextField v-model="d.secretAccessKey" type="password" label="SecretAccessKey" placeholder="SecretAccessKey" autocomplete="new-password" />
+            <!-- sessionToken/endpoint/prefix 为可选字段：undefined 以空串传 MdTextField（modelValue 要求 string），
+                 展示与空串/undefined 均显示 placeholder 一致；isBlankCred 对 '' 与 undefined 同判空白 -->
+            <MdTextField :model-value="d.sessionToken ?? ''" type="password" label="STS SessionToken（可选）" placeholder="STS SessionToken（可选）" autocomplete="new-password" @update:model-value="d.sessionToken = $event" />
+            <MdTextField :model-value="d.endpoint ?? ''" label="Endpoint" placeholder="Endpoint（可选，如 http://localhost:9000）" autocomplete="off" @update:model-value="d.endpoint = $event" />
+            <MdTextField :model-value="d.prefix ?? ''" label="Key 前缀（可选）" placeholder="Key 前缀（可选）" autocomplete="off" @update:model-value="d.prefix = $event" />
+            <MdCheckbox
+              :model-value="!!d.forcePathStyle" :disabled="busy" label="强制 path-style（兼容老 bucket / 自建 S3）"
+              aria-label="强制 path-style（兼容老 bucket / 自建 S3）" @update:model-value="d.forcePathStyle = $event"
+            />
+          </div>
+          <div v-else-if="isGistDraft(d)" class="fields">
+            <MdTextField v-model="d.token" type="password" label="GitHub Token" placeholder="GitHub Token" autocomplete="new-password" />
+            <MdTextField v-model="d.gistId" label="Gist ID" placeholder="Gist ID" autocomplete="off" />
+            <MdCheckbox
+              :model-value="!!d.public" :disabled="busy" label="公开 gist（public）"
+              aria-label="公开 gist（public）" @update:model-value="d.public = $event"
+            />
+            <p v-if="d.public" class="warn" role="alert">当前 gist 为 public，备份内容会暴露在公开页，建议改为 secret gist</p>
+          </div>
+          <div v-else-if="isGDriveDraft(d)" class="fields">
+            <MdTextField v-model="d.accessToken" type="password" label="Access Token（Google OAuth）" placeholder="Access Token（Google OAuth）" autocomplete="new-password" />
+          </div>
+          <div v-else-if="isOneDriveDraft(d)" class="fields">
+            <MdTextField v-model="d.accessToken" type="password" label="Access Token（Microsoft Graph）" placeholder="Access Token（Microsoft Graph）" autocomplete="new-password" />
+          </div>
+        </template>
         <MdTextField :model-value="credDrafts[s.id]!.objectPath ?? ''" label="目标文件路径" :placeholder="DEFAULT_OBJECT_PATH" aria-label="目标文件路径" :disabled="busy" @update:model-value="credDrafts[s.id]!.objectPath = $event.trim()" />
       </template>
       <span v-if="statusFor(s.id)" class="target-status">{{ statusFor(s.id) }}</span>
