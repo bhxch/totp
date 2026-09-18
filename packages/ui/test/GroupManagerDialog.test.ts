@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { createMemoryStorage } from '@totp/core'
 import { createVueStore } from '../src/store'
 import GroupManagerDialog from '../src/components/GroupManagerDialog.vue'
@@ -78,13 +79,51 @@ describe('GroupManagerDialog', () => {
     expect((w.find('.group-add input').element as HTMLInputElement).value).toBe('') // 新建输入已清空
   })
 
-  it('删除走 removeGroupOp（级联清理 groupIds）', async () => {
+  it('删除两击确认：首击仅进入 danger 确认态不删，再击才 removeGroupOp（级联清理 groupIds）', async () => {
     const s = await readyStore()
     const gid = s.vault.groups[0]!.id
     const w = mount(GroupManagerDialog, { props: { open: true, store: s } })
     const row = w.findAll('.group-list li').find((li) => li.text().includes('工作'))!
-    await row.findAll('button').find((b) => b.text() === '删除')!.trigger('click') // 删除按钮
+    // 首击：进入确认态（danger 视觉），组未删
+    await row.findAll('button').find((b) => b.text() === '删除')!.trigger('click')
+    const confirmBtn = w.find('.md-btn--danger')
+    expect(confirmBtn.exists()).toBe(true)
+    expect(confirmBtn.text()).toBe('确认删除？')
+    expect(s.vault.groups.find((g) => g.id === gid)).toBeDefined()
+    // 再击：真正删除
+    await confirmBtn.trigger('click')
     await vi.waitFor(() => expect(s.vault.groups.find((g) => g.id === gid)).toBeUndefined())
+  })
+
+  it('删除确认 3s 超时自动复位（回到标准删除按钮，组保留）', async () => {
+    vi.useFakeTimers()
+    try {
+      const s = await readyStore()
+      const gid = s.vault.groups[0]!.id
+      const w = mount(GroupManagerDialog, { props: { open: true, store: s } })
+      const row = w.findAll('.group-list li').find((li) => li.text().includes('工作'))!
+      await row.findAll('button').find((b) => b.text() === '删除')!.trigger('click')
+      expect(w.find('.md-btn--danger').exists()).toBe(true)
+      vi.advanceTimersByTime(3000)
+      await nextTick()
+      expect(w.find('.md-btn--danger').exists()).toBe(false)
+      expect(s.vault.groups.find((g) => g.id === gid)).toBeDefined()
+      w.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('确认态随关闭复位：重开后无「确认删除？」残留', async () => {
+    const s = await readyStore()
+    const w = mount(GroupManagerDialog, { props: { open: true, store: s } })
+    const row = w.findAll('.group-list li').find((li) => li.text().includes('工作'))!
+    await row.findAll('button').find((b) => b.text() === '删除')!.trigger('click')
+    expect(w.find('.md-btn--danger').exists()).toBe(true)
+    await w.setProps({ open: false })
+    await w.setProps({ open: true })
+    expect(w.find('.md-btn--danger').exists()).toBe(false)
+    expect(s.vault.groups).toHaveLength(2)
   })
 
   it('分组列表显示计数与空态', async () => {

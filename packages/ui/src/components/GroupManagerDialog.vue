@@ -18,13 +18,20 @@ const emit = defineEmits<{ close: [] }>()
 const newGroupName = ref('')
 const renaming = ref<string | null>(null)
 const renameValue = ref('')
+/** 审查 Minor：删除分组改两击确认（与 CodesPage askRemove 同款模式）——首击进入确认态
+ *  3s 超时复位，再击才真删；删除会级联清条目 groupIds，误触代价高 */
+const confirmingDelete = ref<string | null>(null)
+let confirmTimer: ReturnType<typeof setTimeout> | null = null
 
-// 关闭即复位行内编辑与新建输入，避免重开后残留上次的编辑态
+// 关闭即复位行内编辑与新建输入，避免重开后残留上次的编辑态（确认态与定时器同清）
 watch(() => props.open, (open) => {
   if (!open) {
     renaming.value = null
     newGroupName.value = ''
     renameValue.value = ''
+    if (confirmTimer) clearTimeout(confirmTimer)
+    confirmTimer = null
+    confirmingDelete.value = null
   }
 })
 
@@ -37,6 +44,19 @@ async function addGroup() {
 async function saveRename(g: Group) {
   await props.store.renameGroupOp(g.id, renameValue.value.trim() || g.name)
   renaming.value = null
+}
+/** 两击删除：首击进入确认态（3s 超时自动复位），再击执行 removeGroupOp */
+async function removeGroup(g: Group) {
+  if (confirmingDelete.value === g.id) {
+    confirmingDelete.value = null
+    if (confirmTimer) clearTimeout(confirmTimer)
+    confirmTimer = null
+    await props.store.removeGroupOp(g.id)
+    return
+  }
+  confirmingDelete.value = g.id
+  if (confirmTimer) clearTimeout(confirmTimer)
+  confirmTimer = setTimeout(() => (confirmingDelete.value = null), 3000)
 }
 </script>
 
@@ -57,7 +77,9 @@ async function saveRename(g: Group) {
           <span class="gname">{{ g.name }}</span>
           <span class="gcount">{{ store.vault.entries.filter((e) => e.groupIds.includes(g.id)).length }} 条</span>
           <MdIconButton :title="'编辑分组 ' + g.name" :aria-label="'编辑分组 ' + g.name" @click="renaming = g.id; renameValue = g.name">编辑</MdIconButton>
-          <MdIconButton :title="'删除分组 ' + g.name" :aria-label="'删除分组 ' + g.name" @click="store.removeGroupOp(g.id)">删除</MdIconButton>
+          <!-- 确认态换 danger MdButton（error 色视觉警示，与 CodesPage 条目删除一致） -->
+          <MdButton v-if="confirmingDelete === g.id" danger @click="removeGroup(g)">确认删除？</MdButton>
+          <MdIconButton v-else :title="'删除分组 ' + g.name" :aria-label="'删除分组 ' + g.name" @click="removeGroup(g)">删除</MdIconButton>
         </template>
       </li>
       <li v-if="store.vault.groups.length === 0" class="empty">暂无分组</li>
