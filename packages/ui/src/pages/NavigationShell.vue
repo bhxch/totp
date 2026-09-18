@@ -53,14 +53,16 @@ const navItems: { name: string; label: string; icon: string; to: string }[] = [
 
 const active = computed(() => String(route.name ?? ''))
 
-/** 窄窗(<600px)用顶部 Tabs;缺 matchMedia(SSR/测试)按宽窗渲染 Rail */
-const isNarrow = ref(false)
+/** 窄窗(<600px)用顶部 Tabs。审查 Minor：setup 同步测量初值（原 onMounted 才测，窄窗首帧
+ *  先渲染 Rail 再闪变 Tabs）；本组件纯 CSR，缺 matchMedia 的环境兜底宽窗渲染 Rail */
+const isNarrow = ref(
+  typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 599px)').matches,
+)
 let mql: MediaQueryList | null = null
 const onMqlChange = (e: MediaQueryListEvent) => { isNarrow.value = e.matches }
 onMounted(() => {
   if (typeof window.matchMedia !== 'function') return
   mql = window.matchMedia('(max-width: 599px)')
-  isNarrow.value = mql.matches
   mql.addEventListener('change', onMqlChange)
 })
 onBeforeUnmount(() => { mql?.removeEventListener('change', onMqlChange); mql = null })

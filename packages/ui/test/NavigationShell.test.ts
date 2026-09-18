@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { toRaw } from 'vue'
+import { toRaw, nextTick } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import SettingsPage from '../src/pages/SettingsPage.vue'
@@ -81,5 +81,28 @@ describe('NavigationShell', () => {
     w.findComponent(CodesPage).vm.$emit('copy', '123456')
     await flushPromises()
     expect(w.emitted('copy')).toEqual([['123456']])
+  })
+
+  it('isNarrow setup 同步测量：matchMedia 命中时首帧即 Tabs 不闪变 Rail（审查 Minor）', async () => {
+    let changeCb: ((e: { matches: boolean }) => void) | null = null
+    const mql = {
+      matches: true,
+      addEventListener: (_t: string, cb: (e: { matches: boolean }) => void) => { changeCb = cb },
+      removeEventListener: () => { changeCb = null },
+    }
+    vi.spyOn(window, 'matchMedia').mockReturnValue(mql as unknown as MediaQueryList)
+    const router = makeRouter()
+    await router.push('/'); await router.isReady()
+    const w = mount(NavigationShell, { global: { plugins: [router] }, props: { store: stubStore } })
+    // setup 初值同步生效：窄窗首帧直接渲染 Tabs（不先 Rail 再闪变）
+    expect(w.find('.md-rail').exists()).toBe(false)
+    expect(w.find('.md-tabs').exists()).toBe(true)
+    // 断点变化监听仍在：matches 变 false 回宽窗 Rail
+    changeCb?.({ matches: false })
+    await nextTick()
+    expect(w.find('.md-rail').exists()).toBe(true)
+    expect(w.find('.md-tabs').exists()).toBe(false)
+    w.unmount()
+    vi.restoreAllMocks()
   })
 })
