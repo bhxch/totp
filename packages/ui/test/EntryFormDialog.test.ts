@@ -5,14 +5,14 @@ import EntryFormDialog from '../src/components/EntryFormDialog.vue'
 
 const entry: OtpEntry = {
   uuid: 'u1', type: 'totp', issuer: 'GitHub', label: 'me@ex.com', secret: 'JBSWY3DPEHPK3PXP',
-  algorithm: 'SHA1', digits: 6, period: 30, groupIds: [], order: 0, createdAt: 0,
+  algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 0,
 }
 
 const icons = { builtin: getBuiltinIcons(), stored: {} }
 
 function mountDialog(over: Partial<{ open: boolean; editing: OtpEntry | null }> = {}) {
   return mount(EntryFormDialog, {
-    props: { open: true, editing: null, groups: [], icons, ...over },
+    props: { open: true, editing: null, tags: [], icons, ...over },
   })
 }
 
@@ -30,7 +30,7 @@ describe('EntryFormDialog', () => {
     const payload = w.emitted('save')![0]![0]
     expect(payload).toMatchObject({
       type: 'totp', issuer: 'GitHub', label: 'me@ex.com', secret: 'JBSWY3DPEHPK3PXP',
-      algorithm: 'SHA1', digits: 6, period: 30, note: '', groupIds: [], matchRules: [],
+      algorithm: 'SHA1', digits: 6, period: 30, note: '', tagIds: [], matchRules: [],
     })
     // 关弹由父组件在 save 后负责，对话框本身不 emit close
     expect(w.emitted('close')).toBeUndefined()
@@ -62,7 +62,7 @@ describe('EntryFormDialog', () => {
   })
 
   it('Esc 关闭 → emit close', async () => {
-    const w = mount(EntryFormDialog, { props: { open: true, editing: entry, groups: [], icons }, attachTo: document.body })
+    const w = mount(EntryFormDialog, { props: { open: true, editing: entry, tags: [], icons }, attachTo: document.body })
     await w.find('.md-dialog__scrim').trigger('keydown', { key: 'Escape' })
     expect(w.emitted('close')).toHaveLength(1)
     w.unmount()

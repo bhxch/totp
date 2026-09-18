@@ -14,7 +14,7 @@ async function pickOption(w: VueWrapper, ariaLabel: string, label: string): Prom
 
 const entry: OtpEntry = {
   uuid: 'u1', type: 'totp', issuer: 'GitHub', label: 'me@ex.com', secret: 'JBSWY3DPEHPK3PXP',
-  algorithm: 'SHA1', digits: 6, period: 30, groupIds: [], order: 0, createdAt: 0,
+  algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 0,
 }
 
 // jsdom 25 的 Blob 未实现 arrayBuffer()，用 FileReader polyfill（仅测试环境生效）
@@ -31,26 +31,47 @@ if (typeof Blob.prototype.arrayBuffer !== 'function') {
 
 describe('EntryForm', () => {
   it('编辑模式回填字段，save 携带全部数据', async () => {
-    const w = mount(EntryForm, { props: { initial: entry, groups: [] } })
+    const w = mount(EntryForm, { props: { initial: entry, tags: [] } })
     await w.find('form').trigger('submit')
     const payload = w.emitted('save')![0]![0]
-    expect(payload).toMatchObject({ type: 'totp', issuer: 'GitHub', label: 'me@ex.com', secret: 'JBSWY3DPEHPK3PXP', note: '', groupIds: [], matchRules: [] })
+    expect(payload).toMatchObject({ type: 'totp', issuer: 'GitHub', label: 'me@ex.com', secret: 'JBSWY3DPEHPK3PXP', note: '', tagIds: [], matchRules: [] })
   })
   it('非法 secret 显示错误且不 emit save', async () => {
-    const w = mount(EntryForm, { props: { initial: null, groups: [] } })
+    const w = mount(EntryForm, { props: { initial: null, tags: [] } })
     await w.find('input[placeholder="密钥 base32"]').setValue('AB01') // 0/1 非法
     await w.find('form').trigger('submit')
     expect(w.emitted('save')).toBeUndefined()
     expect(w.text()).toContain('base32')
   })
-  it('分组 checkbox 勾选写入 groupIds', async () => {
-    const w = mount(EntryForm, { props: { initial: null, groups: [{ id: 'g1', name: '工作', order: 0 }] } })
+  it('标签 checkbox 勾选写入 tagIds', async () => {
+    const w = mount(EntryForm, { props: { initial: null, tags: [{ id: 'g1', name: '工作' }] } })
     await w.find('input[type="checkbox"]').setValue(true)
     await w.find('form').trigger('submit')
-    expect(w.emitted('save')![0]![0]).toMatchObject({ groupIds: ['g1'] })
+    expect(w.emitted('save')![0]![0]).toMatchObject({ tagIds: ['g1'] })
+  })
+  it('内联建 tag：回车创建后自动勾选（createTag 回传 id）', async () => {
+    const w = mount(EntryForm, {
+      props: {
+        initial: null,
+        tags: [{ id: 't1', name: '工作' }],
+        createTag: async (name: string) => {
+          return name === '银行' ? 't9' : ''
+        },
+      },
+    })
+    // MdTextField 的 aria-label 落在内层原生 input 上（根 div 无 aria-label），选择器按实际 DOM 调整
+    const newTag = () => w.find('input[aria-label="新标签名称"]')
+    await newTag().setValue('银行')
+    await newTag().trigger('keydown.enter')
+    // 等内联 createTag 异步 resolve 且重渲染：新 tag 复选框出现
+    await vi.waitFor(() => expect(w.findAll('input[type="checkbox"]')).toHaveLength(2))
+    expect(w.emitted('save')).toBeUndefined() // 内联建 tag 只勾选，不触发 save
+    const checks = w.findAll('input[type="checkbox"]').map((c) => (c.element as HTMLInputElement).checked)
+    // 新 tag 已出现于复选列表且勾选（t1 未勾、t9 勾）
+    expect(checks).toEqual([false, true])
   })
   it('编辑既有条目：type 下拉始终含 totp/hotp/steam 三选项（C15 解除 type 锁定）', async () => {
-    const w = mount(EntryForm, { props: { initial: { ...entry, type: 'hotp' }, groups: [] } })
+    const w = mount(EntryForm, { props: { initial: { ...entry, type: 'hotp' }, tags: [] } })
     const trigger = w.find('button[aria-label="类型"]')
     // 取消 :disabled：type 现在可自由切换（type 变更时 digits 会自动重算）
     expect(trigger.attributes('disabled')).toBeUndefined()
@@ -61,7 +82,7 @@ describe('EntryForm', () => {
     expect(opts.map((o) => o.attributes('aria-selected'))).toEqual(['false', 'true', 'false'])
   })
   it('F2：type 切 steam 时 digits 实时置 5，切回落回 6（所见即所存）', async () => {
-    const w = mount(EntryForm, { props: { initial: null, groups: [] } })
+    const w = mount(EntryForm, { props: { initial: null, tags: [] } })
     await pickOption(w, '类型', 'Steam')
     expect((w.find('.digits input').element as HTMLInputElement).value).toBe('5')
     // steam 状态下 save 携带 digits 5
@@ -73,7 +94,7 @@ describe('EntryForm', () => {
     expect((w.find('.digits input').element as HTMLInputElement).value).toBe('6')
   })
   it('F2：编辑 8 位 totp 切 steam 再提交，save 携带 digits 5', async () => {
-    const w = mount(EntryForm, { props: { initial: { ...entry, digits: 8 }, groups: [] } })
+    const w = mount(EntryForm, { props: { initial: { ...entry, digits: 8 }, tags: [] } })
     await pickOption(w, '类型', 'Steam')
     expect((w.find('.digits input').element as HTMLInputElement).value).toBe('5')
     await w.find('form').trigger('submit')
@@ -82,7 +103,7 @@ describe('EntryForm', () => {
   it('表单编辑既有 hotp：算法/位数/计数器编辑控件可见且 save 携带', async () => {
     // digits 用 as const 保持 6 字面量（OtpDigits 联合成员），否则对象脱离上下文拓宽为 number
     const hotpEntry = { ...entry, type: 'hotp' as const, counter: 3, digits: 6 as const, algorithm: 'SHA256' as const }
-    const w = mount(EntryForm, { props: { initial: hotpEntry, groups: [] } })
+    const w = mount(EntryForm, { props: { initial: hotpEntry, tags: [] } })
     expect(w.find('button[aria-label="算法"]').exists()).toBe(true)
     expect(w.find('.digits input').exists()).toBe(true)
     // hotp 类型显示计数器；不显示周期
@@ -93,7 +114,7 @@ describe('EntryForm', () => {
     expect(payload).toMatchObject({ algorithm: 'SHA256', digits: 6, counter: 3, type: 'hotp' })
   })
   it('表单 totp：周期输入可见且默认 30；save 携带 period 与 algorithm，不带 counter', async () => {
-    const w = mount(EntryForm, { props: { initial: entry, groups: [] } })
+    const w = mount(EntryForm, { props: { initial: entry, tags: [] } })
     expect(w.find('.period input').exists()).toBe(true)
     expect(w.find('.counter input').exists()).toBe(false) // 非 hotp 不显示 counter
     await w.find('form').trigger('submit')
@@ -102,7 +123,7 @@ describe('EntryForm', () => {
     expect(payload.counter).toBeUndefined()
   })
   it('steam 类型：digits 改 6 提交时报错；counter 编辑器不显示', async () => {
-    const w = mount(EntryForm, { props: { initial: null, groups: [] } })
+    const w = mount(EntryForm, { props: { initial: null, tags: [] } })
     await pickOption(w, '类型', 'Steam')
     await w.find('input[placeholder="密钥 base32"]').setValue('JBSWY3DPEHPK3PXP')
     // steam 显示周期与位数；不显示 counter
@@ -115,7 +136,7 @@ describe('EntryForm', () => {
     expect(w.text()).toContain('Steam')
   })
   it('添加/编辑/删除 matchRule 并随 save 提交', async () => {
-    const w = mount(EntryForm, { props: { initial: entry, groups: [] } })
+    const w = mount(EntryForm, { props: { initial: entry, tags: [] } })
     await w.find('button.add-rule').trigger('click')
     expect(w.findAll('button[aria-label="匹配策略"]')).toHaveLength(1)
     await pickOption(w, '匹配策略', '基础域名')
@@ -128,7 +149,7 @@ describe('EntryForm', () => {
   })
 
   it('I51：matchRules strategy=regex 非法 pattern 阻止 save + 行内错误 + class.invalid', async () => {
-    const w = mount(EntryForm, { props: { initial: entry, groups: [] } })
+    const w = mount(EntryForm, { props: { initial: entry, tags: [] } })
     await w.find('button.add-rule').trigger('click')
     await pickOption(w, '匹配策略', '正则')
     await w.find('.rule-pattern input').setValue('[unbalanced') // 非法正则
@@ -154,7 +175,7 @@ describe('EntryForm', () => {
     expect(validateRegex('*star')).not.toBeNull()
   })
   it('secret 默认遮蔽（type=password），toggle 切换显示/隐藏', async () => {
-    const w = mount(EntryForm, { props: { initial: null, groups: [] } })
+    const w = mount(EntryForm, { props: { initial: null, tags: [] } })
     const secret = () => w.find('input[placeholder="密钥 base32"]')
     expect(secret().attributes('type')).toBe('password')
     await w.find('button.secret-toggle').trigger('click')
@@ -164,7 +185,7 @@ describe('EntryForm', () => {
   })
 
   it('I68：base32 实时校验——输入非法字符立即触发 class.invalid 与 inline hint（不阻塞输入）', async () => {
-    const w = mount(EntryForm, { props: { initial: null, groups: [] } })
+    const w = mount(EntryForm, { props: { initial: null, tags: [] } })
     const secret = () => w.find('input[placeholder="密钥 base32"]')
     const secretField = () => w.find('.secret-field') // invalid 类在 MdTextField 根 div
     // 初始空串 → 合法（无错误）
@@ -181,7 +202,7 @@ describe('EntryForm', () => {
   })
 
   it('I67：recommendTimer 在组件卸载时清理（防 setTimeout 在 unmount 后写 ref）', async () => {
-    const w = mount(EntryForm, { props: { initial: null, groups: [], icons: { builtin: getBuiltinIcons(), stored: {} } } })
+    const w = mount(EntryForm, { props: { initial: null, tags: [], icons: { builtin: getBuiltinIcons(), stored: {} } } })
     await w.find('input[placeholder="服务名（如 GitHub）"]').setValue('github')
     // 立即 unmount（防抖 300ms 还未触发）
     w.unmount()
@@ -189,7 +210,7 @@ describe('EntryForm', () => {
     await new Promise((r) => setTimeout(r, 400))
   })
   it('遮蔽下 secret 值仍可输入并随 save 提交', async () => {
-    const w = mount(EntryForm, { props: { initial: null, groups: [] } })
+    const w = mount(EntryForm, { props: { initial: null, tags: [] } })
     await w.find('input[placeholder="密钥 base32"]').setValue('jbswy3dpehpk3pxp')
     await w.find('form').trigger('submit')
     expect(w.emitted('save')![0]![0]).toMatchObject({ secret: 'JBSWY3DPEHPK3PXP' })
@@ -201,7 +222,7 @@ describe('EntryForm 图标推荐与选择', () => {
   const issuerInput = (w: VueWrapper) => w.find('input[placeholder="服务名（如 GitHub）"]')
 
   it('issuer 输入 github 防抖后出现推荐气泡，点「使用」后 save 携带 builtin icon', async () => {
-    const w = mount(EntryForm, { props: { initial: null, groups: [], icons: icons() } })
+    const w = mount(EntryForm, { props: { initial: null, tags: [], icons: icons() } })
     expect(w.text()).not.toContain('检测到图标')
     await issuerInput(w).setValue('github')
     // 300ms 防抖后才显示推荐
@@ -214,7 +235,7 @@ describe('EntryForm 图标推荐与选择', () => {
   })
 
   it('issuer 无匹配时不显示推荐气泡', async () => {
-    const w = mount(EntryForm, { props: { initial: null, groups: [], icons: icons() } })
+    const w = mount(EntryForm, { props: { initial: null, tags: [], icons: icons() } })
     await issuerInput(w).setValue('zzz-不存在的服务')
     await new Promise((r) => setTimeout(r, 400)) // 越过 300ms 防抖
     expect(w.text()).not.toContain('检测到图标')
@@ -222,7 +243,7 @@ describe('EntryForm 图标推荐与选择', () => {
 
   it('图标选择区默认收起，展示当前图标（builtin→svg），清除后 save 不携带 icon', async () => {
     const w = mount(EntryForm, {
-      props: { initial: { ...entry, icon: { kind: 'builtin', id: 'github' } }, groups: [], icons: icons() },
+      props: { initial: { ...entry, icon: { kind: 'builtin', id: 'github' } }, tags: [], icons: icons() },
     })
     const picker = w.find('details.icon-picker')
     expect(picker.exists()).toBe(true)
@@ -242,7 +263,7 @@ describe('EntryForm 图标推荐与选择', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, blob: async () => new Blob(['png-bytes'], { type: 'image/png' }) })))
     try {
       const store = createIconStore(createMemoryStorage())
-      const w = mount(EntryForm, { props: { initial: null, groups: [], icons: { builtin: getBuiltinIcons(), stored: store.icons }, iconStore: store } })
+      const w = mount(EntryForm, { props: { initial: null, tags: [], icons: { builtin: getBuiltinIcons(), stored: store.icons }, iconStore: store } })
       await w.find('details.icon-picker summary').trigger('click')
       await w.find('.icon-url input').setValue('https://example.com/a.png')
       await w.find('button.fetch-icon').trigger('click')
@@ -260,7 +281,7 @@ describe('EntryForm 图标推荐与选择', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, blob: async () => new Blob([]) })))
     try {
       const store = createIconStore(createMemoryStorage())
-      const w = mount(EntryForm, { props: { initial: null, groups: [], icons: { builtin: getBuiltinIcons(), stored: store.icons }, iconStore: store } })
+      const w = mount(EntryForm, { props: { initial: null, tags: [], icons: { builtin: getBuiltinIcons(), stored: store.icons }, iconStore: store } })
       await w.find('details.icon-picker summary').trigger('click')
       await w.find('.icon-url input').setValue('https://example.com/a.png')
       await w.find('button.fetch-icon').trigger('click')
@@ -274,7 +295,7 @@ describe('EntryForm 图标推荐与选择', () => {
 
   it('导入图标包（zip）：busy 态期间按钮禁用，完成批量入库并提示已导入/跳过数；非法 zip 显示错误', async () => {
     const store = createIconStore(createMemoryStorage())
-    const w = mount(EntryForm, { props: { initial: null, groups: [], icons: { builtin: getBuiltinIcons(), stored: store.icons }, iconStore: store } })
+    const w = mount(EntryForm, { props: { initial: null, tags: [], icons: { builtin: getBuiltinIcons(), stored: store.icons }, iconStore: store } })
     await w.find('details.icon-picker summary').trigger('click')
     expect(w.find('button.import-pack').exists()).toBe(true)
     const setFiles = (el: HTMLInputElement, file: File) => {
@@ -308,12 +329,12 @@ describe('EntryForm 图标推荐与选择', () => {
 
 describe('EntryForm 预填哑值 uuid（URI 导入）边界', () => {
   it('uuid 为空串的预填对象按新建处理：提交按钮显示「添加」', () => {
-    const w = mount(EntryForm, { props: { initial: { ...entry, uuid: '' }, groups: [] } })
+    const w = mount(EntryForm, { props: { initial: { ...entry, uuid: '' }, tags: [] } })
     expect(w.find('button[type="submit"]').text()).toBe('添加')
   })
 
   it('uuid 非空的编辑对象提交按钮显示「保存」', () => {
-    const w = mount(EntryForm, { props: { initial: entry, groups: [] } })
+    const w = mount(EntryForm, { props: { initial: entry, tags: [] } })
     expect(w.find('button[type="submit"]').text()).toBe('保存')
   })
 
@@ -322,7 +343,7 @@ describe('EntryForm 预填哑值 uuid（URI 导入）边界', () => {
     try {
       const store = createIconStore(createMemoryStorage())
       const w = mount(EntryForm, {
-        props: { initial: { ...entry, uuid: '' }, groups: [], icons: { builtin: getBuiltinIcons(), stored: store.icons }, iconStore: store },
+        props: { initial: { ...entry, uuid: '' }, tags: [], icons: { builtin: getBuiltinIcons(), stored: store.icons }, iconStore: store },
       })
       await w.find('details.icon-picker summary').trigger('click')
       await w.find('.icon-url input').setValue('https://example.com/a.png')

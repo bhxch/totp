@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { base32Decode, getBuiltinIcons, recommendBuiltinIcon, type BuiltinIcon, type Group, type HashAlgorithm, type MatchRule, type MatchStrategy, type OtpEntry } from '@totp/core'
+import { base32Decode, getBuiltinIcons, recommendBuiltinIcon, type BuiltinIcon, type HashAlgorithm, type MatchRule, type MatchStrategy, type OtpEntry, type Tag } from '@totp/core'
 import { computed, onScopeDispose, reactive, ref, watch } from 'vue'
 import { fileToScaledDataUrl, importIconPackZip } from '../iconImport'
 import type { IconStore } from '../iconStore'
@@ -21,7 +21,9 @@ function looseToNumber(v: string): number {
 
 const props = defineProps<{
   initial?: OtpEntry | null
-  groups?: Group[]
+  tags?: Tag[]
+  /** 内联快速建 tag：宿主侧创建并回传新 tag id；缺省不渲染内联建行 */
+  createTag?: (name: string) => Promise<string>
   /** 图标数据源：builtin 内置集 + stored（含 'url:' 前缀缓存键）dataUrl 映射；缺省不渲染推荐气泡与图标选择区 */
   icons?: { builtin: Record<string, BuiltinIcon>; stored: Readonly<Record<string, string>> }
   /** 图标存储：上传/URL 拉取需要写能力；缺省时隐藏上传与 URL 拉取 */
@@ -39,7 +41,7 @@ const form = reactive({
   period: (props.initial?.period ?? 30) as number,
   counter: (props.initial?.counter ?? 0) as number,
   note: props.initial?.note ?? '',
-  groupIds: [...(props.initial?.groupIds ?? [])],
+  tagIds: [...(props.initial?.tagIds ?? [])],
   matchRules: (props.initial?.matchRules ?? []).map((r) => ({ ...r })),
   icon: props.initial?.icon as EntryFormData['icon'],
 })
@@ -92,12 +94,39 @@ function setRuleStrategy(r: MatchRule, v: string | number): void {
   r.strategy = v as MatchStrategy
 }
 
-/** 分组勾选（MdCheckbox 替代数组 v-model checkbox）：勾上加 id，取消勾移除 */
-function toggleGroup(id: string, checked: boolean): void {
+/** 标签勾选（MdCheckbox 替代数组 v-model checkbox）：勾上加 id，取消勾移除 */
+function toggleTag(id: string, checked: boolean): void {
   if (checked) {
-    if (!form.groupIds.includes(id)) form.groupIds.push(id)
+    if (!form.tagIds.includes(id)) form.tagIds.push(id)
   } else {
-    form.groupIds = form.groupIds.filter((g) => g !== id)
+    form.tagIds = form.tagIds.filter((g) => g !== id)
+  }
+}
+
+// ---------- 内联快速建 tag（spec §3 EntryForm）：回车/按钮 → createTag → 自动勾选 ----------
+const newTagName = ref('')
+const creatingTag = ref(false)
+/** 内联新建的 tag：宿主 tags prop 异步回流前先本地渲染，保证创建后立即出现于复选列表（按 id 去重） */
+const createdTags = ref<Tag[]>([])
+/** 复选列表 = 宿主 tags + 内联新建（按 id 去重，宿主回流后自然收敛） */
+const shownTags = computed(() => {
+  const list = props.tags ? [...props.tags] : []
+  for (const t of createdTags.value) {
+    if (!list.some((x) => x.id === t.id)) list.push(t)
+  }
+  return list
+})
+async function createTagAndCheck() {
+  const name = newTagName.value.trim()
+  if (!name || !props.createTag || creatingTag.value) return
+  creatingTag.value = true
+  try {
+    const id = await props.createTag(name)
+    if (id && !form.tagIds.includes(id)) form.tagIds.push(id)
+    if (id) createdTags.value.push({ id, name })
+    newTagName.value = ''
+  } finally {
+    creatingTag.value = false
   }
 }
 
@@ -284,7 +313,7 @@ function submit() {
     digits: form.digits,
     period: form.period,
     note: form.note,
-    groupIds: form.groupIds,
+    tagIds: form.tagIds,
     matchRules: form.matchRules.filter((r) => r.pattern.trim()),
     icon: form.icon,
     // type 变更时同步默认 digits：steam=5，其他=6（避免显示错位数）
@@ -339,13 +368,20 @@ function submit() {
       />
     </div>
     <textarea v-model="form.note" placeholder="备注（可选）" rows="2" aria-label="备注" />
-    <fieldset v-if="(groups ?? []).length > 0">
-      <legend>分组</legend>
+    <fieldset v-if="shownTags.length > 0 || createTag">
+      <legend>标签</legend>
       <MdCheckbox
-        v-for="g in groups" :key="g.id" class="group-check"
-        :model-value="form.groupIds.includes(g.id)" :label="g.name" :aria-label="g.name"
-        @update:model-value="toggleGroup(g.id, $event)"
+        v-for="t in shownTags" :key="t.id" class="tag-check"
+        :model-value="form.tagIds.includes(t.id)" :label="t.name" :aria-label="t.name"
+        @update:model-value="toggleTag(t.id, $event)"
       />
+      <div v-if="createTag" class="new-tag-row">
+        <MdTextField
+          v-model="newTagName" class="new-tag" label="新标签" placeholder="新标签，回车创建" aria-label="新标签名称"
+          @keydown.enter.prevent="createTagAndCheck"
+        />
+        <MdButton variant="text" :disabled="creatingTag" @click="createTagAndCheck">添加</MdButton>
+      </div>
     </fieldset>
     <!-- 图标选择区：默认收起 -->
     <details v-if="icons" class="icon-picker">
@@ -419,7 +455,9 @@ function submit() {
 .advanced-row .digits, .advanced-row .period, .advanced-row .counter { flex: 1; min-width: 80px; }
 .steam-hint { font-size: var(--md-sys-typescale-label-small); opacity: .65; margin: 0; width: 100%; }
 fieldset { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 6px; display: flex; gap: 10px; flex-wrap: wrap; }
-.group-check { font-size: var(--md-sys-typescale-body-medium); }
+.tag-check { font-size: var(--md-sys-typescale-body-medium); }
+.new-tag-row { display: flex; gap: 6px; width: 100%; }
+.new-tag { flex: 1; }
 .rule-row { display: flex; gap: 6px; align-items: center; }
 .rule-strategy { flex: none; width: 128px; } /* MdSelect 根定宽，触发端 100% 填充 */
 .rule-row .rule-pattern { flex: 1; }

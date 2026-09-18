@@ -14,7 +14,7 @@ export interface EntryFormData {
   /** HOTP 计数器（仅 hotp 类型有效） */
   counter?: number
   note: string
-  groupIds: string[]
+  tagIds: string[]
   matchRules: MatchRule[]
   /** 图标引用：builtin/stored/url；未设置时缺省 */
   icon?: IconRef
