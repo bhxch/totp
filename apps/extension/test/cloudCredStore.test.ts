@@ -10,7 +10,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { READABLE_BACKUP_RE, SOURCE_REVS_KEY, SOURCES_KEY, type CloudCred, type StorageAdapter } from '@totp/core'
-import { conflictBackupName, formatAutoStatusText, hasLegacyCloudKeys, loadSourcesImpl, migrateLegacySources, saveSourcesImpl } from '../src/cloudCredStore'
+import { conflictBackupName, formatAutoStatusText, hasLegacyCloudKeys, loadSourcesImpl, migrateLegacySources, retentionDeletedNote, saveSourcesImpl } from '../src/cloudCredStore'
 
 const CLOUD_CRED_KEY = 'cloudCred'
 const CLOUD_CREDS_KEY = 'cloudCreds'
@@ -213,6 +213,18 @@ describe('hasLegacyCloudKeys（审查 I6：迁移跳过/失败后宿主据此置
       throw new Error('IO error')
     }
     await expect(hasLegacyCloudKeys(adapter)).resolves.toBe(false)
+  })
+})
+
+describe('retentionDeletedNote（审查 Minor：deleted=0 无信息量不提示）', () => {
+  it('deleted>0 → 「{name} 清理 N 份旧云备份」', () => {
+    expect(retentionDeletedNote('WebDAV', 3)).toBe('WebDAV 清理 3 份旧云备份')
+  })
+  it('deleted=0 → null（宿主不追加清理提示）', () => {
+    expect(retentionDeletedNote('WebDAV', 0)).toBeNull()
+  })
+  it('deleted<0（-1 哨兵=后端不支持远端清理）→ 降级提示', () => {
+    expect(retentionDeletedNote('Gist', -1)).toBe('Gist 后端不支持远端清理')
   })
 })
 

@@ -169,6 +169,14 @@ export async function migrateLegacySources(
   return migrated.length
 }
 
+/** 滚动删除提示文案（审查 Minor：deleted=0 时「清理 0 份旧云备份」无信息量）：
+ *  deleted>0 →「{name} 清理 N 份旧云备份」；deleted=0 → null（宿主不追加提示）；
+ *  deleted<0（后端不支持远端清理的哨兵值）→「{name} 后端不支持远端清理」 */
+export function retentionDeletedNote(name: string, deleted: number): string | null {
+  if (deleted === 0) return null
+  return deleted > 0 ? `${name} 清理 ${deleted} 份旧云备份` : `${name} 后端不支持远端清理`
+}
+
 /** 旧多目标键（cloudCreds/cloudCred/cloudRevs/cloudRev）是否仍存在于 storage
  *  （审查 I6：迁移被跳过/失败后旧键滞留——宿主据此置 UI 提示，告知启用加密后将自动迁移；
  *  成功迁移后旧键已删，本函数自然返回 false，提示随之消失）。任一键读到即 true；读取异常按 false */

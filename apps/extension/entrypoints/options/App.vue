@@ -2,7 +2,7 @@
 import { backupFileName, createAutoRunScheduler, createBackupEnvelope, loadSourceRevs, normalizeSchemes, openBackupEnvelope, OVERWRITE_NAME, randomBytes, saveSourceRev, SCHEMES_KEY, type BackupEnvelope, type BackupSource, type CloudCred, type ImportScheme, type Retention, type Vault } from '@totp/core'
 import { CLIPBOARD_CLEAR_DELAY_MS, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, LockScreen, NavigationShell, prfSupported, useTheme, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { conflictBackupName, formatAutoStatusText, hasLegacyCloudKeys, loadSourcesImpl, migrateLegacySources, saveSourcesImpl } from '../../src/cloudCredStore'
+import { conflictBackupName, formatAutoStatusText, hasLegacyCloudKeys, loadSourcesImpl, migrateLegacySources, retentionDeletedNote, saveSourcesImpl } from '../../src/cloudCredStore'
 import { createDekSession } from '../../src/dekSession'
 import { createIdleLockWatcher } from '../../src/lockEnforcer'
 import { createExtensionStore, storageAdapter } from '../../src/store'
@@ -393,7 +393,9 @@ const cloudSync = createCloudSyncRunner({
   kdfProfile: () => settings.backupKdfProfile,
   sourceName: (id) => cloudSourceNames.get(id) ?? id,
   onRetentionDeleted: (name, deleted) => {
-    retentionNotes.push(deleted >= 0 ? `${name} 清理 ${deleted} 份旧云备份` : `${name} 后端不支持远端清理`)
+    // 审查 Minor：deleted=0 不追加（「清理 0 份」无信息量）；负值=后端不支持远端清理
+    const note = retentionDeletedNote(name, deleted)
+    if (note) retentionNotes.push(note)
   },
   // 状态记录不 await：storage 写失败不影响同步主流程。ok 三态（批 4）：true/false/null（跳过）
   recordStatus: (ok: boolean | null, summary) => {
