@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import type { SyncPlatform } from './syncPlatform'
+import type { SyncPlatform, SyncStatus } from './syncPlatform'
 import MdButton from './md/MdButton.vue'
 import MdCheckbox from './md/MdCheckbox.vue'
 
@@ -12,7 +12,8 @@ const props = defineProps<{
 const busy = ref(false)
 const msg = ref('')
 const msgKind = ref<'ok' | 'err' | 'hint'>('ok')
-const status = ref<{ state: string; at: number } | null>(null)
+// 用 SyncStatus 而非手写 { state; at }：漏掉 pct 会使 usageText 读 s.pct 时被类型层截掉
+const status = ref<SyncStatus | null>(null)
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 function fail(e: unknown): void {

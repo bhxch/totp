@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { getBuiltinIcons, type OtpEntry } from '@totp/core'
+import { getBuiltinIcons, toOtpDigits, type OtpEntry } from '@totp/core'
 import { computed, ref, watch } from 'vue'
 import { useOtpCodes } from '../composables/useOtpCodes'
 import { iconView, type IconStore } from '../iconStore'
@@ -80,8 +80,13 @@ watch(
 
 async function onSave(data: EntryFormData) {
   if (editing.value) {
-    // 表单已显式提交完整字段；不覆盖（用户在表单内可选的 digits/algorithm/period/counter 全部生效）
-    await props.store.updateEntryOp(editing.value.uuid, data)
+    // 表单已显式提交完整字段；不覆盖（用户在表单内可选的 digits/algorithm/period/counter 全部生效）。
+    // digits 经 toOtpDigits 收口 number→OtpDigits：表单提交校验（steam=5、其余 6/7/8）已保证合法值，
+    // 此处恒等回传，不改运行时行为；?? 默认仅兜 EntryFormData.digits 可选的类型口径（运行时表单恒携带）
+    await props.store.updateEntryOp(editing.value.uuid, {
+      ...data,
+      digits: toOtpDigits(data.digits ?? (data.type === 'steam' ? 5 : 6), data.type),
+    })
   } else {
     // 新建：表单未提供的字段用模型默认值；digits/algorithm/period 来自表单（type 切换时表单已自动重算）
     const { algorithm = 'SHA1', digits = data.type === 'steam' ? 5 : 6, period = 30, counter } = data
@@ -89,7 +94,7 @@ async function onSave(data: EntryFormData) {
       ...data,
       uuid: crypto.randomUUID(),
       algorithm,
-      digits,
+      digits: toOtpDigits(digits, data.type),
       period,
       ...(data.type === 'hotp' && counter !== undefined ? { counter } : {}),
       order: 0,

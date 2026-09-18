@@ -80,7 +80,8 @@ describe('EntryForm', () => {
     expect(w.emitted('save')![0]![0]).toMatchObject({ type: 'steam', digits: 5 })
   })
   it('表单编辑既有 hotp：算法/位数/计数器编辑控件可见且 save 携带', async () => {
-    const hotpEntry = { ...entry, type: 'hotp' as const, counter: 3, digits: 6, algorithm: 'SHA256' as const }
+    // digits 用 as const 保持 6 字面量（OtpDigits 联合成员），否则对象脱离上下文拓宽为 number
+    const hotpEntry = { ...entry, type: 'hotp' as const, counter: 3, digits: 6 as const, algorithm: 'SHA256' as const }
     const w = mount(EntryForm, { props: { initial: hotpEntry, groups: [] } })
     expect(w.find('button[aria-label="算法"]').exists()).toBe(true)
     expect(w.find('.digits input').exists()).toBe(true)
