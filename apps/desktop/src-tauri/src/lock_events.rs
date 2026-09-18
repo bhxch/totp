@@ -124,9 +124,18 @@ mod imp {
         unsafe { WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION)? };
         REGISTERED_HWND.store(hwnd.0 as isize, Ordering::SeqCst);
 
-        // 消息泵：GetMessage 返回 0（WM_QUIT）即结束线程；-1（错误）同样终止泵
+        // 消息泵（审查 Minor-M2）：GetMessage 三态显式判定——0=WM_QUIT 正常结束；-1=出错
+        // （如句柄失效）记日志并终止泵（BOOL::as_bool() 对 -1 也返回 true，原 `while as_bool()`
+        // 写法会把错误当消息持续派发，持续性错误时忙等空转）；>0 才是有效消息
         let mut msg = windows::Win32::UI::WindowsAndMessaging::MSG::default();
-        while unsafe { GetMessageW(&mut msg, None, 0, 0) }.as_bool() {
+        loop {
+            let ret = unsafe { GetMessageW(&mut msg, None, 0, 0) };
+            if ret.0 == 0 || ret.0 == -1 {
+                if ret.0 == -1 {
+                    eprintln!("[lock_events] GetMessageW 失败，锁屏监听线程退出");
+                }
+                break;
+            }
             let _ = unsafe { TranslateMessage(&msg) };
             let _ = unsafe { DispatchMessageW(&msg) };
         }
