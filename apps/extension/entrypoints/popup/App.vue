@@ -27,10 +27,15 @@ onMounted(async () => {
     // 主题接线:initStore 成功后挂 useTheme(设置已加载为真实值;首帧属性由 html 内联脚本负责)
     useTheme(store)
     registerStorageSync()
-    // rememberTagFilter 恢复补偿：setup 早于 initStore，上方 selectedTagIds 初始化读到的是默认值；
-    // 盘上设置载入后（Object.assign 同一 reactive 对象）在此补读一次（与 options CodesPage 同语义）。
-    // 仅在确有已存选中时赋值：空→空赋值也会触发持久化 watch，省去一次冗余 settings 落盘
-    if (settings.rememberTagFilter && settings.lastTagFilterIds.length > 0) selectedTagIds.value = [...settings.lastTagFilterIds]
+    // 恢复持久化选中集合：按当前 tags 过滤，防止跨设备删除后盘上残留悬空 id 进入筛选
+    // （all 模式误报空列表 / any 模式常驻并被持久化 watch 写回盘上）；initStore 已 await 完成，
+    // vault.tags 此刻确定已装载，过滤是确定性的。仅在确有有效选中时赋值：空→空赋值也会触发持久化
+    // watch，省去一次冗余 settings 落盘
+    if (settings.rememberTagFilter) {
+      const valid = new Set(vault.tags.map((t) => t.id))
+      const restored = settings.lastTagFilterIds.filter((id) => valid.has(id))
+      if (restored.length > 0) selectedTagIds.value = restored
+    }
     await icons.init()
   } catch (e) {
     error.value = '本地数据读取失败：' + (e instanceof Error ? e.message : String(e))
@@ -72,13 +77,15 @@ watch(selectedTagIds, (ids) => {
   settings.lastTagFilterIds = [...ids]
   void commitSettings()
 })
-// 悬空 tag 清理：tag 被删/同步变更后从选中集合剔除（联动持久化 watch 一并落盘）
+// 悬空 tag 清理：tag 被删/同步变更后从选中集合剔除（联动持久化 watch 一并落盘）；
+// immediate 兜底覆盖补偿恢复前 tags 已装载的首轮（恢复点过滤后通常 no-op）
 watch(
   () => vault.tags.map((t) => t.id),
   (ids) => {
     const next = selectedTagIds.value.filter((id) => ids.includes(id))
     if (next.length !== selectedTagIds.value.length) selectedTagIds.value = next
   },
+  { immediate: true },
 )
 
 /** 四级回退链（spec §3）：搜索 → tag → URL 分级放宽；tabUrl 仅 http(s)（onMounted 既有判定） */
@@ -308,9 +315,10 @@ async function copy(entry: OtpEntry) {
     <div class="filter-row" v-if="tabUrl">
       <!-- M3 MdCheckbox(审查 X10):原 UA 原生 checkbox 深色 scheme 下未选中即深灰填充,即「复选框底色偏深」根因 -->
       <MdCheckbox :model-value="filterOn" label="按当前站点过滤" @update:model-value="toggleFilter" />
-      <span v-if="filterResult.hint" class="hint">{{ filterResult.hint }}</span>
-      <span v-else-if="filterOn && filterResult.urlMatchCount > 0" class="hint">匹配 {{ filterResult.urlMatchCount }} 条</span>
+      <span v-if="!filterResult.hint && filterOn && filterResult.urlMatchCount > 0" class="hint">匹配 {{ filterResult.urlMatchCount }} 条</span>
     </div>
+    <!-- hint 不受 tabUrl 门控：无标签页 URL（新标签页等）时放宽提示仍可达（spec §3 回退提示） -->
+    <span v-if="filterResult.hint" class="hint hint-row">{{ filterResult.hint }}</span>
 
     <!-- 错误提示置于 details 外常显：?uri= 回调报错时 details 默认折叠，放内部会静默不可见 -->
     <div v-if="importError" class="error">{{ importError }}</div>
@@ -378,6 +386,7 @@ h1 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .otpauth-import textarea { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 6px 8px; font-family: inherit; resize: vertical; }
 .otpauth-import .import-row { display: flex; justify-content: flex-end; margin-top: 4px; }
 .hint { opacity: .6; }
+.hint-row { padding: 0 4px; }
 .empty { text-align: center; opacity: .6; padding: 32px 0; }
 .item-wrap { position: relative; }
 .ops { position: absolute; top: 4px; right: 4px; display: flex; gap: 4px; opacity: 0; transition: opacity .15s; }

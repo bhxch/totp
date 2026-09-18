@@ -33,9 +33,12 @@ const searchSecret = ref(false)
 const editing = ref<OtpEntry | null>(null)
 const creating = ref(false)
 const confirmingDelete = ref<string | null>(null)
-/** 标签筛选：多选集合 + any/all 模式（模式存 settings 全局共享；spec §3） */
+/** 标签筛选：多选集合 + any/all 模式（模式存 settings 全局共享；spec §3）。
+ *  恢复持久化选中集合：按当前 tags 过滤，防止跨设备删除后盘上残留悬空 id 进入筛选（终审 Important） */
 const selectedTagIds = ref<string[]>(
-  props.store.settings.rememberTagFilter ? [...props.store.settings.lastTagFilterIds] : [],
+  props.store.settings.rememberTagFilter
+    ? props.store.settings.lastTagFilterIds.filter((id) => props.store.vault.tags.some((t) => t.id === id))
+    : [],
 )
 const tagMode = computed(() => props.store.settings.tagFilterMode)
 async function setTagMode(m: TagFilterMode) {
@@ -54,7 +57,8 @@ watch(
   (ids) => {
     if (!props.store.settings.rememberTagFilter) return
     if (selectedTagIds.value.length > 0) return // 会话内已有选择不覆盖
-    if (ids.length > 0) selectedTagIds.value = [...ids]
+    // 恢复点过滤：仅收当前 tags 存在的 id，悬空 id 不进选中集合（settings 晚装载轮）
+    if (ids.length > 0) selectedTagIds.value = ids.filter((id) => props.store.vault.tags.some((t) => t.id === id))
   },
 )
 /** reveal：列表点击「🔑」后弹 RevealDialog 显前 4 + 后 4（避免列表常驻明文） */
@@ -93,13 +97,15 @@ const visible = computed(() => {
   }
   return filterByTags(list, new Set(selectedTagIds.value), props.store.settings.tagFilterMode)
 })
-/** 兜底：tag 被删除（管理弹层/远端同步）后从选中集合剔除 */
+/** 兜底：tag 被删除（管理弹层/远端同步）后从选中集合剔除；immediate 覆盖 setup 时 tags 已装载的首轮
+ *  （恢复点过滤后此轮通常 no-op，防宿主时序差异漏网） */
 watch(
   () => props.store.vault.tags.map((t) => t.id),
   (ids) => {
     const next = selectedTagIds.value.filter((id) => ids.includes(id))
     if (next.length !== selectedTagIds.value.length) selectedTagIds.value = next
   },
+  { immediate: true },
 )
 
 async function onSave(data: EntryFormData) {

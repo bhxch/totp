@@ -174,6 +174,29 @@ describe('CodesPage 标签筛选（spec §3 管理页）', () => {
     })
   })
 
+  it('盘上 lastTagFilterIds 含悬空 id 时恢复不引入 ghost（all 模式不误报空列表）', async () => {
+    // seed：真实 tag + 仅带该 tag 的条目；settings 预写 rememberTagFilter + 含悬空 id 的持久化选中 + all 模式
+    const storage = createMemoryStorage()
+    const seed = createVueStore(storage)
+    await seed.initStore()
+    const tid = await seed.addTagOp('工作')
+    await seed.addEntryOp({ ...baseEntry('a'), tagIds: [tid] })
+    await storage.set('settings', JSON.stringify({ rememberTagFilter: true, tagFilterMode: 'all', lastTagFilterIds: ['ghost-dangling-id', tid] }))
+    // 悬空 id 走 setup 初始化恢复路径（store 先 init 后 mount：tags 已就绪，清理 watch 首轮无从触发）；
+    // mount 先于 initStore 的时序里恢复 watch 与清理 watch 同轮 flush 自愈，测不到该缺陷
+    const s = createVueStore(storage)
+    await s.initStore()
+    const w = mount(CodesPage, { props: { store: s } })
+    // 仅真实 id 恢复为选中（悬空 id 无对应 chip，不进选中集合）
+    await vi.waitFor(() => {
+      const c = w.findAll('button.md-chip').find((x) => x.text() === '工作')
+      expect(c?.classes()).toContain('md-chip--selected')
+    })
+    // ghost 未混入：all 模式下带「工作」的条目不被误报「无匹配条目」
+    await vi.waitFor(() => expect(w.text()).toContain('GitHub'))
+    expect(w.text()).not.toContain('无匹配条目')
+  })
+
   it('options 时序：rememberTagFilter 关闭时不恢复持久化选中（T13 缺陷修复）', async () => {
     const storage = createMemoryStorage()
     const seed = createVueStore(storage)
