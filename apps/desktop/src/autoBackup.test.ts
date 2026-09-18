@@ -4,10 +4,13 @@ import { createDesktopAutoRunner, formatAutoStatusText, type AutoBackupDeps } fr
 const JSON1 = '{"vault":1}'
 const HASH1 = `hash(${JSON1})`
 
+/** doBackup 全部成功结果（I8 结构化返回形态；可逐字段覆写构造 partial/failed/empty） */
+const OK_RESULT = { outcome: 'ok' as const, okCount: 1, failed: [], summary: '已备份到 1 个目录（家里）' }
+
 /** 基线 deps：解锁、有 secret、onChange=true、无 lastHash（可逐项覆写）。
  *  同时返回关键 mock 引用；over 未覆盖时二者同引用，覆盖后以 deps 上的为准 */
 function makeDeps(over: Partial<AutoBackupDeps> = {}) {
-  const doBackup = vi.fn(async () => null)
+  const doBackup = vi.fn(async () => OK_RESULT)
   const doCloudSync = vi.fn(async () => null)
   const setLastBackupHash = vi.fn()
   const onError = vi.fn()
@@ -99,30 +102,73 @@ describe('createDesktopAutoRunner（backup 通道）', () => {
     expect(onError).toHaveBeenCalledWith(boom, 'backup')
   })
 
-  it('recordStatus：备份成功写 ok=true（summary 中文，如 已创建备份）', async () => {
+  it('recordStatus：全部源成功（outcome=ok）写 ok=true，summary 原样透传，基线推进', async () => {
     const recordStatus = vi.fn()
-    const { deps } = makeDeps({ doBackup: vi.fn(async () => 'created'), recordStatus })
+    const { deps, setLastBackupHash } = makeDeps({ doBackup: vi.fn(async () => ({ ...OK_RESULT, summary: '已创建备份' })), recordStatus })
     createDesktopAutoRunner(deps).notifyChanged()
     await vi.advanceTimersByTimeAsync(10_000)
     expect(recordStatus).toHaveBeenCalledTimes(1)
     expect(recordStatus).toHaveBeenCalledWith(true, '已创建备份')
+    expect(setLastBackupHash).toHaveBeenCalledWith(HASH1)
   })
 
-  it('recordStatus：覆盖模式成功写「已覆盖备份」', async () => {
+  it('recordStatus：多源中文摘要（createBackupToSources summary）原样透传', async () => {
     const recordStatus = vi.fn()
-    const { deps } = makeDeps({ doBackup: vi.fn(async () => 'overwritten'), recordStatus })
-    createDesktopAutoRunner(deps).notifyChanged()
-    await vi.advanceTimersByTimeAsync(10_000)
-    expect(recordStatus).toHaveBeenCalledWith(true, '已覆盖备份')
-  })
-
-  it('recordStatus：多源中文摘要（plan16 T14 createBackupToSources 返回值）不在 label 表内，原样透传', async () => {
-    const recordStatus = vi.fn()
-    const summary = '已备份到 2 个目录（家里、办公室）；失败：停用'
-    const { deps } = makeDeps({ doBackup: vi.fn(async () => summary), recordStatus })
+    const summary = '已备份到 2 个目录（家里、办公室）'
+    const { deps } = makeDeps({ doBackup: vi.fn(async () => ({ ...OK_RESULT, okCount: 2, summary })), recordStatus })
     createDesktopAutoRunner(deps).notifyChanged()
     await vi.advanceTimersByTimeAsync(10_000)
     expect(recordStatus).toHaveBeenCalledWith(true, summary)
+  })
+
+  it('I8 部分失败（outcome=partial）：基线不动 + recordStatus(false, 失败明细)', async () => {
+    const recordStatus = vi.fn()
+    const { deps, setLastBackupHash } = makeDeps({
+      doBackup: vi.fn(async () => ({ outcome: 'partial' as const, okCount: 1, failed: [{ source: '家里', error: 'disk full' }], summary: '已备份到 1 个目录（办公室）；失败：家里' })),
+      recordStatus,
+    })
+    createDesktopAutoRunner(deps).notifyChanged()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(setLastBackupHash).not.toHaveBeenCalled()
+    expect(recordStatus).toHaveBeenCalledTimes(1)
+    expect(recordStatus).toHaveBeenCalledWith(false, '已备份到 1 个目录（办公室）；失败：家里')
+  })
+
+  it('I8 全部失败（outcome=failed）：基线不动 + recordStatus(false, 失败名单)', async () => {
+    const recordStatus = vi.fn()
+    const { deps, setLastBackupHash } = makeDeps({
+      doBackup: vi.fn(async () => ({ outcome: 'failed' as const, okCount: 0, failed: [{ source: '家里', error: 'disk full' }], summary: '备份失败：家里' })),
+      recordStatus,
+    })
+    createDesktopAutoRunner(deps).notifyChanged()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(setLastBackupHash).not.toHaveBeenCalled()
+    expect(recordStatus).toHaveBeenCalledWith(false, '备份失败：家里')
+  })
+
+  it('I8 无启用源（outcome=empty）：基线不动 + recordStatus(null, 提示)', async () => {
+    const recordStatus = vi.fn()
+    const { deps, setLastBackupHash } = makeDeps({
+      doBackup: vi.fn(async () => ({ outcome: 'empty' as const, okCount: 0, failed: [], summary: '未配置启用的备份目录' })),
+      recordStatus,
+    })
+    createDesktopAutoRunner(deps).notifyChanged()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(setLastBackupHash).not.toHaveBeenCalled()
+    expect(recordStatus).toHaveBeenCalledWith(null, '未配置启用的备份目录')
+  })
+
+  it('I8 基线不动后同内容下轮仍重试（不被 unchanged 跳过，自愈通道）', async () => {
+    const doBackup = vi.fn(async () => ({ outcome: 'failed' as const, okCount: 0, failed: [{ source: '家里', error: 'disk full' }], summary: '备份失败：家里' }))
+    const { deps, setLastBackupHash } = makeDeps({ doBackup })
+    const runner = createDesktopAutoRunner(deps)
+    runner.notifyChanged()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(doBackup).toHaveBeenCalledTimes(1)
+    expect(setLastBackupHash).not.toHaveBeenCalled()
+    runner.notifyChanged() // lastHash 仍为 null → decideAutoRun 不判 unchanged，照常重试
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(doBackup).toHaveBeenCalledTimes(2)
   })
 
   it('recordStatus：备份失败写 ok=false（错误消息截断 100 字符），onError 仍收到', async () => {

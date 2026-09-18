@@ -73,28 +73,46 @@ async function writeSourceBackup(dirOverride: string | null, contents: string, r
   return 'created'
 }
 
+/** createBackupToSources 结构化结果（审查 I8）：诚实反映每源成败，调用方据此决定
+ *  基线推进/状态记录（此前恒 resolve 字符串，失败被吞且详情丢失，自动通道误推进基线静默停摆） */
+export interface BackupSourcesResult {
+  /** 'ok'=全部启用源成功；'partial'=部分失败；'failed'=全部失败；'empty'=无启用源 */
+  outcome: 'ok' | 'partial' | 'failed' | 'empty'
+  /** 成功源数 */
+  okCount: number
+  /** 失败源明细（source=显示名，error=异常消息；此前被 catch 吞掉的错误详情） */
+  failed: Array<{ source: string; error: string }>
+  /** 中文摘要（文案与旧版逐字一致，手动备份卡直接展示；自动通道 recordStatus 复用） */
+  summary: string
+}
+
 /**
- * 每源备份（plan16 T14）：对全部启用源逐一落盘（各按其 retention），返回诚实反映成败的中文摘要。
+ * 每源备份（plan16 T14）：对全部启用源逐一落盘（各按其 retention），返回诚实反映成败的结构化结果。
  * envelope 按 profile 档位一次生成、多目录复用（同 (vaultJson, password, profile) 密文可多目录存放）；
- * 单源失败（写盘/滚动删除异常）不阻断其余源，仅计入摘要失败名单；无启用源返回提示文案由卡展示。
+ * 单源失败（写盘/滚动删除异常）不阻断其余源，计入 failed 明细（含错误消息）；无启用源返回 empty。
  */
-export async function createBackupToSources(sources: BackupSourceInput[], vaultJson: string, password: string, profile: KdfProfile = DEFAULT_KDF_PROFILE): Promise<string> {
+export async function createBackupToSources(sources: BackupSourceInput[], vaultJson: string, password: string, profile: KdfProfile = DEFAULT_KDF_PROFILE): Promise<BackupSourcesResult> {
   const enabled = sources.filter((s) => s.enabled)
-  if (enabled.length === 0) return '未配置启用的备份目录'
+  if (enabled.length === 0) return { outcome: 'empty', okCount: 0, failed: [], summary: '未配置启用的备份目录' }
   const contents = JSON.stringify(await createBackupEnvelope(vaultJson, password, profile), null, 2)
   const ok: string[] = []
-  const failed: string[] = []
+  const failed: Array<{ source: string; error: string }> = []
   for (const s of enabled) {
     try {
       await writeSourceBackup(s.dir ?? null, contents, s.retention)
       ok.push(s.name)
-    } catch {
-      failed.push(s.name)
+    } catch (e) {
+      failed.push({ source: s.name, error: e instanceof Error ? e.message : String(e) })
     }
   }
-  if (failed.length === 0) return `已备份到 ${ok.length} 个目录（${ok.join('、')}）`
-  if (ok.length === 0) return `备份失败：${failed.join('、')}`
-  return `已备份到 ${ok.length} 个目录（${ok.join('、')}）；失败：${failed.join('、')}`
+  if (failed.length === 0) {
+    return { outcome: 'ok', okCount: ok.length, failed, summary: `已备份到 ${ok.length} 个目录（${ok.join('、')}）` }
+  }
+  const failedNames = failed.map((f) => f.source).join('、')
+  if (ok.length === 0) {
+    return { outcome: 'failed', okCount: 0, failed, summary: `备份失败：${failedNames}` }
+  }
+  return { outcome: 'partial', okCount: ok.length, failed, summary: `已备份到 ${ok.length} 个目录（${ok.join('、')}）；失败：${failedNames}` }
 }
 
 /** 云同步冲突副本：本地 vault JSON 字节写 backups/conflict-{ts}.totpbackup（不参与滚动删除），返回文件名。

@@ -72,8 +72,11 @@ describe('createBackupToSources（每源备份）', () => {
       }
       return null
     })
-    const summary = await createBackupToSources(sources, '{"v":1}', 'pw', 'paranoid')
-    expect(summary).toBe('已备份到 2 个目录（家里、办公室）')
+    const r = await createBackupToSources(sources, '{"v":1}', 'pw', 'paranoid')
+    expect(r.outcome).toBe('ok')
+    expect(r.okCount).toBe(2)
+    expect(r.failed).toEqual([])
+    expect(r.summary).toBe('已备份到 2 个目录（家里、办公室）')
     // envelope 一次生成（Argon2id 昂贵，多目录复用同一密文）且档位第三参透传
     expect(envMock()).toHaveBeenCalledTimes(1)
     expect(envMock()).toHaveBeenCalledWith('{"v":1}', 'pw', 'paranoid')
@@ -113,27 +116,38 @@ describe('createBackupToSources（每源备份）', () => {
     expect(JSON.parse(writeArgs.contents)).toMatchObject({ v: 2, kdf: { profile: 'paranoid' } })
   })
 
-  it('单源失败不阻断其余源：摘要列出失败源名', async () => {
+  it('单源失败不阻断其余源：outcome=partial，failed 带错误消息，摘要列出失败源名（审查 I8）', async () => {
     invokeMock.mockImplementation(async (cmd: string) => {
       if (cmd === 'write_text_file_os') throw new Error('disk full')
       return null
     })
-    const summary = await createBackupToSources(sources, '{"v":1}', 'pw', 'balanced')
-    expect(summary).toBe('已备份到 1 个目录（办公室）；失败：家里')
+    const r = await createBackupToSources(sources, '{"v":1}', 'pw', 'balanced')
+    expect(r.outcome).toBe('partial')
+    expect(r.okCount).toBe(1)
+    expect(r.failed).toEqual([{ source: '家里', error: 'disk full' }])
+    expect(r.summary).toBe('已备份到 1 个目录（办公室）；失败：家里')
     // 其余源照常落盘
     expect(fsMocks.writeTextFile).toHaveBeenCalled()
   })
 
-  it('全部失败：摘要只列失败名单', async () => {
+  it('全部失败：outcome=failed，failed 明细含每源错误消息，摘要只列失败名单', async () => {
     invokeMock.mockRejectedValue(new Error('disk full'))
     fsMocks.writeTextFile.mockRejectedValue(new Error('disk full'))
-    const summary = await createBackupToSources(sources, '{}', 'pw', 'balanced')
-    expect(summary).toBe('备份失败：家里、办公室')
+    const r = await createBackupToSources(sources, '{}', 'pw', 'balanced')
+    expect(r.outcome).toBe('failed')
+    expect(r.okCount).toBe(0)
+    expect(r.failed).toEqual([
+      { source: '家里', error: 'disk full' },
+      { source: '办公室', error: 'disk full' },
+    ])
+    expect(r.summary).toBe('备份失败：家里、办公室')
   })
 
-  it('无启用源：返回提示文案，不生成 envelope 不写盘', async () => {
-    const summary = await createBackupToSources([sources[2]!], '{}', 'pw', 'balanced')
-    expect(summary).toBe('未配置启用的备份目录')
+  it('无启用源：outcome=empty 提示文案，不生成 envelope 不写盘', async () => {
+    const r = await createBackupToSources([sources[2]!], '{}', 'pw', 'balanced')
+    expect(r.outcome).toBe('empty')
+    expect(r.okCount).toBe(0)
+    expect(r.summary).toBe('未配置启用的备份目录')
     expect(envMock()).not.toHaveBeenCalled()
     expect(invokeMock).not.toHaveBeenCalled()
     expect(fsMocks.writeTextFile).not.toHaveBeenCalled()

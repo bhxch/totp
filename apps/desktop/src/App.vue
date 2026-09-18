@@ -155,12 +155,15 @@ const IMPORT_FILE_FILTERS = [
  */
 const backupPlatform: BackupPlatform = {
   createBackup: async (vaultJson, password) => {
-    const summary = await createBackupToSources(await loadAllSources(), vaultJson, password, kdfProfileOf())
-    // 手动备份同样记录 lastBackupHash：自动备份的 unchanged 去重以最新落盘内容为基线
-    try {
-      localStorage.setItem(LAST_BACKUP_HASH_KEY, await sha256Hex(new TextEncoder().encode(vaultJson)))
-    } catch { /* hash 记录失败不影响备份本身 */ }
-    return summary
+    // 审查 I8：按结构化结果如实提示；仅全部启用源成功才记录 lastBackupHash——
+    // 部分失败推进基线会让自动通道按 unchanged 跳过后续重试（静默停摆），与自动通道同口径
+    const r = await createBackupToSources(await loadAllSources(), vaultJson, password, kdfProfileOf())
+    if (r.outcome === 'ok') {
+      try {
+        localStorage.setItem(LAST_BACKUP_HASH_KEY, await sha256Hex(new TextEncoder().encode(vaultJson)))
+      } catch { /* hash 记录失败不影响备份本身 */ }
+    }
+    return r.summary
   },
   listLocalSources: async () => toLocalViews(await loadAllSources()),
   async saveLocalSource(v) {
@@ -241,7 +244,8 @@ const auto = createDesktopAutoRunner({
     } catch { /* hash 持久化失败仅影响去重，不阻塞 */ }
   },
   doBackup: async (json, secret) => {
-    // plan16 T14：全部启用本地源各按 retention 落盘，返回中文摘要（runner 原样透传至自动状态行）
+    // plan16 T14：全部启用本地源各按 retention 落盘；审查 I8：返回结构化成败结果，
+    // runner 据此决定基线推进与状态记录（部分失败不推进基线，下轮自动重试）
     return createBackupToSources(await loadAllSources(), json, secret, kdfProfileOf())
   },
   // Task 11：desktop 云多目标编排接入（cloudSync 在下方定义；busy 防重入内建于 runner）

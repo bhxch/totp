@@ -1,4 +1,5 @@
 import { createAutoRunScheduler, decideAutoRun, type AutoRunReason, type AutoRunScheduler } from '@totp/core'
+import type { BackupSourcesResult } from './backupService'
 
 /** 自动通道偏好（形态与 ui BackupAutoPrefs 一致；desktop 宿主经 loadBackupPrefs 提供） */
 export interface AutoChannelPrefs {
@@ -19,7 +20,7 @@ export interface AutoBackupDeps {
   cloudPrefs(): AutoChannelPrefs | null
   getLastBackupHash(): string | null
   setLastBackupHash(h: string): void
-  doBackup(json: string, secret: string): Promise<unknown>
+  doBackup(json: string, secret: string): Promise<BackupSourcesResult>
   /** 云同步（Task 11 接入多目标编排；接入前宿主传 no-op） */
   doCloudSync(): Promise<unknown>
   /** 摘要函数注入：desktop 用 core sha256Hex(TextEncoder(vaultJson))，测试用轻量实现 */
@@ -38,9 +39,6 @@ export interface DesktopAutoRunner {
 }
 
 const DEFAULT_DEBOUNCE_MS = 10_000
-
-/** doBackup 结果 → 中文 summary（Minor-6 中文化；未知结果兜底「已完成」） */
-const BACKUP_RESULT_LABEL: Record<string, string> = { created: '已创建备份', overwritten: '已覆盖备份' }
 
 /** 自动状态 JSON → 卡片展示文本（design §4.1）：「YYYY-MM-DD HH:mm 成功/失败/跳过：summary」；
  *  缺字段/坏 JSON/null → null（卡片显示「暂无」）。ok=null 渲染「跳过」（写侧 summary 仅存原因，
@@ -103,11 +101,22 @@ export function createDesktopAutoRunner(deps: AutoBackupDeps, opts?: { debounceM
       }
       const secret = deps.getSecret()
       if (secret === null) return // decideAutoRun 已挡 no-secret；此处窄化满足 TS
+      // 审查 I8：doBackup 返回结构化成败结果，基线推进与状态记录按 outcome 如实处理——
+      // 仅全部启用源成功才写 lastBackupHash（部分/全部失败不写基线，下轮同内容也会重试，
+      // 不再出现「recordStatus(true, 备份失败：X)」自相矛盾 + unchanged 跳过致静默停摆）
       const r = await deps.doBackup(deps.getVaultJson(), secret)
-      deps.setLastBackupHash(currentHash)
-      // 状态记录（design §4.1）：summary 取 doBackup 结果——created/overwritten 走中文化 label 表，
-      // plan16 T14 起多源中文摘要（如「已备份到 2 个目录（…）」）不在表内，原样透传（诚实反映每源成败）
-      deps.recordStatus?.(true, typeof r === 'string' ? (BACKUP_RESULT_LABEL[r] ?? r) : '已完成')
+      if (r.outcome === 'ok') {
+        deps.setLastBackupHash(currentHash)
+        deps.recordStatus?.(true, r.summary)
+        return
+      }
+      if (r.outcome === 'empty') {
+        // 无启用源：无可备份内容，记跳过态且不写基线（防止先记基线后配源时变更被 unchanged 误吞）
+        deps.recordStatus?.(null, r.summary)
+        return
+      }
+      // partial / failed：失败明细（summary 含失败源名，截断口径与 catch 分支一致）
+      deps.recordStatus?.(false, r.summary.slice(0, 100))
     } catch (err) {
       // 失败也记状态；rethrow 交调度器 onError 兜底（行为不变）
       deps.recordStatus?.(false, (err instanceof Error ? err.message : String(err)).slice(0, 100))
