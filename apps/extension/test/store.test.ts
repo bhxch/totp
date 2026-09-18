@@ -6,7 +6,7 @@
  * - 仅 vault/settings 键变更 → 不触碰 bag（credsCache 不被无谓重读）
  * - area !== 'local'（如 session 区 DEK 写入）→ 整体忽略
  */
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { sealSecretBag, SECRET_BAG_KEY, type CloudCred } from '@totp/core'
 import { createExtensionStore } from '../src/store'
 
@@ -53,6 +53,11 @@ function flush(): Promise<void> {
   return new Promise((r) => setTimeout(r, 0))
 }
 
+/** 多拍静置：忽略类断言前给 reload 的 crypto 异步链路充分时间被证明「未发生」 */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0))
+}
+
 beforeEach(() => {
   delete (globalThis as unknown as { chrome?: unknown }).chrome
 })
@@ -71,13 +76,12 @@ describe('extension store registerSync 映射（审查 I7）', () => {
     const dek = s.getCurrentDek()!
     await c.local.set(SECRET_BAG_KEY, await sealSecretBag(dek, { backupPassword: '', creds: { 'src-1': WEBDAV, 'src-2': GIST } }))
     c.emit({ secretBag: { newValue: '...' } })
-    await flush()
-    expect(s.credsCache.value['src-2']).toEqual(GIST) // 远端变更已感知
+    await vi.waitFor(() => expect(s.credsCache.value['src-2']).toEqual(GIST)) // 远端变更已感知（轮询等 crypto 链路）
   })
 
   it('仅 vault/settings 键变更 → 不触碰 bag；session 区变更 → 整体忽略', async () => {
     const c = installChrome()
-    const s = createExtensionStore('test')
+    const s = createExtensionStore('test', { selfWriteSuppressMs: 0 })
     await s.initStore()
     s.registerStorageSync()
     await s.enableEncryption('masterpw')
@@ -87,12 +91,12 @@ describe('extension store registerSync 映射（审查 I7）', () => {
 
     // vault/settings 通知不触发 bag 重读
     c.emit({ vault: { newValue: '...' }, settings: { newValue: '...' } })
-    await flush()
+    await settle()
     expect(s.credsCache.value['src-2']).toBeUndefined()
 
     // 非 local 区（如 session 区 DEK 写入派发的 onChanged）整体忽略
     c.emit({ secretBag: { newValue: '...' } }, 'session')
-    await flush()
+    await settle()
     expect(s.credsCache.value['src-2']).toBeUndefined()
   })
 
@@ -106,7 +110,7 @@ describe('extension store registerSync 映射（审查 I7）', () => {
     s.lock()
     await c.local.set(SECRET_BAG_KEY, await sealSecretBag(dek, { backupPassword: '', creds: { 'src-2': GIST } }))
     c.emit({ secretBag: { newValue: '...' } })
-    await flush()
+    await settle()
     expect(s.locked.value).toBe(true)
     expect(s.credsCache.value).toEqual({})
   })

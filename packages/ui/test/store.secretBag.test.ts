@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   createMemoryStorage, decryptVaultWithDek, encryptVaultWithDek, openSecretBag, randomBytes, sealSecretBag, SECRET_BAG_KEY,
   SECURITY_KEY, bytesToBase64, base64ToBytes,
@@ -270,6 +270,11 @@ describe('store secretBag', () => {
 
   // ---- 审查 I7：secretBag 跨上下文变更感知 ----
 
+  /** 多拍静置：忽略/抑制类断言前给 reload 的 crypto 异步链路充分时间被证明「未发生」 */
+  async function settle(): Promise<void> {
+    for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0))
+  }
+
   /** 模拟远端上下文写入保管区：以 store 当前 DEK 封存一份新 bag 密文落盘（sealSecretBag 返回值即落盘原文，等价另一页写入） */
   async function writeRemoteBag(adapter: StorageAdapter, dek: Uint8Array, content: { backupPassword?: string; creds?: Record<string, CloudCred> }): Promise<void> {
     await adapter.set(SECRET_BAG_KEY, await sealSecretBag(dek, { backupPassword: content.backupPassword ?? '', creds: content.creds ?? {} }))
@@ -290,8 +295,9 @@ describe('store secretBag', () => {
     // 远端覆盖 bag：src-1 凭据更新 + 新增 src-2 + 备份口令变化
     await writeRemoteBag(adapter, dek, { backupPassword: 'remote-pw', creds: { 'src-1': { ...webdavCred, password: 'p-remote' }, 'src-2': gistCred } })
     notify!({ secretBag: true })
-    await flush()
-    expect(s.credsCache.value).toEqual({ 'src-1': { ...webdavCred, password: 'p-remote' }, 'src-2': gistCred })
+    await vi.waitFor(() =>
+      expect(s.credsCache.value).toEqual({ 'src-1': { ...webdavCred, password: 'p-remote' }, 'src-2': gistCred }),
+    )
     expect(s.backupSecret.value).toBe('remote-pw')
     expect(s.bagStored.value).toBe(true)
   })
@@ -309,7 +315,7 @@ describe('store secretBag', () => {
     // 锁定后远端写入 bag 并通知：锁定态不消费（bag 缓存与 DEK 同生命周期，解锁路径重装载）
     await writeRemoteBag(adapter, dek, { backupPassword: 'remote-pw', creds: { 'src-1': webdavCred } })
     notify!({ secretBag: true })
-    await flush()
+    await settle()
     expect(s.credsCache.value).toEqual({})
     expect(s.backupSecret.value).toBeNull()
     expect(s.bagStored.value).toBe(false)
@@ -331,7 +337,7 @@ describe('store secretBag', () => {
     const gistCred: CloudCred = { backend: 'gist', token: 't', gistId: 'g' }
     await writeRemoteBag(adapter, dek, { creds: { 'src-2': gistCred } })
     notify!({ secretBag: true })
-    await flush()
+    await settle()
     expect(s.credsCache.value).toEqual({ 'src-1': webdavCred }) // 未被远端内容覆盖
   })
 
