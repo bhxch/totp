@@ -167,6 +167,8 @@ function onCancelRemove(): void {
  * 确认移除：源元数据=当前内存列表减去该项（与「保存凭据」持久化内存列表的既有语义一致）；
  * 凭据仅在平台凭据缓存中存在时调 removeCred（未保存过的空白源跳过——锁定态缓存为空也不误触
  * 未解锁 reject），云端对象不受影响。
+ * 持久化先于内存变更：saveSources 成功才 removeTarget，失败则内存/磁盘天然一致
+ * （不会出现「内存已删、盘上仍在」的失配导致重进页面该源复活），错误经既有 fail 通道提示。
  */
 async function onConfirmRemove(): Promise<void> {
   const p = props.platform
@@ -176,9 +178,9 @@ async function onConfirmRemove(): Promise<void> {
     return
   }
   const hadSavedCred = !!p.creds[id]
-  removeTarget(id)
   try {
-    await p.saveSources(sources.value)
+    await p.saveSources(sources.value.filter((x) => x.id !== id))
+    removeTarget(id)
     if (hadSavedCred) await p.removeCred(id)
   } catch (e) {
     fail(e)

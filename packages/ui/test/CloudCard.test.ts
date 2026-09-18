@@ -460,6 +460,24 @@ describe('CloudCard（多源）', () => {
     expect(w.find('.confirm-row').exists()).toBe(false)
   })
 
+  it('⑱e2移除持久化失败：saveSources 拒绝 → 内存列表不动（源仍在、可重试），错误提示且不调 removeCred', async () => {
+    const p = makePlatform({
+      loadSources: vi.fn().mockResolvedValue([WEBDAV_SOURCE, GIST_SOURCE]),
+      creds: { 's-webdav': WEBDAV_CRED, 's-gist': GIST_CRED },
+      saveSources: vi.fn().mockRejectedValue(new Error('磁盘写入失败')),
+    })
+    const w = await mountCard(p)
+    await w.findAll('button.target-remove')[1]!.trigger('click')
+    await w.findAll('button').find((b) => b.text() === '确认移除')!.trigger('click')
+    await flushPromises()
+    // 持久化先于内存变更：失败则源仍在列表（内存/磁盘一致，重进页面不复活）
+    expect(w.findAll('.target')).toHaveLength(2)
+    expect(w.text()).toContain('GitHub Gist')
+    expect(w.find('.confirm-row').exists()).toBe(false)
+    expect(w.text()).toContain('磁盘写入失败')
+    expect(p.removeCred).not.toHaveBeenCalled()
+  })
+
   it('⑱f挂起移除确认期间：立即同步按钮禁用；移除后可重置集合/采纳基线引用同步清理', async () => {
     const p = makePlatform({
       loadSources: vi.fn().mockResolvedValue([WEBDAV_SOURCE]),
