@@ -1,6 +1,7 @@
 import type { Vault } from '../model'
 import type { StorageAdapter } from './adapter'
 import { DEFAULT_KDF_PROFILE, isKdfProfile, type KdfProfile } from '../crypto/kdfProfile'
+import type { TagFilterMode } from '../tags/filter'
 import { createVault } from '../vault'
 
 export const VAULT_KEY = 'vault'
@@ -47,6 +48,12 @@ export interface AppSettings {
   lockOnSystemLock: boolean
   /** 备份加密强度档位（plan16 §2：本地备份与云上传 envelope 按此档位生成；与本地库档位 securityStore 各自独立） */
   backupKdfProfile: KdfProfile
+  /** tag 过滤模式：any=命中任一（并集）/ all=需命中全部选中（交集）；偏好，始终持久化（spec §3） */
+  tagFilterMode: TagFilterMode
+  /** 「记住标签筛选」开关：开则 popup 与管理页读写同一份 lastTagFilterIds */
+  rememberTagFilter: boolean
+  /** 选中 tag 集合持久化载体；仅 rememberTagFilter 开启时读写（关闭不清除已存值） */
+  lastTagFilterIds: string[]
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -61,6 +68,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lockIdleMinutes: 0,
   lockOnSystemLock: true,
   backupKdfProfile: DEFAULT_KDF_PROFILE,
+  tagFilterMode: 'any', rememberTagFilter: false, lastTagFilterIds: [],
 }
 
 export async function loadSettings(adapter: StorageAdapter): Promise<AppSettings> {
@@ -83,6 +91,9 @@ export async function loadSettings(adapter: StorageAdapter): Promise<AppSettings
       lockIdleMinutes: typeof merged.lockIdleMinutes === 'number' && Number.isInteger(merged.lockIdleMinutes) && merged.lockIdleMinutes >= 0 ? (merged.lockIdleMinutes as number) : DEFAULT_SETTINGS.lockIdleMinutes,
       lockOnSystemLock: typeof merged.lockOnSystemLock === 'boolean' ? (merged.lockOnSystemLock as boolean) : DEFAULT_SETTINGS.lockOnSystemLock,
       backupKdfProfile: isKdfProfile(merged.backupKdfProfile) ? merged.backupKdfProfile : DEFAULT_SETTINGS.backupKdfProfile,
+      tagFilterMode: merged.tagFilterMode === 'any' || merged.tagFilterMode === 'all' ? merged.tagFilterMode : DEFAULT_SETTINGS.tagFilterMode,
+      rememberTagFilter: typeof merged.rememberTagFilter === 'boolean' ? (merged.rememberTagFilter as boolean) : DEFAULT_SETTINGS.rememberTagFilter,
+      lastTagFilterIds: Array.isArray(merged.lastTagFilterIds) && merged.lastTagFilterIds.every((x) => typeof x === 'string') ? (merged.lastTagFilterIds as string[]) : DEFAULT_SETTINGS.lastTagFilterIds,
     }
   } catch {
     return { ...DEFAULT_SETTINGS }
