@@ -33,7 +33,7 @@ const MODE_OPTIONS = [
 const resolvedLabel = computed(() => (resolvedMode.value === 'dark' ? '深色' : '浅色'))
 
 // Task 6 审查裁定：设置项直写 settings + commitSettings，不做「条件否决 v-model」
-type BoolKey = 'blurHideEnabled' | 'urlFilterEnabled' | 'clipboardClearEnabled'
+type BoolKey = 'blurHideEnabled' | 'urlFilterEnabled' | 'clipboardClearEnabled' | 'rememberTagFilter'
 async function setBool(key: BoolKey, v: boolean): Promise<void> {
   props.store.settings[key] = v
   await props.store.commitSettings()
@@ -50,7 +50,8 @@ async function setPopupDelay(v: string): Promise<void> {
 
 // 剪贴板自动清除：与 SecurityCard 内开关同语义，设置页同步提供一份；无该能力的宿主不渲染
 const hasClipboardClear = computed(() => typeof props.securityPlatform?.setClipboardClear === 'function')
-const hasGeneralItems = computed(() => props.showDesktop || props.showExtension || hasClipboardClear.value)
+// 通用卡恒渲染：即使宿主无 desktop/extension/剪贴板能力，也有「记住标签筛选」开关兜底
+const hasGeneralItems = computed(() => true)
 </script>
 
 <template>
@@ -106,6 +107,13 @@ const hasGeneralItems = computed(() => props.showDesktop || props.showExtension 
         <MdSwitch
           class="set-clipboard-clear" :model-value="store.settings.clipboardClearEnabled"
           @update:model-value="setBool('clipboardClearEnabled', $event)"
+        />
+      </div>
+      <div class="row">
+        <span class="row-label">记住标签筛选</span>
+        <MdSwitch
+          class="set-remember-tag-filter" :model-value="store.settings.rememberTagFilter"
+          @update:model-value="setBool('rememberTagFilter', $event)"
         />
       </div>
     </MdCard>

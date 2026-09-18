@@ -105,6 +105,14 @@ describe('SettingsPage 通用区', () => {
     expect(commit).toHaveBeenCalledTimes(1)
   })
 
+  it('记住标签筛选开关写入 settings', async () => {
+    const s = createVueStore(createMemoryStorage())
+    await s.initStore()
+    const w = mount(SettingsPage, { props: { store: s } })
+    await w.find('input.set-remember-tag-filter, .set-remember-tag-filter input').setValue(true)
+    await vi.waitFor(() => expect(s.settings.rememberTagFilter).toBe(true))
+  })
+
   it('剪贴板开关：securityPlatform.setClipboardClear 缺失不渲染；存在则渲染且切换写 settings', async () => {
     const s = await readyStore()
     const w = mount(SettingsPage, { props: { store: s } })
