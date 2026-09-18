@@ -612,6 +612,33 @@ describe('CloudCard（多源）', () => {
     expect(w.find('button.cloud-reset').exists()).toBe(false) // 重置完成清出可重置集合
   })
 
+  it('⑱b重置确认空白草稿回落已存凭据：清空编辑副本后确认重置仍用已存凭据推（同 onSync isBlankCred 守护）', async () => {
+    mockedSync.mockResolvedValue({
+      results: [{ key: 's-webdav', outcome: null, error: PW_MISMATCH_ERROR }],
+      finalVaultJson: VALID_VAULT,
+      adopted: false,
+      hashes: {},
+    })
+    mockedPush.mockResolvedValue({ hash: 'rh1', envelopeJson: '{"enc":1}' })
+    const p = makePlatform({
+      loadSources: vi.fn().mockResolvedValue([WEBDAV_SOURCE]),
+      creds: { 's-webdav': WEBDAV_CRED },
+    })
+    const w = await mountCard(p)
+    await clickSync(w) // 先同步一次产生口令不匹配 → 重置救济入口
+    expect(w.find('button.cloud-reset').exists()).toBe(true)
+    // 用户清空凭据编辑副本（未点保存）
+    await w.findAll('button.target-toggle')[0]!.trigger('click')
+    await w.find('input[placeholder="服务器地址（https://dav.example.com）"]').setValue('')
+    await w.find('input[placeholder="应用密码"]').setValue('')
+    await w.find('input[placeholder="用户名"]').setValue('')
+    await w.find('button.cloud-reset').trigger('click')
+    await w.findAll('button').find((b) => b.text() === '确认重置')!.trigger('click')
+    await flushPromises()
+    expect(vi.mocked(createCloudBackend)).toHaveBeenCalledWith(WEBDAV_CRED) // 回落已存凭据而非空白
+    expect(mockedPush).toHaveBeenCalledTimes(1)
+  })
+
   it('⑲重置确认挂起：立即同步按钮禁用；取消后不调用 pushEnvelope 且确认行消失', async () => {
     mockedSync.mockResolvedValue({
       results: [{ key: 's-webdav', outcome: null, error: PW_MISMATCH_ERROR }],

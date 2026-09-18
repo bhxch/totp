@@ -393,7 +393,10 @@ async function onConfirmReset(): Promise<void> {
   const p = props.platform
   const id = pendingReset.value
   const s = sources.value.find((x) => x.id === id)
-  const cred = s ? (credDrafts.value[s.id] ?? p.creds[s.id]) : undefined
+  // 空白草稿（用户清空后未保存）回落已存凭据：与 onSync 的 isBlankCred 守护同口径，
+  // 防止用空白凭据构造 backend 发请求只换来网络错
+  const draft = s ? credDrafts.value[s.id] : undefined
+  const cred = s ? (draft && !isBlankCred(draft) ? draft : p.creds[s.id]) : undefined
   if (!p || !s || !cred || !props.sessionSecret) {
     pendingReset.value = null
     return
