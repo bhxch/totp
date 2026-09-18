@@ -6,6 +6,11 @@
  * 基线口径：全程「云端远端字节摘要」，与既有 cloudRev 语义一致——outcome.hash（in-sync/downloaded/
  * conflict-resolved 为远端 get 字节 sha256，uploaded 为本次上传信封字节 sha256）与 pushEnvelope 返回的
  * hash 同一口径；宿主可把 hashes 原样持久化并在下轮作 localHash 使用。
+ *
+ * 勘误（2026-09-18 审查）：in-sync 分支判据 remoteHash === sha256(vaultJson) 拿远端 envelope 密文摘要
+ * 与本地明文摘要比较，生产形态（远端恒为 envelope 密文）下永不相等、不可达——编排层并无「内容未变→
+ * 跳过」自去重。去重由宿主自动通道的明文内容 hash 门承担（cloudRunner/desktop autoBackup，属后续
+ * 任务）；编排层保留该分支仅为测试/mock 形态（远端存明文）下的短路。
  */
 import { pushEnvelope, syncWithCloud } from './syncOrchestrator'
 import type { KdfProfile } from '../backup/envelope'

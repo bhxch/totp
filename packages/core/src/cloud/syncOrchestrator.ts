@@ -5,7 +5,10 @@
  *
  * 分支语义（按序判定）：
  * - 云端不存在：createBackupEnvelope 加密本地 → put → 回读校验 → uploaded
- * - remoteHash === sha256(vaultJson)：本地与云端内容一致 → in-sync（不写云端）
+ * - remoteHash === sha256(vaultJson)：远端字节摘要与本地明文摘要一致 → in-sync（不写云端）。
+ *   勘误（2026-09-18 审查）：生产形态远端恒为 envelope 密文，此判据不可达；该分支仅在测试/mock
+ *   形态（远端存明文）下短路，生产「内容未变→跳过」去重由宿主自动通道的明文内容 hash 门承担
+ *   （cloudRunner/desktop autoBackup，属后续任务）
  * - remoteHash === cloudRev：远端未变、本地已改（本地较新）→ 推送本地 envelope → 回读校验 → uploaded
  * - 其余（远端已变且与本地不同）：openBackupEnvelope 解远端——
  *   - 成功：先经 onConflictBackup 把本地内容保存为加密冲突副本（envelope 字节），再采用远端覆盖本地——
