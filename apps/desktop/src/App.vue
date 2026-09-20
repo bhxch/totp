@@ -1,7 +1,7 @@
 <script setup lang="ts">
+import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { backupFileName, createBackupEnvelope, loadSourceRevs, loadSources, normalizeSchemes, openBackupEnvelope, randomBytes, saveSourceRev, saveSources, SCHEMES_KEY, sha256Hex, type BackupSource, type CloudCred, type ImportScheme, type KdfProfile, type Retention, type StorageAdapter, type Vault } from '@totp/core'
 import { createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type LocalSourceView, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
@@ -604,14 +604,18 @@ onScopeDispose(() => {
   document.removeEventListener('keydown', onUserActivity)
 })
 
-/** 30s 清剪贴板：settings.clipboardClearEnabled 开启时复制后定时清空（重复复制重置计时；setup 作用域销毁自动 dispose；store 未就绪时读不到开关视为关闭） */
+/** 30s 清剪贴板：settings.clipboardClearEnabled 开启时复制后定时清空（重复复制重置计时；setup 作用域销自动 dispose；
+ *  store 未就绪时读不到开关视为关闭）。
+ *  F16：清除经 Rust clipboard_clear_if_staged 读回比对（仍为本应用复制内容才清空），dispose 欠清除补清、
+ *  失败重试上报；托盘退出另有原生兜底。剪贴板读取只在 Rust 侧，webview JS 无读取能力 */
 const clearer = createClipboardClearer(
   () => store.value?.settings.clipboardClearEnabled === true,
-  () => writeText(''),
+  () => invoke('clipboard_clear_if_staged').then(() => {}),
 )
 
 async function copyToClipboard(code: string) {
-  await writeText(code)
+  // F16：复制经 Rust stage 命令登记暂存值（退出兜底比对的事实源）
+  await invoke('stage_clipboard_write', { value: code })
   clearer.notifyCopied()
 }
 

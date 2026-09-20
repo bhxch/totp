@@ -5,6 +5,7 @@ use tauri::{
     menu::{Menu, MenuItem},
     tray::{TrayIconBuilder, TrayIconEvent},
 };
+use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
@@ -12,6 +13,46 @@ mod lock_events;
 
 // mini 最近一次因失焦而隐藏的时刻，用于缓解「托盘点击收起」与「失焦自动隐藏」的竞态
 static LAST_FOCUS_HIDE: Mutex<Option<Instant>> = Mutex::new(None);
+
+// F16 剪贴板暂存（托盘退出兜底清除的唯一事实源）：JS 复制路径经 stage_clipboard_write 写入并登记，
+// clipboard_clear_if_staged / 托盘退出时读回比对——内容仍为本应用最近一次复制的值才清空（不误清外部内容）。
+// 剪贴板读取只在 Rust 侧进行：不向 webview JS 授予剪贴板读取能力（CSP null 下 read 权限=持续监听原语）。
+static CLIPBOARD_STAGE: Mutex<Option<String>> = Mutex::new(None);
+
+/// 托盘退出兜底与 clipboard_clear_if_staged 命令共用：仅当剪贴板内容仍为本应用最近一次复制的值时清空。
+/// 读取失败按 fail-safe 处理（宁误清不残留种子）；无暂存/内容已换则不动剪贴板。返回是否实际清空。
+fn clear_clipboard_if_staged<R: Runtime>(app: &AppHandle<R>) -> bool {
+    let staged = CLIPBOARD_STAGE.lock().ok().and_then(|mut s| s.take());
+    let Some(value) = staged else { return false };
+    let clipboard = app.clipboard();
+    match clipboard.read_text() {
+        Ok(current) if current == value => {
+            let _ = clipboard.write_text(String::new());
+            true
+        }
+        Ok(_) => false, // 用户已复制外部内容：保留，不误清
+        Err(_) => {
+            let _ = clipboard.write_text(String::new()); // 读回失败：fail-safe 清空
+            true
+        }
+    }
+}
+
+#[tauri::command]
+fn stage_clipboard_write(value: String, app: AppHandle) -> Result<(), String> {
+    app.clipboard()
+        .write_text(value.clone())
+        .map_err(|e| e.to_string())?;
+    if let Ok(mut s) = CLIPBOARD_STAGE.lock() {
+        *s = Some(value);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn clipboard_clear_if_staged(app: AppHandle) -> bool {
+    clear_clipboard_if_staged(&app)
+}
 
 // 桌面应用 settings.json：存于 app_data_dir（与前端 createTauriFs 的 baseDir 对齐）。
 // 当前唯一可配项为 shortcutToggleMini（toggle mini 的全局快捷键），默认 alt+shift+t；
@@ -789,7 +830,12 @@ pub fn run() {
             app.on_menu_event(|app, event| {
                 match event.id().as_ref() {
                     "show-main" => show_main(app),
-                    "quit" => app.exit(0),
+                    "quit" => {
+                        // F16：托盘退出兜底——剪贴板仍持有本应用复制内容时清空（读回比对在 Rust 侧，
+                        // 不会误清用户后续复制的外部内容；无暂存/内容已换则不动）
+                        clear_clipboard_if_staged(app);
+                        app.exit(0)
+                    }
                     _ => {}
                 }
             });
@@ -833,7 +879,9 @@ pub fn run() {
             os_auto_protect,
             os_auto_unprotect,
             os_auto_forget,
-            set_global_shortcut
+            set_global_shortcut,
+            stage_clipboard_write,
+            clipboard_clear_if_staged
         ])
         // build+run（回调形态）：RunEvent::Exit 时注销系统锁屏监听（plan16 T15）；
         // 正常运行路径行为与直接 .run(context) 完全一致

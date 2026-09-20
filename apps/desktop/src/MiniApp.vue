@@ -1,6 +1,6 @@
 <script setup lang="ts">
+import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { OtpListItem, createClipboardClearer, createIconStore, createVueStore, iconView, useOtpCodes, useTheme, type IconStore, type VueStore } from '@totp/ui'
 import { computed, onMounted, ref, shallowRef } from 'vue'
 import { createTauriFs } from './tauriFs'
@@ -53,16 +53,18 @@ function maskSecret(secret: string): string {
   return `${s.slice(0, 4)}…${s.slice(-4)}`
 }
 
-/** 30s 清剪贴板：settings.clipboardClearEnabled 开启时复制后定时清空（重复复制重置计时；setup 作用域销毁自动 dispose；store 未就绪时读不到开关视为关闭） */
+/** 30s 清剪贴板：settings.clipboardClearEnabled 开启时复制后定时清空（重复复制重置计时；setup 作用域销毁自动 dispose；store 未就绪时读不到开关视为关闭）。
+ *  F16：清除经 Rust clipboard_clear_if_staged 读回比对（仍为本应用复制内容才清空），dispose 欠清除补清、失败重试上报 */
 const clearer = createClipboardClearer(
   () => store.value?.settings.clipboardClearEnabled === true,
-  () => writeText(''),
+  () => invoke('clipboard_clear_if_staged').then(() => {}),
 )
 
 async function copy(entry: { uuid: string; type?: string; counter?: number }) {
   const code = codes.value.get(entry.uuid)?.code
   if (!code) return
-  await writeText(code)
+  // F16：复制经 Rust stage 命令登记暂存值（退出兜底比对的事实源）
+  await invoke('stage_clipboard_write', { value: code })
   // C14：HOTP 复制的是旧 counter 的码（RFC 语义），复制完成后再递增；TOTP 不动 counter。
   // mini 锁定时模板不渲染条目（见 template v-if="store && locked" 分支），故此处 store 必已解锁；
   // updateEntryOp 在 locked 态会抛错，捕获避免在某些边界场景把窗口隐藏打断
