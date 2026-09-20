@@ -24,6 +24,36 @@ import type { ImportResult, ParsedEntry } from './types'
 const TAG_LEN = 16
 const NONCE_LEN = 12
 
+// 钳制 slot 级 scrypt 参数（与 backup/envelope、security/securityStore 对 argon2id 的上限同口径）：
+// 恶意导入文件可声明超大 n/r/p，使 hash-wasm scrypt 按 128*n*r 字节预分配内存而资源耗尽，
+// 且解密失败会吞错换下一个 slot 逐个放大；超限视为文件结构非法，整文件拒绝而非逐 slot 回退。
+// 上限换算：scrypt 内存 = 128*n*r 字节 ≤ 2 GiB（对应 argon2id m ≤ 2**21 KiB 的同额度上限），
+// r ≤ 8 时得 n ≤ 2**31/(128*8) = 2**21；r/p 上限沿用 envelope/securityStore 的 8。
+// 真实 Aegis 导出（N=16384/r=8/p=1，slot 仅口令+生物识别等少数几个）远低于该上限。
+const MAX_SCRYPT_N = 2 ** 21
+const MAX_SCRYPT_R = 8
+const MAX_SCRYPT_P = 8
+// 参与解密尝试的 slot 数上限：真实导出至多数个 slot，超出即结构非法
+const MAX_SLOTS = 8
+
+/** 加密导入前的 slot 结构钳制：超限直接拒绝整文件，防止恶意参数在逐 slot 解密尝试中触发资源耗尽 */
+function assertSlotsWithinLimits(slots: Record<string, unknown>[]): void {
+  if (slots.length > MAX_SLOTS) throw new Error('Aegis 文件结构非法：slots 数量超限')
+  for (const slot of slots) {
+    if (slot === null || typeof slot !== 'object') continue
+    const s = slot as Record<string, unknown>
+    if (s.type !== 1) continue // 仅 PasswordSlot 参与 scrypt（与 tryDecryptSlot 的过滤口径一致）
+    const n = Number(s.n)
+    const r = Number(s.r)
+    const p = Number(s.p)
+    // 非有限数沿用既有行为：交由 tryDecryptSlot 返回 null 换下一 slot，这里只钳有限值
+    if (!Number.isFinite(n) || !Number.isFinite(r) || !Number.isFinite(p)) continue
+    if (n > MAX_SCRYPT_N || r > MAX_SCRYPT_R || p > MAX_SCRYPT_P) {
+      throw new Error('Aegis 文件结构非法：slot 的 scrypt 参数超限')
+    }
+  }
+}
+
 function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
   const out = new Uint8Array(a.length + b.length)
   out.set(a)
@@ -202,6 +232,7 @@ export async function importAegisEncrypted(text: string, password: string): Prom
   }
 
   let masterKey: Uint8Array | null = null
+  assertSlotsWithinLimits(header.slots)
   for (const slot of header.slots) {
     if (slot === null || typeof slot !== 'object') continue
     masterKey = await tryDecryptSlot(slot as Record<string, unknown>, password)

@@ -74,6 +74,28 @@ describe('importAegisEncrypted', () => {
     await expect(importAegisEncrypted('{}', 'test1234')).rejects.toThrow('结构非法')
   })
 
+  it('slot 级 scrypt 参数超限：整文件按结构非法拒绝（F2 资源耗尽防护）', async () => {
+    const base = JSON.parse(enc()) as { header: { slots: Record<string, unknown>[] } }
+    // 上限：n ≤ 2**21（128*n*8 ≤ 2GiB）、r ≤ 8、p ≤ 8（与 envelope/securityStore 的 argon2id 口径同源）
+    const overrides: Array<Record<string, number>> = [{ n: 2 ** 21 + 1 }, { r: 9 }, { p: 9 }]
+    for (const override of overrides) {
+      const text = JSON.stringify({
+        ...base,
+        header: { ...base.header, slots: [{ ...base.header.slots[0]!, ...override }] },
+      })
+      await expect(importAegisEncrypted(text, 'test1234')).rejects.toThrow('结构非法')
+    }
+  })
+
+  it('slots 数量超限（>8）：整文件按结构非法拒绝', async () => {
+    const base = JSON.parse(enc()) as { header: { slots: Record<string, unknown>[] } }
+    const text = JSON.stringify({
+      ...base,
+      header: { ...base.header, slots: Array.from({ length: 9 }, (_, i) => ({ type: 0, uuid: `s${i}` })) },
+    })
+    await expect(importAegisEncrypted(text, 'test1234')).rejects.toThrow('结构非法')
+  })
+
   it('I23：解密后 secret 字节与 base32 已知值一致（hash-wasm 4.x scrypt 冒烟）', async () => {
     const r = await importAegisEncrypted(enc(), 'test1234')
     // fixture 内条目 secret='JBSWY3DPEHPK3PXP'，scrypt + AES-GCM 解密后 base32Decode 须为同一字节
