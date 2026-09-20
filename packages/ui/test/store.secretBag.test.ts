@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
-  createMemoryStorage, decryptVaultWithDek, encryptVaultWithDek, openSecretBag, randomBytes, sealSecretBag, SECRET_BAG_KEY,
-  SECURITY_KEY, bytesToBase64, base64ToBytes,
+  createMemoryStorage, decryptVaultWithDek, encryptVaultWithDek, newEntryFromUri, openSecretBag, randomBytes,
+  sealSecretBag, SECRET_BAG_KEY, SECURITY_KEY, SECURITY_PENDING_KEY, VAULT_KEY, bytesToBase64, base64ToBytes,
   type CloudCred, type SecuritySettings, type StorageAdapter, type Vault,
 } from '@totp/core'
 import { createVueStore } from '../src/store'
@@ -193,6 +193,89 @@ describe('store secretBag', () => {
     expect(s.getCurrentDek()).not.toBe(oldDek) // DEK 已轮换
     const enc = JSON.parse((await adapter.get('vault'))!)
     await expect(decryptVaultWithDek(oldDek, enc)).rejects.toThrow() // 旧 DEK 解不开新密文
+  })
+
+  // ---- F12 回归：staged 轮换的故障注入（不变量：任一失败点，盘上要么完整旧态，要么 PENDING 在场） ----
+
+  /** 故障注入适配器：arm(key) 后该键的下一次 set/delete 抛错（一次性），其余透传 memory 适配器 */
+  function flakyAdapter(base: StorageAdapter): { adapter: StorageAdapter; arm: (key: string) => void } {
+    const armed = new Set<string>()
+    return {
+      adapter: {
+        get: (key) => base.get(key),
+        set: async (key, value) => {
+          if (armed.has(key)) {
+            armed.delete(key)
+            throw new Error(`injected io failure: ${key}`)
+          }
+          await base.set(key, value)
+        },
+        delete: async (key) => {
+          if (armed.has(key)) {
+            armed.delete(key)
+            throw new Error(`injected io failure: ${key}`)
+          }
+          await base.delete(key)
+        },
+      },
+      arm: (key) => { armed.add(key) },
+    }
+  }
+
+  it('F12 回归①保管区重封失败（vault 已换新 DEK）：PENDING 保留，新口令解锁补完轮换，旧口令自此失效', async () => {
+    const base = createMemoryStorage()
+    const { adapter, arm } = flakyAdapter(base)
+    const s = createVueStore(adapter)
+    await s.initStore()
+    await s.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await s.enableEncryption('oldpw')
+    arm(SECRET_BAG_KEY) // 精确命中 staged ③ 保管区重封（vault 重写已成功之后）
+    await expect(s.changePassphrase('newpw')).rejects.toThrow('injected io failure')
+    // 不变量：vault 已重写但 SECURITY_KEY 未转正，PENDING 必须在场（清了即锁死）
+    const pending = JSON.parse((await adapter.get(SECURITY_PENDING_KEY))!) as SecuritySettings
+    expect(pending.wrappedDek).toBeTruthy()
+    const diskSec = JSON.parse((await adapter.get(SECURITY_KEY))!) as SecuritySettings
+    expect(diskSec.wrappedDek).not.toBe(pending.wrappedDek)
+    // 中间态下旧口令不解 vault（已新 DEK 密文），恢复路径不得吞删 PENDING
+    s.lock()
+    await expect(s.unlock('oldpw')).rejects.toThrow()
+    expect(await adapter.get(SECURITY_PENDING_KEY)).not.toBeNull()
+    // 新口令解锁：GCM 证明通过 → 转正 + 清 PENDING + 解锁，数据完整
+    await s.unlock('newpw')
+    expect(s.locked.value).toBe(false)
+    expect(s.vault.entries).toHaveLength(1)
+    expect(await adapter.get(SECURITY_PENDING_KEY)).toBeNull()
+    // 转正已落盘：新实例旧口令拒绝、新口令解锁且条目保留
+    const b = createVueStore(adapter)
+    await b.initStore()
+    expect(b.locked.value).toBe(true)
+    await expect(b.unlock('oldpw')).rejects.toThrow()
+    await b.unlock('newpw')
+    expect(b.locked.value).toBe(false)
+    expect(b.vault.entries).toHaveLength(1)
+  })
+
+  it('F12 回归②vault 重写失败：PENDING 清除回滚完整旧态，旧口令解锁、新口令未生效', async () => {
+    const base = createMemoryStorage()
+    const { adapter, arm } = flakyAdapter(base)
+    const s = createVueStore(adapter)
+    await s.initStore()
+    await s.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await s.enableEncryption('oldpw')
+    arm(VAULT_KEY) // 精确命中 staged ② 全库重加密（旧 SECURITY_KEY 尚完整有效）
+    await expect(s.changePassphrase('newpw')).rejects.toThrow('injected io failure')
+    // 回滚不变量：vault 未被改写，PENDING 已清——盘上为完整旧态
+    expect(await adapter.get(SECURITY_PENDING_KEY)).toBeNull()
+    s.lock()
+    await s.unlock('oldpw')
+    expect(s.locked.value).toBe(false)
+    expect(s.vault.entries).toHaveLength(1)
+    // 新口令未生效：解锁拒绝（轮换已完整回滚）
+    const b = createVueStore(adapter)
+    await b.initStore()
+    await expect(b.unlock('newpw')).rejects.toThrow()
+    await b.unlock('oldpw')
+    expect(b.vault.entries).toHaveLength(1)
   })
 
   it('migrateLegacySecrets 幂等：首次迁移写盘（保管区+密文剥除），二次调用零写盘', async () => {

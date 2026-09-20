@@ -1,7 +1,7 @@
 import {
-  DEFAULT_SETTINGS, SECRET_BAG_KEY, SECURITY_KEY, VAULT_KEY, VAULT_REV_WATERMARK_KEY, VaultRollbackError, addEntry, addPrfSource,
+  DEFAULT_SETTINGS, SECRET_BAG_KEY, SECURITY_KEY, SECURITY_PENDING_KEY, VAULT_KEY, VAULT_REV_WATERMARK_KEY, VaultRollbackError, addEntry, addPrfSource,
   addTag, base64ToBytes, bytesToBase64, changeVaultPassphrase, createVault, decryptVaultWithDek, decryptVaultWithDekDetailed,
-  dekFingerprint, emptyBag, encryptVaultWithDek, isEncryptedVault, kekSourcesOf, loadSettings, openSecretBag, removeEntry,
+  dekFingerprint, emptyBag, encryptVaultWithDek, isEncryptedVault, isSecuritySettings, kekSourcesOf, loadSettings, openSecretBag, removeEntry,
   removeKekSource, removeTag, renameTag, reorderEntries, saveSettings, saveVault, sealSecretBag, setupVaultEncryption,
   unlockVaultEncryption, updateEntry, withDpapiSource,
   type AppSettings, type CloudCred, type EncryptedVault, type KekSource, type KdfProfile, type OtpEntry, type SecretBagContent,
@@ -476,6 +476,10 @@ export function createVueStore(
       lastSelfWrite.vault = Date.now()
       await saveVault(adapter, toRaw(vault) as Vault)
       await adapter.delete(SECURITY_KEY)
+      // F12：staged 轮换的 PENDING 暂存随加密一并退役（残留为死数据：明文库语义下 unlock 恢复路径
+      // 的 GCM 证明使其永远无法被转正或误解锁）。删除尽力而为，不阻断关闭——失败时残留 PENDING
+      // 由成功口令解锁的孤儿清理或下次 staged 轮换的覆写收尾
+      await adapter.delete(SECURITY_PENDING_KEY).catch(() => {})
       security.value = null
       dekByWin.set(windowId, null)
       void opts.dekPersist?.clear() // 丢 DEK 必清 persist（T7 审查 R2 对称语义）
@@ -487,9 +491,13 @@ export function createVueStore(
   /** 更换口令（需已解锁）：默认 rotateDek=true（设计 §2 裁定改口令即被动轮换）——重生成 DEK、全库重加密写盘、
    *  保管区重封、kekSources 重置为 password 源（prf/dpapi 死凭证数据层丢弃，宿主 UI 引导重绑）；
    *  rotateDek=false 仅重包裹（DEK 不变，多绑来源保留）。经 commit 队列，与写 op 串行。
-   *  F7：派生后、首个盘写前复查锁定代数（此点中止零盘写零内存前进，无半迁移）；盘写一旦开始不再因
-   *  锁定中止——中途弃写会留下「新 DEK 密文配旧 security」的不可解盘态，故写序全部完成后按代数
-   *  统一裁决内存前进：期间被锁即保持锁定、不重挂 DEK、不写持久化，盘上为完整一致的新口令态 */
+   *  轮换路径为 staged 提交（F12）：新 wrappedDek 先写 SECURITY_PENDING_KEY 暂存，vault 重写成功后才
+   *  重封保管区并转正 SECURITY_KEY。不变量：任一失败点盘上要么是完整旧态（旧 SECURITY_KEY + 旧 DEK vault，
+   *  PENDING 已清/为孤儿），要么 PENDING 在场且 vault 可能已换新 DEK（unlock 恢复路径以新口令补完）——
+   *  杜绝「旧 SECURITY_KEY + 新 DEK vault + 无 PENDING」的永久锁死。
+   *  F7：changeVaultPassphrase 派生后、首个盘写前复查锁定代数（此点中止零盘写零内存前进）；盘写一旦开始
+   *  不再因锁定中止（中途弃写会留下不可解盘态），写序全部完成后按代数统一裁决内存前进：期间被锁即保持
+   *  锁定、不重挂 DEK、不写持久化，盘上为完整一致的新口令态，用户以新口令重新解锁即可 */
   function changePassphrase(newPassword: string, changeOpts: { rotateDek?: boolean; profile?: KdfProfile } = {}): Promise<void> {
     return enqueue(async () => {
       if (lockedByWin.get(windowId)) throw new Error('vault locked')
@@ -500,22 +508,42 @@ export function createVueStore(
       const r = await changeVaultPassphrase(security.value, dekByWin.get(windowId)!, newPassword, { ...changeOpts, rotateDek: changeOpts.rotateDek ?? true })
       ensureNotLockedSince(gen)
       if (r.dek) {
-        // 被动轮换（设计 §2）：DEK 已换 → 全库重加密写盘 + 保管区重封。两次数据写盘先行（失败→内存未前进→
-        // 下次 commit 以旧 DEK+旧 security 落盘，重试自愈，T7 审查 R3）。明文/保管区快照在本检查点后
-        // 同步捕获（至下一盘写间无 await，锁定插不进来），写序期间锁定也不至于把清空后的缓存写盘
+        // F7：盘写序起点同步捕获保管区快照（至盘写序内各调用显式传入，杜绝锁定清空 bag 后把空保管区封盘）
         const bagSnapshot = bag
+        // staged ① 暂存：新 wrappedDek 先落 PENDING。失败则盘上未动，完整旧态，重试自愈
+        await adapter.set(SECURITY_PENDING_KEY, JSON.stringify(r.security))
+        try {
+          // staged ② 全库重加密（新 DEK）。仅此步失败才清 PENDING：vault 未被改写，旧 SECURITY_KEY
+          // 完整有效，PENDING 已成孤儿（其新 DEK 与盘上旧 DEK vault 过不了 GCM 证明），清除即完整回滚
+          lastSelfWrite.vault = Date.now()
+          await adapter.set(VAULT_KEY, JSON.stringify(await encryptVaultWithDek(r.dek, JSON.stringify(vault))))
+        } catch (e) {
+          await adapter.delete(SECURITY_PENDING_KEY).catch(() => {})
+          throw e
+        }
+        // staged ③ 自此盘上 vault 已是新 DEK 密文：其后任何失败都必须保留 PENDING（它是新口令经
+        // unlock 恢复路径补完轮换的唯一依据），清了即成 F12 锁死态。保管区重封须在转正前——
+        // 否则转正后旧 DEK 内存态的后续 commit 会以旧 DEK 重写 vault + 新 SECURITY_KEY，再造锁死
+        await sealBagToDisk(r.dek, bagSnapshot) // 保管区重封（新 DEK 写盘前 dekByWin 尚未前进，显式传入快照防锁定清空）
+        // staged ④ 转正（提交点）：SECURITY_KEY ← 新 wrappedDek。此写失败 PENDING 自然保留
+        // （中间态可达恢复路径）；成功后 PENDING 残留与 SECURITY_KEY 同内容已无害，删除尽力而为，
+        // 失败由下次成功口令解锁的孤儿清理兜底
         lastSelfWrite.vault = Date.now()
-        await adapter.set(VAULT_KEY, JSON.stringify(await encryptVaultWithDek(r.dek, JSON.stringify(vault))))
-        await sealBagToDisk(r.dek, bagSnapshot) // 保管区重封（新 DEK 写盘前 dekByWin 尚未前进，显式传入）
-      }
-      security.value = r.security
-      lastSelfWrite.vault = Date.now()
-      await adapter.set(SECURITY_KEY, JSON.stringify(r.security))
-      // 全部盘写成功后才前进内存解锁态（security 落盘作最后提交点）：期间 lock() 已发生（代数前进）→
-      // 保持锁定，不重挂 DEK、不写持久化，用户以新口令重新解锁即可
-      if (r.dek && lockGeneration === gen) {
-        dekByWin.set(windowId, r.dek)
-        void opts.dekPersist?.set(r.dek)
+        await adapter.set(SECURITY_KEY, JSON.stringify(r.security))
+        await adapter.delete(SECURITY_PENDING_KEY).catch(() => {})
+        // staged ⑤（F7 裁决）全部盘写成功后才按代数前进内存：期间 lock() 已发生（代数前进）→
+        // 保持锁定，不重挂 DEK、不写持久化、security 缓存保持旧值（旧口令主路径解锁仍成立，
+        // 新口令经 PENDING 恢复路径补完）
+        if (lockGeneration === gen) {
+          dekByWin.set(windowId, r.dek)
+          void opts.dekPersist?.set(r.dek)
+          security.value = r.security
+        }
+      } else {
+        // rotateDek=false 仅重包裹（DEK 不变，vault/bag 无需重写），security 落盘作唯一提交点（原语义不变）
+        security.value = r.security
+        lastSelfWrite.vault = Date.now()
+        await adapter.set(SECURITY_KEY, JSON.stringify(r.security))
       }
     })
   }
@@ -523,11 +551,58 @@ export function createVueStore(
   /** 解锁：口令解出 DEK → 本窗口读盘解密/明文填充 → 退出锁定；口令错时原样抛出供组件展示。
    *  盘上 vault 非密文（缺失或明文）时宽容接受：这是「security 在但 vault 明文」的
    *  enableEncryption 半失败不一致态，直接加载并恢复持有 DEK，后续写 op 经加密分支自愈回密文。
-   *  F7：入口捕获锁定代数下传，Argon2 派生等 await 窗口内的 lock() 由 applyDekAndUnlock 复查中止 */
+   *  F7：入口捕获锁定代数下传，Argon2 派生等 await 窗口内的 lock() 由 applyDekAndUnlock 复查中止。
+   *  F12：主路径失败后尝试 PENDING 恢复（staged 轮换第二步由新口令补完）；主路径成功（vault 已被
+   *  本口令 DEK 成功解开）则盘上 PENDING 必为孤儿/转正残留，尽力清理——失败无碍，下次解锁再清 */
   async function unlock(password: string): Promise<void> {
     if (!security.value) throw new Error('encryption not enabled')
     const gen = lockGeneration
-    await applyDekAndUnlock(await unlockVaultEncryption(security.value, password), gen)
+    try {
+      await applyDekAndUnlock(await unlockVaultEncryption(security.value, password), gen)
+    } catch (e) {
+      await unlockViaPending(password, e)
+      return
+    }
+    await adapter.delete(SECURITY_PENDING_KEY).catch(() => {})
+  }
+
+  /** F12 PENDING 恢复：staged changePassphrase 中断的中间盘态（旧 SECURITY_KEY + 可能已换新 DEK 的
+   *  vault + PENDING）由新口令补完轮换。仅当 ①该口令能解开 PENDING 的 wrappedDek，且 ②PENDING 的 DEK
+   *  能解开盘上现有 vault 密文（GCM 证明 vault 确属本次轮换的新 DEK，同时排除 vault 明文/缺失的完整旧态
+   *  与陈旧/异体 PENDING）才转正：SECURITY_KEY ← PENDING → 清 PENDING → 以新 DEK 走 applyDekAndUnlock。
+   *  其余任何失败一律原样重抛主路径错误且绝不删除 PENDING（它是中间态下新口令的唯一恢复通道）；
+   *  转正写盘失败 PENDING 仍在场，恢复路径可重试（同一不变量）。
+   *  F7：转正提交点捕获新锁定代数下传 applyDekAndUnlock——恢复解锁自身的 await 窗口同样受复查保护 */
+  async function unlockViaPending(password: string, primaryErr: unknown): Promise<void> {
+    const raw = await adapter.get(SECURITY_PENDING_KEY).catch(() => null)
+    if (typeof raw !== 'string') throw primaryErr
+    let pending: SecuritySettings
+    try {
+      pending = JSON.parse(raw) as SecuritySettings
+      if (!isSecuritySettings(pending)) throw new Error('invalid pending security')
+    } catch {
+      // 结构损坏的 PENDING 永远过不了证明，也无法被任何口令解开：按孤儿尽力清理后原错误照抛
+      await adapter.delete(SECURITY_PENDING_KEY).catch(() => {})
+      throw primaryErr
+    }
+    let dek: Uint8Array
+    try {
+      dek = await unlockVaultEncryption(pending, password)
+    } catch {
+      throw primaryErr // 该口令不解 PENDING：维持主路径错误（如「口令错误或数据已损坏」）
+    }
+    const parsed = await readRawVault()
+    if (!isEncryptedVault(parsed)) throw primaryErr // vault 明文/缺失：旧态完整，无需也不得转正
+    try {
+      await decryptVaultWithDek(dek, parsed) // GCM 证明：PENDING 的 DEK 确能解开现有 vault
+    } catch {
+      throw primaryErr // 证明失败（陈旧/异体 PENDING）：拒绝转正，防植入 PENDING 借机夺权
+    }
+    lastSelfWrite.vault = Date.now() // security 键写入复用 vault 自写窗口抑制（onChanged 无 security 通道）
+    await adapter.set(SECURITY_KEY, JSON.stringify(pending))
+    security.value = pending
+    await adapter.delete(SECURITY_PENDING_KEY).catch(() => {})
+    await applyDekAndUnlock(dek, lockGeneration)
   }
 
   /** unlock(password) 共享的后置逻辑：本窗口读盘解密/明文填充 → 本窗口持有 DEK → 退出锁定。

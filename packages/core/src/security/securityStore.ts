@@ -51,6 +51,12 @@ export class VaultRollbackError extends Error {
   }
 }
 
+/** staged 轮换暂存键（F12）：changePassphrase(rotateDek=true) 先把新 wrappedDek 写到此键，
+ *  vault/保管区以新 DEK 重写成功后才转正 SECURITY_KEY 并删除本键；中途失败时它是 unlock
+ *  恢复路径（新口令补完轮换）的唯一依据，孤儿态由成功口令解锁清理。设备本地状态，不参与
+ *  浏览器同步（syncEngine push/pull 均为显式键列表，不含此键） */
+export const SECURITY_PENDING_KEY = 'securityPending'
+
 /** DEK 指纹（水位谱系标识）：SHA-256(DEK) 前 16B base64。单向派生，不泄漏 DEK 本体 */
 export async function dekFingerprint(dek: Uint8Array): Promise<string> {
   const h = new Uint8Array(await crypto.subtle.digest('SHA-256', dek as BufferSource))
