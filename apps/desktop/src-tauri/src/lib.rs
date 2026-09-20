@@ -476,11 +476,11 @@ fn read_import_file_os(grants: tauri::State<DialogGrants>, path: String, dir_tok
 }
 
 // 导入文件字节读取（SQLite 等二进制格式，ImportCard 字节入口）：与 read_import_file_os 同构，
-// 白名单在其基础上加 .db/.sqlitedb/.sqlite；返回原始字节（invoke JSON 数组），不经 UTF-8 文本管道
+// 白名单在其基础上加 .db/.sqlitedb/.sqlite 与 AP 加密 zip 的 .zip；返回原始字节（invoke JSON 数组），不经 UTF-8 文本管道
 #[tauri::command]
 fn read_import_file_bytes_os(grants: tauri::State<DialogGrants>, path: String, dir_token: String) -> Result<Vec<u8>, String> {
-    const IMPORT_BYTE_EXTENSIONS: [&str; 8] =
-        [".json", ".wauth", ".xml", ".txt", ".aegis", ".db", ".sqlitedb", ".sqlite"];
+    const IMPORT_BYTE_EXTENSIONS: [&str; 9] =
+        [".json", ".wauth", ".xml", ".txt", ".aegis", ".db", ".sqlitedb", ".sqlite", ".zip"];
     let lower = path.to_lowercase();
     if !IMPORT_BYTE_EXTENSIONS.iter().any(|ext| lower.ends_with(ext)) {
         return Err("invalid import file extension".into());

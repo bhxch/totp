@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import {
   SQLITE_TABLE_PROBES, applyImportPlan, dedupeWithinFile, extractGenericRows, importAegisEncrypted,
-  importAegisPlaintext, importAndOtp, importAuthy, importBattleNet, importBitwarden, importDuo,
-  importFreeOtp, importFreeOtpLegacy, importGeneric, importProton, importStratum,
-  importTotpAuthenticator, importTwoFas, importUriBatch, importWinauth, matchSchemes, planImport,
-  normalizeSchemes, removeScheme, sniffAegis, sniffFormat, upsertScheme,
+  importAegisPlaintext, importAndOtp, importAuthenticatorPlus, importAuthy, importBattleNet,
+  importBitwarden, importDuo, importFreeOtp, importFreeOtpLegacy, importGeneric, importProton,
+  importStratum, importTotpAuthenticator, importTwoFas, importUriBatch, importWinauth, matchSchemes,
+  planImport, normalizeSchemes, removeScheme, sniffAegis, sniffFormat, upsertScheme,
   type ConflictPolicy, type ImportFormat, type ImportPlan, type ImportResult, type ImportScheme,
   type ImportStats, type ParsedEntry, type RowMapping, type SuspectChoice,
 } from '@totp/core'
@@ -27,10 +27,11 @@ const props = defineProps<{
 // 流程状态机：idle → picked →（generic→mapping / aegis 加密与 winauth/authy→password、totpAuthenticator 分享文件→password）→ confirm → report
 type Step = 'idle' | 'picked' | 'mapping' | 'password' | 'confirm' | 'report'
 
-// 可分派格式 = sniff 全集 + 非 sniff 判定的补充入口（authy/battleNet/duo 文本、msAuth/sqlite 字节）
-type ManualFormat = ImportFormat | 'authy' | 'battleNet' | 'duo' | 'msAuth' | 'sqlite'
-// 直接解析族（其余格式分别走：generic→映射页、aegis/winauth/authy→口令页、totpAuthenticator 分享文件→条件口令页、msAuth/sqlite→字节入口）
-type DirectFormat = Exclude<ManualFormat, 'generic' | 'aegis' | 'winauth' | 'authy' | 'msAuth' | 'sqlite'>
+// 可分派格式 = sniff 全集 + 非 sniff 判定的补充入口（authy/battleNet/duo 文本、authenticatorPlus zip 字节、msAuth/sqlite 字节）
+type ManualFormat = ImportFormat | 'authy' | 'battleNet' | 'duo' | 'authenticatorPlus' | 'msAuth' | 'sqlite'
+// 直接解析族（其余格式分别走：generic→映射页、aegis/winauth/authy→口令页、totpAuthenticator 分享文件→条件口令页、
+// authenticatorPlus→口令页+字节通道、msAuth/sqlite→字节入口）
+type DirectFormat = Exclude<ManualFormat, 'generic' | 'aegis' | 'winauth' | 'authy' | 'authenticatorPlus' | 'msAuth' | 'sqlite'>
 
 const step = ref<Step>('idle')
 const busy = ref(false)
@@ -38,6 +39,8 @@ const msg = ref('')
 const msgKind = ref<'ok' | 'err' | 'hint'>('ok')
 const fileName = ref('')
 const fileText = ref('')
+/** 字节通道缓存：start() 文本管道读失败的二进制文件（AP 加密 zip）经 readImportFileBytes 兜底缓存 */
+const fileBytes = ref<Uint8Array | null>(null)
 const format = ref<ManualFormat | null>(null)
 const manual = ref<'auto' | ManualFormat>('auto')
 const password = ref('')
@@ -63,6 +66,7 @@ const FORMAT_LABEL: Record<ManualFormat, string> = {
   freeOtpLegacy: '旧版 FreeOTP（tokens.xml）',
   totpAuthenticator: 'TOTP Authenticator 导出',
   andOtp: 'andOTP 明文导出（JSON）',
+  authenticatorPlus: 'Authenticator Plus 导出（加密 zip）',
   authy: 'Authy shared_prefs（XML）',
   battleNet: 'Battle.net shared_prefs（XML）',
   duo: 'Duo duokit accounts（JSON）',
@@ -84,6 +88,7 @@ const MANUAL_OPTIONS: Array<{ value: ManualFormat; label: string }> = [
   { value: 'freeOtpLegacy', label: '旧版 FreeOTP（tokens.xml）' },
   { value: 'totpAuthenticator', label: 'TOTP Authenticator（明文/外部分享）' },
   { value: 'andOtp', label: 'andOTP 明文导出（JSON）' },
+  { value: 'authenticatorPlus', label: 'Authenticator Plus（加密 zip）' },
   { value: 'authy', label: 'Authy shared_prefs（XML）' },
   { value: 'battleNet', label: 'Battle.net shared_prefs（XML）' },
   { value: 'duo', label: 'Duo duokit accounts（JSON）' },
@@ -276,6 +281,7 @@ function reset(): void {
   step.value = 'idle'
   fileName.value = ''
   fileText.value = ''
+  fileBytes.value = null
   format.value = null
   manual.value = 'auto'
   password.value = ''
@@ -326,8 +332,28 @@ async function start(): Promise<void> {
         return
       }
       if (await importFromSqlite(true)) return // 字节入口已接手（picked/confirm+错误已展示）
+      // 文本管道读失败的二进制文件（如 Authenticator Plus 加密 zip）：字节通道兜底落到 picked 页，
+      // 由用户手动指定格式（zip 无文本嗅探特征，属预期入口）
+      const rb = props.platform.readImportFileBytes
+      if (rb) {
+        try {
+          const fb = await rb()
+          if (fb) {
+            fileBytes.value = fb.bytes
+            fileText.value = ''
+            fileName.value = fb.name
+            format.value = null
+            manual.value = 'auto'
+            step.value = 'picked'
+            return
+          }
+        } catch {
+          // 字节通道也失败：回落到下方原 readErr 展示
+        }
+      }
       throw readErr
     }
+    fileBytes.value = null
     const f = sniffFormat(picked.text)
     if (f === null && (await importFromSqlite(true))) return
     fileText.value = picked.text
@@ -486,6 +512,11 @@ async function nextFromPicked(): Promise<void> {
     step.value = 'password'
     return
   }
+  if (f === 'authenticatorPlus') {
+    passwordHint.value = 'Authenticator Plus 导出 zip 受口令保护：请输入导出口令（未加密导出可留空）'
+    step.value = 'password'
+    return
+  }
   if (f === 'msAuth' || f === 'sqlite') {
     await importFromSqlite(false)
     return
@@ -541,6 +572,21 @@ async function nextFromPassword(): Promise<void> {
   }
   if (f === 'authy') {
     await parseAndConfirm(() => importAuthy(fileText.value, password.value || undefined))
+    return
+  }
+  if (f === 'authenticatorPlus') {
+    // zip 二进制：优先用 start() 字节通道兜底缓存的 bytes，否则走 readImportFileBytes（平台侧复用最近选择，免二次弹窗）
+    const readBytes = props.platform?.readImportFileBytes
+    if (!fileBytes.value && !readBytes) return fail(new Error('当前端不支持 Authenticator Plus 导入'))
+    await parseAndConfirm(async () => {
+      let bytes = fileBytes.value
+      if (!bytes) {
+        const fb = await readBytes!()
+        if (!fb) throw new Error('未选择文件')
+        bytes = fb.bytes
+      }
+      return importAuthenticatorPlus(bytes, password.value)
+    })
     return
   }
   if (f === 'totpAuthenticator') {
@@ -622,7 +668,7 @@ function failureLabel(f: { index: number; message: string }): string {
       <details class="formats">
         <summary>支持的导入格式</summary>
         <ul>
-          <li>加密备份类：Aegis（加密/明文）、WinAuth XML、Authy</li>
+          <li>加密备份类：Aegis（加密/明文）、WinAuth XML、Authy、Authenticator Plus（加密 zip，手动选择格式）</li>
           <li>应用导出类：2FAS、Bitwarden、Proton Authenticator、Stratum、FreeOTP+、旧版 FreeOTP、andOTP、TOTP Authenticator、Battle.net、Duo、Microsoft Authenticator</li>
           <li>文本与通用类：otpauth URI 批量文本、通用 JSON/JSONL/SQLite（可自定义字段映射，映射方案可保存复用）</li>
         </ul>

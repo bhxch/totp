@@ -156,9 +156,9 @@ const TEXT_FILE_FILTERS: DialogFilterSpec[] = [{ name: '导出文件', extension
 // 图片导出（批① §2.5 二维码拼版）对话框过滤器：拼版 PNG 落 .png
 const IMAGE_FILE_FILTERS: DialogFilterSpec[] = [{ name: '图片', extensions: ['png'] }]
 // 与 Rust 端 read_import_file_os 扩展名白名单一致（.json/.wauth/.xml/.txt/.aegis）+ SQLite .db/.sqlitedb/.sqlite
-// （.db 经文本读取报 UTF-8 错时由 ImportCard 转字节入口复查，见 read_import_file_bytes_os）
+// （.db 经文本读取报 UTF-8 错时由 ImportCard 转字节入口复查，见 read_import_file_bytes_os）+ AP .zip（手动选择字节通道）
 const IMPORT_FILE_FILTERS = [
-  { name: '导入文件', extensions: ['json', 'wauth', 'txt', 'aegis', 'xml', 'db', 'sqlitedb', 'sqlite'] },
+  { name: '导入文件', extensions: ['json', 'wauth', 'txt', 'aegis', 'xml', 'db', 'sqlitedb', 'sqlite', 'zip'] },
 ]
 
 /**

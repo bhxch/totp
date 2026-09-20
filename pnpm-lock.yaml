@@ -112,6 +112,9 @@ importers:
 
   packages/core:
     dependencies:
+      fflate:
+        specifier: ^0.8.3
+        version: 0.8.3
       hash-wasm:
         specifier: 4.12.0
         version: 4.12.0

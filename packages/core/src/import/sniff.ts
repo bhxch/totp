@@ -28,6 +28,8 @@ export * from './uriBatch'
  * 注：Ente 明文导出即 otpauth URI 行（EnteAuthImporter 委托 GoogleAuthUriImporter），落入
  * uriBatch，不设独立判定；Ente 加密导出与未知 JSON 无可靠特征，留给手动选择（generic/uriBatch）。
  * TOTP Authenticator 外部分享为纯 base64 密文，与任意文本无可靠区分特征，不强判（手动选择）。
+ * Authenticator Plus 导出为 WinZip AES 加密 zip（二进制），文本嗅探不适用——入口为
+ * ImportCard 手动选择「Authenticator Plus」+ readImportFileBytes 字节通道，不加入 sniffFormat。
  */
 // Aegis 特征键：明文与加密 vault 顶层均含 'header'（{slots,params}，明文 slots 为空数组）——
 // 不能以 header 存在判加密；可靠区分是顶层 db 的类型：明文 db 为对象，加密 db 为密文 Base64 字符串。

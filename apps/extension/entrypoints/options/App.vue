@@ -287,7 +287,7 @@ const backupPlatform: BackupPlatform = {
   replaceAllOp: (v) => replaceAllOp(v),
   // 导入：浏览器 input file 读取文本；无 DPAPI 能力，WinAuth DPAPI 条目由 core 逐条 failure「请用桌面版」
   async readImportFile() {
-    const file = await pickFile('.json,.jsonl,.wauth,.txt,.aegis,.xml,.db,.sqlitedb,.sqlite')
+    const file = await pickFile('.json,.jsonl,.wauth,.txt,.aegis,.xml,.db,.sqlitedb,.sqlite,.zip')
     if (!file) return null
     lastImportFile = file
     return { text: await file.text(), name: file.name }
@@ -295,7 +295,7 @@ const backupPlatform: BackupPlatform = {
   // SQLite 字节入口：文本管道会损坏二进制，复用最近一次选择的文件（File.arrayBuffer 原生读字节）；
   // 无最近选择时补弹选择器
   async readImportFileBytes() {
-    const file = lastImportFile ?? (await pickFile('.db,.sqlitedb,.sqlite,.json,.jsonl,.txt,.xml,.wauth,.aegis'))
+    const file = lastImportFile ?? (await pickFile('.db,.sqlitedb,.sqlite,.json,.jsonl,.txt,.xml,.wauth,.aegis,.zip'))
     if (!file) return null
     lastImportFile = file
     return { bytes: new Uint8Array(await file.arrayBuffer()), name: file.name }
