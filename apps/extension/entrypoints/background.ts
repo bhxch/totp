@@ -1,5 +1,6 @@
 import { parseOtpUri } from '@totp/core'
 import { PENDING_OTPAUTH_KEY } from '../src/pendingOtpauth'
+import { decodeImageBytesToUri } from '../src/qrDecode'
 import { pullSyncIfNewer, pushSync } from '../src/syncEngine'
 
 /** 清剪贴板 alarm 名（chrome.alarms 同名 create 即覆盖 = 重复复制重置计时） */
@@ -12,6 +13,8 @@ const DEFAULT_CLEAR_DELAY_MS = 30_000
 const SYNC_PUSH_MERGE_MS = 1_000
 /** 右键菜单 id：把选中的 otpauth 链接导入为条目 */
 const OTPAUTH_MENU_ID = 'otpauth-add'
+/** 右键菜单 id：识别图片中的 otpauth 二维码（C4，activeTab 随右键授予，零新增权限） */
+const QR_IMAGE_MENU_ID = 'qr-decode-image'
 
 /** 确保 offscreen document 存在：每扩展仅允许一个，重复 createDocument 会抛错，捕获即「已存在」 */
 async function ensureOffscreenDocument(): Promise<void> {
@@ -66,8 +69,40 @@ export default defineBackground(() => {
     { id: OTPAUTH_MENU_ID, title: '将选中的 otpauth 链接添加为条目', contexts: ['selection'] },
     () => void chrome.runtime.lastError,
   )
-  // 点击：selectionText 双重校验（前缀 + parseOtpUri）后写入 pendingOtpauth 并尝试打开 popup
-  chrome.contextMenus.onClicked.addListener((info) => {
+  chrome.contextMenus.create(
+    { id: QR_IMAGE_MENU_ID, title: '识别图中的验证码二维码', contexts: ['image'] },
+    () => void chrome.runtime.lastError,
+  )
+  // 点击：listener 改 async（MV3 只要求 addListener 本身同步注册；事件回调返回的 promise 被
+  // Chrome 忽略，无副作用），async 化使 QR 分支可直接 await fetch/storage，分支复用三件套
+  chrome.contextMenus.onClicked.addListener(async (info) => {
+    // C4 图片识别：activeTab 权限随本次右键点击授予该 tab 的源访问权，fetch 图片字节后本地解码。
+    // fetch 被权限/CORS 拒绝（Failed to fetch）、解码失败、内容非 otpauth → 统一失败通知
+    if (info.menuItemId === QR_IMAGE_MENU_ID) {
+      const src = info.srcUrl ?? ''
+      let uri: string | null = null
+      try {
+        const res = await fetch(src)
+        uri = await decodeImageBytesToUri(new Uint8Array(await res.arrayBuffer()))
+      } catch { uri = null }
+      if (uri === null) {
+        void chrome.notifications.create({
+          type: 'basic',
+          iconUrl: '/icon/128.png',
+          title: 'TOTP 验证码工具',
+          message: '图中未识别到有效的 otpauth 二维码',
+        })
+        return
+      }
+      await chrome.storage.local.set({ [PENDING_OTPAUTH_KEY]: uri })
+      void chrome.notifications.create({
+        type: 'basic',
+        iconUrl: '/icon/128.png',
+        title: 'TOTP 验证码工具',
+        message: '已识别验证码二维码，点扩展图标查看并保存',
+      })
+      return
+    }
     if (info.menuItemId !== OTPAUTH_MENU_ID) return
     const text = (info.selectionText ?? '').trim()
     let valid = false

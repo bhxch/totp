@@ -16,7 +16,7 @@ export default defineConfig({
     // offscreen：popup 关闭后由 background 经 offscreen document 清剪贴板；alarms：30s 定时触发；
     // unlimitedStorage：图标包导入的 dataUrl 存 chrome.storage.local，不受 10MB 配额限制；
     // notifications：右键菜单导入选中文本非 otpauth 时提示；
-    // contextMenus：右键菜单 otpauth-add 注册（Chromium 下无此权限 API 不可用、菜单静默不显示）；
+    // contextMenus：右键菜单 otpauth-add / qr-decode-image 注册（Chromium 下无此权限 API 不可用、菜单静默不显示）；
     // idle：options 页 idle/锁屏自动锁定轮询（plan16 T12：setDetectionInterval + queryState）
     permissions: ['storage', 'unlimitedStorage', 'clipboardWrite', 'activeTab', 'alarms', 'offscreen', 'notifications', 'contextMenus', 'idle'],
     // 仅 Firefox 目标注册协议处理器：
