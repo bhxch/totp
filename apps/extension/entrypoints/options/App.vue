@@ -20,7 +20,8 @@ const store = createExtensionStore('options', {
 // D1 i18n 挂载：store 在本组件 setup 创建（页面生命周期内唯一实例），装入当前 app 供全部子组件
 // useI18n/$t。appContext.app 须在 setup 同步段取；装入发生在 setup 中段，本组件自身的 script setup
 // 内 useI18n() 不可用（注入尚未就绪），壳层翻译走 i18n.global.t——子组件不受限
-getCurrentInstance()?.appContext.app.use(createAppI18n(store))
+const i18n = createAppI18n(store)
+getCurrentInstance()?.appContext.app.use(i18n)
 const {
   vault, initStore, registerStorageSync,
   locked, hasEncryption, unlock, lock, enableEncryption, disableEncryption, changePassphrase,
@@ -65,13 +66,13 @@ async function runLegacyMigrations(): Promise<void> {
   try {
     await store.migrateLegacySecrets()
     const n = await migrateLegacySources(storageAdapter, { saveCred: store.saveSourceCredOp })
-    if (n > 0) migrateNote.value = `已迁移 ${n} 个云目标到新模型`
+    if (n > 0) migrateNote.value = i18n.global.t('options.migrated', { count: n })
   } catch (e) {
     console.warn('[migrate] 旧数据迁移失败（旧键保留，解锁后重试）', e)
   }
   // 成功迁移后旧键已删 → 检测为 false 提示自然消失；仍滞留（跳过/失败）→ 提示置位
   legacyNote.value = (await hasLegacyCloudKeys(storageAdapter))
-    ? '检测到旧版云同步配置：启用加密后将自动迁移到新模型'
+    ? i18n.global.t('options.legacyNote')
     : ''
 }
 
@@ -90,7 +91,7 @@ onMounted(async () => {
     // idle/锁屏自动锁定（plan16 T12）：initStore 后启动（settings/加密态已就绪，watcher 内部自判 prefs）
     lockWatcher.start()
   } catch (e) {
-    loadError.value = '本地数据读取失败：' + (e instanceof Error ? e.message : String(e))
+    loadError.value = i18n.global.t('options.readError', { message: e instanceof Error ? e.message : String(e) })
   }
 })
 
@@ -276,8 +277,10 @@ const backupPlatform: BackupPlatform = {
     const overwrite = backupMode.value.type === 'overwrite'
     const name = overwrite ? OVERWRITE_NAME : backupFileName(new Date())
     downloadEnvelope(envelope, name)
-    // T9 后 BackupCard 直接展示宿主摘要：返回中文（含文件名，诚实反映导出结果）
-    return overwrite ? `已导出备份文件（覆盖）：${name}` : `已导出备份文件：${name}`
+    // T9 后 BackupCard 直接展示宿主摘要：返回记录时语言文案（含文件名，诚实反映导出结果；D2 i18n）
+    return overwrite
+      ? i18n.global.t('options.exportedOverwrite', { name })
+      : i18n.global.t('options.exported', { name })
   },
   async restoreFromPicker(password) {
     const file = await pickBackupFile()

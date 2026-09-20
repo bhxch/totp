@@ -593,5 +593,38 @@
     "popupDelay": "弹窗关闭延迟（毫秒）",
     "clipboardClear": "复制后自动清除剪贴板",
     "rememberTagFilter": "记住标签筛选"
+  },
+  "popup": {
+    "title": "TOTP 验证码",
+    "add": "＋ 添加",
+    "settings": "设置",
+    "openSettings": "打开设置",
+    "copiedBanner": "已复制到剪贴板",
+    "readError": "本地数据读取失败：{message}",
+    "filterBySite": "按当前站点过滤",
+    "matchCount": "匹配 {count} 条",
+    "importSummary": "粘贴 otpauth 链接导入",
+    "importBtn": "导入",
+    "tabManual": "手动填写",
+    "tabPaste": "智能粘贴",
+    "inputMethod": "录入方式",
+    "empty": "暂无条目，点击右上角「＋ 添加」录入。",
+    "noMatch": "无匹配结果",
+    "confirmDelete": "确认删除？",
+    "revealTitle": "{issuer} — 密钥",
+    "revealHint": "出于安全考虑，仅显示密钥前后各 4 位；如需完整密钥请使用编辑功能。",
+    "close": "关闭",
+    "edit": "编辑",
+    "showQr": "显示二维码",
+    "copyUri": "复制 URI",
+    "pin": "置顶",
+    "unpin": "取消置顶"
+  },
+  "options": {
+    "migrated": "已迁移 {count} 个云目标到新模型",
+    "legacyNote": "检测到旧版云同步配置：启用加密后将自动迁移到新模型",
+    "readError": "本地数据读取失败：{message}",
+    "exported": "已导出备份文件：{name}",
+    "exportedOverwrite": "已导出备份文件（覆盖）：{name}"
   }
 }

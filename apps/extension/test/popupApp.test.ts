@@ -54,6 +54,7 @@ vi.mock('../src/store', async () => {
 })
 
 import App from '../entrypoints/popup/App.vue'
+import { createTestI18n } from './helpers/i18n'
 import { addEntryOp, vault } from '../src/store'
 
 /** BatchPastePanel 桩：保留 added 事件发射能力（点内嵌按钮触发），data-test 判定渲染 */
@@ -67,6 +68,7 @@ const BatchPastePanelStub = {
 async function mountApp() {
   const wrapper = mount(App, {
     global: {
+      plugins: [createTestI18n()],
       stubs: {
         LockScreen: true,
         EntryForm: true,

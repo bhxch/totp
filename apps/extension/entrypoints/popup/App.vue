@@ -2,6 +2,7 @@
 import { getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
 import { BatchPastePanel, CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, MdCheckbox, MdIconButton, MdSegmentedButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, OtpQrDialog, parseUriToEntryData, resolvePopupVisible, SearchBar, TagFilterRow, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
 import { storageAdapter } from '../../src/store'
 import {
@@ -9,6 +10,9 @@ import {
 } from '../../src/store'
 
 const icons = createIconStore(storageAdapter)
+
+// D2 抽串：popup 壳层文案走 i18n（popup.*）。i18n 插件由 main.ts 在 mount 前同步装入，useI18n 可用
+const { t } = useI18n()
 
 /** 设置深链:直达 options 的 /settings 页(hash 路由);openOptionsPage 不支持 hash 故用 tabs.create */
 const SETTINGS_ICON_PATH = NAV_ICONS.settings
@@ -38,7 +42,7 @@ onMounted(async () => {
     }
     await icons.init()
   } catch (e) {
-    error.value = '本地数据读取失败：' + (e instanceof Error ? e.message : String(e))
+    error.value = t('popup.readError', { message: e instanceof Error ? e.message : String(e) })
   } finally {
     loaded.value = true
   }
@@ -232,10 +236,11 @@ function closeForm() {
 
 /** 14c 新建表单双 Tab：manual=原内联 EntryForm（行为不动）/ paste=BatchPastePanel；仅 creating 显 Tab（编辑保持纯手动） */
 const formTab = ref<'manual' | 'paste'>('manual')
-const FORM_TAB_OPTIONS = [
-  { value: 'manual', label: '手动填写' },
-  { value: 'paste', label: '智能粘贴' },
-]
+// computed：locale 切换后 Tab 文案联动
+const FORM_TAB_OPTIONS = computed(() => [
+  { value: 'manual', label: t('popup.tabManual') },
+  { value: 'paste', label: t('popup.tabPaste') },
+])
 // 进入新建（startCreate，creating false→true）回默认「手动填写」；applyOtpauthPrefill 路径
 // （creating 已 true，watch 不触发）在其函数体内显式复位
 watch(creating, (v) => { if (v) formTab.value = 'manual' })
@@ -316,16 +321,16 @@ async function copy(entry: OtpEntry) {
   <LockScreen v-if="locked" :store="store" :allow-passkey="false" />
   <main v-else @click="closeContextMenu">
     <header>
-      <h1>TOTP 验证码</h1>
+      <h1>{{ t('popup.title') }}</h1>
       <div class="header-ops">
-        <button v-if="!creating && !editing" @click="startCreate">＋ 添加</button>
-        <MdIconButton title="设置" aria-label="打开设置" @click="openSettings">
+        <button v-if="!creating && !editing" @click="startCreate">{{ t('popup.add') }}</button>
+        <MdIconButton :title="t('popup.settings')" :aria-label="t('popup.openSettings')" @click="openSettings">
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path :d="SETTINGS_ICON_PATH" fill="currentColor" /></svg>
         </MdIconButton>
       </div>
     </header>
 
-    <div v-if="copied" class="copied-banner">已复制到剪贴板</div>
+    <div v-if="copied" class="copied-banner">{{ t('popup.copiedBanner') }}</div>
     <div v-if="error" class="error">{{ error }}</div>
 
     <SearchBar v-model="query" />
@@ -338,8 +343,8 @@ async function copy(entry: OtpEntry) {
 
     <div class="filter-row" v-if="tabUrl">
       <!-- M3 MdCheckbox(审查 X10):原 UA 原生 checkbox 深色 scheme 下未选中即深灰填充,即「复选框底色偏深」根因 -->
-      <MdCheckbox :model-value="filterOn" label="按当前站点过滤" @update:model-value="toggleFilter" />
-      <span v-if="!filterResult.hint && filterOn && filterResult.urlMatchCount > 0" class="hint">匹配 {{ filterResult.urlMatchCount }} 条</span>
+      <MdCheckbox :model-value="filterOn" :label="t('popup.filterBySite')" @update:model-value="toggleFilter" />
+      <span v-if="!filterResult.hint && filterOn && filterResult.urlMatchCount > 0" class="hint">{{ t('popup.matchCount', { count: filterResult.urlMatchCount }) }}</span>
     </div>
     <!-- hint 不受 tabUrl 门控：无标签页 URL（新标签页等）时放宽提示仍可达（spec §3 回退提示） -->
     <span v-if="filterResult.hint" class="hint hint-row">{{ filterResult.hint }}</span>
@@ -347,10 +352,10 @@ async function copy(entry: OtpEntry) {
     <!-- 错误提示置于 details 外常显：?uri= 回调报错时 details 默认折叠，放内部会静默不可见 -->
     <div v-if="importError" class="error">{{ importError }}</div>
     <details class="otpauth-import" :open="importOpen" @toggle="onImportToggle">
-      <summary>粘贴 otpauth 链接导入</summary>
+      <summary>{{ t('popup.importSummary') }}</summary>
       <textarea v-model="otpauthUri" rows="2" placeholder="otpauth://totp/GitHub:me?secret=..." />
       <div class="import-row">
-        <button type="button" @click="importOtpauth">导入</button>
+        <button type="button" @click="importOtpauth">{{ t('popup.importBtn') }}</button>
       </div>
     </details>
 
@@ -358,18 +363,18 @@ async function copy(entry: OtpEntry) {
          （:key 预填重挂载机制、onSave、cancel=closeForm 一字不动）；paste 渲染 BatchPastePanel，粘贴落库
          added → onBatchAdded 关表单回列表。v-if/v-else 切换即卸载，切回手动时 EntryForm 状态重置 -->
     <template v-if="creating || editing">
-      <MdSegmentedButton v-if="creating" v-model="formTab" :options="FORM_TAB_OPTIONS" aria-label="录入方式" class="form-tabs" />
+      <MdSegmentedButton v-if="creating" v-model="formTab" :options="FORM_TAB_OPTIONS" :aria-label="t('popup.inputMethod')" class="form-tabs" />
       <EntryForm v-if="formTab === 'manual' || editing" :key="editing?.uuid ?? (prefill ? `prefill-${formKey}` : 'new')" :initial="editing ?? prefill" :tags="vault.tags" :create-tag="addTagOp" :icons="entryIcons" :icon-store="icons" @save="onSave" @cancel="closeForm" />
       <BatchPastePanel v-else :store="store" @added="onBatchAdded" />
     </template>
 
-    <div v-if="loaded && sorted.length === 0" class="empty">暂无条目，点击右上角「＋ 添加」录入。</div>
-    <div v-else-if="loaded && visible.length === 0" class="empty">无匹配结果</div>
+    <div v-if="loaded && sorted.length === 0" class="empty">{{ t('popup.empty') }}</div>
+    <div v-else-if="loaded && visible.length === 0" class="empty">{{ t('popup.noMatch') }}</div>
     <div v-for="e in visible" :key="e.uuid" class="item-wrap" @click="closeContextMenu">
       <OtpListItem :entry="e" :icon="iconView(e.icon, icons)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" @reveal="onReveal(e)" @qr="qrEntry = e" @context="(ev) => onContextMenu(e, ev)" />
       <div class="ops">
         <template v-if="confirmingDelete === e.uuid">
-          <button class="danger" @click.stop="askRemove(e.uuid)">确认删除？</button>
+          <button class="danger" @click.stop="askRemove(e.uuid)">{{ t('popup.confirmDelete') }}</button>
         </template>
         <template v-else>
           <button class="icon" @click.stop="editing = e">✎</button>
@@ -381,10 +386,10 @@ async function copy(entry: OtpEntry) {
     <!-- F1：reveal 模态（与 旧单页 同语义：仅显前 4 + 后 4） -->
     <div v-if="revealing" class="reveal-mask" @click="closeReveal">
       <div class="reveal-card" @click.stop>
-        <h3>{{ revealing.issuer }} — 密钥</h3>
+        <h3>{{ t('popup.revealTitle', { issuer: revealing.issuer }) }}</h3>
         <code class="reveal-secret">{{ maskSecret(revealing.secret) }}</code>
-        <p class="reveal-hint">出于安全考虑，仅显示密钥前后各 4 位；如需完整密钥请使用编辑功能。</p>
-        <button class="reveal-close" @click="closeReveal">关闭</button>
+        <p class="reveal-hint">{{ t('popup.revealHint') }}</p>
+        <button class="reveal-close" @click="closeReveal">{{ t('popup.close') }}</button>
       </div>
     </div>
 
@@ -395,10 +400,10 @@ async function copy(entry: OtpEntry) {
       :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
       @click.stop
     >
-      <li><button @click="contextEdit(contextMenu.entry)">编辑</button></li>
-      <li><button @click="qrEntry = contextMenu.entry; contextMenu = null">显示二维码</button></li>
-      <li><button @click="contextCopyUri(contextMenu.entry)">复制 URI</button></li>
-      <li><button @click="contextTogglePin(contextMenu.entry)">{{ contextMenu.entry.pinned ? '取消置顶' : '置顶' }}</button></li>
+      <li><button @click="contextEdit(contextMenu.entry)">{{ t('popup.edit') }}</button></li>
+      <li><button @click="qrEntry = contextMenu.entry; contextMenu = null">{{ t('popup.showQr') }}</button></li>
+      <li><button @click="contextCopyUri(contextMenu.entry)">{{ t('popup.copyUri') }}</button></li>
+      <li><button @click="contextTogglePin(contextMenu.entry)">{{ contextMenu.entry.pinned ? t('popup.unpin') : t('popup.pin') }}</button></li>
     </ul>
 
     <!-- 单条目 otpauth 二维码（Esc/遮罩/「关闭」按钮关闭） -->

@@ -593,5 +593,38 @@
     "popupDelay": "Popup close delay (ms)",
     "clipboardClear": "Auto-clear clipboard after copy",
     "rememberTagFilter": "Remember tag filter"
+  },
+  "popup": {
+    "title": "TOTP Codes",
+    "add": "+ Add",
+    "settings": "Settings",
+    "openSettings": "Open settings",
+    "copiedBanner": "Copied to clipboard",
+    "readError": "Failed to read local data: {message}",
+    "filterBySite": "Filter by current site",
+    "matchCount": "{count} matches",
+    "importSummary": "Paste an otpauth link to import",
+    "importBtn": "Import",
+    "tabManual": "Manual entry",
+    "tabPaste": "Smart paste",
+    "inputMethod": "Input method",
+    "empty": "No entries yet. Tap \"+ Add\" at the top right to create one.",
+    "noMatch": "No matching results",
+    "confirmDelete": "Confirm delete?",
+    "revealTitle": "{issuer} — Secret",
+    "revealHint": "For security, only the first and last 4 characters of the secret are shown; use Edit to view the full secret.",
+    "close": "Close",
+    "edit": "Edit",
+    "showQr": "Show QR code",
+    "copyUri": "Copy URI",
+    "pin": "Pin",
+    "unpin": "Unpin"
+  },
+  "options": {
+    "migrated": "Migrated {count} cloud targets to the new model",
+    "legacyNote": "Legacy cloud sync configuration detected: it will migrate automatically once encryption is enabled",
+    "readError": "Failed to read local data: {message}",
+    "exported": "Backup file exported: {name}",
+    "exportedOverwrite": "Backup file exported (overwrite): {name}"
   }
 }
