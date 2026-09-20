@@ -4,7 +4,7 @@ import {
   DEFAULT_OBJECT_PATH, enforceRemoteRetention, pushEnvelope, resolveObjectPath, resolveTimestampPath, syncMultipleTargets,
 } from '@totp/core'
 import { computed, onMounted, ref, watch } from 'vue'
-import { CLOUD_ACTION_LABEL, createCloudBackend } from './cloudPlatform'
+import { CLOUD_ACTION_LABEL, createCloudBackend, isPlaintextHttpUrl } from './cloudPlatform'
 import type { CloudAutoPrefs, CloudPlatform } from './cloudPlatform'
 import { parseVaultJson } from './parseVaultJson'
 import MdButton from './md/MdButton.vue'
@@ -266,13 +266,35 @@ onMounted(async () => {
 // 对账——锁定态移除源遗留的凭据在此被清（creds 与源列表同以解锁后最新值判定，锁定态空缓存为 no-op）
 watch(() => props.platform?.creds, () => { void reconcileOrphanCreds() })
 
+/** 草稿是否含非本机 http 明文地址（WebDAV serverUrl / S3 endpoint，其余后端无自定服务地址）：
+ *  输入时即显示行内警告（可见性），保存时作为拦截条件（F11） */
+function hasPlaintextUrl(d: CloudCred): boolean {
+  if (isWebdavDraft(d)) return isPlaintextHttpUrl(d.serverUrl)
+  if (isS3Draft(d)) return isPlaintextHttpUrl(d.endpoint ?? '')
+  return false
+}
+
+/** 任一源草稿存在非本机 http 明文地址：保存按钮旁显示确认勾选框并拦截未确认的保存 */
+const needsPlaintextAck = computed(() => sources.value.some((s) => {
+  const d = credDrafts.value[s.id]
+  return !!d && hasPlaintextUrl(d)
+}))
+/** 明文传输显式确认（仅卡内内存，不持久化「永久确认」）：保存成功即复位——确认按保存会话独立，再次保存需重新勾选 */
+const plaintextAck = ref(false)
+
 /**
  * 保存凭据：源元数据整列表落盘 + 逐源把编辑副本写入保管区（含禁用源——凭据与启用态独立，
  * 跳过会造成编辑静默丢失；空白凭据跳过并提示——空白行从未配置过，写入只会污染保管区）。
+ * F11：存在非本机 http 明文地址且未勾选确认 → 整体拦截（不落盘任何内容），提示改用 https 或显式确认。
  */
 async function onSaveCreds(): Promise<void> {
   const p = props.platform
   if (!p) return
+  if (needsPlaintextAck.value && !plaintextAck.value) {
+    msg.value = '存在非本机 http 地址，凭据与备份内容将以明文传输：建议改用 https；确要继续请勾选「我了解凭据将以明文传输」后再保存'
+    msgKind.value = 'err'
+    return
+  }
   try {
     await p.saveSources(sources.value)
     let skipped = 0
@@ -286,6 +308,7 @@ async function onSaveCreds(): Promise<void> {
     }
     msg.value = skipped > 0 ? `凭据已保存（${skipped} 个空白源凭据未保存）` : '凭据已保存'
     msgKind.value = 'ok'
+    plaintextAck.value = false // per-save-session：确认不复用，下次保存重新勾选
   } catch (e) {
     fail(e)
   }
@@ -538,6 +561,8 @@ const hasDuplicateNames = computed(() => {
         <template v-for="d in [credDrafts[s.id]]" :key="s.id">
           <div v-if="isWebdavDraft(d)" class="fields">
             <MdTextField v-model="d.serverUrl" label="服务器地址" placeholder="服务器地址（https://dav.example.com）" autocomplete="off" />
+            <!-- F11：非本机 http 明文地址输入即警告（文案对齐 gist public 警告样式），保存另需显式勾选确认 -->
+            <p v-if="hasPlaintextUrl(d)" class="warn" role="alert">服务器地址为非本机 http 明文连接，用户名与应用密码将随每个请求明文传输，建议改用 https</p>
             <MdTextField v-model="d.username" label="用户名" placeholder="用户名" autocomplete="off" />
             <MdTextField v-model="d.password" type="password" label="应用密码" placeholder="应用密码" autocomplete="new-password" />
           </div>
@@ -550,6 +575,8 @@ const hasDuplicateNames = computed(() => {
                  展示与空串/undefined 均显示 placeholder 一致；isBlankCred 对 '' 与 undefined 同判空白 -->
             <MdTextField :model-value="d.sessionToken ?? ''" type="password" label="STS SessionToken（可选）" placeholder="STS SessionToken（可选）" autocomplete="new-password" @update:model-value="d.sessionToken = $event" />
             <MdTextField :model-value="d.endpoint ?? ''" label="Endpoint" placeholder="Endpoint（可选，如 http://localhost:9000）" autocomplete="off" @update:model-value="d.endpoint = $event" />
+            <!-- F11：同 WebDAV，非本机 http endpoint 明文警告（缺省 endpoint 为 AWS https 域名，不触发） -->
+            <p v-if="hasPlaintextUrl(d)" class="warn" role="alert">Endpoint 为非本机 http 明文连接，访问密钥与备份内容将明文传输，建议改用 https</p>
             <MdTextField :model-value="d.prefix ?? ''" label="Key 前缀（可选）" placeholder="Key 前缀（可选）" autocomplete="off" @update:model-value="d.prefix = $event" />
             <MdCheckbox
               :model-value="!!d.forcePathStyle" :disabled="busy" label="强制 path-style（兼容老 bucket / 自建 S3）"
@@ -587,6 +614,11 @@ const hasDuplicateNames = computed(() => {
       <MdMenu :x="addMenuPos.x" :y="addMenuPos.y" :open="addMenuOpen" :trigger-el="addMenuTrigger" @close="addMenuOpen = false">
         <MdButton v-for="b in addableBackends" :key="b" variant="text" class="menu-item" @click="addTarget(b)">{{ BACKEND_LABEL[b] }}</MdButton>
       </MdMenu>
+      <!-- F11：存在非本机 http 明文地址时保存前要求显式确认（勾选随保存复位，复用需重新勾选） -->
+      <MdCheckbox
+        v-if="needsPlaintextAck" :model-value="plaintextAck" :disabled="busy"
+        label="我了解凭据将以明文传输" aria-label="我了解凭据将以明文传输" @update:model-value="plaintextAck = $event"
+      />
       <MdButton class="creds-save" :disabled="busy" @click="onSaveCreds">保存凭据</MdButton>
       <MdButton class="cloud-sync" :disabled="busy || !sessionSecret || pendingAdopt !== null || pendingReset !== null || pendingRemove !== null" @click="onSync">立即同步</MdButton>
     </div>

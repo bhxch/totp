@@ -25,6 +25,23 @@ export function createCloudBackend(cred: CloudCred, onCredChange?: (cred: CloudC
 }
 
 /**
+ * 非本机 http 明文地址判定（F11）：WebDAV serverUrl / S3 endpoint 经此校验——
+ * scheme 为 http 且主机非 localhost/127.0.0.1/[::1]/*.localhost 视为「凭据明文出网」，
+ * CloudCard 输入时显示行内警告、保存前要求显式确认；本机回环 http（自建服务合法场景）与
+ * https 不拦截。URL 解析失败返回 false：格式校验沿用既有行为（core 请求时报错），此处不二次惩罚。
+ */
+export function isPlaintextHttpUrl(url: string): boolean {
+  try {
+    const u = new URL(url)
+    if (u.protocol !== 'http:') return false
+    const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+    return host !== 'localhost' && host !== '127.0.0.1' && host !== '::1' && !host.endsWith('.localhost')
+  } catch {
+    return false
+  }
+}
+
+/**
  * 存储键约定（plan16 源模型，desktop=AppData JSON 键 / extension=storage.local 键，实现一致）：
  * - 源元数据（非秘密）：`backupSources`（JSON BackupSource[]），经 core loadSources/saveSources 读写；
  * - 源凭据（秘密）：DEK 保管区 `secretBag`，经 store saveSourceCredOp/removeSourceCredOp 读写（解锁态限定）；
