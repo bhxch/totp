@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { computed, ref } from 'vue'
 import BackupSecretCard from '../src/components/BackupSecretCard.vue'
+import { createTestI18n } from './helpers/i18n'
 import type { VueStore } from '../src/store'
 
 /** 最小 store 假对象：按 VueStore 消费形态构造（backupSecret/bagStored/hasEncryption 为 ComputedRef 形态的 ref，
@@ -28,7 +29,7 @@ function makeStore(init: { backupSecret?: string | null; inBag?: boolean; hasEnc
 }
 
 function mountCard(store: VueStore) {
-  return mount(BackupSecretCard, { props: { store } })
+  return mount(BackupSecretCard, { global: { plugins: [createTestI18n()] }, props: { store } })
 }
 
 describe('BackupSecretCard', () => {

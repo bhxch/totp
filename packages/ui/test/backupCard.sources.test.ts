@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import BackupCard from '../src/components/BackupCard.vue'
+import { createTestI18n } from './helpers/i18n'
 import type { BackupPlatform, LocalSourceView } from '../src/components/backupPlatform'
 
 const src = (over: Partial<LocalSourceView> = {}): LocalSourceView => ({
@@ -16,7 +17,7 @@ function makePlatform(over: Partial<BackupPlatform> = {}): BackupPlatform {
 }
 
 async function mountCard(p: BackupPlatform, sessionSecret: string | null = 'pw') {
-  const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret } })
+  const w = mount(BackupCard, { global: { plugins: [createTestI18n()] }, props: { platform: p, vaultJson: '{}', sessionSecret } })
   await flushPromises()
   return w
 }

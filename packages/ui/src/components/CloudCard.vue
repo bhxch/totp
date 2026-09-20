@@ -4,7 +4,8 @@ import {
   DEFAULT_OBJECT_PATH, enforceRemoteRetention, pushEnvelope, resolveObjectPath, resolveTimestampPath, syncMultipleTargets,
 } from '@totp/core'
 import { computed, onMounted, ref, watch } from 'vue'
-import { CLOUD_ACTION_LABEL, createCloudBackend, isPlaintextHttpUrl } from './cloudPlatform'
+import { useI18n } from 'vue-i18n'
+import { createCloudBackend, isPlaintextHttpUrl } from './cloudPlatform'
 import type { CloudAutoPrefs, CloudPlatform } from './cloudPlatform'
 import { parseVaultJson } from './parseVaultJson'
 import MdButton from './md/MdButton.vue'
@@ -21,6 +22,16 @@ const props = defineProps<{
   /** 会话备份口令（D1，即备份加密口令）；null 时同步禁用并提示先设置备份口令 */
   sessionSecret: string | null
 }>()
+
+const { t } = useI18n()
+
+/** 同步动作 → 状态文案 key（i18n D2：卡内状态行经 t() 渲染；cloudRunner 持久化摘要沿用 CLOUD_ACTION_LABEL zh 值） */
+const ACTION_LABEL_KEY: Record<string, string> = {
+  uploaded: 'cloudCard.actionUploaded',
+  downloaded: 'cloudCard.actionDownloaded',
+  'conflict-resolved': 'cloudCard.actionConflictResolved',
+  'in-sync': 'cloudCard.actionInSync',
+}
 
 const BACKENDS = ['webdav', 's3', 'gist', 'gdrive', 'onedrive'] as const
 type BackendId = (typeof BACKENDS)[number]
@@ -135,8 +146,8 @@ function isOneDriveDraft(d: CloudCred | undefined): d is OneDriveCred {
 
 /** 保留策略二选（MdSegmentedButton 选项） */
 const RETENTION_OPTIONS = [
-  { value: 'overwrite', label: '覆盖' },
-  { value: 'keep', label: '保留最近' },
+  { value: 'overwrite', label: t('cloudCard.retentionOverwrite') },
+  { value: 'keep', label: t('cloudCard.retentionKeep') },
 ]
 /** keep 份数输入 → 源 retention：空串/非数字回落 3（与本地源默认一致），数字钳下限 1 */
 function onKeepN(s: BackupSource, v: string | number): void {
@@ -291,7 +302,7 @@ async function onSaveCreds(): Promise<void> {
   const p = props.platform
   if (!p) return
   if (needsPlaintextAck.value && !plaintextAck.value) {
-    msg.value = '存在非本机 http 地址，凭据与备份内容将以明文传输：建议改用 https；确要继续请勾选「我了解凭据将以明文传输」后再保存'
+    msg.value = t('cloudCard.plaintextAckWarn')
     msgKind.value = 'err'
     return
   }
@@ -306,7 +317,7 @@ async function onSaveCreds(): Promise<void> {
       }
       await p.saveCred(s.id, draft)
     }
-    msg.value = skipped > 0 ? `凭据已保存（${skipped} 个空白源凭据未保存）` : '凭据已保存'
+    msg.value = skipped > 0 ? t('cloudCard.credsSavedWithSkipped', { count: skipped }) : t('cloudCard.credsSaved')
     msgKind.value = 'ok'
     plaintextAck.value = false // per-save-session：确认不复用，下次保存重新勾选
   } catch (e) {
@@ -327,9 +338,9 @@ const trunc = (s: string, n = 60) => (s.length > n ? `${s.slice(0, n)}…` : s)
 async function onSync(): Promise<void> {
   const p = props.platform
   if (!p) return
-  if (!props.sessionSecret) return fail(new Error('请先设置备份口令')) // 按钮已禁用，防御兜底
+  if (!props.sessionSecret) return fail(new Error(t('cloudCard.setPwFirst'))) // 按钮已禁用，防御兜底
   const enabled = sources.value.filter((s) => s.enabled)
-  if (enabled.length === 0) return fail(new Error('未启用任何云源'))
+  if (enabled.length === 0) return fail(new Error(t('cloudCard.noEnabledSources')))
   busy.value = true
   msg.value = ''
   statusMap.value = {}
@@ -338,7 +349,7 @@ async function onSync(): Promise<void> {
     for (const s of enabled) {
       const cred = credDrafts.value[s.id] ?? p.creds[s.id]
       if (!cred || isBlankCred(cred)) {
-        statusMap.value[s.id] = '缺少凭据：解锁后保存凭据后再同步' // 锁定态缓存为空同此口径
+        statusMap.value[s.id] = t('cloudCard.missingCreds') // 锁定态缓存为空同此口径
         continue
       }
       inputs.push({
@@ -353,7 +364,7 @@ async function onSync(): Promise<void> {
         hash: await p.loadTargetHash(s.id),
       })
     }
-    if (inputs.length === 0) return fail(new Error('启用源均缺少凭据，请先解锁并保存凭据'))
+    if (inputs.length === 0) return fail(new Error(t('cloudCard.allCredsMissing')))
     const r = await syncMultipleTargets({
       targets: inputs,
       vaultJson: p.readVaultJson(),
@@ -368,16 +379,16 @@ async function onSync(): Promise<void> {
         const errMsg = res.error ?? ''
         if (errMsg.includes('口令不匹配')) {
           // 换口令后云端为旧口令信封：专用状态 + 行内重置救济入口
-          statusMap.value[res.key] = '失败：口令不匹配'
+          statusMap.value[res.key] = t('cloudCard.failedPassphrase')
           resettableBackends.value.push(res.key)
         } else {
-          statusMap.value[res.key] = `失败：${trunc(errMsg)}`
+          statusMap.value[res.key] = t('cloudCard.failed', { message: trunc(errMsg) })
         }
         await p.saveTargetHash(res.key, null) // 失败源删基线，下轮全量重比
         continue
       }
-      statusMap.value[res.key] = CLOUD_ACTION_LABEL[res.outcome.action] ?? res.outcome.action
-      if (res.convergeError) statusMap.value[res.key] += `（收敛回推失败：${trunc(res.convergeError)}）`
+      statusMap.value[res.key] = ACTION_LABEL_KEY[res.outcome.action] ? t(ACTION_LABEL_KEY[res.outcome.action]!) : res.outcome.action
+      if (res.convergeError) statusMap.value[res.key] += t('cloudCard.convergeFailed', { message: trunc(res.convergeError) })
       // keep 源上传成功（含收敛改写后的 uploaded）→ 远端滚动删除超额旧份，结果附到状态行：
       // deleted>0 显示清理份数；-1=后端不支持自动清理，提示累积风险与替代选项；0=未超额不刷屏。
       // per-source try/catch 隔离：listBackups/删除网络抛错不改写该源上传成功状态、
@@ -388,10 +399,10 @@ async function onSync(): Promise<void> {
         if (backend) {
           try {
             const deleted = await enforceRemoteRetention(backend, src.retention.n)
-            if (deleted > 0) statusMap.value[res.key] += `（滚动清理 ${deleted} 份）`
-            else if (deleted < 0) statusMap.value[res.key] += '（该后端不支持自动清理，历史备份会累积，可手动清理或改用覆盖模式）'
+            if (deleted > 0) statusMap.value[res.key] += t('cloudCard.retentionCleaned', { count: deleted })
+            else if (deleted < 0) statusMap.value[res.key] += t('cloudCard.retentionUnsupported')
           } catch {
-            statusMap.value[res.key] += '（滚动清理失败，下轮同步重试）'
+            statusMap.value[res.key] += t('cloudCard.retentionFailed')
           }
         }
       }
@@ -428,7 +439,7 @@ async function onConfirmAdopt(): Promise<void> {
     for (const [key, hash] of pendingHashes.value) await p.saveTargetHash(key, hash)
     pendingAdopt.value = null
     pendingHashes.value = []
-    msg.value = '已采用云端数据覆盖本地'
+    msg.value = t('cloudCard.adopted')
     msgKind.value = 'ok'
   } catch (e) {
     fail(e)
@@ -441,7 +452,7 @@ async function onConfirmAdopt(): Promise<void> {
 function onCancelAdopt(): void {
   pendingAdopt.value = null
   pendingHashes.value = []
-  msg.value = '已保留冲突副本，未改动本地'
+  msg.value = t('cloudCard.adoptCanceled')
   msgKind.value = 'hint'
 }
 
@@ -483,7 +494,7 @@ async function onConfirmReset(): Promise<void> {
       password: props.sessionSecret,
     })
     await p.saveTargetHash(s.id, r.hash)
-    statusMap.value[s.id] = '已重置'
+    statusMap.value[s.id] = t('cloudCard.reset')
     resettableBackends.value = resettableBackends.value.filter((x) => x !== s.id)
     pendingReset.value = null
   } catch (e) {
@@ -511,10 +522,10 @@ function onAutoIntervalToggle(v: boolean): void {
 }
 /** 定时同步间隔选项（value=分钟数，number 直传回写不再经字符串转换；F6 收口换 MdSelect） */
 const INTERVAL_OPTIONS = [
-  { value: 15, label: '15 分钟' },
-  { value: 60, label: '1 小时' },
-  { value: 360, label: '6 小时' },
-  { value: 1440, label: '每天' },
+  { value: 15, label: t('cloudCard.interval15m') },
+  { value: 60, label: t('cloudCard.interval1h') },
+  { value: 360, label: t('cloudCard.interval6h') },
+  { value: 1440, label: t('cloudCard.intervalDaily') },
 ]
 function onIntervalChange(v: string | number): void {
   autoPrefs.value = { ...autoPrefs.value, intervalMinutes: Number(v) }
@@ -534,25 +545,25 @@ const hasDuplicateNames = computed(() => {
 
 <template>
   <section v-if="platform" class="card cloud">
-    <h2>云同步</h2>
+    <h2>{{ t('cloudCard.title') }}</h2>
     <div v-for="(s, i) in sources" :key="s.id" class="target">
       <div class="target-head">
-        <MdSwitch v-model="s.enabled" :aria-label="`${s.name}启用`" />
+        <MdSwitch v-model="s.enabled" :aria-label="t('cloudCard.ariaEnabled', { name: s.name })" />
         <strong>{{ s.name }}</strong>
-        <MdButton variant="text" class="target-toggle" @click="expanded = expanded === i ? -1 : i">{{ expanded === i ? '收起' : '配置' }}</MdButton>
-        <MdButton variant="text" danger class="target-remove" :disabled="busy || pendingAdopt !== null" @click="askRemove(s.id)">移除</MdButton>
+        <MdButton variant="text" class="target-toggle" @click="expanded = expanded === i ? -1 : i">{{ expanded === i ? t('cloudCard.collapse') : t('cloudCard.configure') }}</MdButton>
+        <MdButton variant="text" danger class="target-remove" :disabled="busy || pendingAdopt !== null" @click="askRemove(s.id)">{{ t('cloudCard.remove') }}</MdButton>
       </div>
       <template v-if="expanded === i">
         <div class="fields">
-          <MdTextField v-model="s.name" label="名称" placeholder="源名称（同类型多份时区分用）" aria-label="源名称" autocomplete="off" />
+          <MdTextField v-model="s.name" :label="t('cloudCard.nameLabel')" :placeholder="t('cloudCard.namePlaceholder')" :aria-label="t('cloudCard.sourceNameAria')" autocomplete="off" />
           <div class="retention-row">
             <MdSegmentedButton
-              :options="RETENTION_OPTIONS" :model-value="s.retention.type" aria-label="保留策略"
+              :options="RETENTION_OPTIONS" :model-value="s.retention.type" :aria-label="t('cloudCard.retentionAria')"
               @update:model-value="onRetentionType(s, $event)"
             />
             <MdTextField
               v-if="s.retention.type === 'keep'" class="keep-n"
-              :model-value="String(s.retention.n)" type="number" label="保留份数" aria-label="保留份数"
+              :model-value="String(s.retention.n)" type="number" :label="t('cloudCard.keepCountLabel')" :aria-label="t('cloudCard.keepCountLabel')"
               :disabled="busy" @update:model-value="onKeepN(s, $event)"
             />
           </div>
@@ -560,56 +571,56 @@ const hasDuplicateNames = computed(() => {
         <!-- 草稿经单元素 v-for 提取局部变量 d，各类型字段区用 backend 守卫窄化联合（见 script isXxxDraft） -->
         <template v-for="d in [credDrafts[s.id]]" :key="s.id">
           <div v-if="isWebdavDraft(d)" class="fields">
-            <MdTextField v-model="d.serverUrl" label="服务器地址" placeholder="服务器地址（https://dav.example.com）" autocomplete="off" />
+            <MdTextField v-model="d.serverUrl" :label="t('cloudCard.serverUrlLabel')" :placeholder="t('cloudCard.serverUrlPlaceholder')" autocomplete="off" />
             <!-- F11：非本机 http 明文地址输入即警告（文案对齐 gist public 警告样式），保存另需显式勾选确认 -->
-            <p v-if="hasPlaintextUrl(d)" class="warn" role="alert">服务器地址为非本机 http 明文连接，用户名与应用密码将随每个请求明文传输，建议改用 https</p>
-            <MdTextField v-model="d.username" label="用户名" placeholder="用户名" autocomplete="off" />
-            <MdTextField v-model="d.password" type="password" label="应用密码" placeholder="应用密码" autocomplete="new-password" />
+            <p v-if="hasPlaintextUrl(d)" class="warn" role="alert">{{ t('cloudCard.webdavPlaintextWarn') }}</p>
+            <MdTextField v-model="d.username" :label="t('cloudCard.usernameLabel')" :placeholder="t('cloudCard.usernamePlaceholder')" autocomplete="off" />
+            <MdTextField v-model="d.password" type="password" :label="t('cloudCard.appPasswordLabel')" :placeholder="t('cloudCard.appPasswordPlaceholder')" autocomplete="new-password" />
           </div>
           <div v-else-if="isS3Draft(d)" class="fields">
-            <MdTextField v-model="d.region" label="Region" placeholder="Region（如 us-east-1）" autocomplete="off" />
+            <MdTextField v-model="d.region" label="Region" :placeholder="t('cloudCard.regionPlaceholder')" autocomplete="off" />
             <MdTextField v-model="d.bucket" label="Bucket" placeholder="Bucket" autocomplete="off" />
             <MdTextField v-model="d.accessKeyId" label="AccessKeyId" placeholder="AccessKeyId" autocomplete="off" />
             <MdTextField v-model="d.secretAccessKey" type="password" label="SecretAccessKey" placeholder="SecretAccessKey" autocomplete="new-password" />
             <!-- sessionToken/endpoint/prefix 为可选字段：undefined 以空串传 MdTextField（modelValue 要求 string），
                  展示与空串/undefined 均显示 placeholder 一致；isBlankCred 对 '' 与 undefined 同判空白 -->
-            <MdTextField :model-value="d.sessionToken ?? ''" type="password" label="STS SessionToken（可选）" placeholder="STS SessionToken（可选）" autocomplete="new-password" @update:model-value="d.sessionToken = $event" />
+            <MdTextField :model-value="d.sessionToken ?? ''" type="password" :label="t('cloudCard.stsLabel')" :placeholder="t('cloudCard.stsLabel')" autocomplete="new-password" @update:model-value="d.sessionToken = $event" />
             <MdTextField :model-value="d.endpoint ?? ''" label="Endpoint" placeholder="Endpoint（可选，如 http://localhost:9000）" autocomplete="off" @update:model-value="d.endpoint = $event" />
             <!-- F11：同 WebDAV，非本机 http endpoint 明文警告（缺省 endpoint 为 AWS https 域名，不触发） -->
-            <p v-if="hasPlaintextUrl(d)" class="warn" role="alert">Endpoint 为非本机 http 明文连接，访问密钥与备份内容将明文传输，建议改用 https</p>
-            <MdTextField :model-value="d.prefix ?? ''" label="Key 前缀（可选）" placeholder="Key 前缀（可选）" autocomplete="off" @update:model-value="d.prefix = $event" />
+            <p v-if="hasPlaintextUrl(d)" class="warn" role="alert">{{ t('cloudCard.s3PlaintextWarn') }}</p>
+            <MdTextField :model-value="d.prefix ?? ''" :label="t('cloudCard.prefixLabel')" :placeholder="t('cloudCard.prefixLabel')" autocomplete="off" @update:model-value="d.prefix = $event" />
             <MdCheckbox
-              :model-value="!!d.forcePathStyle" :disabled="busy" label="强制 path-style（兼容老 bucket / 自建 S3）"
-              aria-label="强制 path-style（兼容老 bucket / 自建 S3）" @update:model-value="d.forcePathStyle = $event"
+              :model-value="!!d.forcePathStyle" :disabled="busy" :label="t('cloudCard.forcePathStyleLabel')"
+              :aria-label="t('cloudCard.forcePathStyleLabel')" @update:model-value="d.forcePathStyle = $event"
             />
           </div>
           <div v-else-if="isGistDraft(d)" class="fields">
             <MdTextField v-model="d.token" type="password" label="GitHub Token" placeholder="GitHub Token" autocomplete="new-password" />
             <MdTextField v-model="d.gistId" label="Gist ID" placeholder="Gist ID" autocomplete="off" />
             <MdCheckbox
-              :model-value="!!d.public" :disabled="busy" label="公开 gist（public）"
-              aria-label="公开 gist（public）" @update:model-value="d.public = $event"
+              :model-value="!!d.public" :disabled="busy" :label="t('cloudCard.gistPublicLabel')"
+              :aria-label="t('cloudCard.gistPublicLabel')" @update:model-value="d.public = $event"
             />
-            <p v-if="d.public" class="warn" role="alert">当前 gist 为 public，备份内容会暴露在公开页，建议改为 secret gist</p>
+            <p v-if="d.public" class="warn" role="alert">{{ t('cloudCard.gistPublicWarn') }}</p>
           </div>
           <div v-else-if="isGDriveDraft(d)" class="fields">
-            <MdTextField v-model="d.accessToken" type="password" label="Access Token（Google OAuth）" placeholder="Access Token（Google OAuth）" autocomplete="new-password" />
+            <MdTextField v-model="d.accessToken" type="password" :label="t('cloudCard.gdriveTokenLabel')" :placeholder="t('cloudCard.gdriveTokenLabel')" autocomplete="new-password" />
           </div>
           <div v-else-if="isOneDriveDraft(d)" class="fields">
-            <MdTextField v-model="d.accessToken" type="password" label="Access Token（Microsoft Graph）" placeholder="Access Token（Microsoft Graph）" autocomplete="new-password" />
+            <MdTextField v-model="d.accessToken" type="password" :label="t('cloudCard.onedriveTokenLabel')" :placeholder="t('cloudCard.onedriveTokenLabel')" autocomplete="new-password" />
           </div>
           <!-- v-if="d" 兼作类型窄化：v-for 单元素 d 在守卫链外无 undefined 窄化，vue-tsc 会报 TS18048 -->
-          <MdTextField v-if="d" :model-value="d.objectPath ?? ''" label="目标文件路径" :placeholder="DEFAULT_OBJECT_PATH" aria-label="目标文件路径" :disabled="busy" @update:model-value="d.objectPath = $event.trim()" />
+          <MdTextField v-if="d" :model-value="d.objectPath ?? ''" label="目标文件路径" :placeholder="DEFAULT_OBJECT_PATH" :aria-label="t('cloudCard.objectPathLabel')" :disabled="busy" @update:model-value="d.objectPath = $event.trim()" />
         </template>
       </template>
       <span v-if="statusFor(s.id)" class="target-status">{{ statusFor(s.id) }}</span>
       <MdButton
         v-if="resettableBackends.includes(s.id)" variant="text" danger class="cloud-reset"
         :disabled="busy || pendingAdopt !== null" @click="askReset(s.id)"
-      >用当前口令重置云端</MdButton>
+      >{{ t('cloudCard.resetCloud') }}</MdButton>
     </div>
     <div class="actions">
-      <MdButton variant="text" class="target-add" aria-haspopup="menu" :aria-expanded="addMenuOpen ? 'true' : 'false'" @click="openAddMenu">添加源</MdButton>
+      <MdButton variant="text" class="target-add" aria-haspopup="menu" :aria-expanded="addMenuOpen ? 'true' : 'false'" @click="openAddMenu">{{ t('cloudCard.addSource') }}</MdButton>
       <!-- MdMenu 只在 open 时渲染；定位/Esc 关闭由组件负责，点选收起在 addTarget 内；triggerEl 供 Esc 回焦 -->
       <MdMenu :x="addMenuPos.x" :y="addMenuPos.y" :open="addMenuOpen" :trigger-el="addMenuTrigger" @close="addMenuOpen = false">
         <MdButton v-for="b in addableBackends" :key="b" variant="text" class="menu-item" @click="addTarget(b)">{{ BACKEND_LABEL[b] }}</MdButton>
@@ -617,49 +628,49 @@ const hasDuplicateNames = computed(() => {
       <!-- F11：存在非本机 http 明文地址时保存前要求显式确认（勾选随保存复位，复用需重新勾选） -->
       <MdCheckbox
         v-if="needsPlaintextAck" :model-value="plaintextAck" :disabled="busy"
-        label="我了解凭据将以明文传输" aria-label="我了解凭据将以明文传输" @update:model-value="plaintextAck = $event"
+        :label="t('cloudCard.plaintextAckLabel')" :aria-label="t('cloudCard.plaintextAckLabel')" @update:model-value="plaintextAck = $event"
       />
-      <MdButton class="creds-save" :disabled="busy" @click="onSaveCreds">保存凭据</MdButton>
-      <MdButton class="cloud-sync" :disabled="busy || !sessionSecret || pendingAdopt !== null || pendingReset !== null || pendingRemove !== null" @click="onSync">立即同步</MdButton>
+      <MdButton class="creds-save" :disabled="busy" @click="onSaveCreds">{{ t('cloudCard.saveCreds') }}</MdButton>
+      <MdButton class="cloud-sync" :disabled="busy || !sessionSecret || pendingAdopt !== null || pendingReset !== null || pendingRemove !== null" @click="onSync">{{ t('cloudCard.syncNow') }}</MdButton>
     </div>
-    <p v-if="!sessionSecret" class="hint">先在上方设置备份口令。</p>
-    <p v-if="hasDuplicateNames" class="hint">同名源请用「名称」区分（同类型可添加多份）。</p>
+    <p v-if="!sessionSecret" class="hint">{{ t('cloudCard.setPwHint') }}</p>
+    <p v-if="hasDuplicateNames" class="hint">{{ t('cloudCard.duplicateNamesHint') }}</p>
     <div v-if="platform.autoPrefs" class="auto-block">
-      <p class="hint">自动执行前会与上次内容比对，无变化则跳过写入。</p>
+      <p class="hint">{{ t('cloudCard.autoHint') }}</p>
       <div class="auto-row">
         <div class="auto-item">
           <MdSwitch :model-value="autoPrefs.onChange" aria-label="变更后自动同步" @update:model-value="onAutoOnChange" />
-          <span>变更后自动同步</span>
+          <span>{{ t('cloudCard.autoOnChange') }}</span>
         </div>
         <div class="auto-item">
           <MdSwitch :model-value="autoPrefs.onInterval" aria-label="定时自动同步" @update:model-value="onAutoIntervalToggle" />
-          <span>定时自动同步</span>
+          <span>{{ t('cloudCard.autoInterval') }}</span>
         </div>
         <div class="auto-item">
           <MdSelect
             :model-value="autoPrefs.intervalMinutes" :options="INTERVAL_OPTIONS"
-            label="间隔" aria-label="自动同步间隔" @update:model-value="onIntervalChange"
+            :label="t('cloudCard.intervalLabel')" :aria-label="t('cloudCard.intervalAria')" @update:model-value="onIntervalChange"
           />
         </div>
       </div>
-      <span v-if="platform.loadAutoStatus" class="auto-status">上次自动同步：{{ autoStatus ?? '暂无' }}</span>
+      <span v-if="platform.loadAutoStatus" class="auto-status">{{ t('cloudCard.lastAuto', { status: autoStatus ?? t('cloudCard.none') }) }}</span>
     </div>
     <div v-if="pendingAdopt" class="confirm-row">
-      <span>云端数据较新，已保留本地冲突副本，采用云端将覆盖本地。</span>
-      <MdButton danger :disabled="busy" @click="onConfirmAdopt">采用云端</MdButton>
-      <MdButton variant="text" :disabled="busy" @click="onCancelAdopt">取消</MdButton>
+      <span>{{ t('cloudCard.adoptConfirm') }}</span>
+      <MdButton danger :disabled="busy" @click="onConfirmAdopt">{{ t('cloudCard.adoptBtn') }}</MdButton>
+      <MdButton variant="text" :disabled="busy" @click="onCancelAdopt">{{ t('cloudCard.cancel') }}</MdButton>
     </div>
     <div v-if="pendingReset" class="confirm-row reset-confirm-row">
-      <span>将用当前备份口令重新加密并覆盖云端源「{{ sourceName(pendingReset) }}」的对象，云端旧数据将被替换。确认重置？</span>
-      <MdButton danger :disabled="busy" @click="onConfirmReset">确认重置</MdButton>
-      <MdButton variant="text" :disabled="busy" @click="onCancelReset">取消</MdButton>
+      <span>{{ t('cloudCard.resetConfirm', { name: sourceName(pendingReset) }) }}</span>
+      <MdButton danger :disabled="busy" @click="onConfirmReset">{{ t('cloudCard.confirmReset') }}</MdButton>
+      <MdButton variant="text" :disabled="busy" @click="onCancelReset">{{ t('cloudCard.cancel') }}</MdButton>
     </div>
     <div v-if="pendingRemove" class="confirm-row remove-confirm-row">
       <!-- 锁定态无法立即删除保管区凭据（缓存为空不误触未解锁 reject）：如实提示改由解锁后对账清理 -->
-      <span v-if="sessionSecret">移除源「{{ sourceName(pendingRemove) }}」？已保存的凭据将从本机删除，云端对象不受影响。</span>
-      <span v-else>移除源「{{ sourceName(pendingRemove) }}」？本机保存的凭据缓存暂不可用，将随下次解锁对账自动清理；云端对象不受影响。</span>
-      <MdButton danger :disabled="busy" @click="onConfirmRemove">确认移除</MdButton>
-      <MdButton variant="text" :disabled="busy" @click="onCancelRemove">取消</MdButton>
+      <span v-if="sessionSecret">{{ t('cloudCard.removeConfirmUnlocked', { name: sourceName(pendingRemove) }) }}</span>
+      <span v-else>{{ t('cloudCard.removeConfirmLocked', { name: sourceName(pendingRemove) }) }}</span>
+      <MdButton danger :disabled="busy" @click="onConfirmRemove">{{ t('cloudCard.confirmRemove') }}</MdButton>
+      <MdButton variant="text" :disabled="busy" @click="onCancelRemove">{{ t('cloudCard.cancel') }}</MdButton>
     </div>
     <div v-if="msg" :class="msgKind" role="status">{{ msg }}</div>
   </section>

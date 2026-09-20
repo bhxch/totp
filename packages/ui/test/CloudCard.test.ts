@@ -16,6 +16,7 @@ vi.mock('../src/components/cloudPlatform', async (importOriginal) => {
 import { pushEnvelope, syncMultipleTargets, type BackupSource, type CloudBackend, type CloudCred } from '@totp/core'
 import { createCloudBackend } from '../src/components/cloudPlatform'
 import CloudCard from '../src/components/CloudCard.vue'
+import { createTestI18n } from './helpers/i18n'
 import type { CloudPlatform } from '../src/components/cloudPlatform'
 
 const mockedSync = vi.mocked(syncMultipleTargets)
@@ -47,7 +48,7 @@ function makePlatform(over: Partial<CloudPlatform> = {}): CloudPlatform {
 }
 
 async function mountCard(p: CloudPlatform, sessionSecret: string | null = 'pw') {
-  const w = mount(CloudCard, { props: { platform: p, sessionSecret } })
+  const w = mount(CloudCard, { global: { plugins: [createTestI18n()] }, props: { platform: p, sessionSecret } })
   await flushPromises() // onMounted 异步回填 sources/credDrafts/autoPrefs/autoStatus
   return w
 }

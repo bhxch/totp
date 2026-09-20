@@ -7,6 +7,7 @@ import type { BackupSource, CloudCred } from '@totp/core'
 import { isPlaintextHttpUrl } from '../src/components/cloudPlatform'
 import type { CloudPlatform } from '../src/components/cloudPlatform'
 import CloudCard from '../src/components/CloudCard.vue'
+import { createTestI18n } from './helpers/i18n'
 
 const WEBDAV_CRED: CloudCred = { backend: 'webdav', serverUrl: 'https://dav.example.com', username: 'alice', password: 'davpw' }
 
@@ -31,7 +32,7 @@ function makePlatform(over: Partial<CloudPlatform> = {}): CloudPlatform {
 }
 
 async function mountCard(p: CloudPlatform) {
-  const w = mount(CloudCard, { props: { platform: p, sessionSecret: 'pw' } })
+  const w = mount(CloudCard, { global: { plugins: [createTestI18n()] }, props: { platform: p, sessionSecret: 'pw' } })
   await flushPromises() // onMounted 异步回填 sources/credDrafts
   return w
 }

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import BackupCard from '../src/components/BackupCard.vue'
+import { createTestI18n } from './helpers/i18n'
 import type { BackupAutoPrefs, BackupPlatform, LocalSourceView } from '../src/components/backupPlatform'
 
 const VALID_VAULT = JSON.stringify({ version: 2, entries: [], tags: [], updatedAt: 0 })
@@ -18,7 +19,7 @@ describe('BackupCard', () => {
 
   it('无 sessionSecret：立即备份/导出按钮禁用且显示设置口令提示', () => {
     const p = makePlatform({ exportToFile: vi.fn(async () => true) })
-    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: null } })
+    const w = mount(BackupCard, { global: { plugins: [createTestI18n()] }, props: { platform: p, vaultJson: '{}', sessionSecret: null } })
     expect((w.find('button.backup-now').element as HTMLButtonElement).disabled).toBe(true)
     const exportBtn = w.findAll('button').find((b) => b.text() === '导出到文件')!
     expect((exportBtn.element as HTMLButtonElement).disabled).toBe(true)
@@ -29,7 +30,7 @@ describe('BackupCard', () => {
 
   it('有 sessionSecret：立即备份以 (vaultJson, sessionSecret) 调 createBackup 并展示宿主返回的中文摘要', async () => {
     const p = makePlatform()
-    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{"v":1}', sessionSecret: 'sec' } })
+    const w = mount(BackupCard, { global: { plugins: [createTestI18n()] }, props: { platform: p, vaultJson: '{"v":1}', sessionSecret: 'sec' } })
     await w.find('button.backup-now').trigger('click')
     await vi.waitFor(() => expect(p.createBackup).toHaveBeenCalledWith('{"v":1}', 'sec'))
     expect(w.text()).toContain('已备份到 1 个目录')
@@ -37,7 +38,7 @@ describe('BackupCard', () => {
 
   it('无启用源：宿主返回空串时摘要兜底「未配置启用目录」', async () => {
     const p = makePlatform({ createBackup: vi.fn(async () => '') })
-    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
+    const w = mount(BackupCard, { global: { plugins: [createTestI18n()] }, props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
     await w.find('button.backup-now').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('未配置启用目录'))
   })
@@ -50,7 +51,7 @@ describe('BackupCard', () => {
         .mockResolvedValueOnce({ json: VALID_VAULT }),
       replaceAllOp: vi.fn(async () => {}),
     })
-    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'pw1' } })
+    const w = mount(BackupCard, { global: { plugins: [createTestI18n()] }, props: { platform: p, vaultJson: '{}', sessionSecret: 'pw1' } })
     // 备份列表由 listBackups 异步填充：先等「恢复」按钮出现
     await vi.waitFor(() => expect(w.findAll('button').some((b) => b.text() === '恢复')).toBe(true))
     const btn = w.findAll('button').find((b) => b.text() === '恢复')!
@@ -68,7 +69,7 @@ describe('BackupCard', () => {
 
   it('sessionSecret=null 点恢复：不调平台方法，直接展开回退口令输入', async () => {
     const p = makePlatform({ restoreFromPicker: vi.fn(async () => null) })
-    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: null } })
+    const w = mount(BackupCard, { global: { plugins: [createTestI18n()] }, props: { platform: p, vaultJson: '{}', sessionSecret: null } })
     const btn = w.findAll('button').find((b) => b.text() === '从文件恢复')!
     await btn.trigger('click')
     expect(p.restoreFromPicker).not.toHaveBeenCalled()
@@ -80,7 +81,7 @@ describe('BackupCard', () => {
       listBackups: vi.fn(async () => [{ sourceId: 's1', name: 'b1.json' }]),
       restoreByName: vi.fn().mockRejectedValue(new Error('decrypt failed')),
     })
-    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'pw1' } })
+    const w = mount(BackupCard, { global: { plugins: [createTestI18n()] }, props: { platform: p, vaultJson: '{}', sessionSecret: 'pw1' } })
     await vi.waitFor(() => expect(w.findAll('button').some((b) => b.text() === '恢复')).toBe(true))
     await w.findAll('button').find((b) => b.text() === '恢复')!.trigger('click')
     // 首发失败：静默展开回退区，无错误提示
@@ -98,7 +99,7 @@ describe('BackupCard', () => {
       restoreFromPicker: vi.fn(async () => ({ json: JSON.stringify({ version: 2, entries: [] }) })),
       replaceAllOp: vi.fn(async () => {}),
     })
-    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'a' } })
+    const w = mount(BackupCard, { global: { plugins: [createTestI18n()] }, props: { platform: p, vaultJson: '{}', sessionSecret: 'a' } })
     const btn = w.findAll('button').find((b) => b.text() === '从文件恢复')!
     await btn.trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('备份内容不是有效的 vault 数据'))
@@ -108,7 +109,7 @@ describe('BackupCard', () => {
   })
 
   it('能力探测：platform 未提供 getAutoPrefs/listLocalSources → 自动区与源区不渲染，立即备份仍在（createBackup 必需）', () => {
-    const w = mount(BackupCard, { props: { platform: makePlatform(), vaultJson: '{}', sessionSecret: 'sec' } })
+    const w = mount(BackupCard, { global: { plugins: [createTestI18n()] }, props: { platform: makePlatform(), vaultJson: '{}', sessionSecret: 'sec' } })
     expect(w.find('.auto-row').exists()).toBe(false)
     expect(w.find('.sources-block').exists()).toBe(false)
     expect(w.find('button.backup-now').exists()).toBe(true)
@@ -120,7 +121,7 @@ describe('BackupCard', () => {
       getAutoPrefs: vi.fn(() => prefs),
       setAutoPrefs: vi.fn(async () => {}),
     })
-    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
+    const w = mount(BackupCard, { global: { plugins: [createTestI18n()] }, props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
     const onChangeSw = w.find('input[aria-label="变更后自动备份"]')
     expect(onChangeSw.exists()).toBe(true)
     await onChangeSw.setValue(true)
@@ -139,7 +140,7 @@ describe('BackupCard', () => {
       getAutoPrefs: vi.fn(() => ({ onChange: false, onInterval: false, intervalMinutes: 60 })),
       setAutoPrefs: vi.fn(async () => {}),
     })
-    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
+    const w = mount(BackupCard, { global: { plugins: [createTestI18n()] }, props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
     await w.find('button[aria-label="自动备份间隔"]').trigger('click')
     await w.findAll('[role="option"]').find((o) => o.text() === '每天')!.trigger('click')
     await vi.waitFor(() =>
@@ -152,30 +153,30 @@ describe('BackupCard', () => {
       getAutoPrefs: vi.fn(() => ({ onChange: false, onInterval: false, intervalMinutes: 60 })),
       getAutoStatus: vi.fn(async () => '2026-09-16 12:00 成功：已备份'),
     })
-    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
+    const w = mount(BackupCard, { global: { plugins: [createTestI18n()] }, props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
     await vi.waitFor(() => expect(w.find('.auto-status').text()).toBe('上次自动备份：2026-09-16 12:00 成功：已备份'))
     // 读不到（null）：显示「暂无」
     const p2 = makePlatform({
       getAutoPrefs: vi.fn(() => ({ onChange: false, onInterval: false, intervalMinutes: 60 })),
       getAutoStatus: vi.fn(async () => null),
     })
-    const w2 = mount(BackupCard, { props: { platform: p2, vaultJson: '{}', sessionSecret: 'sec' } })
+    const w2 = mount(BackupCard, { global: { plugins: [createTestI18n()] }, props: { platform: p2, vaultJson: '{}', sessionSecret: 'sec' } })
     await vi.waitFor(() => expect(w2.find('.auto-status').text()).toBe('上次自动备份：暂无'))
     // 平台未提供 getAutoStatus：状态行不渲染
-    const w3 = mount(BackupCard, { props: { platform: makePlatform({ getAutoPrefs: vi.fn(() => ({ onChange: false, onInterval: false, intervalMinutes: 60 })) }), vaultJson: '{}', sessionSecret: 'sec' } })
+    const w3 = mount(BackupCard, { global: { plugins: [createTestI18n()] }, props: { platform: makePlatform({ getAutoPrefs: vi.fn(() => ({ onChange: false, onInterval: false, intervalMinutes: 60 })) }), vaultJson: '{}', sessionSecret: 'sec' } })
     await flushPromises()
     expect(w3.find('.auto-status').exists()).toBe(false)
   })
 
   it('导出到文件：exportToFile 成功显示「已导出到文件」，取消（false）显示「已取消」', async () => {
     const p = makePlatform({ exportToFile: vi.fn(async () => true) })
-    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
+    const w = mount(BackupCard, { global: { plugins: [createTestI18n()] }, props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
     await w.findAll('button').find((b) => b.text() === '导出到文件')!.trigger('click')
     await vi.waitFor(() => expect(p.exportToFile).toHaveBeenCalledWith('{}', 'sec'))
     expect(w.text()).toContain('已导出到文件')
     // 用户在系统对话框取消：saved=false → 提示「已取消」
     const p2 = makePlatform({ exportToFile: vi.fn(async () => false) })
-    const w2 = mount(BackupCard, { props: { platform: p2, vaultJson: '{}', sessionSecret: 'sec' } })
+    const w2 = mount(BackupCard, { global: { plugins: [createTestI18n()] }, props: { platform: p2, vaultJson: '{}', sessionSecret: 'sec' } })
     await w2.findAll('button').find((b) => b.text() === '导出到文件')!.trigger('click')
     await vi.waitFor(() => expect(w2.text()).toContain('已取消'))
   })
@@ -186,7 +187,7 @@ describe('BackupCard', () => {
       restoreByName: vi.fn(async () => ({ json: VALID_VAULT })),
       replaceAllOp: vi.fn(async () => {}),
     })
-    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'pw1' } })
+    const w = mount(BackupCard, { global: { plugins: [createTestI18n()] }, props: { platform: p, vaultJson: '{}', sessionSecret: 'pw1' } })
     await vi.waitFor(() => expect(w.findAll('button').some((b) => b.text() === '恢复')).toBe(true))
     await w.findAll('button').find((b) => b.text() === '恢复')!.trigger('click')
     await vi.waitFor(() => expect(w.find('.confirm-row').exists()).toBe(true))
@@ -199,7 +200,7 @@ describe('BackupCard', () => {
       restoreByName: vi.fn(async () => ({ json: VALID_VAULT })),
       replaceAllOp: vi.fn(async () => { throw new Error('replace failed') }),
     })
-    const w2 = mount(BackupCard, { props: { platform: p2, vaultJson: '{}', sessionSecret: 'pw1' } })
+    const w2 = mount(BackupCard, { global: { plugins: [createTestI18n()] }, props: { platform: p2, vaultJson: '{}', sessionSecret: 'pw1' } })
     await vi.waitFor(() => expect(w2.findAll('button').some((b) => b.text() === '恢复')).toBe(true))
     await w2.findAll('button').find((b) => b.text() === '恢复')!.trigger('click')
     await vi.waitFor(() => expect(w2.find('.confirm-row').exists()).toBe(true))
@@ -211,7 +212,7 @@ describe('BackupCard', () => {
     const p = makePlatform({
       listBackups: vi.fn(async () => [{ sourceId: 's1', name: 'vault-1.totpbackup' }]),
     })
-    const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
+    const w = mount(BackupCard, { global: { plugins: [createTestI18n()] }, props: { platform: p, vaultJson: '{}', sessionSecret: 'sec' } })
     await w.find('button.backup-now').trigger('click')
     await flushPromises()
     expect(p.listBackups).toHaveBeenCalled()

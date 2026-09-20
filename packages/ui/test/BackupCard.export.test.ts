@@ -2,6 +2,7 @@ import { mount } from '@vue/test-utils'
 import type { VueWrapper } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import BackupCard from '../src/components/BackupCard.vue'
+import { createTestI18n } from './helpers/i18n'
 import type { BackupPlatform } from '../src/components/backupPlatform'
 
 const basePlatform = (over: Partial<BackupPlatform> = {}): BackupPlatform => ({
@@ -12,7 +13,7 @@ const basePlatform = (over: Partial<BackupPlatform> = {}): BackupPlatform => ({
 }) as BackupPlatform
 
 const mountCard = (platform: BackupPlatform) =>
-  mount(BackupCard, { props: { platform, vaultJson: '{"version":2,"entries":[],"tags":[],"updatedAt":0}', sessionSecret: 'pw' } })
+  mount(BackupCard, { global: { plugins: [createTestI18n()] }, props: { platform, vaultJson: '{"version":2,"entries":[],"tags":[],"updatedAt":0}', sessionSecret: 'pw' } })
 
 /** MdSelect 点选（自定义弹层组件，brief 的 .setValue 不适用）：data-test 定位触发按钮 → 按显示文本点选项（F6 间隔用例同款交互） */
 async function pickFormat(w: VueWrapper, label: string): Promise<void> {

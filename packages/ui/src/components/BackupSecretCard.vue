@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { VueStore } from '../store'
 import MdButton from './md/MdButton.vue'
 import MdSwitch from './md/MdSwitch.vue'
@@ -9,6 +10,8 @@ const props = defineProps<{
   /** 全局响应式 store：读 hasEncryption/backupSecret/bagStored，写走 setBackupSecret/forgetBackupSecret */
   store: VueStore
 }>()
+
+const { t } = useI18n()
 
 const password = ref('')
 const confirmPw = ref('')
@@ -25,8 +28,8 @@ const storedInBag = computed(() => props.store.bagStored.value)
 
 /** 状态行三态：未设置 / 会话内已启用 / 已存入保管区 */
 const statusText = computed(() => {
-  if (!sessionSecret.value) return '未设置'
-  return storedInBag.value ? '已存入保管区，解锁即用' : '会话内已启用'
+  if (!sessionSecret.value) return t('backupSecretCard.statusUnset')
+  return storedInBag.value ? t('backupSecretCard.statusStoredInBag') : t('backupSecretCard.statusSessionOnly')
 })
 
 function fail(e: unknown): void {
@@ -36,8 +39,8 @@ function fail(e: unknown): void {
 
 /** 启用前校验：非空且两次一致（错误不清空输入，便于修改重试） */
 function validatePw(): string | null {
-  if (!password.value.trim()) return '请输入口令'
-  if (password.value !== confirmPw.value) return '两次输入的口令不一致'
+  if (!password.value.trim()) return t('backupSecretCard.passphraseRequired')
+  if (password.value !== confirmPw.value) return t('backupSecretCard.passphraseMismatch')
   return null
 }
 
@@ -50,7 +53,7 @@ async function onEnable(): Promise<void> {
     await props.store.setBackupSecret(password.value.trim(), remember.value)
     password.value = ''
     confirmPw.value = ''
-    msg.value = '备份口令已启用'
+    msg.value = t('backupSecretCard.enabled')
     msgKind.value = 'ok'
   } catch (e) {
     fail(e)
@@ -64,7 +67,7 @@ async function onClear(): Promise<void> {
   msg.value = ''
   try {
     await props.store.forgetBackupSecret()
-    msg.value = '已清除'
+    msg.value = t('backupSecretCard.cleared')
     msgKind.value = 'ok'
   } catch (e) {
     fail(e)
@@ -76,20 +79,20 @@ async function onClear(): Promise<void> {
 
 <template>
   <section class="card backup-secret">
-    <h2>备份口令</h2>
-    <div class="hint desc">用于加密本地备份文件与云端同步对象，两者共用；开启记住后存入库旁的加密保管区（受本地主口令保护），解锁库即可用；未记住则锁定或关闭页面后需重新输入。</div>
+    <h2>{{ t('backupSecretCard.title') }}</h2>
+    <div class="hint desc">{{ t('backupSecretCard.desc') }}</div>
     <div class="pw-row">
-      <MdTextField v-model="password" type="password" label="备份口令" placeholder="备份口令" autocomplete="new-password" />
-      <MdTextField v-model="confirmPw" type="password" label="确认口令" placeholder="确认口令" autocomplete="new-password" />
+      <MdTextField v-model="password" type="password" :label="t('backupSecretCard.pwLabel')" :placeholder="t('backupSecretCard.pwPlaceholder')" autocomplete="new-password" />
+      <MdTextField v-model="confirmPw" type="password" :label="t('backupSecretCard.confirmLabel')" :placeholder="t('backupSecretCard.confirmPlaceholder')" autocomplete="new-password" />
     </div>
     <div class="remember-row">
-      <MdSwitch v-model="remember" aria-label="记住（存入保管区）" :disabled="!hasEnc" />
-      <span>记住（存入保管区）</span>
+      <MdSwitch v-model="remember" :aria-label="t('backupSecretCard.remember')" :disabled="!hasEnc" />
+      <span>{{ t('backupSecretCard.remember') }}</span>
     </div>
-    <div class="hint remember-hint">开启后以密文存入保管区（需已启用加密），解锁库即可用，系统原生解锁方式同样生效；已启用会话后再拨动本开关不会立即生效，随下次「启用会话」生效。</div>
+    <div class="hint remember-hint">{{ t('backupSecretCard.rememberHint') }}</div>
     <div class="actions">
-      <MdButton class="secret-save" :disabled="busy" @click="onEnable">启用会话</MdButton>
-      <MdButton v-if="sessionSecret" class="secret-clear" variant="tonal" :disabled="busy" @click="onClear">清除</MdButton>
+      <MdButton class="secret-save" :disabled="busy" @click="onEnable">{{ t('backupSecretCard.enableSession') }}</MdButton>
+      <MdButton v-if="sessionSecret" class="secret-clear" variant="tonal" :disabled="busy" @click="onClear">{{ t('backupSecretCard.clear') }}</MdButton>
     </div>
     <div class="status">{{ statusText }}</div>
     <div v-if="msg" :class="msgKind" role="status">{{ msg }}</div>

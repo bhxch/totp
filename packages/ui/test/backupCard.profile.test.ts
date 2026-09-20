@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import type { KdfProfile } from '@totp/core'
 import BackupCard from '../src/components/BackupCard.vue'
+import { createTestI18n } from './helpers/i18n'
 import type { BackupPlatform } from '../src/components/backupPlatform'
 
 function makePlatform(over: Partial<BackupPlatform> = {}): BackupPlatform {
@@ -27,7 +28,7 @@ function makeProfileApi(initial: KdfProfile = 'balanced') {
 }
 
 async function mountCard(p: BackupPlatform, sessionSecret: string | null = 'pw') {
-  const w = mount(BackupCard, { props: { platform: p, vaultJson: '{}', sessionSecret } })
+  const w = mount(BackupCard, { global: { plugins: [createTestI18n()] }, props: { platform: p, vaultJson: '{}', sessionSecret } })
   await flushPromises()
   return w
 }
@@ -54,7 +55,7 @@ describe('BackupCard 备份加密强度档位（plan16 T11.5）', () => {
       get: vi.fn((): Promise<KdfProfile> => new Promise((r) => { resolveGet = r })),
       set: vi.fn(),
     }
-    const w = mount(BackupCard, { props: { platform: makePlatform({ backupKdfProfile: api }), vaultJson: '{}', sessionSecret: 'pw' } })
+    const w = mount(BackupCard, { global: { plugins: [createTestI18n()] }, props: { platform: makePlatform({ backupKdfProfile: api }), vaultJson: '{}', sessionSecret: 'pw' } })
     await flushPromises()
     expect(w.find('.profile-row').exists()).toBe(false) // 载入完成前不渲染（不闪默认值）
     resolveGet('paranoid')

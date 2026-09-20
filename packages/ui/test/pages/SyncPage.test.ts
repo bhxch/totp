@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { createMemoryStorage, newEntryFromUri } from '@totp/core'
 import { createVueStore } from '../../src/store'
 import SyncPage from '../../src/pages/SyncPage.vue'
+import { createTestI18n } from '../helpers/i18n'
 import BackupCard from '../../src/components/BackupCard.vue'
 import CloudCard from '../../src/components/CloudCard.vue'
 import SyncCard from '../../src/components/SyncCard.vue'
@@ -49,7 +50,7 @@ function syncPlatform(): SyncPlatform {
 describe('SyncPage 三区块按 props 缺省渲染', () => {
   it('三平台齐备 → 本地备份/云同步/浏览器同步三区块都渲染', async () => {
     const s = await readyStore()
-    const w = mount(SyncPage, {
+    const w = mount(SyncPage, { global: { plugins: [createTestI18n()] },
       props: { store: s, platform: backupPlatform(), cloudPlatform: cloudPlatform(), syncPlatform: syncPlatform() },
     })
     expect(w.findComponent(BackupCard).exists()).toBe(true)
@@ -59,7 +60,7 @@ describe('SyncPage 三区块按 props 缺省渲染', () => {
 
   it('platform 缺省 → 不渲染本地备份区块', async () => {
     const s = await readyStore()
-    const w = mount(SyncPage, {
+    const w = mount(SyncPage, { global: { plugins: [createTestI18n()] },
       props: { store: s, platform: null, cloudPlatform: cloudPlatform(), syncPlatform: syncPlatform() },
     })
     expect(w.findComponent(BackupCard).exists()).toBe(false)
@@ -69,7 +70,7 @@ describe('SyncPage 三区块按 props 缺省渲染', () => {
 
   it('cloudPlatform 缺省 → 不渲染云同步区块', async () => {
     const s = await readyStore()
-    const w = mount(SyncPage, {
+    const w = mount(SyncPage, { global: { plugins: [createTestI18n()] },
       props: { store: s, platform: backupPlatform(), cloudPlatform: null, syncPlatform: syncPlatform() },
     })
     expect(w.findComponent(BackupCard).exists()).toBe(true)
@@ -79,7 +80,7 @@ describe('SyncPage 三区块按 props 缺省渲染', () => {
 
   it('syncPlatform 缺省 → 不渲染浏览器同步区块', async () => {
     const s = await readyStore()
-    const w = mount(SyncPage, {
+    const w = mount(SyncPage, { global: { plugins: [createTestI18n()] },
       props: { store: s, platform: backupPlatform(), cloudPlatform: cloudPlatform(), syncPlatform: null },
     })
     expect(w.findComponent(BackupCard).exists()).toBe(true)
@@ -89,7 +90,7 @@ describe('SyncPage 三区块按 props 缺省渲染', () => {
 
   it('BackupCard 收到 vault JSON 快照（含条目数据）', async () => {
     const s = await readyStore()
-    const w = mount(SyncPage, {
+    const w = mount(SyncPage, { global: { plugins: [createTestI18n()] },
       props: { store: s, platform: backupPlatform(), cloudPlatform: null, syncPlatform: null },
     })
     const json = String(w.findComponent(BackupCard).props('vaultJson'))

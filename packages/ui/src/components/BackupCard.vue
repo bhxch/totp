@@ -2,6 +2,7 @@
 import type { KdfProfile, Vault } from '@totp/core'
 import { exportAegisEncrypted, exportAegisPlaintext, exportOtpauthText } from '@totp/core'
 import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { BackupAutoPrefs, BackupPlatform, LocalSourceView } from './backupPlatform'
 import { parseVaultJson } from './parseVaultJson'
 import MdButton from './md/MdButton.vue'
@@ -10,6 +11,8 @@ import MdSegmentedButton from './md/MdSegmentedButton.vue'
 import MdSelect from './md/MdSelect.vue'
 import MdSwitch from './md/MdSwitch.vue'
 import MdTextField from './md/MdTextField.vue'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   /** 平台备份实现；null 时整卡不渲染（popup 不受影响） */
@@ -46,9 +49,9 @@ const autoStatus = ref<string | null>(null)
 const backupProfile = ref<KdfProfile | null>(null)
 /** 档位三档（文案与 SecurityCard KDF_OPTIONS 同口径） */
 const BACKUP_PROFILE_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: 'fast', label: '更快（低端机友好）' },
-  { value: 'balanced', label: '平衡（默认）' },
-  { value: 'paranoid', label: '更慢更耐暴力破解' },
+  { value: 'fast', label: t('backupCard.profileFast') },
+  { value: 'balanced', label: t('backupCard.profileBalanced') },
+  { value: 'paranoid', label: t('backupCard.profileParanoid') },
 ]
 
 /** 本地源列表（plan16 §3「目录=源」；platform.listLocalSources 提供才渲染源区，extension 零影响） */
@@ -73,7 +76,7 @@ async function onBackup(): Promise<void> {
   msg.value = ''
   try {
     const r = await props.platform!.createBackup(props.vaultJson, props.sessionSecret)
-    msg.value = r.trim() !== '' ? r : '未配置启用目录'
+    msg.value = r.trim() !== '' ? r : t('backupCard.noEnabledDirs')
     msgKind.value = 'ok'
     if (props.platform?.listBackups) await refreshList()
   } catch (e) {
@@ -90,10 +93,10 @@ async function onExport(): Promise<void> {
   try {
     const saved = await props.platform!.exportToFile!(props.vaultJson, props.sessionSecret)
     if (saved === false) {
-      msg.value = '已取消'
+      msg.value = t('backupCard.canceled')
       msgKind.value = 'hint'
     } else {
-      msg.value = '已导出到文件'
+      msg.value = t('backupCard.exportedToFile')
       msgKind.value = 'ok'
     }
   } catch (e) {
@@ -107,10 +110,10 @@ async function onExport(): Promise<void> {
 /** 四格式：totp-backup=现状加密 .totpbackup（exportToFile）；其余为文本格式（saveTextFile，宿主提供才渲染本区） */
 const fmt = ref('totp-backup')
 const EXPORT_FORMAT_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: 'totp-backup', label: '应用备份（.totpbackup）' },
-  { value: 'otpauth-text', label: 'otpauth 文本（.txt）' },
-  { value: 'aegis-plain', label: 'Aegis 明文 JSON' },
-  { value: 'aegis-encrypted', label: 'Aegis 加密 JSON' },
+  { value: 'totp-backup', label: t('backupCard.fmtAppBackup') },
+  { value: 'otpauth-text', label: t('backupCard.fmtOtpauthText') },
+  { value: 'aegis-plain', label: t('backupCard.fmtAegisPlain') },
+  { value: 'aegis-encrypted', label: t('backupCard.fmtAegisEncrypted') },
 ]
 /** Aegis 加密导出的独立口令（与备份口令无关，仅作用于本次导出文件） */
 const encPw = ref('')
@@ -128,7 +131,7 @@ const runDisabled = computed(
 )
 
 /** 确认行文案（评审 R1：确认行仅服务明文两种，spec §2.3 固定警示；加密导出点「导出」直接执行） */
-const EXPORT_CONFIRM_TEXT = '导出为明文，任何人读取该内容即可获取全部密钥，确认继续？'
+const EXPORT_CONFIRM_TEXT = t('backupCard.exportConfirmText')
 
 /** 切格式收起上一格式挂起的确认行 */
 function onFmtChange(v: string | number): void {
@@ -163,7 +166,7 @@ async function runExport(): Promise<void> {
   try {
     if (fmt.value === 'otpauth-text') {
       const saved = await save('totp-export.txt', exportOtpauthText(v))
-      msg.value = saved ? '已导出' : '已取消'
+      msg.value = saved ? t('backupCard.exported') : t('backupCard.canceled')
       msgKind.value = saved ? 'ok' : 'hint'
     } else if (fmt.value === 'aegis-plain') {
       const { json, report } = exportAegisPlaintext(v)
@@ -185,8 +188,10 @@ async function runExport(): Promise<void> {
 /** 文本导出反馈：取消=hint；成功时多余标签（Aegis 条目仅支持单分组，spec §2.2）随文案提示 */
 function okWithDropped(saved: boolean, report: { droppedTagCount: number }): void {
   msg.value = !saved
-    ? '已取消'
-    : '已导出' + (report.droppedTagCount > 0 ? `（${report.droppedTagCount} 个多余标签未导出：Aegis 条目仅支持单分组）` : '')
+    ? t('backupCard.canceled')
+    : report.droppedTagCount > 0
+      ? t('backupCard.exportedWithDropped', { count: report.droppedTagCount })
+      : t('backupCard.exported')
   msgKind.value = saved ? 'ok' : 'hint'
 }
 
@@ -215,7 +220,7 @@ function newSourceId(): string {
 
 /** 目录显示名：末段（兼容 \ 与 / 分隔）；解析不出回落「本地备份」 */
 function dirLabelOf(dir: string): string {
-  return dir.split(/[\\/]/).filter((s) => s !== '').pop() ?? '本地备份'
+  return dir.split(/[\\/]/).filter((s) => s !== '').pop() ?? t('backupCard.localBackup')
 }
 
 /** 「添加目录」：选目录 → 以目录末段为名建源（keep 3、enabled 开）落盘并刷新列表；取消不动 */
@@ -259,8 +264,8 @@ function onNameCommit(s: LocalSourceView): void {
 
 /** 保留策略二选（MdSegmentedButton 选项，沿 T8 CloudCard 口径） */
 const RETENTION_OPTIONS = [
-  { value: 'overwrite', label: '覆盖' },
-  { value: 'keep', label: '保留最近' },
+  { value: 'overwrite', label: t('backupCard.retentionOverwrite') },
+  { value: 'keep', label: t('backupCard.retentionKeep') },
 ]
 function onRetentionType(s: LocalSourceView, v: string | number): void {
   s.retention = v === 'keep' ? { type: 'keep', n: 3 } : { type: 'overwrite' }
@@ -355,7 +360,7 @@ async function attemptRestore(req: { kind: 'picker' | 'name'; sourceId?: string;
     restoreReq.value = req
     showFallback.value = true
     if (isRetry) {
-      msg.value = '口令不匹配，请重试'
+      msg.value = t('backupCard.passphraseMismatch')
       msgKind.value = 'err'
     } else {
       msg.value = ''
@@ -384,7 +389,7 @@ function retryRestore(): void {
     showFallback.value = false
     return
   }
-  if (!fallbackPw.value) return fail(new Error('请输入口令'))
+  if (!fallbackPw.value) return fail(new Error(t('backupCard.passphraseRequired')))
   void attemptRestore(req, fallbackPw.value)
 }
 
@@ -396,7 +401,7 @@ async function confirmRestore(): Promise<void> {
   try {
     await p.replaceAllOp!(pending.value)
     pending.value = null
-    msg.value = '恢复成功'
+    msg.value = t('backupCard.restoreOk')
     msgKind.value = 'ok'
   } catch (e) {
     fail(e)
@@ -419,10 +424,10 @@ function onAutoIntervalToggle(v: boolean): void {
 }
 /** 定时备份间隔选项（value=分钟数，number 直传回写不再经字符串转换；F6 收口换 MdSelect） */
 const INTERVAL_OPTIONS = [
-  { value: 15, label: '15 分钟' },
-  { value: 60, label: '1 小时' },
-  { value: 360, label: '6 小时' },
-  { value: 1440, label: '每天' },
+  { value: 15, label: t('backupCard.interval15m') },
+  { value: 60, label: t('backupCard.interval1h') },
+  { value: 360, label: t('backupCard.interval6h') },
+  { value: 1440, label: t('backupCard.intervalDaily') },
 ]
 function onIntervalChange(v: string | number): void {
   autoPrefs.value = { ...autoPrefs.value, intervalMinutes: Number(v) }
@@ -439,120 +444,120 @@ function onBackupProfileChange(v: string | number): void {
 
 <template>
   <section v-if="platform" class="card backup">
-    <h2>备份</h2>
+    <h2>{{ t('backupCard.title') }}</h2>
     <div v-if="hasSources" class="sources-block">
       <div class="sources-head">
-        <span class="sources-title">本地备份目录</span>
-        <MdButton v-if="canAddDir" variant="tonal" class="dir-add" :disabled="busy" @click="onAddDir">添加目录…</MdButton>
+        <span class="sources-title">{{ t('backupCard.sourcesTitle') }}</span>
+        <MdButton v-if="canAddDir" variant="tonal" class="dir-add" :disabled="busy" @click="onAddDir">{{ t('backupCard.addDir') }}</MdButton>
       </div>
-      <p v-if="sources.length === 0" class="hint">尚无备份目录，点「添加目录」选择一个文件夹（默认源为应用数据目录）。</p>
+      <p v-if="sources.length === 0" class="hint">{{ t('backupCard.noSourcesHint') }}</p>
       <div v-for="s in sources" :key="s.id" class="source">
         <div class="source-head">
-          <MdSwitch :model-value="s.enabled" :aria-label="`${s.name}启用`" @update:model-value="onEnabled(s, $event)" />
+          <MdSwitch :model-value="s.enabled" :aria-label="t('backupCard.ariaEnabled', { name: s.name })" @update:model-value="onEnabled(s, $event)" />
           <strong class="source-name">{{ s.name }}</strong>
-          <span class="source-dir">{{ s.dir ?? '默认（应用数据目录）' }}</span>
-          <MdButton variant="text" class="source-toggle" @click="expanded = expanded === s.id ? null : s.id">{{ expanded === s.id ? '收起' : '配置' }}</MdButton>
-          <MdButton variant="text" danger class="source-remove" :disabled="busy" @click="askRemove(s.id)">移除</MdButton>
+          <span class="source-dir">{{ s.dir ?? t('backupCard.defaultDir') }}</span>
+          <MdButton variant="text" class="source-toggle" @click="expanded = expanded === s.id ? null : s.id">{{ expanded === s.id ? t('backupCard.collapse') : t('backupCard.configure') }}</MdButton>
+          <MdButton variant="text" danger class="source-remove" :disabled="busy" @click="askRemove(s.id)">{{ t('backupCard.remove') }}</MdButton>
         </div>
         <div v-if="expanded === s.id" class="source-fields">
           <MdTextField
-            :model-value="s.name" label="名称" aria-label="源名称" autocomplete="off"
+            :model-value="s.name" :label="t('backupCard.nameLabel')" :aria-label="t('backupCard.sourceNameAria')" autocomplete="off"
             @update:model-value="onName(s, $event)" @change="onNameCommit(s)"
           />
           <div class="retention-row">
             <MdSegmentedButton
-              :options="RETENTION_OPTIONS" :model-value="s.retention.type" aria-label="保留策略"
+              :options="RETENTION_OPTIONS" :model-value="s.retention.type" :aria-label="t('backupCard.retentionAria')"
               @update:model-value="onRetentionType(s, $event)"
             />
             <MdTextField
               v-if="s.retention.type === 'keep'" class="keep-n"
-              :model-value="String(s.retention.n)" type="number" label="保留份数" aria-label="保留份数"
+              :model-value="String(s.retention.n)" type="number" :label="t('backupCard.keepCountLabel')" :aria-label="t('backupCard.keepCountLabel')"
               @update:model-value="onKeepN(s, $event)" @change="onKeepNCommit(s)"
             />
           </div>
         </div>
       </div>
       <div v-if="pendingRemove" class="confirm-row remove-confirm-row">
-        <span>移除备份目录「{{ sourceName(pendingRemove) }}」？目录内已备份文件不受影响。</span>
-        <MdButton danger :disabled="busy" @click="onConfirmRemove">确认移除</MdButton>
-        <MdButton variant="text" :disabled="busy" @click="onCancelRemove">取消</MdButton>
+        <span>{{ t('backupCard.removeConfirm', { name: sourceName(pendingRemove) }) }}</span>
+        <MdButton danger :disabled="busy" @click="onConfirmRemove">{{ t('backupCard.confirmRemove') }}</MdButton>
+        <MdButton variant="text" :disabled="busy" @click="onCancelRemove">{{ t('backupCard.cancel') }}</MdButton>
       </div>
     </div>
     <div class="actions">
-      <MdButton class="backup-now" :disabled="busy || !sessionSecret" @click="onBackup">立即备份</MdButton>
-      <MdButton v-if="platform.exportToFile" variant="tonal" :disabled="busy || !sessionSecret" @click="onExport">导出到文件</MdButton>
-      <MdButton v-if="platform.restoreFromPicker" variant="tonal" :disabled="busy" @click="startRestore('picker')">从文件恢复</MdButton>
+      <MdButton class="backup-now" :disabled="busy || !sessionSecret" @click="onBackup">{{ t('backupCard.backupNow') }}</MdButton>
+      <MdButton v-if="platform.exportToFile" variant="tonal" :disabled="busy || !sessionSecret" @click="onExport">{{ t('backupCard.exportToFile') }}</MdButton>
+      <MdButton v-if="platform.restoreFromPicker" variant="tonal" :disabled="busy" @click="startRestore('picker')">{{ t('backupCard.restoreFromFile') }}</MdButton>
     </div>
     <!-- 导出格式区（批① §2.3）：宿主提供 saveTextFile 才渲染；明文格式经两步确认后落盘（加密免确认，评审 R1） -->
     <div v-if="platform.saveTextFile" class="export-block">
       <MdSelect
         data-test="export-format" class="export-format"
         :model-value="fmt" :options="EXPORT_FORMAT_OPTIONS"
-        label="导出格式" aria-label="导出格式" @update:model-value="onFmtChange"
+        :label="t('backupCard.formatLabel')" :aria-label="t('backupCard.formatLabel')" @update:model-value="onFmtChange"
       />
       <div v-if="fmt === 'aegis-encrypted'" class="export-pw-row">
         <MdTextField
           data-test="export-password" class="export-pw"
-          v-model="encPw" type="password" label="Aegis 导出口令" aria-label="Aegis 导出口令" autocomplete="new-password"
+          v-model="encPw" type="password" :label="t('backupCard.aegisPwLabel')" :aria-label="t('backupCard.aegisPwLabel')" autocomplete="new-password"
         />
         <MdCheckbox
           data-test="export-remember"
-          v-model="remember" label="记住到保管区" aria-label="记住导出口令"
+          v-model="remember" :label="t('backupCard.rememberLabel')" :aria-label="t('backupCard.rememberAria')"
         />
       </div>
       <div>
-        <MdButton data-test="export-run" variant="tonal" :disabled="runDisabled" @click="onExportRun">导出</MdButton>
+        <MdButton data-test="export-run" variant="tonal" :disabled="runDisabled" @click="onExportRun">{{ t('backupCard.exportBtn') }}</MdButton>
       </div>
       <div v-if="exportPending" class="confirm-row export-confirm-row">
         <span>{{ EXPORT_CONFIRM_TEXT }}</span>
-        <MdButton data-test="export-confirm" :disabled="busy" @click="runExport">确认导出</MdButton>
-        <MdButton variant="text" :disabled="busy" @click="exportPending = false">取消</MdButton>
+        <MdButton data-test="export-confirm" :disabled="busy" @click="runExport">{{ t('backupCard.confirmExport') }}</MdButton>
+        <MdButton variant="text" :disabled="busy" @click="exportPending = false">{{ t('backupCard.cancel') }}</MdButton>
       </div>
-      <p v-if="fmt !== 'totp-backup'" class="hint">otpauth/Aegis 为独立格式（明文或独立口令），不替代加密的应用备份。</p>
+      <p v-if="fmt !== 'totp-backup'" class="hint">{{ t('backupCard.formatsHint') }}</p>
     </div>
-    <p v-if="!sessionSecret" class="hint">先在上方设置备份口令。</p>
+    <p v-if="!sessionSecret" class="hint">{{ t('backupCard.setPwHint') }}</p>
     <div v-if="showFallback" class="fallback-row">
-      <MdTextField v-model="fallbackPw" class="fallback-pw" type="password" label="恢复口令" placeholder="输入该备份的口令" autocomplete="off" />
-      <MdButton :disabled="busy" @click="retryRestore">重试</MdButton>
+      <MdTextField v-model="fallbackPw" class="fallback-pw" type="password" :label="t('backupCard.restorePwLabel')" :placeholder="t('backupCard.restorePwPlaceholder')" autocomplete="off" />
+      <MdButton :disabled="busy" @click="retryRestore">{{ t('backupCard.retry') }}</MdButton>
     </div>
     <ul v-if="backups.length" class="backup-list">
       <li v-for="b in backups" :key="`${b.sourceId}/${b.name}`">
         <span class="bname">{{ b.name }}</span>
-        <MdButton v-if="platform.restoreByName" variant="text" :disabled="busy" @click="startRestore('name', b.sourceId, b.name)">恢复</MdButton>
+        <MdButton v-if="platform.restoreByName" variant="text" :disabled="busy" @click="startRestore('name', b.sourceId, b.name)">{{ t('backupCard.restore') }}</MdButton>
       </li>
     </ul>
     <div v-if="pending" class="confirm-row">
-      <span>将用备份覆盖当前全部条目？</span>
-      <MdButton danger :disabled="busy" @click="confirmRestore">确认覆盖</MdButton>
-      <MdButton variant="text" :disabled="busy" @click="pending = null">取消</MdButton>
+      <span>{{ t('backupCard.overwriteConfirm') }}</span>
+      <MdButton danger :disabled="busy" @click="confirmRestore">{{ t('backupCard.confirmOverwrite') }}</MdButton>
+      <MdButton variant="text" :disabled="busy" @click="pending = null">{{ t('backupCard.cancel') }}</MdButton>
     </div>
     <div v-if="platform.backupKdfProfile && backupProfile" class="profile-row">
       <MdSelect
         class="profile-select"
         :model-value="backupProfile" :options="BACKUP_PROFILE_OPTIONS"
-        label="备份加密强度" aria-label="备份加密强度" @update:model-value="onBackupProfileChange"
+        :label="t('backupCard.profileLabel')" :aria-label="t('backupCard.profileLabel')" @update:model-value="onBackupProfileChange"
       />
-      <p class="hint">用于本地备份文件与云端同步对象的加密参数（Argon2id 强度）</p>
+      <p class="hint">{{ t('backupCard.profileHint') }}</p>
     </div>
     <div v-if="platform.getAutoPrefs" class="auto-block">
-      <p class="hint">自动执行前会与上次内容比对，无变化则跳过写入。</p>
+      <p class="hint">{{ t('backupCard.autoHint') }}</p>
       <div class="auto-row">
         <div class="auto-item">
-          <MdSwitch :model-value="autoPrefs.onChange" aria-label="变更后自动备份" @update:model-value="onAutoOnChange" />
-          <span>变更后自动备份</span>
+          <MdSwitch :model-value="autoPrefs.onChange" :aria-label="t('backupCard.autoOnChange')" @update:model-value="onAutoOnChange" />
+          <span>{{ t('backupCard.autoOnChange') }}</span>
         </div>
         <div class="auto-item">
-          <MdSwitch :model-value="autoPrefs.onInterval" aria-label="定时自动备份" @update:model-value="onAutoIntervalToggle" />
-          <span>定时自动备份</span>
+          <MdSwitch :model-value="autoPrefs.onInterval" :aria-label="t('backupCard.autoInterval')" @update:model-value="onAutoIntervalToggle" />
+          <span>{{ t('backupCard.autoInterval') }}</span>
         </div>
         <div class="auto-item">
           <MdSelect
             :model-value="autoPrefs.intervalMinutes" :options="INTERVAL_OPTIONS"
-            label="间隔" aria-label="自动备份间隔" @update:model-value="onIntervalChange"
+            :label="t('backupCard.intervalLabel')" :aria-label="t('backupCard.intervalAria')" @update:model-value="onIntervalChange"
           />
         </div>
       </div>
-      <span v-if="platform.getAutoStatus" class="auto-status">上次自动备份：{{ autoStatus ?? '暂无' }}</span>
+      <span v-if="platform.getAutoStatus" class="auto-status">{{ t('backupCard.lastAuto', { status: autoStatus ?? t('backupCard.none') }) }}</span>
     </div>
     <div v-if="msg" :class="msgKind" role="status">{{ msg }}</div>
   </section>
