@@ -107,9 +107,8 @@ decodeQr 固定样例图单测；双 Tab 流转 / 批量勾选组件测试；扩
 
 ### 4.2 Authenticator Plus 导入（core）
 
-- `packages/core/src/import/authenticatorPlus.ts`：解密对齐 Aegis `AuthenticatorPlusImporter`（加密 ZIP + 内部 SQLite）。
-- **技术风险**：fflate 不支持 WinZip AES 加密 zip → 自实现 AE-1/AE-2 解密（有 WinAuth Blowfish 自实现先例，风格一致）+ 复用 sql.js 读内部 SQLite。参数对不上 Aegis 实现时回报，不猜测。
-- group→tag 映射按权威源核实后落地。
+- `packages/core/src/import/authenticatorPlus.ts`：对齐 Aegis `AuthenticatorPlusImporter.java`——加密 zip 内为 `Accounts.txt`（otpauth URI 逐行文本），解出后直接复用 `importUriBatch`；**无 SQLite、无 group 映射**。
+- **技术风险**：fflate 不支持 WinZip AES 加密 zip → 自实现 AE-1/AE-2 解密 + zip 结构解析（`zipRead.ts`）；参数对不上 Aegis/zip4j 实现时回报。
 
 ### 验收
 
