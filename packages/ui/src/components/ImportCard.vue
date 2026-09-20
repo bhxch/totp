@@ -9,6 +9,7 @@ import {
   type ImportStats, type ParsedEntry, type RowMapping, type SuspectChoice,
 } from '@totp/core'
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { openSqlite } from '../sqliteLoader'
 import type { VueStore } from '../store'
 import MdButton from './md/MdButton.vue'
@@ -16,6 +17,8 @@ import MdSegmentedButton from './md/MdSegmentedButton.vue'
 import MdSelect from './md/MdSelect.vue'
 import MdTextField from './md/MdTextField.vue'
 import type { ImportPlatform, ImportSchemesApi } from './importPlatform'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   /** 平台导入能力（readImportFile + 可选 readImportFileBytes/decryptDpapi + store）；null 时整卡不渲染（popup 不受影响） */
@@ -54,46 +57,46 @@ const inFileMerged = ref(0)
 const suspectChoices = ref<Map<number, SuspectChoice>>(new Map())
 
 const FORMAT_LABEL: Record<ManualFormat, string> = {
-  aegis: 'Aegis 备份（加密或明文）',
-  winauth: 'WinAuth 配置（XML）',
-  uriBatch: 'otpauth URI 批量文本',
-  generic: '通用 JSON / JSONL',
-  twoFas: '2FAS 导出（JSON）',
-  bitwarden: 'Bitwarden 导出（JSON）',
-  proton: 'Proton Authenticator 导出（JSON）',
-  stratum: 'Stratum 导出（JSON）',
-  freeOtp: 'FreeOTP+ 导出（JSON）',
-  freeOtpLegacy: '旧版 FreeOTP（tokens.xml）',
-  totpAuthenticator: 'TOTP Authenticator 导出',
-  andOtp: 'andOTP 明文导出（JSON）',
-  authenticatorPlus: 'Authenticator Plus 导出（加密 zip）',
-  authy: 'Authy shared_prefs（XML）',
-  battleNet: 'Battle.net shared_prefs（XML）',
-  duo: 'Duo duokit accounts（JSON）',
-  msAuth: 'Microsoft Authenticator（SQLite）',
-  sqlite: 'SQLite 数据库（表名探测）',
+  aegis: t('importCard.fmtAegis'),
+  winauth: t('importCard.fmtWinauth'),
+  uriBatch: t('importCard.fmtUriBatch'),
+  generic: t('importCard.fmtGeneric'),
+  twoFas: t('importCard.fmtTwoFas'),
+  bitwarden: t('importCard.fmtBitwarden'),
+  proton: t('importCard.fmtProton'),
+  stratum: t('importCard.fmtStratum'),
+  freeOtp: t('importCard.fmtFreeOtp'),
+  freeOtpLegacy: t('importCard.fmtFreeOtpLegacy'),
+  totpAuthenticator: t('importCard.fmtTotpAuthenticator'),
+  andOtp: t('importCard.fmtAndOtp'),
+  authenticatorPlus: t('importCard.fmtAuthenticatorPlus'),
+  authy: t('importCard.fmtAuthy'),
+  battleNet: t('importCard.fmtBattleNet'),
+  duo: t('importCard.fmtDuo'),
+  msAuth: t('importCard.fmtMsAuth'),
+  sqlite: t('importCard.fmtSqlite'),
 }
 
 /** picked 页手动指定格式下拉（嗅探失败/误判时自选；freeOtpPlus 与 freeOtp 同 parser 不单列） */
 const MANUAL_OPTIONS: Array<{ value: ManualFormat; label: string }> = [
-  { value: 'uriBatch', label: 'otpauth URI 批量文本' },
-  { value: 'aegis', label: 'Aegis 备份（JSON）' },
-  { value: 'winauth', label: 'WinAuth（XML）' },
-  { value: 'generic', label: '通用 JSON / JSONL（字段映射）' },
-  { value: 'twoFas', label: '2FAS（JSON）' },
-  { value: 'bitwarden', label: 'Bitwarden（JSON）' },
-  { value: 'proton', label: 'Proton Authenticator（JSON）' },
-  { value: 'stratum', label: 'Stratum（JSON）' },
-  { value: 'freeOtp', label: 'FreeOTP+（JSON）' },
-  { value: 'freeOtpLegacy', label: '旧版 FreeOTP（tokens.xml）' },
-  { value: 'totpAuthenticator', label: 'TOTP Authenticator（明文/外部分享）' },
-  { value: 'andOtp', label: 'andOTP 明文导出（JSON）' },
-  { value: 'authenticatorPlus', label: 'Authenticator Plus（加密 zip）' },
-  { value: 'authy', label: 'Authy shared_prefs（XML）' },
-  { value: 'battleNet', label: 'Battle.net shared_prefs（XML）' },
-  { value: 'duo', label: 'Duo duokit accounts（JSON）' },
-  { value: 'msAuth', label: 'Microsoft Authenticator（SQLite）' },
-  { value: 'sqlite', label: 'SQLite 数据库（表名探测）' },
+  { value: 'uriBatch', label: t('importCard.manualUriBatch') },
+  { value: 'aegis', label: t('importCard.manualAegis') },
+  { value: 'winauth', label: t('importCard.manualWinauth') },
+  { value: 'generic', label: t('importCard.manualGeneric') },
+  { value: 'twoFas', label: t('importCard.manualTwoFas') },
+  { value: 'bitwarden', label: t('importCard.manualBitwarden') },
+  { value: 'proton', label: t('importCard.manualProton') },
+  { value: 'stratum', label: t('importCard.manualStratum') },
+  { value: 'freeOtp', label: t('importCard.manualFreeOtp') },
+  { value: 'freeOtpLegacy', label: t('importCard.manualFreeOtpLegacy') },
+  { value: 'totpAuthenticator', label: t('importCard.manualTotpAuthenticator') },
+  { value: 'andOtp', label: t('importCard.manualAndOtp') },
+  { value: 'authenticatorPlus', label: t('importCard.manualAuthenticatorPlus') },
+  { value: 'authy', label: t('importCard.manualAuthy') },
+  { value: 'battleNet', label: t('importCard.manualBattleNet') },
+  { value: 'duo', label: t('importCard.manualDuo') },
+  { value: 'msAuth', label: t('importCard.manualMsAuth') },
+  { value: 'sqlite', label: t('importCard.manualSqlite') },
 ]
 
 /** 实际生效格式：手动选择覆盖嗅探结果（auto 时用嗅探值，可能为 null=未识别） */
@@ -101,7 +104,7 @@ const effectiveFormat = computed<ManualFormat | null>(() => (manual.value === 'a
 
 /** 手动指定格式 MdSelect 选项：首项「自动」label 随嗅探结果动态（picked 页可能晚于嗅探渲染） */
 const manualOptions = computed<Array<{ value: string; label: string }>>(() => [
-  { value: 'auto', label: `自动（${format.value ?? '未识别'}）` },
+  { value: 'auto', label: t('importCard.manualAuto', { format: format.value ?? t('importCard.unrecognized') }) },
   ...MANUAL_OPTIONS,
 ])
 /** 格式下拉回调：MdSelect emit 泛化 string|number，收敛回 manual 的联合类型 */
@@ -177,9 +180,9 @@ async function refreshSchemes(): Promise<void> {
 async function saveScheme(): Promise<void> {
   if (!props.schemesApi || busy.value) return
   const mapping = buildMapping()
-  if (!mapping) return fail(new Error('secret 字段的映射路径必填'))
+  if (!mapping) return fail(new Error(t('importCard.mappingSecretRequired')))
   const name = schemeName.value.trim()
-  if (!name) return fail(new Error('请先输入方案名称'))
+  if (!name) return fail(new Error(t('importCard.schemeNameRequired')))
   try {
     const s: ImportScheme = { id: crypto.randomUUID(), name, mapping, createdAt: Date.now() }
     const rp = rowsPath.value.trim()
@@ -188,7 +191,7 @@ async function saveScheme(): Promise<void> {
     await props.schemesApi.save(list)
     schemes.value = list
     schemeSel.value = s.id
-    msg.value = `方案「${name}」已保存`
+    msg.value = t('importCard.schemeSaved', { name })
     msgKind.value = 'ok'
   } catch (e) {
     fail(e)
@@ -198,7 +201,7 @@ async function saveScheme(): Promise<void> {
 /** 应用方案：回填映射路径输入（覆盖预填/当前值）与 rowsPath，未映射字段清空 */
 function applyScheme(): void {
   const s = schemes.value.find((x) => x.id === schemeSel.value)
-  if (!s) return fail(new Error('请先选择方案'))
+  if (!s) return fail(new Error(t('importCard.schemeNotSelected')))
   for (const f of FIELDS) paths.value[f.key] = s.mapping[f.key]?.path ?? ''
   rowsPath.value = s.rowsPath ?? ''
 }
@@ -219,7 +222,7 @@ async function deleteScheme(): Promise<void> {
 
 /** 方案下拉 MdSelect 选项：占位空值 + 推荐/其他平铺（原生 optgroup 的归类展示在 listbox 语义中不保留，顺序不变） */
 const schemeOptions = computed<Array<{ value: string; label: string }>>(() => [
-  { value: '', label: '选择方案…' },
+  { value: '', label: t('importCard.schemePlaceholder') },
   ...recommended.value.map((s) => ({ value: s.id, label: s.name })),
   ...otherSchemes.value.map((s) => ({ value: s.id, label: s.name })),
 ])
@@ -230,9 +233,9 @@ function onSchemeSelect(v: string | number): void {
 
 // ---------- 终步冲突策略：三选一以 MdSegmentedButton 呈现（替代原生 radio，参照 BackupCard F5） ----------
 const POLICY_OPTIONS = [
-  { value: 'skip', label: '跳过冲突条目' },
-  { value: 'replace', label: '覆盖现有条目' },
-  { value: 'merge', label: '保留两者（并存）' },
+  { value: 'skip', label: t('importCard.policySkip') },
+  { value: 'replace', label: t('importCard.policyReplace') },
+  { value: 'merge', label: t('importCard.policyMerge') },
 ]
 /** 分段按钮回调：emit 的 string 收敛回 ConflictPolicy */
 function onPolicySelect(v: string): void {
@@ -241,9 +244,9 @@ function onPolicySelect(v: string): void {
 
 // ---------- suspect（疑似同账户）逐条处理：默认跳过，每条可单独改为新增/覆盖 ----------
 const SUSPECT_OPTIONS = [
-  { value: 'skip', label: '跳过' },
-  { value: 'add', label: '新增' },
-  { value: 'replace', label: '覆盖' },
+  { value: 'skip', label: t('importCard.suspectSkip') },
+  { value: 'add', label: t('importCard.suspectAdd') },
+  { value: 'replace', label: t('importCard.suspectReplace') },
 ]
 /** suspect 行渲染项：incoming 索引 + 导入条目 + 按 targetUuid 定位的现有条目（预览期间 vault 变化可致缺失） */
 const suspectItems = computed(() => {
@@ -327,7 +330,7 @@ async function start(): Promise<void> {
     }
     if (!picked) {
       if (readErr === null) {
-        msg.value = '已取消'
+        msg.value = t('importCard.canceled')
         msgKind.value = 'hint'
         return
       }
@@ -378,12 +381,12 @@ async function parseAndConfirm(
   try {
     const r = await parse()
     if (opts.retryPasswordOnNeed && r.entries.length === 0 && r.failures.some((x) => x.message.includes('需要口令'))) {
-      passwordHint.value = '该文件包含口令保护条目，请输入口令后重试'
+      passwordHint.value = t('importCard.pwRetryHint')
       step.value = 'password'
       return
     }
     if (opts.emptyGoesBack && r.entries.length === 0 && r.failures.length > 0) {
-      fail(new Error(`解析结果为空：${r.failures.length} 行全部失败（如「${r.failures[0]!.message}」），请检查字段映射`))
+      fail(new Error(t('importCard.emptyResult', { count: r.failures.length, message: r.failures[0]!.message })))
       return
     }
     // 文件内全字段完全重复行先合并（设计 §4），避免预览计数虚高；合并数在 confirm/report 页展示
@@ -426,7 +429,7 @@ const TEXT_PARSERS: Record<DirectFormat, () => ImportResult | Promise<ImportResu
 async function importFromSqlite(auto: boolean): Promise<boolean> {
   const readBytes = props.platform?.readImportFileBytes
   if (!readBytes) {
-    if (!auto) fail(new Error('当前端不支持 SQLite 导入'))
+    if (!auto) fail(new Error(t('importCard.sqliteUnsupported')))
     return false
   }
   busy.value = true
@@ -435,13 +438,13 @@ async function importFromSqlite(auto: boolean): Promise<boolean> {
     const picked = await readBytes()
     if (!picked) {
       if (!auto) {
-        msg.value = '已取消'
+        msg.value = t('importCard.canceled')
         msgKind.value = 'hint'
       }
       return false
     }
     if (!isSqliteHeader(picked.bytes)) {
-      if (!auto) fail(new Error('无法识别的 SQLite 数据库（文件头不是 SQLite format 3）'))
+      if (!auto) fail(new Error(t('importCard.sqliteBadHeader')))
       return false
     }
     fileName.value = picked.name
@@ -453,7 +456,7 @@ async function importFromSqlite(auto: boolean): Promise<boolean> {
       try {
         const names = db.query("SELECT name FROM sqlite_master WHERE type='table'").map((r) => String(r.name))
         const probe = SQLITE_TABLE_PROBES.find((p) => names.includes(p.table))
-        if (!probe) throw new Error('无法识别的 SQLite 数据库')
+        if (!probe) throw new Error(t('importCard.sqliteUnknown'))
         return probe.toEntries(db.query(`SELECT * FROM "${probe.table}"`))
       } finally {
         db.close()
@@ -476,7 +479,7 @@ async function importFromSqlite(auto: boolean): Promise<boolean> {
 async function nextFromPicked(): Promise<void> {
   if (busy.value) return
   const f = effectiveFormat.value
-  if (f === null) return fail(new Error('无法识别的文件格式，请在下方手动指定格式'))
+  if (f === null) return fail(new Error(t('importCard.unrecognizedFile')))
   if (f === 'generic') {
     const ex = extractGenericRows(fileText.value)
     rows.value = ex.rows
@@ -495,7 +498,7 @@ async function nextFromPicked(): Promise<void> {
     // M11：使用 sniffAegis 暴露的 encrypted 标志（顶层 db 为密文 Base64 字符串 → 加密；明文 vault 同样带空 slots 的 header）
     const aegis = sniffAegis(fileText.value)
     if (aegis?.encrypted) {
-      passwordHint.value = '该 Aegis 备份已加密，请输入导出口令'
+      passwordHint.value = t('importCard.aegisPwHint')
       step.value = 'password'
       return
     }
@@ -503,17 +506,17 @@ async function nextFromPicked(): Promise<void> {
     return
   }
   if (f === 'winauth') {
-    passwordHint.value = 'WinAuth 文件可能受口令保护：受保护时必填，未加密可留空'
+    passwordHint.value = t('importCard.winauthPwHint')
     step.value = 'password'
     return
   }
   if (f === 'authy') {
-    passwordHint.value = 'Authy 令牌可能受口令保护：加密令牌必填，明文可留空'
+    passwordHint.value = t('importCard.authyPwHint')
     step.value = 'password'
     return
   }
   if (f === 'authenticatorPlus') {
-    passwordHint.value = 'Authenticator Plus 导出 zip 受口令保护：请输入导出口令（未加密导出可留空）'
+    passwordHint.value = t('importCard.apPwHint')
     step.value = 'password'
     return
   }
@@ -524,7 +527,7 @@ async function nextFromPicked(): Promise<void> {
   // totpAuthenticator 条件口令页入口：外部分享文件为 Base64 密文（非明文数组）→ 口令页；
   // 明文 '[' 开头保持下方分派表直接解析
   if (f === 'totpAuthenticator' && !fileText.value.trim().startsWith('[')) {
-    passwordHint.value = '输入该分享文件的口令，默认 TotpAuthenticator'
+    passwordHint.value = t('importCard.totpAuthPwHint')
     step.value = 'password'
     return
   }
@@ -550,7 +553,7 @@ function buildMapping(): RowMapping | null {
 function nextFromMapping(): void {
   if (busy.value) return
   const mapping = buildMapping()
-  if (!mapping) return fail(new Error('secret 字段的映射路径必填'))
+  if (!mapping) return fail(new Error(t('importCard.mappingSecretRequired')))
   const text = fileText.value
   const rp = rowsPath.value.trim()
   const rowsOverride = rp ? extractGenericRows(text, rp).rows : rows.value
@@ -566,7 +569,7 @@ async function nextFromPassword(): Promise<void> {
   if (busy.value) return
   const f = effectiveFormat.value
   if (f === 'aegis') {
-    if (!password.value) return fail(new Error('请输入口令'))
+    if (!password.value) return fail(new Error(t('importCard.passphraseRequired')))
     await parseAndConfirm(() => importAegisEncrypted(fileText.value, password.value))
     return
   }
@@ -577,12 +580,12 @@ async function nextFromPassword(): Promise<void> {
   if (f === 'authenticatorPlus') {
     // zip 二进制：优先用 start() 字节通道兜底缓存的 bytes，否则走 readImportFileBytes（平台侧复用最近选择，免二次弹窗）
     const readBytes = props.platform?.readImportFileBytes
-    if (!fileBytes.value && !readBytes) return fail(new Error('当前端不支持 Authenticator Plus 导入'))
+    if (!fileBytes.value && !readBytes) return fail(new Error(t('importCard.apUnsupported')))
     await parseAndConfirm(async () => {
       let bytes = fileBytes.value
       if (!bytes) {
         const fb = await readBytes!()
-        if (!fb) throw new Error('未选择文件')
+        if (!fb) throw new Error(t('importCard.noFilePicked'))
         bytes = fb.bytes
       }
       return importAuthenticatorPlus(bytes, password.value)
@@ -600,7 +603,7 @@ async function nextFromPassword(): Promise<void> {
     )
     return
   }
-  fail(new Error('当前格式不使用口令页，请取消后重新选择'))
+  fail(new Error(t('importCard.pwPageUnused')))
 }
 
 /** 终步：按 commit 时最新 vault 重算判定树（预览期间 vault 可能被远端/其他窗口改动），
@@ -653,141 +656,147 @@ async function commitImport(): Promise<void> {
 function failureLabel(f: { index: number; message: string }): string {
   if (effectiveFormat.value === 'uriBatch') {
     const line = fileText.value.split(/\r?\n/)[f.index]?.trim() ?? ''
-    return `第 ${f.index + 1} 行：${line}：${f.message}`
+    return t('importCard.failureLine', { index: f.index + 1, line, message: f.message })
   }
-  return `第 ${f.index + 1} 项：${f.message}`
+  return t('importCard.failureItem', { index: f.index + 1, message: f.message })
 }
 </script>
 
 <template>
   <section v-if="platform" class="card import">
-    <h2>导入</h2>
+    <h2>{{ t('importCard.title') }}</h2>
     <!-- idle 态首屏说明：仅 idle 渲染（其余步骤的「冲突」等断言/文案不受污染） -->
     <template v-if="step === 'idle'">
-      <p class="meta">选择文件后自动识别格式；不确定格式可直接尝试。冲突条目可选跳过/替换/合并；与现有完全相同的条目自动跳过，疑似同账户的条目逐条确认。</p>
+      <p class="meta">{{ t('importCard.idleIntro') }}</p>
       <details class="formats">
-        <summary>支持的导入格式</summary>
+        <summary>{{ t('importCard.formatsSummary') }}</summary>
         <ul>
-          <li>加密备份类：Aegis（加密/明文）、WinAuth XML、Authy、Authenticator Plus（加密 zip，手动选择格式）</li>
-          <li>应用导出类：2FAS、Bitwarden、Proton Authenticator、Stratum、FreeOTP+、旧版 FreeOTP、andOTP、TOTP Authenticator、Battle.net、Duo、Microsoft Authenticator</li>
-          <li>文本与通用类：otpauth URI 批量文本、通用 JSON/JSONL/SQLite（可自定义字段映射，映射方案可保存复用）</li>
+          <li>{{ t('importCard.formatsEncrypted') }}</li>
+          <li>{{ t('importCard.formatsApps') }}</li>
+          <li>{{ t('importCard.formatsText') }}</li>
         </ul>
       </details>
     </template>
 
     <template v-if="step === 'idle'">
       <div class="actions">
-        <MdButton class="import-start" :disabled="busy" @click="start">导入</MdButton>
+        <MdButton class="import-start" :disabled="busy" @click="start">{{ t('importCard.startBtn') }}</MdButton>
       </div>
     </template>
 
     <template v-else-if="step === 'picked'">
-      <p class="meta">文件：{{ fileName }} · 识别格式：{{ format ?? '未知' }}</p>
-      <p class="hint">{{ effectiveFormat ? FORMAT_LABEL[effectiveFormat] : '无法自动识别，请在下方手动指定格式' }}</p>
+      <p class="meta">{{ t('importCard.pickedMeta', { name: fileName, format: format ?? t('importCard.unknown') }) }}</p>
+      <p class="hint">{{ effectiveFormat ? FORMAT_LABEL[effectiveFormat] : t('importCard.manualNeeded') }}</p>
       <div class="actions">
         <MdSelect
-          :model-value="manual" class="format-select" label="格式" aria-label="手动指定格式"
+          :model-value="manual" class="format-select" :label="t('importCard.formatLabel')" :aria-label="t('importCard.formatAria')"
           :disabled="busy" :options="manualOptions" @update:model-value="onManualSelect"
         />
-        <MdButton class="import-next" :disabled="busy" @click="nextFromPicked">下一步</MdButton>
-        <MdButton variant="text" :disabled="busy" @click="reset">取消</MdButton>
+        <MdButton class="import-next" :disabled="busy" @click="nextFromPicked">{{ t('importCard.next') }}</MdButton>
+        <MdButton variant="text" :disabled="busy" @click="reset">{{ t('importCard.cancel') }}</MdButton>
       </div>
     </template>
 
     <template v-else-if="step === 'mapping'">
-      <p class="meta">字段映射（点路径，如 otp.params.secret）· 共 {{ rows.length }} 行（{{ rowsKind }}）</p>
+      <p class="meta">{{ t('importCard.mappingMeta', { count: rows.length, kind: rowsKind }) }}</p>
       <div v-if="rowsKind === 'jsonObjectArray'" class="map-row">
-        <MdTextField v-model="rowsPath" class="map-field" data-field="rowsPath" label="行数组路径" placeholder="留空自动" />
+        <MdTextField v-model="rowsPath" class="map-field" data-field="rowsPath" :label="t('importCard.rowsPathLabel')" :placeholder="t('importCard.rowsPathPlaceholder')" />
       </div>
       <div v-for="f in FIELDS" :key="f.key" class="map-row">
         <MdTextField
           v-model="paths[f.key]" class="map-field" :data-field="f.key" :label="f.label"
-          :placeholder="f.required ? '必填' : '留空使用默认值'"
+          :placeholder="f.required ? t('importCard.requiredHint') : t('importCard.defaultHint')"
         />
       </div>
       <div v-if="schemesApi" class="schemes">
         <div class="scheme-row">
-          <MdTextField v-model="schemeName" class="scheme-name" label="方案名称" placeholder="方案名称（保存当前映射）" @keydown.enter.prevent="saveScheme" />
-          <MdButton variant="tonal" class="scheme-save" :disabled="busy" @click="saveScheme">保存方案</MdButton>
+          <MdTextField v-model="schemeName" class="scheme-name" :label="t('importCard.schemeNameLabel')" :placeholder="t('importCard.schemeNamePlaceholder')" @keydown.enter.prevent="saveScheme" />
+          <MdButton variant="tonal" class="scheme-save" :disabled="busy" @click="saveScheme">{{ t('importCard.saveSchemeBtn') }}</MdButton>
         </div>
         <div v-if="schemes.length" class="scheme-row">
           <MdSelect
-            :model-value="schemeSel" class="scheme-select" label="映射方案" aria-label="映射方案"
+            :model-value="schemeSel" class="scheme-select" :label="t('importCard.schemeLabel')" :aria-label="t('importCard.schemeLabel')"
             :options="schemeOptions" @update:model-value="onSchemeSelect"
           />
-          <MdButton variant="tonal" class="scheme-apply" :disabled="!schemeSel" @click="applyScheme">应用</MdButton>
-          <MdButton danger class="scheme-delete" :disabled="!schemeSel || busy" @click="deleteScheme">删除</MdButton>
+          <MdButton variant="tonal" class="scheme-apply" :disabled="!schemeSel" @click="applyScheme">{{ t('importCard.applyBtn') }}</MdButton>
+          <MdButton danger class="scheme-delete" :disabled="!schemeSel || busy" @click="deleteScheme">{{ t('importCard.deleteBtn') }}</MdButton>
         </div>
       </div>
       <div class="actions">
-        <MdButton variant="text" class="prefill" :disabled="busy" @click="guessPaths">使用预填</MdButton>
-        <MdButton class="import-next" :disabled="busy" @click="nextFromMapping">下一步</MdButton>
-        <MdButton variant="text" :disabled="busy" @click="reset">取消</MdButton>
+        <MdButton variant="text" class="prefill" :disabled="busy" @click="guessPaths">{{ t('importCard.prefillBtn') }}</MdButton>
+        <MdButton class="import-next" :disabled="busy" @click="nextFromMapping">{{ t('importCard.next') }}</MdButton>
+        <MdButton variant="text" :disabled="busy" @click="reset">{{ t('importCard.cancel') }}</MdButton>
       </div>
     </template>
 
     <template v-else-if="step === 'password'">
       <p class="meta">{{ passwordHint }}</p>
       <MdTextField
-        v-model="password" type="password" class="import-password" label="文件口令" placeholder="文件口令"
+        v-model="password" type="password" class="import-password" :label="t('importCard.pwLabel')" :placeholder="t('importCard.pwPlaceholder')"
         autocomplete="off" @keydown.enter="nextFromPassword"
       />
       <div class="actions">
-        <MdButton class="import-next" :disabled="busy" @click="nextFromPassword">下一步</MdButton>
-        <MdButton variant="text" :disabled="busy" @click="reset">取消</MdButton>
+        <MdButton class="import-next" :disabled="busy" @click="nextFromPassword">{{ t('importCard.next') }}</MdButton>
+        <MdButton variant="text" :disabled="busy" @click="reset">{{ t('importCard.cancel') }}</MdButton>
       </div>
     </template>
 
     <template v-else-if="step === 'confirm'">
-      <p class="meta">解析出 {{ result?.entries.length ?? 0 }} 条，解析失败 {{ result?.failures.length ?? 0 }} 条</p>
-      <p v-if="inFileMerged" class="meta">文件内重复已合并 {{ inFileMerged }} 条</p>
+      <p class="meta">{{ t('importCard.confirmMeta', { parsed: result?.entries.length ?? 0, failed: result?.failures.length ?? 0 }) }}</p>
+      <p v-if="inFileMerged" class="meta">{{ t('importCard.inFileMerged', { count: inFileMerged }) }}</p>
       <p class="meta">
-        新增 {{ importPlan?.counts.new ?? 0 }} · 完全相同自动跳过 {{ importPlan?.counts.identical ?? 0 }} ·
-        疑似同账户 {{ importPlan?.counts.suspect ?? 0 }}（默认跳过） · 冲突 {{ importPlan?.counts.conflict ?? 0 }}
+        {{ t('importCard.confirmCounts', {
+          added: importPlan?.counts.new ?? 0,
+          identical: importPlan?.counts.identical ?? 0,
+          suspect: importPlan?.counts.suspect ?? 0,
+          conflict: importPlan?.counts.conflict ?? 0,
+        }) }}
       </p>
       <div v-if="suspectItems.length" class="suspects">
-        <p class="meta">疑似同账户（secret 相同），请逐条选择处理方式：</p>
+        <p class="meta">{{ t('importCard.suspectIntro') }}</p>
         <div v-for="s in suspectItems" :key="s.idx" class="suspect-row">
           <span class="suspect-line">
-            导入 {{ s.entry.issuer || '（无 issuer）' }}/{{ s.entry.label || '（无 label）' }} →
-            现有 {{ s.target ? `${s.target.issuer}/${s.target.label}` : '条目已不存在（按跳过处理）' }}
+            {{ t('importCard.suspectLine', {
+              incoming: (s.entry.issuer || t('importCard.noIssuer')) + '/' + (s.entry.label || t('importCard.noLabel')),
+              existing: s.target ? `${s.target.issuer}/${s.target.label}` : t('importCard.targetGone'),
+            }) }}
           </span>
           <MdSegmentedButton
             :model-value="suspectChoices.get(s.idx) ?? 'skip'" :options="SUSPECT_OPTIONS"
-            :aria-label="`疑似同账户处理：${s.entry.issuer}/${s.entry.label}`" @update:model-value="onSuspectSelect(s.idx, $event)"
+            :aria-label="t('importCard.suspectAria', { target: `${s.entry.issuer}/${s.entry.label}` })" @update:model-value="onSuspectSelect(s.idx, $event)"
           />
         </div>
       </div>
       <div class="policies">
         <MdSegmentedButton
-          aria-label="冲突策略" :model-value="policy" :options="POLICY_OPTIONS"
+          :aria-label="t('importCard.policyAria')" :model-value="policy" :options="POLICY_OPTIONS"
           @update:model-value="onPolicySelect"
         />
       </div>
       <div class="actions">
-        <MdButton class="import-commit" :disabled="busy" @click="commitImport">确认导入</MdButton>
-        <MdButton variant="text" :disabled="busy" @click="reset">取消</MdButton>
+        <MdButton class="import-commit" :disabled="busy" @click="commitImport">{{ t('importCard.commitBtn') }}</MdButton>
+        <MdButton variant="text" :disabled="busy" @click="reset">{{ t('importCard.cancel') }}</MdButton>
       </div>
     </template>
 
     <template v-else-if="step === 'report' && report">
-      <p class="ok">成功落库 {{ report.imported }} 条</p>
-      <p v-if="report.inFileMerged" class="meta">文件内重复已合并 {{ report.inFileMerged }} 条</p>
-      <p v-if="report.identical" class="meta">完全相同自动跳过 {{ report.identical }} 条</p>
-      <p v-if="report.suspectSkipped" class="meta">疑似同账户跳过 {{ report.suspectSkipped }} 条</p>
-      <p v-if="report.suspectAdded" class="meta">疑似同账户新增 {{ report.suspectAdded }} 条</p>
-      <p v-if="report.suspectReplaced" class="meta">疑似同账户覆盖 {{ report.suspectReplaced }} 条</p>
-      <p v-if="report.conflictSkipped" class="meta">跳过 {{ report.conflictSkipped }} 条（与现有条目冲突）</p>
-      <p v-if="report.conflictReplaced" class="meta">覆盖 {{ report.conflictReplaced }} 条（与现有条目冲突）</p>
-      <p v-if="report.conflictMerged" class="meta">并存 {{ report.conflictMerged }} 条（与现有条目冲突）</p>
+      <p class="ok">{{ t('importCard.reportImported', { count: report.imported }) }}</p>
+      <p v-if="report.inFileMerged" class="meta">{{ t('importCard.inFileMerged', { count: report.inFileMerged }) }}</p>
+      <p v-if="report.identical" class="meta">{{ t('importCard.reportIdentical', { count: report.identical }) }}</p>
+      <p v-if="report.suspectSkipped" class="meta">{{ t('importCard.reportSuspectSkipped', { count: report.suspectSkipped }) }}</p>
+      <p v-if="report.suspectAdded" class="meta">{{ t('importCard.reportSuspectAdded', { count: report.suspectAdded }) }}</p>
+      <p v-if="report.suspectReplaced" class="meta">{{ t('importCard.reportSuspectReplaced', { count: report.suspectReplaced }) }}</p>
+      <p v-if="report.conflictSkipped" class="meta">{{ t('importCard.reportConflictSkipped', { count: report.conflictSkipped }) }}</p>
+      <p v-if="report.conflictReplaced" class="meta">{{ t('importCard.reportConflictReplaced', { count: report.conflictReplaced }) }}</p>
+      <p v-if="report.conflictMerged" class="meta">{{ t('importCard.reportConflictMerged', { count: report.conflictMerged }) }}</p>
       <div v-if="report.failures.length">
-        <p class="meta">失败 {{ report.failures.length }} 条：</p>
+        <p class="meta">{{ t('importCard.reportFailures', { count: report.failures.length }) }}</p>
         <ul class="failures">
           <li v-for="(f, i) in report.failures" :key="i">{{ failureLabel(f) }}</li>
         </ul>
       </div>
       <div class="actions">
-        <MdButton class="import-done" :disabled="busy" @click="reset">完成</MdButton>
+        <MdButton class="import-done" :disabled="busy" @click="reset">{{ t('importCard.doneBtn') }}</MdButton>
       </div>
     </template>
 

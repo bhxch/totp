@@ -3,6 +3,7 @@ import { mount, type VueWrapper } from '@vue/test-utils'
 import { createMemoryStorage, newEntryFromUri, type ImportScheme } from '@totp/core'
 import { createVueStore } from '../src/store'
 import ImportCard from '../src/components/ImportCard.vue'
+import { createTestI18n } from './helpers/i18n'
 
 /** MdSelect 点选：按 aria-label 开弹层，按显示文本点选项（CloudCard F6 间隔用例同款交互） */
 async function pickOption(w: VueWrapper, ariaLabel: string, label: string): Promise<void> {
@@ -27,7 +28,7 @@ function mkPlatform(store: Awaited<ReturnType<typeof readyStore>>) {
 describe('ImportCard', () => {
   it('idle 首屏说明：自动识别提示 + 支持格式清单（details/summary 结构，3 组 li）', async () => {
     const store = await readyStore()
-    const w = mount(ImportCard, { props: { platform: mkPlatform(store) } })
+    const w = mount(ImportCard, { global: { plugins: [createTestI18n()] }, props: { platform: mkPlatform(store) } })
     expect(w.text()).toContain('自动识别')
     expect(w.text()).toContain('冲突条目可选跳过/替换/合并')
     // details/summary 展开交互 jsdom 不支持，不做点击展开断言（内容存在性已断言）
@@ -42,7 +43,7 @@ describe('ImportCard', () => {
   })
   it('URI 批量导入：识别格式→确认冲突策略 skip→报告 1 成功 1 冲突跳过 1 失败', async () => {
     const store = await readyStore()
-    const w = mount(ImportCard, { props: { platform: mkPlatform(store) } })
+    const w = mount(ImportCard, { global: { plugins: [createTestI18n()] }, props: { platform: mkPlatform(store) } })
     await w.find('button.import-start').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('uriBatch'))
     await w.find('button.import-next').trigger('click') // URI 格式无映射页
@@ -60,7 +61,7 @@ describe('ImportCard', () => {
   })
   it('无法识别格式：picked 页手动指定；自动下一步报错；手选 sqlite 无字节能力提示不支持', async () => {
     const store = await readyStore()
-    const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text: 'hello', name: 'x' }), store } } })
+    const w = mount(ImportCard, { global: { plugins: [createTestI18n()] }, props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text: 'hello', name: 'x' }), store } } })
     await w.find('button.import-start').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('手动指定'))
     await w.find('button.import-next').trigger('click')
@@ -75,7 +76,7 @@ describe('ImportCard', () => {
       schemaVersion: 4,
       services: [{ secret: 'JBSWY3DPEHPK3PXQ', name: 'TwoFasSvc', otp: { account: 'me@x.com', issuer: 'TwoFasSvc', tokenType: 'TOTP' } }],
     })
-    const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text, name: '2fas.json' }), store } } })
+    const w = mount(ImportCard, { global: { plugins: [createTestI18n()] }, props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text, name: '2fas.json' }), store } } })
     await w.find('button.import-start').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('twoFas'))
     await w.find('button.import-next').trigger('click') // twoFas 无映射页，直接解析
@@ -88,7 +89,7 @@ describe('ImportCard', () => {
   it('手动指定格式：andOtp 嗅探下手选 generic → 映射页→落库', async () => {
     const store = await readyStore()
     const text = JSON.stringify([{ type: 'totp', algorithm: 'SHA1', label: 'Svc - me', secret: 'JBSWY3DPEHPK3PXQ' }])
-    const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text, name: 'a.json' }), store } } })
+    const w = mount(ImportCard, { global: { plugins: [createTestI18n()] }, props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text, name: 'a.json' }), store } } })
     await w.find('button.import-start').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('andOtp'))
     await pickOption(w, '手动指定格式', '通用 JSON / JSONL（字段映射）') // 覆盖嗅探结果
@@ -104,7 +105,7 @@ describe('ImportCard', () => {
   })
   it('手动指定 sqlite：字节入口头校验失败报错（wasm 链路由 typecheck+build 验收）', async () => {
     const store = await readyStore()
-    const w = mount(ImportCard, {
+    const w = mount(ImportCard, { global: { plugins: [createTestI18n()] },
       props: {
         platform: {
           readImportFile: vi.fn().mockResolvedValue({ text: 'hello', name: 'x' }),
@@ -124,7 +125,7 @@ describe('ImportCard', () => {
     // 合法 shared_prefs XML（.key 值为加密令牌数组）；不含 winauth/tokenOrder 特征 → 嗅探失败
     const xml =
       '<map>\n  <string name="com.authy.storage.tokens.authenticator.key">[{"encryptedSecret":"AAAA","salt":"c2FsdA==","digits":6,"name":"Authy x"}]</string>\n</map>'
-    const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text: xml, name: 'prefs.xml' }), store } } })
+    const w = mount(ImportCard, { global: { plugins: [createTestI18n()] }, props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text: xml, name: 'prefs.xml' }), store } } })
     await w.find('button.import-start').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('手动指定'))
     await pickOption(w, '手动指定格式', 'Authy shared_prefs（XML）')
@@ -135,7 +136,7 @@ describe('ImportCard', () => {
   })
   it('手动指定 winauth：口令页→importWinauth 被分派（非 XML 文本报 WinAuth 特有错误）', async () => {
     const store = await readyStore()
-    const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text: 'hello', name: 'x' }), store } } })
+    const w = mount(ImportCard, { global: { plugins: [createTestI18n()] }, props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text: 'hello', name: 'x' }), store } } })
     await w.find('button.import-start').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('手动指定'))
     await pickOption(w, '手动指定格式', 'WinAuth（XML）')
@@ -154,7 +155,7 @@ describe('ImportCard', () => {
     const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-CBC', iv: new Uint8Array(16) }, key, new TextEncoder().encode(outer)))
     let bin = ''
     for (const b of ct) bin += String.fromCharCode(b)
-    const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text: btoa(bin), name: 'share.txt' }), store } } })
+    const w = mount(ImportCard, { global: { plugins: [createTestI18n()] }, props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text: btoa(bin), name: 'share.txt' }), store } } })
     await w.find('button.import-start').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('手动指定')) // base64 密文嗅探不强判
     await pickOption(w, '手动指定格式', 'TOTP Authenticator（明文/外部分享）')
@@ -170,7 +171,7 @@ describe('ImportCard', () => {
   it('generic JSON：映射页按常见键名预填 secret 路径→确认导入成功', async () => {
     const store = await readyStore()
     const text = JSON.stringify([{ name: 'Svc', userName: 'a@b.c', key: 'JBSWY3DPEHPK3PXQ' }])
-    const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text, name: 'g.json' }), store } } })
+    const w = mount(ImportCard, { global: { plugins: [createTestI18n()] }, props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text, name: 'g.json' }), store } } })
     await w.find('button.import-start').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('generic'))
     await w.find('button.import-next').trigger('click') // 进入映射页
@@ -188,7 +189,7 @@ describe('ImportCard', () => {
     const store = await readyStore()
     const text = JSON.stringify([{ name: 'Svc', userName: 'a@b.c', key: 'JBSWY3DPEHPK3PXQ' }])
     const schemesApi = { load: vi.fn().mockResolvedValue([]), save: vi.fn().mockResolvedValue(undefined) }
-    const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text, name: 'g.json' }), store }, schemesApi } })
+    const w = mount(ImportCard, { global: { plugins: [createTestI18n()] }, props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text, name: 'g.json' }), store }, schemesApi } })
     await w.find('button.import-start').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('generic'))
     await w.find('button.import-next').trigger('click') // 进入映射页
@@ -218,7 +219,7 @@ describe('ImportCard', () => {
       mapping: { secret: { path: 'secretKey' }, issuer: { path: 'brand' }, label: { path: 'account' }, period: { path: 'step' } },
     }
     const schemesApi = { load: vi.fn().mockResolvedValue([premade]), save: vi.fn().mockResolvedValue(undefined) }
-    const w = mount(ImportCard, { props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text, name: 'g.json' }), store }, schemesApi } })
+    const w = mount(ImportCard, { global: { plugins: [createTestI18n()] }, props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text, name: 'g.json' }), store }, schemesApi } })
     await w.find('button.import-start').trigger('click')
     await vi.waitFor(() => expect(w.text()).toContain('generic'))
     await w.find('button.import-next').trigger('click')
