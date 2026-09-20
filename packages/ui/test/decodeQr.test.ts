@@ -27,6 +27,10 @@ describe('decodeQrPixels', () => {
   })
   it('decodeQrToUri：非法码文本给中文错误', () => {
     const r = decodeQrToUri({ data: new Uint8ClampedArray(100 * 100 * 4).fill(255), width: 100, height: 100 })
-    expect(r).toHaveProperty('error')
+    expect(r).toEqual({ error: '未识别到二维码' })
+  })
+  // 注：'hello world' 生成版本 1 最小矩阵，jsQR 识别不出（实测 null），故用可解码的较长非 otpauth 文本
+  it('解码成功但非 otpauth 内容：精确中文错误', () => {
+    expect(decodeQrToUri(gridToPixels('otpauth-x: //not-valid'))).toEqual({ error: '二维码内容不是有效的 otpauth 链接' })
   })
 })
