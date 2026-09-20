@@ -1,6 +1,6 @@
 import {
   createGDriveBackend, createGistBackend, createOneDriveBackend, createS3Backend, createWebdavBackend,
-  type BackupSource, type CloudBackend, type CloudCred, type CloudSyncOutcome, type KdfProfile,
+  type BackupSource, type CloudBackend, type CloudCred, type KdfProfile,
 } from '@totp/core'
 
 /** 云端对象固定路径（内容=加密 envelope JSON，见计划 10 Global Constraints）
@@ -55,14 +55,6 @@ export function isPlaintextHttpUrl(url: string): boolean {
 
 /** 云同步自动触发偏好（变更触发/间隔触发及间隔分钟数） */
 export interface CloudAutoPrefs { onChange: boolean; onInterval: boolean; intervalMinutes: number }
-
-/**
- * 云同步动作 → 中文状态文案（Minor-6 中文化）：手动 CloudCard statusMap 与自动 runner
- * recordStatus summary 共用；「key: label」拼接后的自动状态行与手动状态行口径一致。
- */
-export const CLOUD_ACTION_LABEL: Record<CloudSyncOutcome['action'], string> = {
-  uploaded: '已上传', downloaded: '已下载', 'conflict-resolved': '冲突已解决', 'in-sync': '已是最新',
-}
 
 /**
  * 云同步平台能力（宿主注入：desktop=Tauri fs；extension=chrome.storage.local+Blob 下载）。

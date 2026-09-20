@@ -647,5 +647,18 @@
     "revealTitle": "{issuer} — Secret",
     "revealHint": "Only the first and last 4 characters of the secret are shown; view or edit the full secret in the main window.",
     "close": "Close"
+  },
+  "cloudRunner": {
+    "lockedVault": "Vault locked",
+    "noSecret": "No backup passphrase set",
+    "noChange": "No content changes",
+    "noSources": "No enabled cloud sources",
+    "failed": "Failed",
+    "action": {
+      "uploaded": "Uploaded",
+      "downloaded": "Downloaded",
+      "conflictResolved": "Conflict resolved",
+      "inSync": "Up to date"
+    }
   }
 }

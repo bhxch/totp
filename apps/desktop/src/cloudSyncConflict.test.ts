@@ -55,6 +55,8 @@ describe('审查 I9：冲突副本写盘失败传播（desktop 接线）', () =>
       persistAdopted: vi.fn(),
       saveConflictBackup,
       recordStatus,
+      // D2 抽串：runner deps 必注入 t——本用例仅命中失败分支，夹具映射与 zh 资源逐字一致
+      t: (key: string) => ({ 'cloudRunner.failed': '失败' })[key] ?? key,
       onError: vi.fn(),
     }).run()
     // 副本落盘被调用且带 sourceId（写盘语义不变，只是失败不再被吞）

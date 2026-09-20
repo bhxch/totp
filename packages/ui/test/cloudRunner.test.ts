@@ -3,6 +3,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createBackupEnvelope, sha256Hex, type BackupSource, type CloudBackend, type CloudCred } from '@totp/core'
 import { createCloudSyncRunner, type CloudRunnerDeps } from '../src/components/cloudRunner'
+import { createTestI18n } from './helpers/i18n'
 
 const PW = 'pw'
 const PATH = 'totp-backup.totpbackup'
@@ -48,6 +49,9 @@ async function envelopeBytesOf(vaultJson: string, password: string): Promise<Uin
   return bytesOf(JSON.stringify(await createBackupEnvelope(vaultJson, password)))
 }
 
+/** t 注入 zh 资源查找（D2 抽串）：runner 摘要断言维持 zh 字面量与资源逐字一致 */
+const testT = createTestI18n().global.t
+
 /** 基线 deps：解锁、有 secret、默认无源（可逐项覆写）；makeBackend 默认每次新建 fake backend。
  *  返回的 mock 引用在 over 覆盖后取 deps 上的最终值（断言永远指向实际注入的实现） */
 function makeDeps(over: Partial<CloudRunnerDeps> = {}) {
@@ -76,6 +80,7 @@ function makeDeps(over: Partial<CloudRunnerDeps> = {}) {
     saveConflictBackup: saveConflictBackupDef,
     onRetentionDeleted: onRetentionDeletedDef,
     recordStatus: recordStatusDef,
+    t: (key: string, params: Record<string, unknown> = {}) => testT(key, params),
     onError: onErrorDef,
     ...over,
   }

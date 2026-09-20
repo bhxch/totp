@@ -25,7 +25,7 @@ const props = defineProps<{
 
 const { t } = useI18n()
 
-/** 同步动作 → 状态文案 key（i18n D2：卡内状态行经 t() 渲染；cloudRunner 持久化摘要沿用 CLOUD_ACTION_LABEL zh 值） */
+/** 同步动作 → 状态文案 key（i18n D2：卡内状态行经 t() 渲染；自动 runner 摘要经 deps.t 用 common.json cloudRunner.* 记录） */
 const ACTION_LABEL_KEY: Record<string, string> = {
   uploaded: 'cloudCard.actionUploaded',
   downloaded: 'cloudCard.actionDownloaded',

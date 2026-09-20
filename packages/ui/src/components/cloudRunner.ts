@@ -17,9 +17,8 @@
  */
 import {
   enforceRemoteRetention, resolveObjectPath, resolveTimestampPath, sha256Hex, syncMultipleTargets,
-  type BackupSource, type CloudBackend, type CloudCred, type ConflictBackupResult, type KdfProfile,
+  type BackupSource, type CloudBackend, type CloudCred, type CloudSyncOutcome, type ConflictBackupResult, type KdfProfile,
 } from '@totp/core'
-import { CLOUD_ACTION_LABEL } from './cloudPlatform'
 
 export interface CloudRunnerDeps {
   /** 锁定态：锁定或无 secret 时自动触发直接跳过 */
@@ -53,7 +52,18 @@ export interface CloudRunnerDeps {
    *  三态（批 4）：true=成功 / false=失败 / null=跳过（锁定/无 secret/空目标/内容无变化；记录仅来自自动通道——
    *  手动同步走 CloudCard 自身的 platform 链路，不经过本 runner，不会污染手动状态行） */
   recordStatus?(ok: boolean | null, summary: string): void
+  /** 状态摘要翻译器（D2 抽串）：宿主注入（i18n.global.t 同签名），key 见 common.json cloudRunner.*。
+   *  摘要随 recordStatus 持久化，翻译发生在记录时（locale 切换不改已落盘摘要，与手动卡状态行同限制） */
+  t(key: string, params?: Record<string, unknown>): string
   onError?(err: unknown): void
+}
+
+/** 同步动作 → 状态文案 key（D2：原 CLOUD_ACTION_LABEL zh 常量上移至 common.json cloudRunner.action.*） */
+const ACTION_LABEL_KEY: Record<CloudSyncOutcome['action'], string> = {
+  uploaded: 'cloudRunner.action.uploaded',
+  downloaded: 'cloudRunner.action.downloaded',
+  'conflict-resolved': 'cloudRunner.action.conflictResolved',
+  'in-sync': 'cloudRunner.action.inSync',
 }
 
 /** 模块级防重入标志：run 在途时再次 run 直接 return（自动与自动重叠防护） */
@@ -83,12 +93,12 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
     // summary 仅存原因文本，不携带「跳过：」前缀——前缀由宿主格式化按 ok=null 拼装（label 拼装职责单一）。
     // 写入频率自审：调度器防抖 10s / 到点 ≥15min，每次触发事件至多写一条，量级可接受
     if (deps.isLocked()) {
-      deps.recordStatus?.(null, '库已锁定')
+      deps.recordStatus?.(null, deps.t('cloudRunner.lockedVault'))
       return
     }
     const secret = deps.getSecret()
     if (secret === null) {
-      deps.recordStatus?.(null, '未设置备份口令')
+      deps.recordStatus?.(null, deps.t('cloudRunner.noSecret'))
       return // 自动触发只在解锁会话内
     }
     busy = true
@@ -97,12 +107,12 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
       // 自动通道内容门（审查 I1）：已有基线且明文内容未变 → 不发起任何同步（连 loadSources 都不进，
       // 零网络请求），记 null 跳过态；manual 不设门（对齐设计「手动不跳过」）
       if (mode === 'auto' && lastAutoVaultHash !== null && (await sha256Hex(encoder.encode(vaultJson))) === lastAutoVaultHash) {
-        deps.recordStatus?.(null, '内容无变化')
+        deps.recordStatus?.(null, deps.t('cloudRunner.noChange'))
         return
       }
       const pairs = (await deps.loadSources()).filter((p) => p.source.enabled)
       if (pairs.length === 0) {
-        deps.recordStatus?.(null, '未启用云源')
+        deps.recordStatus?.(null, deps.t('cloudRunner.noSources'))
         return
       }
       const inputs = await Promise.all(
@@ -145,7 +155,7 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
           // 不进 onError（区别于编排层意外）：清理失败下轮同步自动重试
         }
       }
-      // summary 动作中文化（Minor-6）：与手动同步状态行同口径；单目标失败（outcome=null）记「失败」；
+      // summary 动作文案（Minor-6 → D2 i18n）：与手动同步状态行同口径；单目标失败（outcome=null）记失败；
       // 源显示名（审查 I4）：sourceName 提供时用名称，新建源 uuid 不上屏。
       // 内容门基线刷新裁定（复审必修）：core 对单目标失败（outcome=null）与收敛回推失败（convergeError）
       // 均不抛错，仅当全部目标拿到确定结果（outcome 非 null 且无 convergeError）才以 finalVaultJson 刷新
@@ -153,7 +163,7 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
       // 吸收成静默僵死。全程意外走 catch 同样不刷新（catch 内不动基线，保持 null/旧值语义）
       const allSettled = r.results.every((x) => x.outcome !== null && !x.convergeError)
       lastAutoVaultHash = allSettled ? await sha256Hex(encoder.encode(r.finalVaultJson)) : null
-      deps.recordStatus?.(true, r.results.map((x) => `${displayName(x.key)}: ${x.outcome ? CLOUD_ACTION_LABEL[x.outcome.action] : '失败'}`).join('; '))
+      deps.recordStatus?.(true, r.results.map((x) => `${displayName(x.key)}: ${x.outcome ? deps.t(ACTION_LABEL_KEY[x.outcome.action]) : deps.t('cloudRunner.failed')}`).join('; '))
     } catch (err) {
       deps.onError?.(err)
       deps.recordStatus?.(false, errMsg(err).slice(0, 100))

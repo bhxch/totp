@@ -425,6 +425,8 @@ const cloudSync = createCloudSyncRunner({
     const note = retentionDeletedNote(name, deleted)
     if (note) retentionNotes.push(note)
   },
+  // D2 抽串：runner 状态摘要经注入 t() 记录时取词（i18n 在 setup 已同步装入，回调必然晚于装入）
+  t: (key: string, params: Record<string, unknown> = {}) => i18n.global.t(key, params),
   // 状态记录不 await：storage 写失败不影响同步主流程。ok 三态（批 4）：true/false/null（跳过）
   recordStatus: (ok: boolean | null, summary) => {
     const notes = retentionNotes.join('；')

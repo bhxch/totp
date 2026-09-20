@@ -647,5 +647,18 @@
     "revealTitle": "{issuer} — 密钥",
     "revealHint": "仅显示密钥前后各 4 位；完整密钥请在主窗口编辑查看。",
     "close": "关闭"
+  },
+  "cloudRunner": {
+    "lockedVault": "库已锁定",
+    "noSecret": "未设置备份口令",
+    "noChange": "内容无变化",
+    "noSources": "未启用云源",
+    "failed": "失败",
+    "action": {
+      "uploaded": "已上传",
+      "downloaded": "已下载",
+      "conflictResolved": "冲突已解决",
+      "inSync": "已是最新"
+    }
   }
 }

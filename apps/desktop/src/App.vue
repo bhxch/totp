@@ -420,6 +420,8 @@ const cloudSync = createCloudSyncRunner({
   saveConflictBackup: (key, bytes) => saveConflictBackupToDir(bytes, null, key),
   kdfProfile: () => kdfProfileOf(),
   sourceName: (id) => cloudSourceNames.get(id) ?? id,
+  // D2 抽串：runner 状态摘要经注入 t() 记录时取词（tr 内部读 locale ref；runner 回调均在 i18n 装入后触发）
+  t: (key, params) => tr(key, params),
   onRetentionDeleted: (name, deleted) => {
     // D2 抽串：记录时取词（摘要持久化于 cloudAutoStatus，展示端按落盘内容显示）
     retentionNotes.push(deleted >= 0 ? tr('desktop.retentionCleaned', { name, count: deleted }) : tr('desktop.retentionUnsupported', { name }))
