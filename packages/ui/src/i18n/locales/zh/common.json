@@ -507,5 +507,35 @@
     "osEnabled": "{label}已启用",
     "osRemoved": "{label}已移除",
     "cancel": "取消"
+  },
+  "syncCard": {
+    "title": "浏览器同步",
+    "toggleLabel": "启用浏览器同步（Chrome/Edge）",
+    "unsupported": "当前环境不支持浏览器同步",
+    "perDeviceHint": "同步开关按设备独立，他机不会改写本端",
+    "plainWarn": "当前未启用本地加密，条目将以明文同步至浏览器账号云端——建议先在安全设置中启用加密",
+    "refresh": "刷新状态",
+    "statusOk": "上次同步 {time}",
+    "statusQuota": "同步空间已满——建议配置云备份后关闭浏览器同步",
+    "statusError": "同步出错",
+    "statusConflict": "远端为明文库且本机已加密：已拒绝降级同步，请在任一设备上统一加密状态",
+    "statusInvalid": "远端同步数据无效：已拒绝应用（对端数据可能损坏或被篡改）",
+    "statusOff": "未启用",
+    "usage": "已用 {pct}% / 100KB"
+  },
+  "otpListItem": {
+    "pinnedTitle": "已置顶",
+    "invalid": "密钥非法",
+    "invalidTitle": "密钥非法：{message}",
+    "revealTitle": "显示密钥",
+    "qrTitle": "显示二维码"
+  },
+  "searchBar": {
+    "searchLabel": "搜索",
+    "searchPlaceholder": "搜索服务名或账户…",
+    "searchAria": "搜索服务名或账户",
+    "searchSecretLabel": "搜 secret",
+    "secretToggleOnTitle": "关闭密钥匹配（当前开启）",
+    "secretToggleOffTitle": "开启后会用密钥 base32 串匹配（默认关闭）"
   }
 }

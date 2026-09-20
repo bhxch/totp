@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import type { OtpEntry } from '@totp/core'
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import MdIconButton from './md/MdIconButton.vue'
 import { avatarStyleOf } from './avatarColor'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   entry: OtpEntry
@@ -56,7 +59,7 @@ function onContextMenu(e: MouseEvent): void {
     </span>
     <div class="meta">
       <div class="issuer">
-        <span v-if="entry.pinned" class="pin" title="已置顶">★</span>
+        <span v-if="entry.pinned" class="pin" :title="t('otpListItem.pinnedTitle')">★</span>
         {{ entry.issuer }}
       </div>
       <div class="label">{{ entry.label }}</div>
@@ -64,10 +67,10 @@ function onContextMenu(e: MouseEvent): void {
     <div class="right">
       <span
         :class="['code', { invalid: code === 'INVALID' }]"
-        :title="code === 'INVALID' ? `密钥非法：${error ?? ''}` : undefined"
-      >{{ code === 'INVALID' ? '密钥非法' : grouped(code) }}</span>
-      <MdIconButton class="reveal" :title="'显示密钥'" aria-label="显示密钥" @click.stop="emit('reveal')">🔑</MdIconButton>
-      <MdIconButton class="show-qr" title="显示二维码" aria-label="显示二维码" @click.stop="emit('qr')">▣</MdIconButton>
+        :title="code === 'INVALID' ? t('otpListItem.invalidTitle', { message: error ?? '' }) : undefined"
+      >{{ code === 'INVALID' ? t('otpListItem.invalid') : grouped(code) }}</span>
+      <MdIconButton class="reveal" :title="t('otpListItem.revealTitle')" :aria-label="t('otpListItem.revealTitle')" @click.stop="emit('reveal')">🔑</MdIconButton>
+      <MdIconButton class="show-qr" :title="t('otpListItem.qrTitle')" :aria-label="t('otpListItem.qrTitle')" @click.stop="emit('qr')">▣</MdIconButton>
       <svg viewBox="0 0 36 36" class="ring" aria-hidden="true">
         <circle cx="18" cy="18" r="16" class="ring-bg" />
         <circle

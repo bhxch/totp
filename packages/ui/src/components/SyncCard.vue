@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { SyncPlatform, SyncStatus } from './syncPlatform'
 import MdButton from './md/MdButton.vue'
 import MdCheckbox from './md/MdCheckbox.vue'
@@ -8,6 +9,8 @@ const props = defineProps<{
   /** 同步平台实现；null 时整卡不渲染（desktop/popup 不受影响） */
   platform: SyncPlatform | null
 }>()
+
+const { t } = useI18n()
 
 const busy = ref(false)
 const msg = ref('')
@@ -46,15 +49,6 @@ async function onToggle(enabled: boolean): Promise<void> {
   }
 }
 
-const STATUS_TEXT: Record<string, string> = {
-  ok: '上次同步 {time}',
-  quota: '同步空间已满——建议配置云备份后关闭浏览器同步',
-  error: '同步出错',
-  conflict: '远端为明文库且本机已加密：已拒绝降级同步，请在任一设备上统一加密状态',
-  invalid: '远端同步数据无效：已拒绝应用（对端数据可能损坏或被篡改）',
-  off: '未启用',
-}
-
 function fmtTime(at: number): string {
   const d = new Date(at)
   const p = (n: number) => String(n).padStart(2, '0')
@@ -64,7 +58,15 @@ function fmtTime(at: number): string {
 const statusText = computed(() => {
   const s = status.value
   if (!s) return ''
-  return (STATUS_TEXT[s.state] ?? '').replace('{time}', fmtTime(s.at))
+  switch (s.state) {
+    case 'ok': return t('syncCard.statusOk', { time: fmtTime(s.at) })
+    case 'quota': return t('syncCard.statusQuota')
+    case 'error': return t('syncCard.statusError')
+    case 'conflict': return t('syncCard.statusConflict')
+    case 'invalid': return t('syncCard.statusInvalid')
+    case 'off': return t('syncCard.statusOff')
+    default: return ''
+  }
 })
 const stateClass = computed(() => (status.value ? `sync-${status.value.state}` : ''))
 
@@ -75,7 +77,7 @@ const plainSyncWarn = computed(() => props.platform?.syncEnabled === true && pro
 const usageText = computed(() => {
   const s = status.value
   if (!s || typeof s.pct !== 'number') return ''
-  return `已用 ${Math.round(s.pct)}% / 100KB`
+  return t('syncCard.usage', { pct: Math.round(s.pct) })
 })
 
 onMounted(() => {
@@ -90,23 +92,23 @@ onUnmounted(() => {
 
 <template>
   <section v-if="platform" class="card sync">
-    <h2>浏览器同步</h2>
+    <h2>{{ t('syncCard.title') }}</h2>
     <MdCheckbox
       class="sync-toggle" :model-value="platform.syncEnabled" :disabled="busy || !platform.canSync"
-      label="启用浏览器同步（Chrome/Edge）" aria-label="启用浏览器同步（Chrome/Edge）"
+      :label="t('syncCard.toggleLabel')" :aria-label="t('syncCard.toggleLabel')"
       @update:model-value="onToggle"
     />
-    <p v-if="!platform.canSync" class="hint">当前环境不支持浏览器同步</p>
+    <p v-if="!platform.canSync" class="hint">{{ t('syncCard.unsupported') }}</p>
     <!-- I55：per-device 同步开关明示，避免用户误解为他机关闭会影响本端 -->
-    <p class="per-device-hint">同步开关按设备独立，他机不会改写本端</p>
+    <p class="per-device-hint">{{ t('syncCard.perDeviceHint') }}</p>
     <!-- 加密警示承载于状态条区域：label 不绑定「加密分片」承诺（未加密时以明文同步） -->
     <p v-if="plainSyncWarn" class="warn" role="alert">
-      当前未启用本地加密，条目将以明文同步至浏览器账号云端——建议先在安全设置中启用加密
+      {{ t('syncCard.plainWarn') }}
     </p>
     <div class="status-row">
       <span v-if="statusText" :class="['status', stateClass]" role="status">{{ statusText }}</span>
       <span v-if="usageText" class="usage" role="status">{{ usageText }}</span>
-      <MdButton variant="text" class="refresh" :disabled="busy" @click="refreshStatus">刷新状态</MdButton>
+      <MdButton variant="text" class="refresh" :disabled="busy" @click="refreshStatus">{{ t('syncCard.refresh') }}</MdButton>
     </div>
     <div v-if="msg" :class="msgKind" role="alert">{{ msg }}</div>
   </section>

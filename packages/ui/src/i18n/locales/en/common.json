@@ -507,5 +507,35 @@
     "osEnabled": "{label} enabled",
     "osRemoved": "{label} removed",
     "cancel": "Cancel"
+  },
+  "syncCard": {
+    "title": "Browser sync",
+    "toggleLabel": "Enable browser sync (Chrome/Edge)",
+    "unsupported": "Browser sync is not supported in this environment",
+    "perDeviceHint": "The sync toggle is per device; other devices do not change this one",
+    "plainWarn": "Local encryption is not enabled: entries will sync in plaintext to the browser account cloud — consider enabling encryption in Security settings first",
+    "refresh": "Refresh status",
+    "statusOk": "Last synced {time}",
+    "statusQuota": "Sync storage is full — consider configuring cloud backup, then turn off browser sync",
+    "statusError": "Sync error",
+    "statusConflict": "Remote is a plaintext vault while this device is encrypted: downgrade sync rejected. Unify the encryption state on either device",
+    "statusInvalid": "Remote sync data is invalid: not applied (the peer's data may be corrupted or tampered with)",
+    "statusOff": "Not enabled",
+    "usage": "{pct}% of 100KB used"
+  },
+  "otpListItem": {
+    "pinnedTitle": "Pinned",
+    "invalid": "Invalid secret",
+    "invalidTitle": "Invalid secret: {message}",
+    "revealTitle": "Reveal secret",
+    "qrTitle": "Show QR code"
+  },
+  "searchBar": {
+    "searchLabel": "Search",
+    "searchPlaceholder": "Search service name or account…",
+    "searchAria": "Search service name or account",
+    "searchSecretLabel": "Search secret",
+    "secretToggleOnTitle": "Disable secret matching (currently on)",
+    "secretToggleOffTitle": "When on, matching uses the base32 secret string (off by default)"
   }
 }

@@ -1,6 +1,9 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import MdCheckbox from './md/MdCheckbox.vue'
 import MdTextField from './md/MdTextField.vue'
+
+const { t } = useI18n()
 
 defineProps<{
   modelValue: string
@@ -18,9 +21,9 @@ const emit = defineEmits<{
     <MdTextField
       class="grow"
       type="search"
-      label="搜索"
-      placeholder="搜索服务名或账户…"
-      aria-label="搜索服务名或账户"
+      :label="t('searchBar.searchLabel')"
+      :placeholder="t('searchBar.searchPlaceholder')"
+      :aria-label="t('searchBar.searchAria')"
       :model-value="modelValue"
       @update:model-value="emit('update:modelValue', $event)"
     />
@@ -28,9 +31,9 @@ const emit = defineEmits<{
     <MdCheckbox
       class="secret-toggle"
       :model-value="!!searchSecret"
-      label="搜 secret"
-      aria-label="搜 secret"
-      :title="searchSecret ? '关闭密钥匹配（当前开启）' : '开启后会用密钥 base32 串匹配（默认关闭）'"
+      :label="t('searchBar.searchSecretLabel')"
+      :aria-label="t('searchBar.searchSecretLabel')"
+      :title="searchSecret ? t('searchBar.secretToggleOnTitle') : t('searchBar.secretToggleOffTitle')"
       @update:model-value="emit('update:searchSecret', $event)"
     />
   </div>
