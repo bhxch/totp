@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { KdfProfile } from '@totp/core'
 import type { LockPrefs, SecurityPlatform } from './securityPlatform'
 import MdButton from './md/MdButton.vue'
@@ -7,6 +8,8 @@ import MdCheckbox from './md/MdCheckbox.vue'
 import MdSelect from './md/MdSelect.vue'
 import MdSwitch from './md/MdSwitch.vue'
 import MdTextField from './md/MdTextField.vue'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   /** 安全平台能力；null 时整卡不渲染（popup 不受影响） */
@@ -32,6 +35,11 @@ const clipboardOn = computed(() => props.platform?.clipboardClearEnabled.value ?
 const naming = computed(() => props.platform?.unlockNaming ?? null)
 /** Passkey 显示名（msg 拼接与模板共用；未注入回退 'Passkey'） */
 const prfLabel = computed(() => naming.value?.prfLabel ?? 'Passkey')
+/** 启用提示的「可绑定方式」串：Passkey（+ OS 自动解锁显示名，宿主注入时） */
+const bindMethods = computed(() => {
+  const os = naming.value?.osAutoLabel
+  return os ? `${prfLabel.value} ${t('securityCard.or')} ${os}` : prfLabel.value
+})
 
 /** Passkey(PRF) 能力探测结果：unknown=探测中/宿主未提供；false 时显示不支持提示 */
 const prfCap = ref<'unknown' | boolean>('unknown')
@@ -53,9 +61,9 @@ const kekOnlyPassword = computed(() => {
 
 /** 三档选项（设计 §2 KDF 档位表：fast≈OWASP 低档 / balanced=历史默认 / paranoid=保守） */
 const KDF_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: 'fast', label: '更快（低端机友好）' },
-  { value: 'balanced', label: '平衡（默认）' },
-  { value: 'paranoid', label: '更慢更耐暴力破解' },
+  { value: 'fast', label: t('securityCard.kdfFast') },
+  { value: 'balanced', label: t('securityCard.kdfBalanced') },
+  { value: 'paranoid', label: t('securityCard.kdfParanoid') },
 ]
 const curProfile = computed<KdfProfile>(() => props.platform?.security?.kdfProfile.value ?? 'balanced')
 /** 待确认的新档位（null=未在调整；确认成功或取消/重选当前档位即复位） */
@@ -103,8 +111,8 @@ function fail(e: unknown): void {
 
 /** 口令校验：非空且两次一致（启用/换口令共用） */
 function validatePw(a: string, b: string): string | null {
-  if (!a) return '请输入口令'
-  if (a !== b) return '两次输入的口令不一致'
+  if (!a) return t('securityCard.passphraseRequired')
+  if (a !== b) return t('securityCard.passphraseMismatch')
   return null
 }
 
@@ -130,7 +138,7 @@ async function onEnable(): Promise<void> {
   if (!p) return
   const err = validatePw(password.value, confirmPw.value)
   if (err) return fail(new Error(err))
-  if (await run(() => p.enableEncryption(password.value), '已启用加密')) {
+  if (await run(() => p.enableEncryption(password.value), t('securityCard.enabled'))) {
     password.value = ''
     confirmPw.value = ''
   }
@@ -145,9 +153,9 @@ async function onChangePw(): Promise<void> {
   // 换前存在非口令来源时追加重绑提示（文案按 dpapiOps 有无动态化，与旧 keepHint 反向）
   const hadAlternate = passkeySources.value.length > 0 || dpapiSource.value !== null
   const rebindHint = hadAlternate
-    ? (dpapiOps.value ? `；已绑定的 Passkey/${dpapiOps.value.label}已因密钥轮换失效，请重新绑定` : '；已绑定的 Passkey已因密钥轮换失效，请重新绑定')
+    ? t(dpapiOps.value ? 'securityCard.rebindWithOs' : 'securityCard.rebindNoOs', { os: dpapiOps.value?.label ?? '' })
     : ''
-  if (await run(() => p.changePassphrase(newPw.value, { rotateDek: true }), `口令已更换${rebindHint}`)) {
+  if (await run(() => p.changePassphrase(newPw.value, { rotateDek: true }), t('securityCard.pwChanged', { hint: rebindHint }))) {
     newPw.value = ''
     newPwConfirm.value = ''
   }
@@ -164,8 +172,8 @@ async function onConfirmProfile(): Promise<void> {
   const p = props.platform?.security
   const sel = profileSel.value
   if (!p || !sel) return
-  if (!profilePw.value) return fail(new Error('请输入当前口令'))
-  if (await run(() => p.changePassphrase(profilePw.value, { rotateDek: false, profile: sel }), '加密强度已更新（立即生效，数据无需重新加密）')) {
+  if (!profilePw.value) return fail(new Error(t('securityCard.currentPwRequired')))
+  if (await run(() => p.changePassphrase(profilePw.value, { rotateDek: false, profile: sel }), t('securityCard.profileUpdated'))) {
     profileSel.value = null
     profilePw.value = ''
   }
@@ -197,7 +205,7 @@ async function onDisable(): Promise<void> {
   // I71：无论 run 成功失败都显式复位 confirmDisable（run 内部已 finally 复位 busy，
   // 但 confirmDisable 不能依赖 run 副作用；当前实现 run=false 时不进入 if 分支导致状态残留）
   try {
-    await run(() => p.disableEncryption(), '已关闭加密')
+    await run(() => p.disableEncryption(), t('securityCard.disabled'))
   } finally {
     confirmDisable.value = false
   }
@@ -208,14 +216,14 @@ async function onAddPasskey(): Promise<void> {
   if (!pk) return
   const prf = prfLabel.value
   await run(async () => {
-    if (!(await pk.add())) throw new Error(`${prf} 创建未完成（已取消或认证器不支持 PRF）`)
-  }, `${prf} 已绑定，下次锁定后可使用 ${prf} 解锁`)
+    if (!(await pk.add())) throw new Error(t('securityCard.prfCreateFailed', { prf }))
+  }, t('securityCard.prfAdded', { prf }))
 }
 
 async function onRemovePasskey(credentialId: string): Promise<void> {
   const pk = passkeyOps.value
   if (!pk) return
-  await run(() => pk.remove(credentialId), `${prfLabel.value} 已移除`)
+  await run(() => pk.remove(credentialId), t('securityCard.prfRemoved', { prf: prfLabel.value }))
 }
 
 /** 启用 OS 自动解锁：取当前 DEK → OS 包裹（Windows=DPAPI / mac=Keychain / linux=Secret Service）→ 绑定来源落盘 */
@@ -224,15 +232,15 @@ async function onEnableDpapi(): Promise<void> {
   if (!ops) return
   await run(async () => {
     const dek = ops.getCurrentDek()
-    if (!dek) throw new Error('当前无可用 DEK（需先解锁）')
+    if (!dek) throw new Error(t('securityCard.noDek'))
     await ops.add(await ops.protect(dek))
-  }, `${ops.label}已启用`)
+  }, t('securityCard.osEnabled', { label: ops.label }))
 }
 
 async function onRemoveDpapi(): Promise<void> {
   const ops = dpapiOps.value
   if (!ops) return
-  await run(() => ops.remove(), `${ops.label}已移除`)
+  await run(() => ops.remove(), t('securityCard.osRemoved', { label: ops.label }))
 }
 
 async function onClipboardChange(checked: boolean): Promise<void> {
@@ -247,103 +255,103 @@ async function onDelayChange(value: string): Promise<void> {
 
 <template>
   <section v-if="platform" class="card security">
-    <h2>安全</h2>
+    <h2>{{ t('securityCard.title') }}</h2>
     <template v-if="platform.security">
       <!-- 未启用：口令+确认 → 启用加密 -->
       <template v-if="!hasEnc">
-        <p class="hint">此口令用于加密本机存储的验证库数据，与备份口令相互独立。</p>
+        <p class="hint">{{ t('securityCard.enableIntro') }}</p>
         <div class="pw-row">
-          <MdTextField v-model="password" type="password" label="加密口令" placeholder="加密口令" autocomplete="new-password" :disabled="busy" />
-          <MdTextField v-model="confirmPw" type="password" label="确认口令" placeholder="确认口令" autocomplete="new-password" :disabled="busy" />
+          <MdTextField v-model="password" type="password" :label="t('securityCard.pwLabel')" :placeholder="t('securityCard.pwLabel')" autocomplete="new-password" :disabled="busy" />
+          <MdTextField v-model="confirmPw" type="password" :label="t('securityCard.confirmLabel')" :placeholder="t('securityCard.confirmLabel')" autocomplete="new-password" :disabled="busy" />
         </div>
         <div class="actions">
-          <MdButton class="enable-enc" :disabled="busy" @click="onEnable">启用加密</MdButton>
+          <MdButton class="enable-enc" :disabled="busy" @click="onEnable">{{ t('securityCard.enableBtn') }}</MdButton>
         </div>
-        <p class="hint">启用后本地数据以口令加密存储。启用后可绑定{{ prfLabel }}{{ naming?.osAutoLabel ? ` 或 ${naming.osAutoLabel}` : '' }}，免输口令解锁。</p>
-        <p class="hint">启用后浏览器同步的数据也将是密文。</p>
+        <p class="hint">{{ t('securityCard.enableBindHint', { methods: bindMethods }) }}</p>
+        <p class="hint">{{ t('securityCard.enableSyncHint') }}</p>
       </template>
       <!-- 已启用且解锁：解锁方式 + 换口令 + 关闭加密 -->
       <template v-else-if="!isLocked">
         <!-- 解锁方式（prf：宿主提供 passkey ops 才渲染，不支持时仅提示；dpapi：仅 desktop 宿主提供时渲染） -->
         <div v-if="passkeyOps || dpapiOps" class="unlock-methods">
-          <h3>解锁方式</h3>
+          <h3>{{ t('securityCard.unlockMethodsTitle') }}</h3>
           <template v-if="passkeyOps">
-            <p v-if="prfCap === false" class="hint">当前浏览器不支持 {{ prfLabel }} 解锁（PRF）</p>
+            <p v-if="prfCap === false" class="hint">{{ t('securityCard.prfUnsupported', { prf: prfLabel }) }}</p>
             <template v-else>
               <div class="method-row">
-                <span class="method">口令</span>
-                <span class="method-hint">默认解锁方式，不可移除</span>
+                <span class="method">{{ t('securityCard.methodPassphrase') }}</span>
+                <span class="method-hint">{{ t('securityCard.methodHint') }}</span>
               </div>
               <ul v-if="passkeySources.length" class="passkey-list">
                 <li v-for="c in passkeySources" :key="c.credentialId">
                   <code>Passkey {{ shortId(c.credentialId) }}</code>
-                  <MdButton variant="text" danger class="remove-passkey" :disabled="busy" @click="onRemovePasskey(c.credentialId)">移除</MdButton>
+                  <MdButton variant="text" danger class="remove-passkey" :disabled="busy" @click="onRemovePasskey(c.credentialId)">{{ t('securityCard.remove') }}</MdButton>
                 </li>
               </ul>
               <div class="actions">
-                <MdButton variant="tonal" class="add-passkey" :disabled="busy || prfCap !== true" @click="onAddPasskey">添加 {{ prfLabel }} 解锁</MdButton>
+                <MdButton variant="tonal" class="add-passkey" :disabled="busy || prfCap !== true" @click="onAddPasskey">{{ t('securityCard.addPrf', { prf: prfLabel }) }}</MdButton>
               </div>
             </template>
           </template>
           <template v-if="dpapiOps">
             <div v-if="dpapiSource" class="dpapi-row">
-              <span class="method">{{ dpapiOps.label }}{{ dpapiOps.techSuffix ?? '（DPAPI）' }}</span>
-              <MdButton variant="text" danger class="remove-dpapi" :disabled="busy" @click="onRemoveDpapi">移除</MdButton>
+              <span class="method">{{ dpapiOps.label }}{{ dpapiOps.techSuffix ?? t('securityCard.dpapiTechSuffix') }}</span>
+              <MdButton variant="text" danger class="remove-dpapi" :disabled="busy" @click="onRemoveDpapi">{{ t('securityCard.remove') }}</MdButton>
             </div>
             <div v-else class="actions">
-              <MdButton variant="tonal" class="enable-dpapi" :disabled="busy" @click="onEnableDpapi">启用 {{ dpapiOps.label }}</MdButton>
+              <MdButton variant="tonal" class="enable-dpapi" :disabled="busy" @click="onEnableDpapi">{{ t('securityCard.enableOs', { label: dpapiOps.label }) }}</MdButton>
             </div>
           </template>
         </div>
         <!-- 主口令天数提示（设计 §2：超 180 天强调色；passwordChangedAt 缺失显示未记录） -->
-        <p v-if="pwAgeDays === null" class="pw-age-hint">本地主口令未记录更换时间</p>
-        <p v-else :class="pwAgeDays > 180 ? 'pw-age-warn' : 'pw-age-hint'">本地主口令已 {{ pwAgeDays }} 天未更换</p>
+        <p v-if="pwAgeDays === null" class="pw-age-hint">{{ t('securityCard.pwAgeUnknown') }}</p>
+        <p v-else :class="pwAgeDays > 180 ? 'pw-age-warn' : 'pw-age-hint'">{{ t('securityCard.pwAge', { days: pwAgeDays }) }}</p>
         <!-- 加密强度档位（plan16 设计 §2 立即生效裁定：重 wrap 换 salt，数据无需重加密） -->
         <div class="kdf-row">
           <MdSelect
-            class="kdf-select" label="加密强度" aria-label="加密强度"
+            class="kdf-select" :label="t('securityCard.kdfLabel')" :aria-label="t('securityCard.kdfLabel')"
             :model-value="profileSel ?? curProfile" :options="KDF_OPTIONS" :disabled="busy"
             @update:model-value="onProfileSelect"
           />
-          <span class="opt-hint">调整立即生效，数据无需重新加密</span>
+          <span class="opt-hint">{{ t('securityCard.kdfHint') }}</span>
         </div>
         <div v-if="profileSel" class="confirm-row kdf-confirm">
-          <MdTextField v-model="profilePw" type="password" label="当前口令" placeholder="当前口令" autocomplete="current-password" :disabled="busy" />
-          <MdButton class="confirm-kdf" :disabled="busy" @click="onConfirmProfile">确认调整</MdButton>
-          <MdButton variant="text" :disabled="busy" @click="profileSel = null">取消</MdButton>
+          <MdTextField v-model="profilePw" type="password" :label="t('securityCard.currentPwLabel')" :placeholder="t('securityCard.currentPwLabel')" autocomplete="current-password" :disabled="busy" />
+          <MdButton class="confirm-kdf" :disabled="busy" @click="onConfirmProfile">{{ t('securityCard.confirmProfileBtn') }}</MdButton>
+          <MdButton variant="text" :disabled="busy" @click="profileSel = null">{{ t('securityCard.cancel') }}</MdButton>
         </div>
         <div class="pw-row">
-          <MdTextField v-model="newPw" type="password" label="新口令" placeholder="新口令" autocomplete="new-password" :disabled="busy" />
-          <MdTextField v-model="newPwConfirm" type="password" label="确认新口令" placeholder="确认新口令" autocomplete="new-password" :disabled="busy" />
+          <MdTextField v-model="newPw" type="password" :label="t('securityCard.newPwLabel')" :placeholder="t('securityCard.newPwLabel')" autocomplete="new-password" :disabled="busy" />
+          <MdTextField v-model="newPwConfirm" type="password" :label="t('securityCard.newPwConfirmLabel')" :placeholder="t('securityCard.newPwConfirmLabel')" autocomplete="new-password" :disabled="busy" />
         </div>
         <div class="actions">
-          <MdButton class="change-pw" :disabled="busy" @click="onChangePw">更换口令</MdButton>
-          <MdButton v-if="!confirmDisable" danger class="disable-enc" :disabled="busy" @click="confirmDisable = true">关闭加密</MdButton>
+          <MdButton class="change-pw" :disabled="busy" @click="onChangePw">{{ t('securityCard.changePwBtn') }}</MdButton>
+          <MdButton v-if="!confirmDisable" danger class="disable-enc" :disabled="busy" @click="confirmDisable = true">{{ t('securityCard.disableBtn') }}</MdButton>
         </div>
         <div v-if="confirmDisable" class="confirm-row">
-          <span>关闭加密将把全部条目以明文存储，确定？</span>
-          <MdButton danger :disabled="busy" @click="onDisable">确认关闭</MdButton>
-          <MdButton variant="text" :disabled="busy" @click="confirmDisable = false">取消</MdButton>
+          <span>{{ t('securityCard.disableConfirm') }}</span>
+          <MdButton danger :disabled="busy" @click="onDisable">{{ t('securityCard.confirmDisableBtn') }}</MdButton>
+          <MdButton variant="text" :disabled="busy" @click="confirmDisable = false">{{ t('securityCard.cancel') }}</MdButton>
         </div>
       </template>
       <!-- 锁定：仅提示（解锁入口由主 LockScreen 处理） -->
-      <p v-else class="locked-hint">已锁定——解锁后可管理加密设置</p>
+      <p v-else class="locked-hint">{{ t('securityCard.lockedHint') }}</p>
       <!-- 锁定策略区（plan16 设计 §1；仅已启用加密且宿主提供 lockPrefs 时渲染，锁定态也可改——settings 写入不依赖 DEK） -->
       <div v-if="hasEnc && platform.lockPrefs && lockPrefsState" class="lock-prefs">
-        <h3>锁定策略</h3>
+        <h3>{{ t('securityCard.lockPrefsTitle') }}</h3>
         <!-- 重启后保持锁定：仅对有会话保持能力的端有意义，宿主声明不支持（unsupported）时隐藏 -->
         <div v-if="!unsupportedLockPrefs.has('lockOnRestart')" class="opt">
           <MdSwitch
-            class="lock-restart" :model-value="lockPrefsState.lockOnRestart" aria-label="重启后保持锁定"
+            class="lock-restart" :model-value="lockPrefsState.lockOnRestart" :aria-label="t('securityCard.lockOnRestart')"
             @update:model-value="(v: boolean) => onLockPrefChange({ lockOnRestart: v })"
           />
-          <span>重启后保持锁定</span>
-          <span class="opt-hint">（关闭后浏览器会话内保持解锁，仅对支持会话保持的端有意义）</span>
+          <span>{{ t('securityCard.lockOnRestart') }}</span>
+          <span class="opt-hint">{{ t('securityCard.lockOnRestartHint') }}</span>
         </div>
         <div class="opt">
-          <span>空闲 N 分钟后锁定（0=禁用）</span>
+          <span>{{ t('securityCard.lockIdle') }}</span>
           <MdTextField
-            class="idle-min" type="number" label="空闲（分钟）" aria-label="空闲 N 分钟后锁定（0 为禁用）"
+            class="idle-min" type="number" :label="t('securityCard.idleLabel')" :aria-label="t('securityCard.idleAria')"
             min="0" :model-value="String(lockPrefsState.lockIdleMinutes)" :disabled="busy"
             @update:model-value="onIdleMinutesChange"
           />
@@ -351,10 +359,10 @@ async function onDelayChange(value: string): Promise<void> {
         <!-- 系统锁屏时锁定：宿主声明不支持（unsupported，如无系统锁屏事件源的端）时隐藏 -->
         <div v-if="!unsupportedLockPrefs.has('lockOnSystemLock')" class="opt">
           <MdSwitch
-            class="lock-syslock" :model-value="lockPrefsState.lockOnSystemLock" aria-label="系统锁屏时锁定"
+            class="lock-syslock" :model-value="lockPrefsState.lockOnSystemLock" :aria-label="t('securityCard.lockOnSystemLock')"
             @update:model-value="(v: boolean) => onLockPrefChange({ lockOnSystemLock: v })"
           />
-          <span>系统锁屏时锁定</span>
+          <span>{{ t('securityCard.lockOnSystemLock') }}</span>
         </div>
       </div>
     </template>
@@ -362,22 +370,22 @@ async function onDelayChange(value: string): Promise<void> {
     <div class="opt">
       <MdCheckbox
         class="clipboard-clear" :model-value="clipboardOn" :disabled="isLocked"
-        label="复制后 30 秒自动清空剪贴板" ariaLabel="复制后 30 秒自动清空剪贴板"
+        :label="t('securityCard.clipboardClear')" :aria-label="t('securityCard.clipboardClear')"
         @update:model-value="onClipboardChange"
       />
-      <span class="opt-hint">（剪贴板自动清空当前仅在 Chrome/Edge 生效）</span>    </div>
+      <span class="opt-hint">{{ t('securityCard.clipboardHint') }}</span>    </div>
     <div v-if="platform.popupCloseDelayMs && platform.setPopupCloseDelay" class="opt">
-      <span>复制后弹窗自动关闭延迟（毫秒）</span>
+      <span>{{ t('securityCard.closeDelay') }}</span>
       <MdTextField
-        class="delay-ms" type="number" label="延迟（毫秒）" aria-label="复制后弹窗自动关闭延迟（毫秒）"
+        class="delay-ms" type="number" :label="t('securityCard.delayLabel')" :aria-label="t('securityCard.closeDelay')"
         min="0" :model-value="String(platform.popupCloseDelayMs.value)"
         :disabled="busy || isLocked" @update:model-value="onDelayChange"
       />
     </div>
     <!-- I65：锁定态下两个通用设置均被禁用，提示用户先解锁 -->
-    <p v-if="isLocked" class="locked-hint">解锁后可调整</p>
+    <p v-if="isLocked" class="locked-hint">{{ t('securityCard.lockedAdjustHint') }}</p>
     <!-- I54：双端独立加密提示——仅 password 解锁时提醒跨设备需用同一口令 -->
-    <p v-if="kekOnlyPassword" class="kek-hint">当前为口令解锁，跨设备需用同一口令</p>
+    <p v-if="kekOnlyPassword" class="kek-hint">{{ t('securityCard.kekOnlyHint') }}</p>
     <div v-if="msg" :class="msgKind" role="status">{{ msg }}</div>
   </section>
 </template>

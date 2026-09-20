@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { computed, ref } from 'vue'
 import SecurityCard from '../src/components/SecurityCard.vue'
+import { createTestI18n } from './helpers/i18n'
 import type { DpapiUnlockOps, SecurityOps, SecurityPlatform } from '../src/components/securityPlatform'
 
 function makeSecurity(over: Partial<SecurityOps> = {}): SecurityOps {
@@ -49,13 +50,13 @@ describe('SecurityCard', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('platform 为 null 不渲染', () => {
-    const w = mount(SecurityCard, { props: { platform: null } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: null } })
     expect(w.find('section.security').exists()).toBe(false)
   })
 
   it('未启用：两次口令不一致不调用 enableEncryption', async () => {
     const p = makePlatform()
-    const w = mount(SecurityCard, { props: { platform: p } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: p } })
     const inputs = w.findAll('input[type="password"]')
     await inputs[0]!.setValue('a')
     await inputs[1]!.setValue('b')
@@ -66,7 +67,7 @@ describe('SecurityCard', () => {
 
   it('未启用：口令一致调用 enableEncryption', async () => {
     const p = makePlatform()
-    const w = mount(SecurityCard, { props: { platform: p } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: p } })
     const inputs = w.findAll('input[type="password"]')
     await inputs[0]!.setValue('a')
     await inputs[1]!.setValue('a')
@@ -75,22 +76,22 @@ describe('SecurityCard', () => {
   })
 
   it('未启用：提示浏览器同步数据在启用加密后也将是密文；已启用态不显示该说明', () => {
-    const disabled = mount(SecurityCard, { props: { platform: makePlatform() } })
+    const disabled = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: makePlatform() } })
     expect(disabled.text()).toContain('启用后浏览器同步的数据也将是密文')
-    const enabled = mount(SecurityCard, { props: { platform: makePlatform({ security: unlockedSecurity() }) } })
+    const enabled = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: makePlatform({ security: unlockedSecurity() }) } })
     expect(enabled.text()).not.toContain('浏览器同步的数据也将是密文')
   })
 
   it('未启用态：口令说明含「与备份口令相互独立」（§7.2 定稿）；已启用态不显示', () => {
-    const disabled = mount(SecurityCard, { props: { platform: makePlatform() } })
+    const disabled = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: makePlatform() } })
     expect(disabled.text()).toContain('此口令用于加密本机存储的验证库数据，与备份口令相互独立')
-    const enabled = mount(SecurityCard, { props: { platform: makePlatform({ security: unlockedSecurity() }) } })
+    const enabled = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: makePlatform({ security: unlockedSecurity() }) } })
     expect(enabled.text()).not.toContain('与备份口令相互独立')
   })
 
   it('已启用解锁态：渲染换口令与关闭加密按钮；换口令一致后调用 changePassphrase（plan16 裁定 rotateDek:true）', async () => {
     const p = makePlatform({ security: unlockedSecurity() })
-    const w = mount(SecurityCard, { props: { platform: p } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: p } })
     expect(w.find('button.change-pw').exists()).toBe(true)
     expect(w.find('button.disable-enc').exists()).toBe(true)
     const inputs = w.findAll('input[type="password"]')
@@ -104,7 +105,7 @@ describe('SecurityCard', () => {
     // 注入 passkey ops 让「解锁方式」区渲染；不解锁 passkey 探测以聚焦口令行
     const passkey = { sources: computed(() => []), prfSupported: vi.fn().mockResolvedValue(true), add: vi.fn(), remove: vi.fn() }
     const p = makePlatform({ security: makeSecurity({ hasEncryption: computed(() => true), locked: ref(false), passkey }) })
-    const w = mount(SecurityCard, { props: { platform: p } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: p } })
     expect(w.text()).toContain('解锁方式')
     expect(w.text()).toContain('口令')
     expect(w.text()).toContain('默认解锁方式，不可移除')
@@ -112,7 +113,7 @@ describe('SecurityCard', () => {
 
   it('关闭加密：先显示明文警示，确认后才调用 disableEncryption', async () => {
     const p = makePlatform({ security: unlockedSecurity() })
-    const w = mount(SecurityCard, { props: { platform: p } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: p } })
     await w.find('button.disable-enc').trigger('click')
     expect(p.security!.disableEncryption).not.toHaveBeenCalled()
     expect(w.text()).toContain('明文存储')
@@ -123,7 +124,7 @@ describe('SecurityCard', () => {
 
   it('锁定态：显示已锁定提示且不渲染加密操作入口', () => {
     const p = makePlatform({ security: unlockedSecurity({ locked: ref(true) }) })
-    const w = mount(SecurityCard, { props: { platform: p } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: p } })
     expect(w.text()).toContain('已锁定')
     expect(w.find('button.enable-enc').exists()).toBe(false)
     expect(w.find('button.change-pw').exists()).toBe(false)
@@ -132,18 +133,18 @@ describe('SecurityCard', () => {
 
   it('剪贴板 checkbox 触发 setClipboardClear', async () => {
     const p = makePlatform()
-    const w = mount(SecurityCard, { props: { platform: p } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: p } })
     await w.find('.clipboard-clear input').setValue(false)
     expect(p.setClipboardClear).toHaveBeenCalledWith(false)
   })
 
   it('popupCloseDelayMs：platform 提供时渲染数字输入并触发 setPopupCloseDelay；未提供时不渲染', async () => {
-    const without = mount(SecurityCard, { props: { platform: makePlatform() } })
+    const without = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: makePlatform() } })
     expect(without.find('.delay-ms input').exists()).toBe(false)
 
     const setPopupCloseDelay = vi.fn().mockResolvedValue(undefined)
     const p = makePlatform({ popupCloseDelayMs: computed(() => 2000), setPopupCloseDelay })
-    const w = mount(SecurityCard, { props: { platform: p } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: p } })
     const input = w.find('.delay-ms input')
     expect(input.exists()).toBe(true)
     expect((input.element as HTMLInputElement).value).toBe('2000')
@@ -152,7 +153,7 @@ describe('SecurityCard', () => {
   })
 
   it('platform 无 dpapi 能力：不渲染 DPAPI 行与启用按钮', () => {
-    const w = mount(SecurityCard, { props: { platform: makePlatform({ security: unlockedSecurity() }) } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: makePlatform({ security: unlockedSecurity() }) } })
     expect(w.find('button.enable-dpapi').exists()).toBe(false)
     expect(w.find('.dpapi-row').exists()).toBe(false)
   })
@@ -160,7 +161,7 @@ describe('SecurityCard', () => {
   it('dpapi 未绑定：显示启用按钮；点击走 getCurrentDek→protect→add 并提示成功', async () => {
     const dek = new Uint8Array(32).fill(7)
     const dpapi = makeDpapi({ getCurrentDek: vi.fn(() => dek) })
-    const w = mount(SecurityCard, {
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] },
       props: { platform: makePlatform({ security: unlockedSecurity(), dpapi }) },
     })
     expect(w.text()).toContain('解锁方式')
@@ -175,7 +176,7 @@ describe('SecurityCard', () => {
 
   it('dpapi 已绑定：显示 DPAPI 行与移除按钮，点击调用 remove', async () => {
     const dpapi = makeDpapi({ source: computed(() => ({ wrappedDekD: 'WRAPPED-DEK' })) })
-    const w = mount(SecurityCard, {
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] },
       props: { platform: makePlatform({ security: unlockedSecurity(), dpapi }) },
     })
     expect(w.find('button.enable-dpapi').exists()).toBe(false)
@@ -188,7 +189,7 @@ describe('SecurityCard', () => {
 
   it('dpapi 启用时无可用 DEK（锁定态残留）：提示错误且不调用 protect', async () => {
     const dpapi = makeDpapi({ getCurrentDek: vi.fn(() => null) })
-    const w = mount(SecurityCard, {
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] },
       props: { platform: makePlatform({ security: unlockedSecurity(), dpapi }) },
     })
     await w.find('button.enable-dpapi').trigger('click')
@@ -199,7 +200,7 @@ describe('SecurityCard', () => {
 
   it('dpapi protect 失败：展示错误消息且不调用 add', async () => {
     const dpapi = makeDpapi({ protect: vi.fn().mockRejectedValue(new Error('仅 Windows 支持')) })
-    const w = mount(SecurityCard, {
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] },
       props: { platform: makePlatform({ security: unlockedSecurity(), dpapi }) },
     })
     await w.find('button.enable-dpapi').trigger('click')
@@ -211,7 +212,7 @@ describe('SecurityCard', () => {
     const passkey = { sources: computed(() => [{ credentialId: 'Y3JlZC0x' }]), prfSupported: vi.fn().mockResolvedValue(true), add: vi.fn(), remove: vi.fn() }
     // 无 naming 注入 + dpapi.label 默认回退「Windows 自动解锁」→ 文案与旧实现口径动态化
     const p = makePlatform({ security: unlockedSecurity({ passkey }), dpapi: makeDpapi() })
-    const w = mount(SecurityCard, { props: { platform: p } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: p } })
     const inputs = w.findAll('input[type="password"]')
     await inputs[0]!.setValue('new')
     await inputs[1]!.setValue('new')
@@ -222,7 +223,7 @@ describe('SecurityCard', () => {
   it('plan16：换口令成功仅 Passkey 绑定且无 dpapi ops（extension）→ 提示仅含「Passkey已因密钥轮换失效，请重新绑定」', async () => {
     const passkey = { sources: computed(() => [{ credentialId: 'Y3JlZC0x' }]), prfSupported: vi.fn().mockResolvedValue(true), add: vi.fn(), remove: vi.fn() }
     const p = makePlatform({ security: unlockedSecurity({ passkey }) })
-    const w = mount(SecurityCard, { props: { platform: p } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: p } })
     const inputs = w.findAll('input[type="password"]')
     await inputs[0]!.setValue('new')
     await inputs[1]!.setValue('new')
@@ -233,7 +234,7 @@ describe('SecurityCard', () => {
 
   it('plan16：换口令成功且无其他解锁方式 → 提示中不包含重绑失效文案', async () => {
     const p = makePlatform({ security: unlockedSecurity() })
-    const w = mount(SecurityCard, { props: { platform: p } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: p } })
     const inputs = w.findAll('input[type="password"]')
     await inputs[0]!.setValue('new')
     await inputs[1]!.setValue('new')
@@ -244,18 +245,18 @@ describe('SecurityCard', () => {
 
   it('I54：仅口令解锁时显示「跨设备需用同一口令」；存在 passkey 或 dpapi 时不显示', () => {
     // 仅口令
-    const onlyPw = mount(SecurityCard, { props: { platform: makePlatform({ security: unlockedSecurity() }) } })
+    const onlyPw = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: makePlatform({ security: unlockedSecurity() }) } })
     expect(onlyPw.text()).toContain('当前为口令解锁')
     expect(onlyPw.text()).toContain('跨设备需用同一口令')
 
     // 已绑定 passkey
     const passkey = { sources: computed(() => [{ credentialId: 'Y3JlZC0x' }]), prfSupported: vi.fn().mockResolvedValue(true), add: vi.fn(), remove: vi.fn() }
-    const withPasskey = mount(SecurityCard, { props: { platform: makePlatform({ security: unlockedSecurity({ passkey }) }) } })
+    const withPasskey = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: makePlatform({ security: unlockedSecurity({ passkey }) }) } })
     expect(withPasskey.text()).not.toContain('跨设备需用同一口令')
 
     // 已绑定 dpapi
     const dpapi = makeDpapi({ source: computed(() => ({ wrappedDekD: 'W' })) })
-    const withDpapi = mount(SecurityCard, { props: { platform: makePlatform({ security: unlockedSecurity(), dpapi }) } })
+    const withDpapi = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: makePlatform({ security: unlockedSecurity(), dpapi }) } })
     expect(withDpapi.text()).not.toContain('跨设备需用同一口令')
   })
 
@@ -265,7 +266,7 @@ describe('SecurityCard', () => {
       popupCloseDelayMs: computed(() => 2000),
       setPopupCloseDelay: vi.fn(),
     })
-    const w = mount(SecurityCard, { props: { platform: p } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: p } })
     const clipboard = w.find('.clipboard-clear input')
     expect(clipboard.attributes('disabled')).toBeDefined()
     expect(w.find('.delay-ms input').attributes('disabled')).toBeDefined()
@@ -276,7 +277,7 @@ describe('SecurityCard', () => {
     const p = makePlatform({
       security: unlockedSecurity({ disableEncryption: vi.fn().mockRejectedValue(new Error('boom')) }),
     })
-    const w = mount(SecurityCard, { props: { platform: p } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: p } })
     await w.find('button.disable-enc').trigger('click')
     expect(w.find('.confirm-row').exists()).toBe(true)
     const confirm = w.findAll('button').find((b) => b.text() === '确认关闭')!
@@ -291,7 +292,7 @@ describe('SecurityCard', () => {
 
   it('D5：未启用态提示注入 prfLabel 与 osAutoLabel（「 或 」拼接，替换旧首行提示）', () => {
     const p = makePlatform({ unlockNaming: { prfLabel: 'Windows Hello (Passkey)', osAutoLabel: 'Windows 自动解锁' } })
-    const w = mount(SecurityCard, { props: { platform: p } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: p } })
     expect(w.text()).toContain('启用后可绑定Windows Hello (Passkey) 或 Windows 自动解锁，免输口令解锁')
     expect(w.text()).not.toContain('每次打开需输入口令解锁')
     // 原第二行密文说明保留
@@ -299,21 +300,21 @@ describe('SecurityCard', () => {
   })
 
   it('D5：未注入 unlockNaming 回退 Passkey 且不含「或」', () => {
-    const w = mount(SecurityCard, { props: { platform: makePlatform() } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: makePlatform() } })
     expect(w.text()).toContain('启用后可绑定Passkey，免输口令解锁')
     expect(w.text()).not.toContain('或')
   })
 
   it('D5：osAutoLabel=null 不拼接「或」', () => {
     const p = makePlatform({ unlockNaming: { prfLabel: 'Windows Hello (Passkey)', osAutoLabel: null } })
-    const w = mount(SecurityCard, { props: { platform: p } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: p } })
     expect(w.text()).toContain('启用后可绑定Windows Hello (Passkey)，免输口令解锁')
     expect(w.text()).not.toContain('或')
   })
 
   it('D5：添加解锁按钮含注入的 prfLabel；未注入回退「添加 Passkey 解锁」', () => {
     const passkey = { sources: computed(() => []), prfSupported: vi.fn().mockResolvedValue(true), add: vi.fn(), remove: vi.fn() }
-    const injected = mount(SecurityCard, {
+    const injected = mount(SecurityCard, { global: { plugins: [createTestI18n()] },
       props: {
         platform: makePlatform({
           security: unlockedSecurity({ passkey }),
@@ -322,7 +323,7 @@ describe('SecurityCard', () => {
       },
     })
     expect(injected.find('button.add-passkey').text()).toBe('添加 Windows Hello (Passkey) 解锁')
-    const fallback = mount(SecurityCard, { props: { platform: makePlatform({ security: unlockedSecurity({ passkey }) }) } })
+    const fallback = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: makePlatform({ security: unlockedSecurity({ passkey }) }) } })
     expect(fallback.find('button.add-passkey').text()).toBe('添加 Passkey 解锁')
   })
 
@@ -332,7 +333,7 @@ describe('SecurityCard', () => {
       security: unlockedSecurity({ passkey }),
       unlockNaming: { prfLabel: 'Windows Hello (Passkey)', osAutoLabel: null },
     })
-    const w = mount(SecurityCard, { props: { platform: p } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: p } })
     await vi.waitFor(() => expect(w.text()).toContain('当前浏览器不支持 Windows Hello (Passkey) 解锁（PRF）'))
   })
 
@@ -343,7 +344,7 @@ describe('SecurityCard', () => {
       dpapi,
       unlockNaming: { prfLabel: 'Passkey', osAutoLabel: 'Touch ID 自动解锁' },
     })
-    const w = mount(SecurityCard, { props: { platform: p } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: p } })
     expect(w.text()).toContain('Touch ID 自动解锁（DPAPI）')
     expect(w.text()).not.toContain('Windows 自动解锁（DPAPI）')
   })
@@ -357,7 +358,7 @@ describe('SecurityCard', () => {
       dpapi,
       unlockNaming: { prfLabel: 'Touch ID (Passkey)', osAutoLabel: '钥匙串自动解锁' },
     })
-    const w = mount(SecurityCard, { props: { platform: p } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: p } })
     const btn = w.find('button.enable-dpapi')
     expect(btn.text()).toBe('启用 钥匙串自动解锁')
     await btn.trigger('click')
@@ -373,7 +374,7 @@ describe('SecurityCard', () => {
       dpapi,
       unlockNaming: { prfLabel: 'Touch ID (Passkey)', osAutoLabel: '钥匙串自动解锁' },
     })
-    const w = mount(SecurityCard, { props: { platform: p } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: p } })
     expect(w.text()).toContain('钥匙串自动解锁（Keychain）')
     expect(w.text()).not.toContain('（DPAPI）')
     expect(w.text()).not.toContain('Windows')
@@ -387,7 +388,7 @@ describe('SecurityCard', () => {
       dpapi,
       unlockNaming: { prfLabel: 'Touch ID (Passkey)', osAutoLabel: '钥匙串自动解锁' },
     })
-    const w = mount(SecurityCard, { props: { platform: p } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: p } })
     const inputs = w.findAll('input[type="password"]')
     await inputs[0]!.setValue('new')
     await inputs[1]!.setValue('new')
@@ -399,7 +400,7 @@ describe('SecurityCard', () => {
 
   it('D14：移除成功消息用注入 label（钥匙串自动解锁已移除）', async () => {
     const dpapi = makeDpapi({ source: computed(() => ({ wrappedDekD: 'W' })), label: '钥匙串自动解锁' })
-    const w = mount(SecurityCard, {
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] },
       props: { platform: makePlatform({ security: unlockedSecurity(), dpapi }) },
     })
     await w.find('button.remove-dpapi').trigger('click')
@@ -414,7 +415,7 @@ describe('SecurityCard', () => {
       security: unlockedSecurity({ passkey }),
       unlockNaming: { prfLabel: 'Touch ID (Passkey)', osAutoLabel: null },
     })
-    const w = mount(SecurityCard, { props: { platform: p } })
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: p } })
     // 按钮在 prfCap 探测完成（异步 resolve true）前 disabled
     const btn = w.find('button.add-passkey')
     await vi.waitFor(() => expect(btn.attributes('disabled')).toBeUndefined())
@@ -427,7 +428,7 @@ describe('SecurityCard', () => {
       security: unlockedSecurity({ passkey: failPk }),
       unlockNaming: { prfLabel: 'Touch ID (Passkey)', osAutoLabel: null },
     })
-    const w2 = mount(SecurityCard, { props: { platform: p2 } })
+    const w2 = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: p2 } })
     const btn2 = w2.find('button.add-passkey')
     await vi.waitFor(() => expect(btn2.attributes('disabled')).toBeUndefined())
     await btn2.trigger('click')
