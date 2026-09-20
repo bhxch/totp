@@ -53,6 +53,12 @@ async function setLocale(v: string | number): Promise<void> {
   await props.store.commitSettings()
 }
 
+/** 纯黑（AMOLED）对比度档（Task 20）：开关语义映射到 'standard' | 'amoled'；css 覆盖层仅在暗色观感生效 */
+async function setThemeContrast(v: boolean): Promise<void> {
+  props.store.settings.themeContrast = v ? 'amoled' : 'standard'
+  await props.store.commitSettings()
+}
+
 /** popup 关闭延迟（毫秒）：number 语义输入，空串/非法/负值忽略不落盘，小数取整落盘 */
 async function setPopupDelay(v: string): Promise<void> {
   if (v.trim() === '') return
@@ -87,6 +93,13 @@ const hasGeneralItems = computed(() => true)
             <span v-if="color === p.id" class="theme-dot__check" aria-hidden="true">✓</span>
           </button>
         </div>
+      </div>
+      <div class="row">
+        <span class="row-label">纯黑（AMOLED）<span class="row-hint">暗色模式下生效</span></span>
+        <MdSwitch
+          class="set-theme-contrast" :model-value="store.settings.themeContrast === 'amoled'"
+          @update:model-value="setThemeContrast"
+        />
       </div>
       <div class="row">
         <span class="row-label">语言</span>
@@ -145,6 +158,7 @@ const hasGeneralItems = computed(() => true)
 .page { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .row-label { font-size: var(--md-sys-typescale-body-medium); }
+.row-hint { display: block; font-size: var(--md-sys-typescale-body-small); opacity: .65; }
 .dots { display: flex; gap: 10px; flex-wrap: wrap; }
 .theme-dot { width: 30px; height: 30px; border-radius: 50%; border: none; cursor: pointer; padding: 0;
   display: inline-flex; align-items: center; justify-content: center; transition: transform .15s; }

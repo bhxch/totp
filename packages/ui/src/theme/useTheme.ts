@@ -2,6 +2,7 @@ import { computed, getCurrentScope, onScopeDispose, ref, watchEffect, type Compu
 import type { VueStore } from '../store'
 import { DEFAULT_THEME_COLOR, isThemeColor } from './palette'
 import { loadPalettes } from './loadPalettes'
+import './amoled.css' // 副作用：AMOLED 覆盖层随主题模块引入（宿主无需单独引样式）
 
 // re-export 供 `@totp/ui` 消费方与测试统一从本模块取 palette 原语
 export { DEFAULT_THEME_COLOR, isThemeColor, THEME_PALETTES } from './palette'
@@ -9,9 +10,10 @@ export { DEFAULT_THEME_COLOR, isThemeColor, THEME_PALETTES } from './palette'
 export type ThemeModeValue = 'light' | 'dark' | 'auto'
 export const THEME_PREF_KEY = 'themePref'
 
-export function applyThemeAttributes(mode: string, color: string): void {
+export function applyThemeAttributes(mode: string, color: string, contrast: string = 'standard'): void {
   document.documentElement.dataset.mode = mode
   document.documentElement.dataset.color = color
+  document.documentElement.dataset.contrast = contrast
 }
 
 export function readThemeMirror(): { mode?: string; color?: string } {
@@ -65,7 +67,7 @@ export function useTheme(store: VueStore): { mode: WritableComputedRef<ThemeMode
     const m = mode.value
     const c = color.value
     ensurePalettes(c) // fire-and-forget:覆盖「设置加载即为非默认种子」的首载路径
-    applyThemeAttributes(m, c)
+    applyThemeAttributes(m, c, store.settings.themeContrast === 'amoled' ? 'amoled' : 'standard')
     const mirror = readThemeMirror()
     if (mirror.mode !== m || mirror.color !== c) writeMirror(m, c)
   })

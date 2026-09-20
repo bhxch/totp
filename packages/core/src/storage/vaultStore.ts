@@ -136,6 +136,8 @@ export interface AppSettings {
   lastTagFilterIds: string[]
   /** 界面语言：auto=跟随浏览器语言（非 en 即 zh）；zh 源语言兼回退（spec §1） */
   locale: 'auto' | 'zh' | 'en'
+  /** 纯黑对比度档（spec §5）：amoled=暗色表面覆盖为 #000 系（OLED 省电+对比），仅影响表面色 */
+  themeContrast: 'standard' | 'amoled'
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -152,6 +154,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   backupKdfProfile: DEFAULT_KDF_PROFILE,
   tagFilterMode: 'any', rememberTagFilter: false, lastTagFilterIds: [],
   locale: 'auto',
+  themeContrast: 'standard',
 }
 
 export async function loadSettings(adapter: StorageAdapter): Promise<AppSettings> {
@@ -178,6 +181,7 @@ export async function loadSettings(adapter: StorageAdapter): Promise<AppSettings
       rememberTagFilter: typeof merged.rememberTagFilter === 'boolean' ? (merged.rememberTagFilter as boolean) : DEFAULT_SETTINGS.rememberTagFilter,
       lastTagFilterIds: Array.isArray(merged.lastTagFilterIds) && merged.lastTagFilterIds.every((x) => typeof x === 'string') ? (merged.lastTagFilterIds as string[]) : DEFAULT_SETTINGS.lastTagFilterIds,
       locale: merged.locale === 'zh' || merged.locale === 'en' || merged.locale === 'auto' ? merged.locale : DEFAULT_SETTINGS.locale,
+      themeContrast: merged.themeContrast === 'amoled' ? merged.themeContrast : 'standard',
     }
   } catch {
     return { ...DEFAULT_SETTINGS }
