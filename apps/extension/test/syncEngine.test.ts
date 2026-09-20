@@ -205,4 +205,33 @@ describe('pullSyncIfNewer（经 pullOnce）', () => {
     // 远端 settings 整体采用但开关位保留本端值
     expect(JSON.parse(local.data[SETTINGS_KEY] as string)).toEqual({ entries: ['from-other-device'], syncEnabled: true })
   })
+
+  it('F14 远端明文 + 本机已加密：拒绝降级（不覆写 vault、不删 security，推进 appliedRev 并置 conflict）', async () => {
+    const localEncrypted = JSON.stringify({ v: 1, enc: true, dataNonce: 'n0nce', ciphertext: 'c1ph3r' })
+    const { local } = installChrome(
+      {
+        [VAULT_KEY]: localEncrypted,
+        [SECURITY_KEY]: '{"wrapped":"kek","nonce":"n"}',
+        [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }),
+        [APPLIED_REV_KEY]: 1,
+      },
+      remotePush(JSON.stringify({ entries: ['attacker-controlled-plain'] }), 2),
+    )
+
+    await pullSyncIfNewer()
+
+    // 本端加密态原样保留：vault 未被明文覆盖，SECURITY_KEY 未被移除
+    expect(local.data[VAULT_KEY]).toBe(localEncrypted)
+    expect(local.data[SECURITY_KEY]).toBe('{"wrapped":"kek","nonce":"n"}')
+    // 记账本次拒绝：appliedRev 推进至远端 rev，置 conflict 状态
+    expect(local.data[APPLIED_REV_KEY]).toBe(2)
+    expect(local.data[SYNC_STATUS_KEY]).toMatchObject({ state: 'conflict' })
+
+    // 同 rev 再次拉取：appliedRev 已记账 → 无重拉循环，状态保持
+    await pullSyncIfNewer()
+    expect(local.data[VAULT_KEY]).toBe(localEncrypted)
+    expect(local.data[SECURITY_KEY]).toBe('{"wrapped":"kek","nonce":"n"}')
+    expect(local.data[APPLIED_REV_KEY]).toBe(2)
+    expect(local.data[SYNC_STATUS_KEY]).toMatchObject({ state: 'conflict' })
+  })
 })

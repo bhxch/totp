@@ -69,6 +69,14 @@ describe('SyncCard', () => {
     expect(w.text()).toContain('他机不会改写本端')
   })
 
+  it('F14 状态 conflict：显示拒绝降级同步提示（错误色）', async () => {
+    const platform = mkPlatform({ state: 'conflict', at: Date.now() })
+    const w = mount(SyncCard, { props: { platform } })
+    await vi.waitFor(() => expect(w.text()).toContain('已拒绝降级同步'))
+    expect(w.text()).toContain('请在任一设备上统一加密状态')
+    expect(w.find('.status.sync-conflict').exists()).toBe(true)
+  })
+
   it('I57：SyncStatus.pct 提供时显示「已用 X% / 100KB」；未提供时不显示', async () => {
     const withPct = mkPlatform({ state: 'ok', at: Date.now(), pct: 87 } as { state: string; at: number; pct: number })
     const w1 = mount(SyncCard, { props: { platform: withPct } })

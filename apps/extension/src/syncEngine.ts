@@ -13,6 +13,8 @@
  * 编排语义（计划9 Task2 简报）：简单 LWW——rev 单调递增，远端 rev > 本端 appliedRev 才拉取应用；
  * 推送前若远端 rev 较新则先拉取再推（防陈旧 local 全量推送覆盖他端）；
  * security 键同态同步（密文态经 sync:security 单键，新设备拉取后可直接解锁）。
+ * 降级防线（F14）：本机已加密而远端为明文库时拒绝采纳（不覆写、不删 security、记账 rev 并置 conflict），
+ * 明文 → 明文的既有 LWW 语义不变。
  */
 import {
   SECURITY_KEY, SETTINGS_KEY, VAULT_KEY,
@@ -29,7 +31,8 @@ const APPLIED_REV_KEY = 'sync:appliedRev'
 export const SYNC_STATUS_KEY = 'sync:status'
 const STATUS_KEY = SYNC_STATUS_KEY
 
-export type SyncStatusState = 'ok' | 'quota' | 'error' | 'off'
+/** conflict（F14）：远端明文库遭本机已加密设备拒绝采纳——两端分叉待用户统一加密状态 */
+export type SyncStatusState = 'ok' | 'quota' | 'error' | 'conflict' | 'off'
 
 export interface SyncStatus {
   state: SyncStatusState
@@ -203,7 +206,20 @@ async function pullOnce(): Promise<void> {
       batch[VAULT_KEY] = payload
       batch[SECURITY_KEY] = sec
     } else {
-      // 远端明文：LWW 跟随移除本地 security（与 store 落盘时「盘上 security 已删则跟随明文」同态）
+      // F14 防降级：sync 区明文 payload 无真实性校验（任何能写该区的一方皆可伪造 meta.rev 使其被拉取）。
+      // 本机已加密（local SECURITY_KEY 在）时拒绝「加密 → 明文」方向的采纳：不写 VAULT_KEY、
+      // 不移除 SECURITY_KEY、不整体采用远端 settings，仅推进 appliedRev 记账本次拒绝（防同 rev 反复触发），
+      // 并置 conflict 状态提示用户统一两端加密状态。此后两端数据有意分叉直至用户裁决（远端设备恢复加密
+      // 或本端关闭加密）——这是保守方向：保完整性、不静默降级。设备间真实性认证属协议级改造，不在本补丁范围。
+      const localSecurity = (await chrome.storage.local.get([SECURITY_KEY]))[SECURITY_KEY]
+      if (typeof localSecurity === 'string') {
+        batch[APPLIED_REV_KEY] = meta.rev
+        await chrome.storage.local.set(batch)
+        await setSyncStatus('conflict')
+        return
+      }
+      // 远端明文且本机未加密（既有明文同步模式）：LWW 跟随移除本地 security（与 store 落盘时
+      // 「盘上 security 已删则跟随明文」同态）
       batch[VAULT_KEY] = payload
       removes.push(SECURITY_KEY)
     }
