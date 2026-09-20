@@ -183,6 +183,9 @@ function applyOtpauthPrefill(uri: string): string | null {
   editing.value = null
   prefill.value = r.data
   creating.value = true
+  // creating 已 true 时下方 creating watch 不触发（粘贴 Tab 激活态点「导入」正是此场景）：
+  // 显式切回手动，保证预填必然落在可见的 EntryForm 上而非被 BatchPastePanel 挡住
+  formTab.value = 'manual'
   formKey.value++
   return null
 }
@@ -233,7 +236,8 @@ const FORM_TAB_OPTIONS = [
   { value: 'manual', label: '手动填写' },
   { value: 'paste', label: '智能粘贴' },
 ]
-// 进入新建恒回默认「手动填写」：startCreate 与 applyOtpauthPrefill 两条路径都会翻 creating，watch 单点复位
+// 进入新建（startCreate，creating false→true）回默认「手动填写」；applyOtpauthPrefill 路径
+// （creating 已 true，watch 不触发）在其函数体内显式复位
 watch(creating, (v) => { if (v) formTab.value = 'manual' })
 
 /** 智能粘贴落库完成 → 关表单回列表（新增条目立即可见），语义同 options 弹窗 batch-added */

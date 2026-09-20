@@ -113,6 +113,22 @@ describe('popup App 新建表单双 Tab（14c）', () => {
     expect(wrapper.find('[data-test="batch-paste-stub"]').exists()).toBe(false)
   })
 
+  it('智能粘贴 Tab 激活时经粘贴框导入 URI 预填：Tab 切回「手动填写」', async () => {
+    const wrapper = await mountApp()
+    await findAddButton(wrapper).trigger('click')
+    const pasteTab = wrapper.findAll('button').find((b) => b.text() === '智能粘贴')!
+    await pasteTab.trigger('click')
+    expect(wrapper.find('[data-test="batch-paste-stub"]').exists()).toBe(true)
+
+    // creating 已 true：creating watch 不触发——预填必须显式切回手动 Tab，否则被粘贴面板挡住
+    await wrapper.find('.otpauth-import textarea').setValue(
+      'otpauth://totp/GitHub:me?secret=JBSWY3DPEHPK3PXP&issuer=GitHub',
+    )
+    await wrapper.findAll('button').find((b) => b.text() === '导入')!.trigger('click')
+    expect(wrapper.find('entry-form-stub').exists()).toBe(true)
+    expect(wrapper.find('[data-test="batch-paste-stub"]').exists()).toBe(false)
+  })
+
   it('编辑态不显 Tab：直接渲染 EntryForm（原语义不变）', async () => {
     vault.entries.push({
       uuid: 'e1', type: 'totp', issuer: 'GitHub', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
