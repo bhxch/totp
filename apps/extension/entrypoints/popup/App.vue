@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
-import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, MdCheckbox, MdIconButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, OtpQrDialog, parseUriToEntryData, resolvePopupVisible, SearchBar, TagFilterRow, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
+import { BatchPastePanel, CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, MdCheckbox, MdIconButton, MdSegmentedButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, OtpQrDialog, parseUriToEntryData, resolvePopupVisible, SearchBar, TagFilterRow, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, ref, watch } from 'vue'
 import { PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
 import { storageAdapter } from '../../src/store'
@@ -227,6 +227,20 @@ function closeForm() {
   importError.value = ''
 }
 
+/** 14c 新建表单双 Tab：manual=原内联 EntryForm（行为不动）/ paste=BatchPastePanel；仅 creating 显 Tab（编辑保持纯手动） */
+const formTab = ref<'manual' | 'paste'>('manual')
+const FORM_TAB_OPTIONS = [
+  { value: 'manual', label: '手动填写' },
+  { value: 'paste', label: '智能粘贴' },
+]
+// 进入新建恒回默认「手动填写」：startCreate 与 applyOtpauthPrefill 两条路径都会翻 creating，watch 单点复位
+watch(creating, (v) => { if (v) formTab.value = 'manual' })
+
+/** 智能粘贴落库完成 → 关表单回列表（新增条目立即可见），语义同 options 弹窗 batch-added */
+function onBatchAdded(): void {
+  closeForm()
+}
+
 async function onSave(data: EntryFormData) {
   if (editing.value) {
     // type 变更时重算 digits（steam→其他保持 5 会显示错位数）；type 未变沿用表单值。
@@ -332,7 +346,14 @@ async function copy(entry: OtpEntry) {
       </div>
     </details>
 
-    <EntryForm v-if="creating || editing" :key="editing?.uuid ?? (prefill ? `prefill-${formKey}` : 'new')" :initial="editing ?? prefill" :tags="vault.tags" :create-tag="addTagOp" :icons="entryIcons" :icon-store="icons" @save="onSave" @cancel="closeForm" />
+    <!-- 14c 新建表单双 Tab：仅 creating 显 Tab（editing 保持原纯手动表单）。manual 渲染原内联 EntryForm
+         （:key 预填重挂载机制、onSave、cancel=closeForm 一字不动）；paste 渲染 BatchPastePanel，粘贴落库
+         added → onBatchAdded 关表单回列表。v-if/v-else 切换即卸载，切回手动时 EntryForm 状态重置 -->
+    <template v-if="creating || editing">
+      <MdSegmentedButton v-if="creating" v-model="formTab" :options="FORM_TAB_OPTIONS" aria-label="录入方式" class="form-tabs" />
+      <EntryForm v-if="formTab === 'manual' || editing" :key="editing?.uuid ?? (prefill ? `prefill-${formKey}` : 'new')" :initial="editing ?? prefill" :tags="vault.tags" :create-tag="addTagOp" :icons="entryIcons" :icon-store="icons" @save="onSave" @cancel="closeForm" />
+      <BatchPastePanel v-else :store="store" @added="onBatchAdded" />
+    </template>
 
     <div v-if="loaded && sorted.length === 0" class="empty">暂无条目，点击右上角「＋ 添加」录入。</div>
     <div v-else-if="loaded && visible.length === 0" class="empty">无匹配结果</div>
@@ -388,6 +409,8 @@ h1 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .filter-row { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-small); padding: 0 4px; }
 .tag-row { padding: 0 4px; }
 .otpauth-import { font-size: var(--md-sys-typescale-body-medium); padding: 0 4px; }
+/* 14c 新建表单双 Tab：与相邻行对齐 4px 边距（popup 宽 ~360px，两段按钮可容） */
+.form-tabs { margin: 0 4px; align-self: flex-start; }
 .otpauth-import summary { cursor: pointer; opacity: .8; }
 .otpauth-import textarea { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 6px 8px; font-family: inherit; resize: vertical; }
 .otpauth-import .import-row { display: flex; justify-content: flex-end; margin-top: 4px; }
