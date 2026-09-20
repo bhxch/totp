@@ -1,0 +1,148 @@
+<script setup lang="ts">
+import { applyImport, parsePastedText, planImport, type ImportKind, type ParsedEntry, type Vault } from '@totp/core'
+import { computed, ref } from 'vue'
+import type { VueStore } from '../store'
+import MdButton from './md/MdButton.vue'
+import MdSelect from './md/MdSelect.vue'
+
+type RowKind = ImportKind
+type RowChoice = 'skip' | 'add' | 'replace' | 'merge'
+/** 行内决策模型：kind new 恒 add、identical 恒 skip 不可选；suspect 可 skip/add；conflict 可 skip/add/replace/merge */
+interface RowDecision {
+  entry: ParsedEntry
+  kind: RowKind
+  choice: RowChoice
+}
+
+const props = defineProps<{ store: VueStore }>()
+const emit = defineEmits<{ added: [count: number] }>()
+
+const text = ref('')
+const error = ref('')
+const rows = ref<RowDecision[]>([])
+const failureLines = ref<string[]>([])
+
+function parse(): void {
+  error.value = ''
+  failureLines.value = []
+  rows.value = []
+  // parser 对结构畸形输入可能直接抛错（如嗅探为 aegis 后解析中断）：兜底展示，不让点击崩掉
+  let r: ReturnType<typeof parsePastedText>
+  try {
+    r = parsePastedText(text.value)
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+    return
+  }
+  if ('unsupported' in r) {
+    error.value = r.unsupported
+    return
+  }
+  if (r.entries.length === 0 && r.failures.length > 0) {
+    error.value = `没有可导入的条目（${r.failures.length} 行无法解析）`
+    return
+  }
+  // planImport 返回 { kinds, targetUuids, counts }（import/dedup.ts:48）——按下标对齐逐条标注
+  const plan = planImport(props.store.vault, r.entries)
+  rows.value = r.entries.map((entry, i) => {
+    const kind = plan.kinds[i] ?? 'new'
+    return { entry, kind, choice: kind === 'new' ? ('add' as const) : ('skip' as const) }
+  })
+  failureLines.value = r.failures.map((f) => `第 ${f.index + 1} 行：${f.message}`)
+}
+
+async function commit(): Promise<void> {
+  const active = rows.value.filter((r) => r.choice !== 'skip' && r.kind !== 'identical')
+  if (active.length === 0) {
+    emit('added', 0)
+    return
+  }
+  await props.store.commit((v) => applyByChoices(v, active))
+  emit('added', active.length)
+}
+
+/** 逐条决策 → 三批次串联 applyImport（immutable，store.commit 采纳末值）：
+ * add=强制新增（空冲突集绕过 skip 策略）；replace/merge=整批标记冲突集 + 对应策略，
+ * 复用 conflict.ts 按 issuer+label 定位既有条目（replace 覆盖 / merge 并存追加） */
+function applyByChoices(v: Vault, active: RowDecision[]): Vault {
+  const asNew = active.filter((r) => r.choice === 'add').map((r) => r.entry)
+  const asReplace = active.filter((r) => r.choice === 'replace').map((r) => r.entry)
+  const asMerge = active.filter((r) => r.choice === 'merge').map((r) => r.entry)
+  let next = v
+  next = applyImport(next, asNew, 'skip', new Set<number>())
+  next = applyImport(next, asReplace, 'replace', new Set(asReplace.map((_, i) => i)))
+  next = applyImport(next, asMerge, 'merge', new Set(asMerge.map((_, i) => i)))
+  return next
+}
+
+const activeCount = computed(() => rows.value.filter((r) => r.choice !== 'skip' && r.kind !== 'identical').length)
+
+function kindLabel(k: RowKind): string {
+  return k === 'identical' ? '已存在' : k === 'suspect' ? '疑似重复' : k === 'conflict' ? '冲突' : '新条目'
+}
+
+/** MdSelect 选项随 kind 收敛：suspect 无覆盖/并集语义（无 issuer+label 定位目标） */
+function choiceOptions(kind: RowKind): Array<{ value: string | number; label: string }> {
+  if (kind === 'conflict') {
+    return [
+      { value: 'skip', label: '跳过' },
+      { value: 'add', label: '仍然添加' },
+      { value: 'replace', label: '覆盖现有' },
+      { value: 'merge', label: '并存并集' },
+    ]
+  }
+  return [
+    { value: 'skip', label: '跳过' },
+    { value: 'add', label: '仍然添加' },
+  ]
+}
+
+/** MdSelect emit 值为泛化 string|number，赋值前收敛回精确联合类型（EntryForm onTypeSelect 同款收口） */
+function onChoiceSelect(r: RowDecision, v: string | number): void {
+  r.choice = v as RowChoice
+}
+</script>
+<template>
+  <div class="batch-paste">
+    <textarea v-model="text" rows="6" aria-label="粘贴文本"
+      placeholder="粘贴 otpauth URI（可多行）或各应用明文导出 JSON"></textarea>
+    <div class="actions">
+      <MdButton data-test="paste-parse" :disabled="text.trim() === ''" @click="parse">解析</MdButton>
+      <MdButton data-test="paste-commit" variant="filled" :disabled="rows.length === 0" @click="commit">
+        添加（{{ activeCount }}）
+      </MdButton>
+    </div>
+    <p v-if="error" class="err">{{ error }}</p>
+    <p v-for="f in failureLines" :key="f" class="err">{{ f }}</p>
+    <ul v-if="rows.length > 0" class="rows">
+      <li v-for="(r, i) in rows" :key="i" data-test="paste-row">
+        <span class="meta">{{ r.entry.issuer }} · {{ r.entry.label }}</span>
+        <span class="kind" :class="`kind--${r.kind}`">{{ kindLabel(r.kind) }}</span>
+        <MdSelect v-if="r.kind !== 'new' && r.kind !== 'identical'" class="choice" label="处理方式"
+          :model-value="r.choice" :options="choiceOptions(r.kind)"
+          :aria-label="`处理方式 ${r.entry.issuer || r.entry.label}`"
+          @update:model-value="onChoiceSelect(r, $event)" />
+      </li>
+    </ul>
+  </div>
+</template>
+<style scoped>
+.batch-paste { display: flex; flex-direction: column; gap: 12px; }
+.batch-paste textarea { box-sizing: border-box; width: 100%; resize: vertical; font: inherit;
+  padding: 12px 16px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface); }
+.batch-paste textarea:focus-visible { outline: 3px solid var(--md-sys-color-primary); outline-offset: 2px; }
+.actions { display: flex; gap: 8px; align-items: center; }
+.err { margin: 0; color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); }
+.rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.rows li { display: flex; align-items: center; gap: 12px; padding: 8px 12px;
+  border-radius: 8px; background: var(--md-sys-color-surface-container); }
+.meta { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--md-sys-typescale-body-medium); color: var(--md-sys-color-on-surface); }
+.kind { flex: none; font-size: var(--md-sys-typescale-body-small); padding: 2px 8px; border-radius: 100px; }
+.kind--new { color: var(--md-sys-color-on-primary-container); background: var(--md-sys-color-primary-container); }
+.kind--identical { color: var(--md-sys-color-on-surface-variant); background: var(--md-sys-color-surface-container-highest); }
+.kind--suspect { color: var(--md-sys-color-on-tertiary-container); background: var(--md-sys-color-tertiary-container); }
+.kind--conflict { color: var(--md-sys-color-on-error-container); background: var(--md-sys-color-error-container); }
+.choice { flex: none; width: 168px; }
+</style>
