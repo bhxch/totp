@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { applyImport, parsePastedText, planImport, type ImportKind, type ParsedEntry, type Vault } from '@totp/core'
+import { applyImport, dedupeWithinFile, parsePastedText, planImport, type ImportKind, type ParsedEntry, type Vault } from '@totp/core'
 import { computed, ref } from 'vue'
 import type { VueStore } from '../store'
 import MdButton from './md/MdButton.vue'
@@ -42,9 +42,13 @@ function parse(): void {
     error.value = `没有可导入的条目（${r.failures.length} 行无法解析）`
     return
   }
+  // 批内先去重再判定（dedupeWithinFile 返回 { kept, removed }，core import/dedup.ts:24）：
+  // 同一 URI 粘两遍时两行全字段相同，若直接进 planImport 恒判 new → vault 落两条完全相同条目。
+  // 前置与文件导入路径（ImportCard）一致；被移除行不单独展示，静默合并进后续流程
+  const { kept } = dedupeWithinFile(r.entries)
   // planImport 返回 { kinds, targetUuids, counts }（import/dedup.ts:48）——按下标对齐逐条标注
-  const plan = planImport(props.store.vault, r.entries)
-  rows.value = r.entries.map((entry, i) => {
+  const plan = planImport(props.store.vault, kept)
+  rows.value = kept.map((entry, i) => {
     const kind = plan.kinds[i] ?? 'new'
     return { entry, kind, choice: kind === 'new' ? ('add' as const) : ('skip' as const) }
   })

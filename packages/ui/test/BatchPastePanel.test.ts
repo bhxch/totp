@@ -39,6 +39,16 @@ describe('BatchPastePanel', () => {
     await vi.waitFor(() => expect(w.emitted('added')?.[1]).toEqual([0]))
     expect(store.vault.entries).toHaveLength(1)
   })
+  it('批内重复行去重：同一 URI 粘两遍仅出 1 行 new，落库恰 1 条', async () => {
+    const store = await mkStore()
+    const w = mount(BatchPastePanel, { props: { store } })
+    await w.find('textarea').setValue(`${URI_A}\n${URI_A}`)
+    await w.find('[data-test="paste-parse"]').trigger('click')
+    expect(w.findAll('[data-test="paste-row"]')).toHaveLength(1)
+    await w.find('[data-test="paste-commit"]').trigger('click')
+    await vi.waitFor(() => expect(w.emitted('added')?.[0]).toEqual([1]))
+    expect(store.vault.entries).toHaveLength(1)
+  })
   it('失败行显示原因且不阻塞其他行', async () => {
     const store = await mkStore()
     const w = mount(BatchPastePanel, { props: { store } })
