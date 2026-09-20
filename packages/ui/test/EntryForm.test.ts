@@ -174,6 +174,12 @@ describe('EntryForm', () => {
     expect(validateRegex('[abc')).not.toBeNull()
     expect(validateRegex('*star')).not.toBeNull()
   })
+  it('F13：validateRegex 与恢复校验对齐——超长/嵌套量词拒绝，常见形态不误杀', () => {
+    expect(validateRegex('(a+)+$')).toMatch(/嵌套量词/)
+    expect(validateRegex('a'.repeat(257))).toMatch(/256/)
+    expect(validateRegex('(sub\\.)?example\\.com')).toBeNull()
+    expect(validateRegex('(?:\\d{1,3}\\.){3}\\d{1,3}')).toBeNull()
+  })
   it('secret 默认遮蔽（type=password），toggle 切换显示/隐藏', async () => {
     const w = mount(EntryForm, { props: { initial: null, tags: [] } })
     const secret = () => w.find('input[placeholder="密钥 base32"]')

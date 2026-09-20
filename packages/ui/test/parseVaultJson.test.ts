@@ -127,3 +127,52 @@ describe('parseVaultJson 单条目校验', () => {
     expect(() => parseVaultJson(vaultJson([mkTotp(), 'not-entry', mkTotp({ uuid: 'u3' })]))).toThrow(/条目 1/)
   })
 })
+
+describe('parseVaultJson matchRules 采纳校验（F13）', () => {
+  it('合法 matchRules：通过且原样保留', () => {
+    const rules = [
+      { strategy: 'baseDomain', pattern: 'github.com' },
+      { strategy: 'regex', pattern: '^https://github\\.com/.*' },
+    ]
+    const v = parseVaultJson(vaultJson([mkTotp({ matchRules: rules })]))
+    expect(v.entries[0]?.matchRules).toEqual(rules)
+  })
+
+  it('缺省 matchRules：放行（向后兼容旧 vault）', () => {
+    expect(() => parseVaultJson(vaultJson([mkTotp()]))).not.toThrow()
+  })
+
+  it('非数组 matchRules：抛错', () => {
+    expect(() => parseVaultJson(vaultJson([mkTotp({ matchRules: 'x' as unknown })]))).toThrow(/matchRules 必须为数组/)
+  })
+
+  it('规则数超上限（>8）：抛错', () => {
+    const rules = Array.from({ length: 9 }, () => ({ strategy: 'host', pattern: 'a.com' }))
+    expect(() => parseVaultJson(vaultJson([mkTotp({ matchRules: rules })]))).toThrow(/数量超过上限/)
+  })
+
+  it('strategy 不在白名单：抛错', () => {
+    expect(() => parseVaultJson(vaultJson([mkTotp({ matchRules: [{ strategy: 'endsWith', pattern: 'x' }] })]))).toThrow(/strategy/)
+  })
+
+  it('规则不是对象 / pattern 非字符串：抛错', () => {
+    expect(() => parseVaultJson(vaultJson([mkTotp({ matchRules: ['x'] })]))).toThrow(/不是有效的对象/)
+    expect(() => parseVaultJson(vaultJson([mkTotp({ matchRules: [{ strategy: 'host', pattern: 1 }] })]))).toThrow(/pattern 必须为字符串/)
+  })
+
+  it('pattern 超长（>256）：抛错', () => {
+    expect(() => parseVaultJson(vaultJson([mkTotp({ matchRules: [{ strategy: 'host', pattern: 'a'.repeat(257) }] })]))).toThrow(/长度超过上限/)
+  })
+
+  it('regex pattern 无法编译：抛错', () => {
+    expect(() => parseVaultJson(vaultJson([mkTotp({ matchRules: [{ strategy: 'regex', pattern: 'b(c' }] })]))).toThrow(/无法编译/)
+  })
+
+  it('regex pattern 嵌套量词回溯形态：抛错', () => {
+    expect(() => parseVaultJson(vaultJson([mkTotp({ matchRules: [{ strategy: 'regex', pattern: '(a+)+$' }] })]))).toThrow(/嵌套量词/)
+  })
+
+  it('非 regex strategy 不做正则编译校验', () => {
+    expect(() => parseVaultJson(vaultJson([mkTotp({ matchRules: [{ strategy: 'startsWith', pattern: '(a+)+' }] })]))).not.toThrow()
+  })
+})

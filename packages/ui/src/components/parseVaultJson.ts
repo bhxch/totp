@@ -1,4 +1,14 @@
-import type { HashAlgorithm, OtpEntry, Vault } from '@totp/core'
+import {
+  hasNestedQuantifierRisk,
+  MATCH_STRATEGIES,
+  MAX_MATCH_PATTERN_LENGTH,
+  MAX_MATCH_RULES,
+  type HashAlgorithm,
+  type MatchRule,
+  type MatchStrategy,
+  type OtpEntry,
+  type Vault,
+} from '@totp/core'
 
 /** 恢复统一流程第 1 步产物校验：version===2 且 entries/tags 是数组（缺 tags 会在 replaceVault 半途抛错污染 commit 队列）。
  *  BackupCard（文件恢复）与 CloudCard（云端下载采用）共用同一份恢复语义。
@@ -67,5 +77,36 @@ function validateEntry(e: unknown, index: number): asserts e is OtpEntry {
     if (typeof o.counter !== 'number' || !Number.isInteger(o.counter) || o.counter < 0) {
       throw new Error(`${at}（hotp）counter 必须为非负整数`)
     }
+  }
+
+  // F13：matchRules 采纳校验——数量上限 + 逐条 strategy 白名单/pattern 长度/regex 安全（可编译 + 无嵌套量词回溯形态）。
+  // 缺省字段放行（向后兼容旧 vault）；同步通道原始落盘不经此路径，由引擎侧 urlMatches 求值前兜底。
+  if (o.matchRules !== undefined) {
+    if (!Array.isArray(o.matchRules)) throw new Error(`${at} matchRules 必须为数组`)
+    if (o.matchRules.length > MAX_MATCH_RULES) throw new Error(`${at} matchRules 数量超过上限 ${MAX_MATCH_RULES}`)
+    o.matchRules.forEach((r, j) => validateMatchRule(r, `${at} matchRules[${j}]`))
+  }
+}
+
+function validateMatchRule(r: unknown, at: string): asserts r is MatchRule {
+  if (typeof r !== 'object' || r === null) throw new Error(`${at} 不是有效的对象`)
+  const m = r as Record<string, unknown>
+  if (typeof m.strategy !== 'string' || !MATCH_STRATEGIES.includes(m.strategy as MatchStrategy)) {
+    throw new Error(`${at} strategy 必须是 ${MATCH_STRATEGIES.join('/')}`)
+  }
+  if (typeof m.pattern !== 'string') throw new Error(`${at} pattern 必须为字符串`)
+  const p = m.pattern.trim()
+  if (p.length > MAX_MATCH_PATTERN_LENGTH) {
+    throw new Error(`${at} pattern 长度超过上限 ${MAX_MATCH_PATTERN_LENGTH}`)
+  }
+  if (m.strategy !== 'regex') return
+  try {
+    // eslint-disable-next-line no-new
+    new RegExp(p)
+  } catch (e) {
+    throw new Error(`${at} regex pattern 无法编译：${e instanceof Error ? e.message : String(e)}`)
+  }
+  if (hasNestedQuantifierRisk(p)) {
+    throw new Error(`${at} regex pattern 含嵌套量词（如 (a+)+），存在灾难性回溯风险`)
   }
 }

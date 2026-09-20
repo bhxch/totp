@@ -69,3 +69,23 @@ describe('与真实 vault 协同', () => {
     expect(out.visible.map((x) => x.uuid)).toEqual(['a'])
   })
 })
+
+describe('F13：popup 混合规则求值（同步/旧 vault 通道的引擎边界兜底）', () => {
+  const risky = e('r', [], [{ strategy: 'regex', pattern: '(a+)+$' }, { strategy: 'baseDomain', pattern: 'work.com' }])
+  const safe = e('s', [], [{ strategy: 'regex', pattern: '^https://work\\.com' }])
+  it('不安全 regex 规则被跳过，同条目其余规则照常命中', () => {
+    const r = resolvePopupVisible({ ...base, entries: [risky], selectedTagIds: new Set(), urlFilterActive: true, tabUrl: 'https://work.com/x' })
+    expect(r.visible.map((x) => x.uuid)).toEqual(['r'])
+    expect(r.urlMatchCount).toBe(1)
+  })
+  it('安全 regex 规则在渲染路径照常命中', () => {
+    const r = resolvePopupVisible({ ...base, entries: [safe], selectedTagIds: new Set(), urlFilterActive: true, tabUrl: 'https://work.com/x' })
+    expect(r.visible.map((x) => x.uuid)).toEqual(['s'])
+  })
+  it('全部规则不命中时按既有回退链处理', () => {
+    const r = resolvePopupVisible({ ...base, entries: [risky], selectedTagIds: new Set(), urlFilterActive: true, tabUrl: 'https://other.com' })
+    expect(r.visible.map((x) => x.uuid)).toEqual(['r'])
+    expect(r.hint).toBe(HINT_SITE_PLAIN)
+    expect(r.urlMatchCount).toBe(0)
+  })
+})

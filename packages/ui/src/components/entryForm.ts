@@ -1,4 +1,4 @@
-import type { HashAlgorithm, IconRef, MatchRule } from '@totp/core'
+import { hasNestedQuantifierRisk, MAX_MATCH_PATTERN_LENGTH, type HashAlgorithm, type IconRef, type MatchRule } from '@totp/core'
 
 export interface EntryFormData {
   type: 'totp' | 'hotp' | 'steam'
@@ -23,7 +23,8 @@ export interface EntryFormData {
 /**
  * I51：URL 匹配规则中 strategy=regex 的客户端预校验。
  * - 空串视为合法（前端过滤后忽略）；非空时必须能编译为 RegExp。
- * - 编译失败 → 返回中文错误消息（提交时阻止保存并展示）；成功 → null。
+ * - F13：与恢复校验对齐——超长（>256）与嵌套量词回溯形态（如 (a+)+）同样拒绝，
+ *   避免表单创建出恢复路径会拒收的规则。
  * - 不接受 /flag 之外的特殊字符限制；保留 i/m 常用旗标。
  */
 export function validateRegex(pattern: string): string | null {
@@ -33,8 +34,10 @@ export function validateRegex(pattern: string): string | null {
   try {
     // eslint-disable-next-line no-new
     new RegExp(p)
-    return null
   } catch (e) {
     return e instanceof Error ? e.message : '正则表达式非法'
   }
+  if (p.length > MAX_MATCH_PATTERN_LENGTH) return `正则长度超过 ${MAX_MATCH_PATTERN_LENGTH} 字符上限`
+  if (hasNestedQuantifierRisk(p)) return '正则含嵌套量词（如 (a+)+），存在灾难性回溯风险'
+  return null
 }
