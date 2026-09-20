@@ -65,10 +65,20 @@ describe('envelope v2', () => {
     const env = await createBackupEnvelope(vaultJson, 'p')
     await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, salt: '!!' } }, 'p')).rejects.toThrow('invalid backup envelope')
   })
-  it('kdf 参数超限抛 invalid backup envelope（防恶意 envelope 资源耗尽）', async () => {
+  it('kdf 参数超限抛 invalid backup envelope（防恶意 envelope 资源耗尽；F9 上限收紧为档位包络 262144/4/1）', async () => {
     const env = await createBackupEnvelope(vaultJson, 'p')
     await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, t: 99999 } }, 'p')).rejects.toThrow('invalid backup envelope')
+    await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, t: 5 } }, 'p')).rejects.toThrow('invalid backup envelope')
     await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, m: 2 ** 21 + 1 } }, 'p')).rejects.toThrow('invalid backup envelope')
+    await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, m: 262145 } }, 'p')).rejects.toThrow('invalid backup envelope')
+    await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, p: 2 } }, 'p')).rejects.toThrow('invalid backup envelope')
+  })
+  it('最重档 paranoid（262144/4/1）恰好等于钳制上限：放行并正常解开', async () => {
+    const env = await createBackupEnvelope(vaultJson, '口令', 'paranoid')
+    expect(env.kdf.m).toBe(262144)
+    expect(env.kdf.t).toBe(4)
+    expect(env.kdf.p).toBe(1)
+    expect(await openBackupEnvelope(env, '口令')).toBe(vaultJson)
   })
   it('kdf 参数下限违规抛 invalid backup envelope（m<1024/t<1/p<1 拒绝；OWASP 最低推荐）', async () => {
     const env = await createBackupEnvelope(vaultJson, 'p')

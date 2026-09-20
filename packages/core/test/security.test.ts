@@ -87,10 +87,14 @@ describe('securityStore', () => {
     // prf 路径不受换口令影响（wrappedDekP 与 DEK 绑定，不与口令 KEK 绑定）
     expect(await unlockWithPrf(s2, prfOutput)).toEqual(dek)
   })
-  it('kdf 超钳制参数拒绝', async () => {
+  it('kdf 超钳制参数拒绝（F9 上限收紧为档位包络 262144/4/1：m=262145/t=5/p=2 均拒绝）', async () => {
     const { security } = await setupVaultEncryption(vaultJson, 'p')
-    const bad = { ...security, kdf: { ...security.kdf, t: 99999 } } as typeof security
-    await expect(unlockVaultEncryption(bad, 'p')).rejects.toThrow('invalid security settings')
+    const badT = { ...security, kdf: { ...security.kdf, t: 99999 } } as typeof security
+    await expect(unlockVaultEncryption(badT, 'p')).rejects.toThrow('invalid security settings')
+    const badM = { ...security, kdf: { ...security.kdf, m: 262145 } } as typeof security
+    const badP = { ...security, kdf: { ...security.kdf, p: 2 } } as typeof security
+    await expect(unlockVaultEncryption(badM, 'p')).rejects.toThrow('invalid security settings')
+    await expect(unlockVaultEncryption(badP, 'p')).rejects.toThrow('invalid security settings')
   })
   it('kdf 下限违规拒绝（m<1024/t<1/p<1；OWASP 最低推荐）', async () => {
     const { security } = await setupVaultEncryption(vaultJson, 'p')

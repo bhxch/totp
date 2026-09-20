@@ -1,5 +1,5 @@
 import { aesGcmDecrypt, aesGcmEncrypt, base64ToBytes, bytesToBase64, deriveKek, randomBytes } from '../crypto/aesgcm'
-import { DEFAULT_KDF_PROFILE, isKdfProfile, KDF_PROFILES, type KdfProfile } from '../crypto/kdfProfile'
+import { DEFAULT_KDF_PROFILE, isKdfProfile, KDF_DECRYPT_CLAMP, KDF_PROFILES, type KdfProfile } from '../crypto/kdfProfile'
 import { kekSourcesOf } from './multiKek'
 
 export { DEFAULT_KDF_PROFILE, isKdfProfile, KDF_PROFILES } from '../crypto/kdfProfile'
@@ -31,13 +31,10 @@ export interface EncryptedVault { v: 1; enc: true; dataNonce: string; ciphertext
 export const SECURITY_KEY = 'security'
 
 // 钳制 security 自带的 KDF 参数：恶意数据可声明超大/超小 m/t/p 使 argon2id 资源耗尽或被旁路；
-// 下限遵循 Argon2id 规范/OWASP 最低推荐（m≥1024 KiB / t≥1 / p≥1），上限与 backup/envelope 一致（m=2**21/t=10/p=8）
-const MIN_M = 1024
-const MAX_M = 2 ** 21
-const MIN_T = 1
-const MAX_T = 10
-const MIN_P = 1
-const MAX_P = 8
+// 边界与 backup/envelope 共用 KDF_DECRYPT_CLAMP（下限=OWASP 最低推荐；上限=已发布档位最大展开值，
+// 与写侧同源防漂移），超限在 deriveKek（口令验证）之前按结构非法拒绝（F9：旧上限 2**21/t=10/p=8
+// 远超最重档 paranoid=262144/4/1，恶意云盘数据可在口令验证前驱动超档 Argon2id）
+const { minM: MIN_M, maxM: MAX_M, minT: MIN_T, maxT: MAX_T, minP: MIN_P, maxP: MAX_P } = KDF_DECRYPT_CLAMP
 
 function assertKdfParams(params: { m?: unknown; t?: unknown; p?: unknown }): void {
   if (
