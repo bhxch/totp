@@ -466,7 +466,7 @@ async function nextFromPicked(): Promise<void> {
     return
   }
   if (f === 'aegis') {
-    // M11：使用 sniffAegis 暴露的 encrypted 标志（'header' 键存在 → 加密）
+    // M11：使用 sniffAegis 暴露的 encrypted 标志（顶层 db 为密文 Base64 字符串 → 加密；明文 vault 同样带空 slots 的 header）
     const aegis = sniffAegis(fileText.value)
     if (aegis?.encrypted) {
       passwordHint.value = '该 Aegis 备份已加密，请输入导出口令'

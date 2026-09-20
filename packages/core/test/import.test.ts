@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractGenericRows, importGeneric, importUriBatch, mapRowToEntry, sniffFormat } from '../src/import/sniff'
+import { extractGenericRows, importGeneric, importUriBatch, mapRowToEntry, sniffAegis, sniffFormat } from '../src/import/sniff'
 import type { RowMapping } from '../src/import/sniff'
 
 describe('sniffFormat', () => {
@@ -11,6 +11,17 @@ describe('sniffFormat', () => {
     expect(sniffFormat('{"a":1}\n{"b":2}')).toBe('generic')
     expect(sniffFormat('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP')).toBe('uriBatch')
     expect(sniffFormat('hello')).toBeNull()
+  })
+})
+
+describe('sniffAegis', () => {
+  // 明文 vault 顶层同样带 header（slots 为空数组，与 Aegis 官方明文导出一致）——
+  // 加密判定只能看顶层 db 类型：明文为对象、加密为密文 Base64 字符串
+  it('加密（db 为字符串）true，明文（带 header + db 对象）false，非 aegis null', () => {
+    expect(sniffAegis('{"version":1,"header":{"slots":[{"type":1}],"params":{}},"db":"aGVsbG8="}')).toMatchObject({ kind: 'aegis', encrypted: true })
+    expect(sniffAegis('{"version":1,"header":{"slots":[],"params":{}},"db":{"entries":[],"groups":[]}}')).toMatchObject({ kind: 'aegis', encrypted: false })
+    expect(sniffAegis('{"foo":1}')).toBeNull()
+    expect(sniffAegis('[1,2]')).toBeNull()
   })
 })
 

@@ -29,7 +29,8 @@ export * from './uriBatch'
  * uriBatch，不设独立判定；Ente 加密导出与未知 JSON 无可靠特征，留给手动选择（generic/uriBatch）。
  * TOTP Authenticator 外部分享为纯 base64 密文，与任意文本无可靠区分特征，不强判（手动选择）。
  */
-// Aegis 特征键：明文 vault 顶层含 'db'（明文对象），加密 vault 顶层含 'header'（{slots,params}）。
+// Aegis 特征键：明文与加密 vault 顶层均含 'header'（{slots,params}，明文 slots 为空数组）——
+// 不能以 header 存在判加密；可靠区分是顶层 db 的类型：明文 db 为对象，加密 db 为密文 Base64 字符串。
 // 嗅探结果包含 encrypted 标志，让 UI 调用方决定走口令页 vs 直接解析。
 export interface AegisSniff {
   kind: 'aegis'
@@ -54,7 +55,7 @@ export function sniffAegis(text: string): AegisSniff | null {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
   const obj = parsed as Record<string, unknown>
   if (!sniffAegisObject(obj)) return null
-  return { kind: 'aegis', encrypted: 'header' in obj }
+  return { kind: 'aegis', encrypted: typeof obj.db === 'string' }
 }
 
 export function sniffFormat(text: string): ImportFormat | null {
