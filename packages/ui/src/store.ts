@@ -34,9 +34,11 @@ export function createVueStore(
   let inited = false
   const lastSelfWrite = { vault: 0, settings: 0, bag: 0 }
   let queue: Promise<void> = Promise.resolve()
-  // 锁定代数（F1）：lock() 不入写队列（同步清 DEK/内存 vault），可能与在途 commit 交叉。
-  // commit 在任务起点捕获代数，saveVaultToAdapter 每次 await 后复查——代数已变即锁定发生在途，
-  // 本任务视为被锁定取代，中止写盘；否则 DEK 已清的续延会把被清空的空库明文覆盖写到盘上密文位置
+  // 锁定代数（F1+F7）：lock() 同步执行、不入写队列（清 DEK/内存 vault），可能与在途 commit
+  // 及加密/解锁续延交叉。commit 与各长耗时流程在入口捕获代数，关键 await 后经
+  // ensureNotLockedSince / 内联复查——代数已变即锁定发生在途：在途写盘中止（否则 DEK 已清的续延
+  // 会把被清空的空库明文覆盖写到盘上密文位置）；进行中的续延中止（否则会把 DEK 重挂回内存/
+  // 宿主会话存储并翻回解锁态，锁定被窗口击穿）
   let lockGeneration = 0
   // 加密态按 windowId 隔离：spec §7 末尾「窗口独立解锁」——一个窗口 unlock 不应让另一个窗口同时解锁
   // security 是数据（盘上唯一真相），所有窗口共享；dek/locked 是解锁态，按 windowId 索引
@@ -77,6 +79,11 @@ export function createVueStore(
       backupSecretRefByWin.set(windowId, r)
     }
     return r
+  }
+  /** F7 不变量复查：传入流程入口捕获的 lockGeneration，当前代数已前进（期间 lock() 已发生）即抛错，
+   *  令加密/解锁续延在前进任何内存/盘上状态前中止；调用方（SecurityCard/LockScreen 的 catch）原样展示 */
+  function ensureNotLockedSince(gen: number): void {
+    if (lockGeneration !== gen) throw new Error('vault locked during operation')
   }
   const security = ref<SecuritySettings | null>(null)
   const locked = computed(() => currentLockedRef().value)
@@ -121,10 +128,12 @@ export function createVueStore(
   }
 
   /** 保管区密封写盘统一出口（审查 I7）：记录自写窗口——本端写盘触发的 storage 回声
-   *  不应触发 reloadBagFromDisk 重读自己刚写的内容（对齐 vault 的 lastSelfWrite 模式） */
-  async function sealBagToDisk(dek: Uint8Array): Promise<void> {
+   *  不应触发 reloadBagFromDisk 重读自己刚写的内容（对齐 vault 的 lastSelfWrite 模式）。
+   *  content 缺省密封当前缓存；changePassphrase 传入口捕获的快照——写序 await 期间 lock() 清空缓存
+   *  也不至于把空保管区密文盖到盘上真实内容（F7 残余防护） */
+  async function sealBagToDisk(dek: Uint8Array, content: SecretBagContent = bag): Promise<void> {
     lastSelfWrite.bag = Date.now()
-    await adapter.set(SECRET_BAG_KEY, await sealSecretBag(dek, bag))
+    await adapter.set(SECRET_BAG_KEY, await sealSecretBag(dek, content))
   }
 
   /** 远端保管区变更重读（审查 I7）：解锁态从盘重读 bag 并前进内存视图（复用 advanceBag 路径）；
@@ -206,6 +215,7 @@ export function createVueStore(
 
   async function initStore(): Promise<void> {
     if (inited) return
+    const gen = lockGeneration // F7：入口捕获代数，供自动恢复解锁续延在 await 后复查
     const [parsed, s, sec] = await Promise.all([readRawVault(), loadSettings(adapter), readSecurity()])
     Object.assign(settings, s)
     security.value = sec
@@ -226,9 +236,9 @@ export function createVueStore(
         const persisted = opts.dekPersist ? await opts.dekPersist.get().catch(() => null) : null
         if (persisted) {
           try {
-            await applyDekAndUnlock(base64ToBytes(persisted))
+            await applyDekAndUnlock(base64ToBytes(persisted), gen)
           } catch {
-            lock() // 持久化 DEK 失效（换库/损坏）：lock 清持久化残留，保持锁定等口令输入
+            lock() // 持久化 DEK 失效（换库/损坏/init 期间被锁定中断）：lock 清持久化残留，保持锁定等口令输入
           }
         } else {
           // 密文在手但本窗口无 DEK：本窗口锁定，vault 保持为空防内存残留读取
@@ -423,25 +433,27 @@ export function createVueStore(
 
   /** 启用加密：以当前内存 vault 明文建 KEK/wrap DEK → 写 security + 密文 vault → 本窗口缓存 DEK。
    *  经 commit 队列执行：Argon2 派生耗时数百 ms，期间的并发写 op 必须排队，
-   *  否则会以 enable 前的旧快照落盘覆盖新写（真实竞态） */
+   *  否则会以 enable 前的旧快照落盘覆盖新写（真实竞态）。
+   *  F7：派生/盘写每个 await 后复查锁定代数，期间 lock() 已发生即中止——内存态（security/dek/解锁标记）
+   *  统一延到全部盘写成功后前进，故中止点零内存污染，也无需失败回滚误清 lock() 特意保留的
+   *  security 缓存（锁定态 LockScreen 枚举解锁方式依赖）；残余：锁定恰插入两次盘写 await 之间时
+   *  盘上至多留下「security 在但 vault 仍明文」半失败态（unlock 宽容接受，与既有崩溃语义同类） */
   function enableEncryption(password: string): Promise<void> {
     return enqueue(async () => {
       if (lockedByWin.get(windowId)) throw new Error('vault locked')
+      const gen = lockGeneration
       // 不用 toRaw：直接序列化响应式对象（P5 裁定，避免 raw target 与 reactive 视图不一致）
       const r = await setupVaultEncryption(JSON.stringify(vault), password)
+      ensureNotLockedSince(gen)
+      // 先写 security 后写密文：中途崩溃最多出现「security 在但 vault 仍明文」，数据不丢
+      lastSelfWrite.vault = Date.now() // security 键写入复用 vault 自写窗口抑制（onChanged 无 security 通道）
+      await adapter.set(SECURITY_KEY, JSON.stringify(r.security))
+      ensureNotLockedSince(gen)
+      lastSelfWrite.vault = Date.now()
+      await adapter.set(VAULT_KEY, JSON.stringify(r.encrypted))
+      ensureNotLockedSince(gen)
       security.value = r.security
       dekByWin.set(windowId, r.dek)
-      try {
-        // 先写 security 后写密文：中途崩溃最多出现「security 在但 vault 仍明文」，数据不丢
-        lastSelfWrite.vault = Date.now() // security 键写入复用 vault 自写窗口抑制（onChanged 无 security 通道）
-        await adapter.set(SECURITY_KEY, JSON.stringify(r.security))
-        lastSelfWrite.vault = Date.now()
-        await adapter.set(VAULT_KEY, JSON.stringify(r.encrypted))
-      } catch (e) {
-        security.value = null
-        dekByWin.set(windowId, null)
-        throw e
-      }
       lockedByWin.set(windowId, false)
       currentLockedRef().value = false
       // DEK 持久化不变量「解锁必写」：enable 同样产出解锁态，宿主会话存储同步持有 DEK
@@ -474,49 +486,69 @@ export function createVueStore(
 
   /** 更换口令（需已解锁）：默认 rotateDek=true（设计 §2 裁定改口令即被动轮换）——重生成 DEK、全库重加密写盘、
    *  保管区重封、kekSources 重置为 password 源（prf/dpapi 死凭证数据层丢弃，宿主 UI 引导重绑）；
-   *  rotateDek=false 仅重包裹（DEK 不变，多绑来源保留）。经 commit 队列，与写 op 串行 */
+   *  rotateDek=false 仅重包裹（DEK 不变，多绑来源保留）。经 commit 队列，与写 op 串行。
+   *  F7：派生后、首个盘写前复查锁定代数（此点中止零盘写零内存前进，无半迁移）；盘写一旦开始不再因
+   *  锁定中止——中途弃写会留下「新 DEK 密文配旧 security」的不可解盘态，故写序全部完成后按代数
+   *  统一裁决内存前进：期间被锁即保持锁定、不重挂 DEK、不写持久化，盘上为完整一致的新口令态 */
   function changePassphrase(newPassword: string, changeOpts: { rotateDek?: boolean; profile?: KdfProfile } = {}): Promise<void> {
     return enqueue(async () => {
       if (lockedByWin.get(windowId)) throw new Error('vault locked')
       if (!security.value || !dekByWin.get(windowId)) throw new Error('encryption not enabled')
       // rotateDek 缺省 true（设计 §2 裁定改口令即被动轮换）；显式传 undefined 也不得静默关闭轮换
       // （审查 Minor：{ rotateDek: true, ...changeOpts } 展开顺序会让显式 undefined 覆盖默认值）
+      const gen = lockGeneration
       const r = await changeVaultPassphrase(security.value, dekByWin.get(windowId)!, newPassword, { ...changeOpts, rotateDek: changeOpts.rotateDek ?? true })
+      ensureNotLockedSince(gen)
       if (r.dek) {
         // 被动轮换（设计 §2）：DEK 已换 → 全库重加密写盘 + 保管区重封。两次数据写盘先行（失败→内存未前进→
-        // 下次 commit 以旧 DEK+旧 security 落盘，重试自愈，T7 审查 R3）；成功后才前进内存 DEK，security 落盘作最后提交点
+        // 下次 commit 以旧 DEK+旧 security 落盘，重试自愈，T7 审查 R3）。明文/保管区快照在本检查点后
+        // 同步捕获（至下一盘写间无 await，锁定插不进来），写序期间锁定也不至于把清空后的缓存写盘
+        const bagSnapshot = bag
         lastSelfWrite.vault = Date.now()
         await adapter.set(VAULT_KEY, JSON.stringify(await encryptVaultWithDek(r.dek, JSON.stringify(vault))))
-        await sealBagToDisk(r.dek) // 保管区重封（新 DEK 写盘前 dekByWin 尚未前进，显式传入）
-        dekByWin.set(windowId, r.dek)
-        void opts.dekPersist?.set(r.dek)
+        await sealBagToDisk(r.dek, bagSnapshot) // 保管区重封（新 DEK 写盘前 dekByWin 尚未前进，显式传入）
       }
       security.value = r.security
       lastSelfWrite.vault = Date.now()
       await adapter.set(SECURITY_KEY, JSON.stringify(r.security))
+      // 全部盘写成功后才前进内存解锁态（security 落盘作最后提交点）：期间 lock() 已发生（代数前进）→
+      // 保持锁定，不重挂 DEK、不写持久化，用户以新口令重新解锁即可
+      if (r.dek && lockGeneration === gen) {
+        dekByWin.set(windowId, r.dek)
+        void opts.dekPersist?.set(r.dek)
+      }
     })
   }
 
   /** 解锁：口令解出 DEK → 本窗口读盘解密/明文填充 → 退出锁定；口令错时原样抛出供组件展示。
    *  盘上 vault 非密文（缺失或明文）时宽容接受：这是「security 在但 vault 明文」的
-   *  enableEncryption 半失败不一致态，直接加载并恢复持有 DEK，后续写 op 经加密分支自愈回密文 */
+   *  enableEncryption 半失败不一致态，直接加载并恢复持有 DEK，后续写 op 经加密分支自愈回密文。
+   *  F7：入口捕获锁定代数下传，Argon2 派生等 await 窗口内的 lock() 由 applyDekAndUnlock 复查中止 */
   async function unlock(password: string): Promise<void> {
     if (!security.value) throw new Error('encryption not enabled')
-    await applyDekAndUnlock(await unlockVaultEncryption(security.value, password))
+    const gen = lockGeneration
+    await applyDekAndUnlock(await unlockVaultEncryption(security.value, password), gen)
   }
 
-  /** unlock(password) 共享的后置逻辑：本窗口读盘解密/明文填充 → 本窗口持有 DEK → 退出锁定 */
-  async function applyDekAndUnlock(key: Uint8Array): Promise<void> {
+  /** unlock(password) 共享的后置逻辑：本窗口读盘解密/明文填充 → 本窗口持有 DEK → 退出锁定。
+   *  gen 为调用方入口捕获的锁定代数（F7 不变量）：每个 await 后复查，期间 lock() 已发生即中止——
+   *  丢弃解出的 DEK 与明文，不重挂、不写持久化、不翻回解锁态（password/unlockWithDek/initStore 三路汇此） */
+  async function applyDekAndUnlock(key: Uint8Array, gen: number): Promise<void> {
+    ensureNotLockedSince(gen)
     const parsed = await readRawVault()
+    ensureNotLockedSince(gen)
     let loaded: Vault
     if (isEncryptedVault(parsed)) {
       loaded = await decryptGuardedVault(key, parsed) // F8：回滚密文在此拒绝（抛 VaultRollbackError，锁定态不前进）
+      ensureNotLockedSince(gen) // F7：解密 await 窗口内 lock() 已发生即中止（不装填旧内容、不前进）
     } else {
       loaded = parsed !== null ? (parsed as Vault) : createVault()
     }
     // 可能失败的副步骤（保管区装载，失败按空保管区回落）先完成，再一次性前进全部内存态
     // （bag/会话口令 → vault → 持 DEK → 退出锁定）：消除「locked=true 但内存持明文+DEK」瞬态窗口（T7 审查 R1）
-    advanceBag(await loadBagFromDisk(key)) // 解锁自动装载保管区（password 与 unlockWithDek/PRF 两条路径均汇于此）
+    const loadedBag = await loadBagFromDisk(key)
+    ensureNotLockedSince(gen)
+    advanceBag(loadedBag) // 解锁自动装载保管区（password 与 unlockWithDek/PRF 两条路径均汇于此）
     replaceVault(loaded)
     await advanceVaultRevWatermark(key, loaded)
     dekByWin.set(windowId, key)
@@ -527,13 +559,15 @@ export function createVueStore(
   }
 
   /** passkey 解锁第二跳：外部经 core unlockWithPrf 解出 DEK 后注入。
-   *  security 缓存缺失（跨窗口陈旧/未 initStore）时从盘补读，保证后续加密写路径可用 */
+   *  security 缓存缺失（跨窗口陈旧/未 initStore）时从盘补读，保证后续加密写路径可用。
+   *  F7：代数在入口捕获（readSecurity 补读 await 之前），补读窗口内的 lock() 同样被复查拦截 */
   async function unlockWithDek(key: Uint8Array): Promise<void> {
+    const gen = lockGeneration
     if (!security.value) security.value = await readSecurity()
     if (!security.value) throw new Error('encryption not enabled')
     // C1：调用方应保证 DEK 长度 32B；core unlockWithPrf 已加校验，此处再校验一次防 caller 跳过 core 直接注入
     if (key.length !== 32) throw new Error('invalid DEK length from PRF unwrap')
-    await applyDekAndUnlock(key)
+    await applyDekAndUnlock(key, gen)
   }
 
   /** 绑定 passkey 解锁（已解锁态）：salt 由调用方生成并在创建凭据时用于 PRF 求值，
@@ -675,7 +709,7 @@ export function createVueStore(
    *  注意：security.value 不在此清空 — 锁定态下 LockScreen 仍需枚举 kekSources 渲染
    *  解锁按钮（passkey/DPAPI 静默解锁），security 本身不包含敏感运行时数据。 */
   function lock(): void {
-    lockGeneration++ // F1：使在途 commit 的落盘写失效（saveVaultToAdapter 每次 await 后复查代数即中止）
+    lockGeneration++ // F1+F7：代数单调前进——在途 commit 落盘写与加密/解锁续延在下一复查点即中止
     dekByWin.set(windowId, null)
     lockedByWin.set(windowId, true)
     currentLockedRef().value = true
