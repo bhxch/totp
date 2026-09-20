@@ -308,6 +308,16 @@ const backupPlatform: BackupPlatform = {
       void commitSettings()
     },
   },
+  // 文本导出（批① §2.3）：otpauth 文本/Aegis JSON 走 Blob 下载（downloadEnvelope 同款 a[download] 通道）；浏览器下载无「取消」回执，恒 true
+  async saveTextFile(name, content) {
+    const url = URL.createObjectURL(new Blob([content], { type: 'application/octet-stream' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = name
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 10_000)
+    return true
+  },
 }
 
 /**

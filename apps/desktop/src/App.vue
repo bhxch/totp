@@ -6,7 +6,7 @@ import { backupFileName, createBackupEnvelope, loadSourceRevs, loadSources, norm
 import { createAppI18n, createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type LocalSourceView, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, getCurrentInstance, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createDesktopAutoRunner, formatAutoStatusText } from './autoBackup'
-import { createBackupToSources, listBackupsFromSources, pickBackupDirOs, pickBackupOpenOs, pickBackupSaveOs, readBackupByName, readBackupFileOs, saveConflictBackupToDir, saveCloudSourcesPreservingLocal, writeBackupFileOs, type PickedOsFile } from './backupService'
+import { createBackupToSources, listBackupsFromSources, pickBackupDirOs, pickBackupOpenOs, pickBackupSaveOs, readBackupByName, readBackupFileOs, saveConflictBackupToDir, saveCloudSourcesPreservingLocal, writeBackupFileOs, writeTextFileOs, type DialogFilterSpec, type PickedOsFile } from './backupService'
 import { decryptDpapiOs, pickImportFileOs, readImportFileBytesOs, readImportFileOs } from './importService'
 import { createIdleLockExecutor } from './idleLock'
 import { lockPrefsUnsupportedKeys } from './lockPrefs'
@@ -151,6 +151,8 @@ async function openBackupText(text: string, password: string): Promise<string> {
 }
 
 const BACKUP_FILE_FILTERS = [{ name: 'TOTP 备份', extensions: ['totpbackup'] }]
+// 文本导出（批① §2.3）对话框过滤器：otpauth 文本落 .txt、Aegis 导出落 .json
+const TEXT_FILE_FILTERS: DialogFilterSpec[] = [{ name: '导出文件', extensions: ['json', 'txt'] }]
 // 与 Rust 端 read_import_file_os 扩展名白名单一致（.json/.wauth/.xml/.txt/.aegis）+ SQLite .db/.sqlitedb/.sqlite
 // （.db 经文本读取报 UTF-8 错时由 ImportCard 转字节入口复查，见 read_import_file_bytes_os）
 const IMPORT_FILE_FILTERS = [
@@ -196,6 +198,13 @@ const backupPlatform: BackupPlatform = {
     if (!picked) return false
     const envelope = await createBackupEnvelope(vaultJson, password, kdfProfileOf())
     await writeBackupFileOs(picked, envelope)
+    return true
+  },
+  // 文本导出（批① §2.3）：save 对话框（Rust 登记授权）+ OS 白名单写；取消=不写盘返回 false
+  async saveTextFile(name, content) {
+    const picked = await pickBackupSaveOs(name, TEXT_FILE_FILTERS)
+    if (!picked) return false
+    await writeTextFileOs(picked, content)
     return true
   },
   async restoreFromPicker(password) {

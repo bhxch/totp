@@ -45,6 +45,9 @@ export interface BackupPlatform {
   removeLocalSource?(id: string): Promise<void>
   /** [可选] 导出到系统选择的文件（desktop：dialog save + OS 写）；false=用户取消（未写文件），true=已导出 */
   exportToFile?(vaultJson: string, password: string): Promise<boolean>
+  /** [可选] 保存任意文本导出文件（批① §2.3：otpauth 文本 .txt / Aegis JSON；desktop=save 对话框 + OS 写，
+   *  extension=Blob 下载）；false=用户取消（未写文件），true=已导出 */
+  saveTextFile?(name: string, content: string): Promise<boolean>
   /** [可选] 从文件选择器选取备份并解密，返回明文 vault JSON；用户取消返回 null */
   restoreFromPicker?(password: string): Promise<{ json: string } | null>
   /** [可选] 聚合全部本地源的备份文件列表（渲染用，新在前；sourceId 供恢复定位来源目录） */

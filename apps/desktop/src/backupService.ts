@@ -218,7 +218,12 @@ export async function readBackupFileOs(picked: PickedOsFile): Promise<string> {
   return invoke<string>('read_text_file_os', { path: picked.path, dirToken: picked.dirToken })
 }
 
+/** 通用文本写盘（批① §2.3 文本导出）：picked 由 pickBackupSaveOs 产生，遏制基准=其登记父目录 */
+export async function writeTextFileOs(picked: PickedOsFile, contents: string): Promise<void> {
+  await invoke('write_text_file_os', { path: picked.path, contents, dirToken: picked.dirToken })
+}
+
 /** 导出写盘（F4）：picked 由 pickBackupSaveOs 的 Rust save 对话框产生，遏制基准=其登记父目录 */
 export async function writeBackupFileOs(picked: PickedOsFile, envelope: BackupEnvelope): Promise<void> {
-  await invoke('write_text_file_os', { path: picked.path, contents: JSON.stringify(envelope, null, 2), dirToken: picked.dirToken })
+  await writeTextFileOs(picked, JSON.stringify(envelope, null, 2))
 }

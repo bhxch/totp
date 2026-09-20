@@ -397,10 +397,13 @@ fn write_text_file_granted(grants: &DialogGrants, path: String, contents: String
     if path.is_empty() {
         return Err("empty path".into());
     }
-    // 扩展名白名单：本命令唯一用途是备份导出；CSP 为 null 的现状下，
-    // 任意路径+任意内容写入等于 XSS 任意文件覆写原语，故限定 .totpbackup
-    if !path.ends_with(".totpbackup") {
-        return Err("invalid backup file extension".into());
+    // 扩展名白名单：本命令用途是备份导出（.totpbackup）与文本导出（批① §2.3：otpauth 文本
+    // .txt / Aegis JSON .json，均经 pick_save_file_os 对话框授权）；CSP 为 null 的现状下，
+    // 任意路径+任意内容写入等于 XSS 任意文件覆写原语，故仍限定扩展名集合
+    const EXPORT_EXTENSIONS: [&str; 3] = [".totpbackup", ".json", ".txt"];
+    let lower = path.to_lowercase();
+    if !EXPORT_EXTENSIONS.iter().any(|ext| lower.ends_with(ext)) {
+        return Err("invalid export file extension".into());
     }
     let p = std::path::Path::new(&path);
     if p.is_dir() {
@@ -1022,10 +1025,17 @@ mod tests {
         let target = allowed.join("vault-20260916-120000.totpbackup");
         write_text_file_granted(&grants, target.to_str().unwrap().into(), "{}".into(), &token).unwrap();
         assert!(target.exists());
+        // 文本导出（批① §2.3）：白名单内 .txt/.json（大小写不敏感）写入成功
+        let txt = allowed.join("totp-export.txt");
+        write_text_file_granted(&grants, txt.to_str().unwrap().into(), "otpauth://".into(), &token).unwrap();
+        assert!(txt.exists());
+        let json = allowed.join("aegis-export.JSON");
+        write_text_file_granted(&grants, json.to_str().unwrap().into(), "{}".into(), &token).unwrap();
+        assert!(json.exists());
         // 非白名单扩展名拒绝
-        let txt = allowed.join("evil.txt");
-        assert!(write_text_file_granted(&grants, txt.to_str().unwrap().into(), "{}".into(), &token).is_err());
-        assert!(!txt.exists());
+        let exe = allowed.join("evil.exe");
+        assert!(write_text_file_granted(&grants, exe.to_str().unwrap().into(), "{}".into(), &token).is_err());
+        assert!(!exe.exists());
         // 登记目录之外（.totpbackup 合法名）遏制拒绝且不落盘
         let outside = base.join("vault-20260916-120000.totpbackup");
         assert!(write_text_file_granted(&grants, outside.to_str().unwrap().into(), "{}".into(), &token).is_err());

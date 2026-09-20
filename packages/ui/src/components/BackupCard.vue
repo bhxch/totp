@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import type { KdfProfile, Vault } from '@totp/core'
-import { onMounted, ref } from 'vue'
+import { exportAegisEncrypted, exportAegisPlaintext, exportOtpauthText } from '@totp/core'
+import { computed, onMounted, ref } from 'vue'
 import type { BackupAutoPrefs, BackupPlatform, LocalSourceView } from './backupPlatform'
 import { parseVaultJson } from './parseVaultJson'
 import MdButton from './md/MdButton.vue'
+import MdCheckbox from './md/MdCheckbox.vue'
 import MdSegmentedButton from './md/MdSegmentedButton.vue'
 import MdSelect from './md/MdSelect.vue'
 import MdSwitch from './md/MdSwitch.vue'
@@ -17,6 +19,9 @@ const props = defineProps<{
   /** 会话备份口令（D1）：备份加密/导出用；null 时备份导出禁用，恢复走一次性口令回退 */
   sessionSecret: string | null
 }>()
+
+/** remember-secret（批① §2.3）：Aegis 加密导出勾选「记住到保管区」时上抛口令，宿主接 store.setBackupSecret(pw, true) */
+const emit = defineEmits<{ 'remember-secret': [pw: string] }>()
 
 const busy = ref(false)
 const msg = ref('')
@@ -96,6 +101,86 @@ async function onExport(): Promise<void> {
   } finally {
     busy.value = false
   }
+}
+
+// ---------- 导出格式（批① §2.3：otpauth 文本 / Aegis 明文·加密，经 platform.saveTextFile 落盘）----------
+/** 四格式：totp-backup=现状加密 .totpbackup（exportToFile）；其余为文本格式（saveTextFile，宿主提供才渲染本区） */
+const fmt = ref('totp-backup')
+const EXPORT_FORMAT_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'totp-backup', label: '应用备份（.totpbackup）' },
+  { value: 'otpauth-text', label: 'otpauth 文本（.txt）' },
+  { value: 'aegis-plain', label: 'Aegis 明文 JSON' },
+  { value: 'aegis-encrypted', label: 'Aegis 加密 JSON' },
+]
+/** Aegis 加密导出的独立口令（与备份口令无关，仅作用于本次导出文件） */
+const encPw = ref('')
+/** 「记住到保管区」：导出成功后上抛 remember-secret（宿主 setBackupSecret 落保管区） */
+const remember = ref(false)
+/** 两步确认挂起态（明文两种警示风险；加密一种普通确认；totp-backup 不经确认） */
+const exportPending = ref(false)
+
+/** 加密导出必须先有口令；busy 防重入 */
+const runDisabled = computed(() => busy.value || (fmt.value === 'aegis-encrypted' && encPw.value === ''))
+
+/** 确认行文案：明文两种用 spec §2.3 固定警示；加密为普通确认 */
+const exportConfirmText = computed(() =>
+  fmt.value === 'aegis-encrypted' ? '确认导出 Aegis 加密文件？' : '导出为明文，任何人读取该内容即可获取全部密钥，确认继续？',
+)
+
+/** 切格式收起上一格式挂起的确认行 */
+function onFmtChange(v: string | number): void {
+  fmt.value = v as string
+  exportPending.value = false
+}
+
+/** 「导出」：totp-backup 走现状 exportToFile（onExport 不动）；文本格式先进两步确认 */
+function onExportRun(): void {
+  if (fmt.value === 'totp-backup') {
+    void onExport()
+    return
+  }
+  exportPending.value = true
+}
+
+/** 确认导出：按格式生成内容并调 platform.saveTextFile（false=用户取消） */
+async function runExport(): Promise<void> {
+  const save = props.platform?.saveTextFile
+  if (!save) {
+    exportPending.value = false
+    return
+  }
+  const v = JSON.parse(props.vaultJson) as Vault
+  exportPending.value = false
+  busy.value = true
+  msg.value = ''
+  try {
+    if (fmt.value === 'otpauth-text') {
+      const saved = await save('totp-export.txt', exportOtpauthText(v))
+      msg.value = saved ? '已导出' : '已取消'
+      msgKind.value = saved ? 'ok' : 'hint'
+    } else if (fmt.value === 'aegis-plain') {
+      const { json, report } = exportAegisPlaintext(v)
+      okWithDropped(await save('aegis-export.json', json), report)
+    } else {
+      const { json, report } = await exportAegisEncrypted(v, encPw.value)
+      const saved = await save('aegis-export.json', json)
+      // 仅真落盘才记口令：取消/写失败时不把口令存入保管区（与导出事实一致）
+      if (saved && remember.value) emit('remember-secret', encPw.value)
+      okWithDropped(saved, report)
+    }
+  } catch (e) {
+    fail(e)
+  } finally {
+    busy.value = false
+  }
+}
+
+/** 文本导出反馈：取消=hint；成功时多余标签（Aegis 条目仅支持单分组，spec §2.2）随文案提示 */
+function okWithDropped(saved: boolean, report: { droppedTagCount: number }): void {
+  msg.value = !saved
+    ? '已取消'
+    : '已导出' + (report.droppedTagCount > 0 ? `（${report.droppedTagCount} 个多余标签未导出：Aegis 条目仅支持单分组）` : '')
+  msgKind.value = saved ? 'ok' : 'hint'
 }
 
 async function refreshList(): Promise<void> {
@@ -391,6 +476,33 @@ function onBackupProfileChange(v: string | number): void {
       <MdButton v-if="platform.exportToFile" variant="tonal" :disabled="busy || !sessionSecret" @click="onExport">导出到文件</MdButton>
       <MdButton v-if="platform.restoreFromPicker" variant="tonal" :disabled="busy" @click="startRestore('picker')">从文件恢复</MdButton>
     </div>
+    <!-- 导出格式区（批① §2.3）：宿主提供 saveTextFile 才渲染；文本格式经两步确认后落盘 -->
+    <div v-if="platform.saveTextFile" class="export-block">
+      <MdSelect
+        data-test="export-format" class="export-format"
+        :model-value="fmt" :options="EXPORT_FORMAT_OPTIONS"
+        label="导出格式" aria-label="导出格式" @update:model-value="onFmtChange"
+      />
+      <div v-if="fmt === 'aegis-encrypted'" class="export-pw-row">
+        <MdTextField
+          data-test="export-password" class="export-pw"
+          v-model="encPw" type="password" label="Aegis 导出口令" aria-label="Aegis 导出口令" autocomplete="new-password"
+        />
+        <MdCheckbox
+          data-test="export-remember"
+          v-model="remember" label="记住到保管区" aria-label="记住导出口令"
+        />
+      </div>
+      <div>
+        <MdButton data-test="export-run" variant="tonal" :disabled="runDisabled" @click="onExportRun">导出</MdButton>
+      </div>
+      <div v-if="exportPending" class="confirm-row export-confirm-row">
+        <span>{{ exportConfirmText }}</span>
+        <MdButton data-test="export-confirm" :disabled="busy" @click="runExport">确认导出</MdButton>
+        <MdButton variant="text" :disabled="busy" @click="exportPending = false">取消</MdButton>
+      </div>
+      <p v-if="fmt !== 'totp-backup'" class="hint">otpauth/Aegis 为独立格式（明文或独立口令），不替代加密的应用备份。</p>
+    </div>
     <p v-if="!sessionSecret" class="hint">先在上方设置备份口令。</p>
     <div v-if="showFallback" class="fallback-row">
       <MdTextField v-model="fallbackPw" class="fallback-pw" type="password" label="恢复口令" placeholder="输入该备份的口令" autocomplete="off" />
@@ -454,6 +566,10 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .retention-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .keep-n { width: 120px; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.export-block { display: flex; flex-direction: column; gap: 8px; }
+.export-format { max-width: 280px; }
+.export-pw-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.export-pw { max-width: 240px; }
 .fallback-row { display: flex; gap: 8px; align-items: center; }
 .fallback-pw { flex: 1; max-width: 240px; }
 .backup-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 160px; overflow: auto; }

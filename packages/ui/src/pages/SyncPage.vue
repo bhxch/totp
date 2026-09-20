@@ -25,6 +25,12 @@ const props = withDefaults(defineProps<{
 const vaultJson = computed(() => JSON.stringify(props.store.vault))
 /** 会话备份口令（D1）：store.backupSecret 是 ComputedRef，在 setup computed 内 .value 解包保持依赖追踪 */
 const sessionSecret = computed(() => props.store.backupSecret.value)
+
+/** BackupCard 导出口令「记住到保管区」上抛（批① §2.3）：store.setBackupSecret 落盘；
+ *  守护失败（未启用加密/锁定）仅告警——导出已完成，不再打断用户 */
+function onRememberSecret(pw: string): void {
+  props.store.setBackupSecret(pw, true).catch((e: unknown) => console.warn('[backup] 记住导出口令失败', e))
+}
 </script>
 
 <template>
@@ -34,7 +40,7 @@ const sessionSecret = computed(() => props.store.backupSecret.value)
       <BackupSecretCard :store="store" />
     </MdCard>
     <MdCard v-if="platform" class="block">
-      <BackupCard :platform="platform" :vault-json="vaultJson" :session-secret="sessionSecret" />
+      <BackupCard :platform="platform" :vault-json="vaultJson" :session-secret="sessionSecret" @remember-secret="onRememberSecret" />
     </MdCard>
     <MdCard v-if="cloudPlatform" class="block">
       <CloudCard :platform="cloudPlatform" :session-secret="sessionSecret" />
