@@ -18,7 +18,7 @@ describe('exportAegisPlaintext', () => {
     ])
     expect(r.entries[1]!.counter).toBe(3)
   })
-  it('多标签条目：第一个标签映射 group，其余计入 report.droppedTagCount', () => {
+  it('多标签条目：全部标签写 entry.groups 数组（官方多标签语义保留），round-trip 回全部标签', () => {
     const e = newEntryFromUri('otpauth://totp/GitHub:alice?secret=JBSWY3DPEHPK3PXP')
     let v = createVault()
     const { vault: v1, tagIds } = resolveTagNames(v, ['工作', '重要']) // 两个 tag
@@ -26,9 +26,40 @@ describe('exportAegisPlaintext', () => {
     e.tagIds = [tagIds[0]!, tagIds[1]!]
     v = addEntry(v, e)
     const { json, report } = exportAegisPlaintext(v)
-    expect(report.droppedTagCount).toBe(1)
+    // 官方可读形态：groups 数组长度 = 标签数
+    const obj = JSON.parse(json) as { db: { entries: Array<Record<string, unknown>> } }
+    expect(obj.db.entries[0]!['groups']).toHaveLength(2)
+    expect(report.droppedTagCount).toBe(0) // groups 数组支持多标签后不再丢标签
     const r = importAegisPlaintext(json)
-    expect(r.entries[0]!.tags).toEqual(['工作'])
+    expect(r.entries[0]!.tags).toEqual(['工作', '重要'])
+  })
+  it('同名组共享 uuid；db.groups 表 [{uuid,name}] 与 entry.groups 引用一致；不写 groupid（官方从无该字段）', () => {
+    let v = createVault()
+    const { vault: v1, tagIds } = resolveTagNames(v, ['工作'])
+    v = v1
+    const e1 = newEntryFromUri('otpauth://totp/GitHub:alice?secret=JBSWY3DPEHPK3PXP')
+    const e2 = newEntryFromUri('otpauth://totp/GitLab:bob?secret=JBSWY3DPEHPK3PXP')
+    e1.tagIds = [tagIds[0]!]
+    e2.tagIds = [tagIds[0]!]
+    v = addEntry(v, e1)
+    v = addEntry(v, e2)
+    const obj = JSON.parse(exportAegisPlaintext(v).json) as {
+      db: { entries: Array<Record<string, unknown>>; groups: Array<{ uuid: string; name: string }> }
+    }
+    expect(obj.db.groups).toEqual([{ uuid: expect.any(String), name: '工作' }])
+    expect(obj.db.entries[0]!['groups']).toEqual(obj.db.entries[1]!['groups'])
+    expect((obj.db.entries[0]!['groups'] as string[])[0]).toBe(obj.db.groups[0]!.uuid)
+    expect('groupid' in obj.db.entries[0]!).toBe(false)
+  })
+  it('C1：空 issuer 条目导出恒写 issuer/note 字段（官方 fromJson 用 getString("issuer")，字段缺失整条导入失败）', () => {
+    const e = newEntryFromUri('otpauth://totp/Gen:alice?secret=JBSWY3DPEHPK3PXP')
+    e.issuer = '' // 空 issuer 条目（导入侧 name 前缀回退不影响导出口径）
+    const v = addEntry(createVault(), e)
+    const entry = (JSON.parse(exportAegisPlaintext(v).json) as { db: { entries: Array<Record<string, unknown>> } }).db.entries[0]!
+    expect('issuer' in entry).toBe(true)
+    expect(entry['issuer']).toBe('')
+    expect('note' in entry).toBe(true)
+    expect(entry['note']).toBe('')
   })
   it('顶层结构对齐 Aegis VaultFile：version/header.slots 为空数组/db.entries', () => {
     const v = addEntry(createVault(), newEntryFromUri('otpauth://totp/G:a?secret=JBSWY3DPEHPK3PXP'))

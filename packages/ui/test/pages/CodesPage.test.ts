@@ -304,8 +304,21 @@ describe('CodesPage reveal / 右键菜单 / pinned（自 旧单页 C16 迁移）
     expect(writeText).not.toHaveBeenCalled()
     expect(w.emitted('copy')).toHaveLength(1)
     const uri = String(w.emitted('copy')![0]![0])
-    expect(uri).toMatch(/^otpauth:\/\/totp\/A:a\?secret=JBSWY3DPEHPK3PXP&issuer=A$/)
+    // 经 core buildOtpUri 产出（I1d：不再手拼）：label 编码冒号、默认参数不写出
+    expect(uri).toBe('otpauth://totp/A%3Aa?secret=JBSWY3DPEHPK3PXP&issuer=A')
     expect(w.find('.md-menu').exists()).toBe(false)
+  })
+  it('yandex 条目「复制 URI」：host 为 yaotp 且携带 pin（I1d：手拼 otpauth://yandex/ 且无 pin 的旧实现自产 URI 自己都拒收）', async () => {
+    const s = createVueStore(createMemoryStorage())
+    await s.initStore()
+    await s.addEntryOp(newEntryFromUri('otpauth://yaotp/Ya:user?secret=KJTEUGOD5SNXVWBCWJ4G36W4IA&pin=1234'))
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    await w.find('.otp-item').trigger('contextmenu', { clientX: 10, clientY: 10 })
+    const copyBtn = w.findAll('.md-menu button').find((b) => b.text() === '复制 URI')!
+    await copyBtn.trigger('click')
+    const uri = String(w.emitted('copy')![0]![0])
+    expect(uri.startsWith('otpauth://yaotp/')).toBe(true)
+    expect(uri).toContain('pin=1234')
   })
 
   it('右键菜单键盘化：条目带 aria-haspopup=menu；开启聚焦首项；Esc 关闭后焦点回右键条目（批 6 a11y）', async () => {

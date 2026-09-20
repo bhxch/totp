@@ -18,7 +18,7 @@ watch(
     if (!open || !e) return
     // canvas 随下一帧可用（MdDialog v-if 挂载）
     void Promise.resolve().then(() => {
-      if (canvasRef.value) drawQrToCanvas(canvasRef.value, qrMatrix(buildOtpUri({ type: e.type, issuer: e.issuer, label: e.label, secret: e.secret, algorithm: e.algorithm, digits: e.digits, period: e.period, counter: e.counter })), { moduleSize: 6 })
+      if (canvasRef.value) drawQrToCanvas(canvasRef.value, qrMatrix(buildOtpUri({ type: e.type, issuer: e.issuer, label: e.label, secret: e.secret, algorithm: e.algorithm, digits: e.digits, period: e.period, counter: e.counter, pin: e.pin })), { moduleSize: 6 })
     })
   },
   { immediate: true },

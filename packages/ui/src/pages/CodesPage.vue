@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { filterByTags, getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
+import { buildOtpUri, filterByTags, getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useOtpCodes } from '../composables/useOtpCodes'
@@ -184,17 +184,15 @@ function contextEdit(entry: OtpEntry) {
 /** 复制 otpauth URI（与应用导入路径兼容：base32 + 算法/位数/周期/counter 全保留）。
  *  审查 I14：URI 含完整 secret 明文，剪贴板写入必须上抛 emit('copy', uri) 由宿主执行
  *  （desktop clearer 链 / options scheduleClipboardClear 均 @copy 挂清除），不得直写
- *  navigator.clipboard 绕过 30s 自动清除；与验证码复制同通道，宿主对载荷统一写剪贴板+调度清除 */
+ *  navigator.clipboard 绕过 30s 自动清除；与验证码复制同通道，宿主对载荷统一写剪贴板+调度清除。
+ *  I1d：经 core buildOtpUri 产出（yandex → yaotp host + pin；此前手拼 otpauth://yandex/ 且丢 pin，
+ *  parseOtpUri 白名单只认 yaotp——自产 URI 自己都拒收） */
 function contextCopyUri(entry: OtpEntry) {
-  const params = new URLSearchParams()
-  params.set('secret', entry.secret.replace(/\s+/g, ''))
-  if (entry.algorithm !== 'SHA1') params.set('algorithm', entry.algorithm)
-  if (entry.digits !== 6) params.set('digits', String(entry.digits))
-  if (entry.type !== 'totp' && entry.period !== 30) params.set('period', String(entry.period))
-  if (entry.type === 'hotp' && typeof entry.counter === 'number') params.set('counter', String(entry.counter))
-  if (entry.issuer) params.set('issuer', entry.issuer)
-  const label = entry.issuer ? `${encodeURIComponent(entry.issuer)}:${encodeURIComponent(entry.label)}` : encodeURIComponent(entry.label)
-  emit('copy', `otpauth://${entry.type}/${label}?${params.toString()}`)
+  emit('copy', buildOtpUri({
+    type: entry.type, issuer: entry.issuer, label: entry.label,
+    secret: entry.secret.replace(/\s+/g, ''), algorithm: entry.algorithm,
+    digits: entry.digits, period: entry.period, counter: entry.counter, pin: entry.pin,
+  }))
   closeContextMenu()
 }
 async function contextTogglePin(entry: OtpEntry) {

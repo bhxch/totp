@@ -40,6 +40,10 @@ describe('yaotp URI（uri.ts 扩展）', () => {
     expect(back.algorithm).toBe('SHA512')
     expect(back.period).toBe(60)
   })
+  it('M6：pin 仅 yandex host 读取；totp URI 携带 pin 参数不产出（文档-行为对齐）', () => {
+    const totp = parseOtpUri('otpauth://totp/G:user?secret=JBSWY3DPEHPK3PXP&pin=9999')
+    expect(totp.pin).toBeUndefined()
+  })
   it('既有 totp/hotp/steam URI 行为不回归（默认与 host 映射不变）', () => {
     const totp = parseOtpUri('otpauth://totp/GitHub:me?secret=JBSWY3DPEHPK3PXP')
     expect(totp.algorithm).toBe('SHA1')

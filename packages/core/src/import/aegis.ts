@@ -92,10 +92,23 @@ function parseEntry(raw: unknown, index: number, groups: Map<string, string>): P
   // Yandex（type=yandex）：Aegis YandexInfo 序列化把 PIN 放 info.pin；仅字符串形态采纳
   if (parsed.type === 'yandex' && typeof info.pin === 'string') parsed.pin = info.pin
   if (typeof entry.note === 'string' && entry.note !== '') parsed.note = entry.note
-  if (typeof entry.groupid === 'string') {
-    const tagName = groups.get(entry.groupid)
-    if (tagName) parsed.tags = [tagName]
-  }
+  // 分组（官方布局对拍）：新版 entry.groups 为 uuid 数组（可多值=多标签，逐个查 db.groups 表保留全部）；
+  // 回退 1：本项目旧版自产文件的 groupid（uuid 查表）；回退 2：官方老版 legacy 的 group（组名字符串直用）。
+  // 历史上官方从无 groupid 字段。groups 数组存在时优先（即使查表全 miss 也不回落 legacy，避免错挂旧名）
+  const tagNames = ((): string[] => {
+    if (Array.isArray(entry.groups)) {
+      return entry.groups
+        .filter((g): g is string => typeof g === 'string')
+        .map((id) => groups.get(id))
+        .filter((n): n is string => n !== undefined)
+    }
+    if (typeof entry.groupid === 'string') {
+      const n = groups.get(entry.groupid)
+      return n !== undefined ? [n] : []
+    }
+    return typeof entry.group === 'string' ? [entry.group] : []
+  })()
+  if (tagNames.length > 0) parsed.tags = tagNames
   return parsed
 }
 
@@ -106,7 +119,8 @@ function parseDbEntries(db: unknown): ImportResult {
   const entries = dbObj.entries
   if (!Array.isArray(entries)) throw new Error('Aegis 文件结构非法：缺少 db.entries 数组')
 
-  // db.groups: [{uuid, name}] → groupid 查表（spec §4）；缺 groups/条目缺 groupid 均合法
+  // db.groups: [{uuid, name}] → entry.groups uuid 数组查表（官方布局；groupid/group 为回退，见 parseEntry）；
+  // 缺 groups/条目无分组引用均合法
   const groups = new Map<string, string>()
   if (Array.isArray(dbObj.groups)) {
     for (const g of dbObj.groups) {

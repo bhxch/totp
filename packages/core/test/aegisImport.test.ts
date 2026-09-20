@@ -67,6 +67,38 @@ describe('importAegisPlaintext', () => {
     expect(res.entries[1]!.tags).toBeUndefined()
     expect(res.entries[2]!.tags).toBeUndefined()
   })
+  it('官方布局：entry.groups 为 uuid 数组（可多值），逐个查名进 tags 且顺序保留', () => {
+    const text = JSON.stringify({
+      db: {
+        groups: [{ uuid: 'g1', name: '工作' }, { uuid: 'g2', name: '重要' }],
+        entries: [
+          { type: 'totp', name: 'GitHub:me', info: { secret: 'JBSWY3DPEHPK3PXP' }, groups: ['g1', 'g2'] },
+          { type: 'totp', name: 'GitLab:me', info: { secret: 'JBSWY3DPEHPK3PXP' }, groups: ['missing'] },
+          { type: 'totp', name: 'No:group', info: { secret: 'JBSWY3DPEHPK3PXP' }, groups: [] },
+        ],
+      },
+    })
+    const res = importAegisPlaintext(text)
+    expect(res.failures).toHaveLength(0)
+    expect(res.entries[0]!.tags).toEqual(['工作', '重要'])
+    expect(res.entries[1]!.tags).toBeUndefined()
+    expect(res.entries[2]!.tags).toBeUndefined()
+  })
+  it('legacy 官方回退：entry.group 为组名字符串（老版 Aegis 从无 groupid），直接作 tag', () => {
+    const text = JSON.stringify({
+      db: {
+        entries: [
+          { type: 'totp', name: 'GitHub:me', info: { secret: 'JBSWY3DPEHPK3PXP' }, group: '工作' },
+          // groups 数组优先于 legacy group
+          { type: 'totp', name: 'GitLab:me', info: { secret: 'JBSWY3DPEHPK3PXP' }, groups: ['g9'], group: '旧名' },
+        ],
+      },
+    })
+    const res = importAegisPlaintext(text)
+    expect(res.failures).toHaveLength(0)
+    expect(res.entries[0]!.tags).toEqual(['工作'])
+    expect(res.entries[1]!.tags).toBeUndefined() // g9 查表 miss → 整体无 tag（不回落 legacy）
+  })
 })
 
 describe('importAegisEncrypted', () => {

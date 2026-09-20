@@ -15,10 +15,10 @@ vi.mock('../src/qr/imageSource', () => ({
 
 import EntryForm from '../src/components/EntryForm.vue'
 
-/** 模拟选择二维码图片并触发 change */
+/** 模拟选择二维码图片并触发 change（configurable 使同一 wrapper 可重复定义，双次选文件用） */
 async function pickQr(w: VueWrapper): Promise<void> {
   const input = w.find<HTMLInputElement>('input[type="file"][data-test="qr-file"]')
-  Object.defineProperty(input.element, 'files', { value: [new File(['x'], 'q.png', { type: 'image/png' })] })
+  Object.defineProperty(input.element, 'files', { value: [new File(['x'], 'q.png', { type: 'image/png' })], configurable: true })
   await input.trigger('change')
 }
 
@@ -37,5 +37,27 @@ describe('EntryForm 从图片识别', () => {
     const w = mount(EntryForm, { global: { plugins: [createTestI18n()] } })
     await pickQr(w)
     await vi.waitFor(() => expect(w.text()).toContain('未识别到二维码'))
+  })
+  it('yandex 二维码预填：pin 回填表单（I1b，yaotp URI 的 pin 不再丢失）', async () => {
+    const { decodeQrToUri } = await import('../src/qr/decodeQr')
+    vi.mocked(decodeQrToUri).mockReturnValueOnce({
+      uri: 'otpauth://yaotp/Yandex:user?secret=KJTEUGOD5SNXVWBCWJ4G36W4IA&pin=1234',
+    })
+    const w = mount(EntryForm, { global: { plugins: [createTestI18n()] } })
+    await pickQr(w)
+    await vi.waitFor(() => {
+      const pin = w.find('[aria-label="Yandex PIN（可选）"]').element as HTMLInputElement
+      expect(pin.value).toBe('1234')
+    })
+  })
+  it('QR 预填成功后清除残留错误（Task 15 遗留）', async () => {
+    const { decodeQrToUri } = await import('../src/qr/decodeQr')
+    const w = mount(EntryForm, { global: { plugins: [createTestI18n()] } })
+    vi.mocked(decodeQrToUri).mockReturnValueOnce({ error: '未识别到二维码' })
+    await pickQr(w)
+    await vi.waitFor(() => expect(w.text()).toContain('未识别到二维码'))
+    vi.mocked(decodeQrToUri).mockReturnValueOnce({ uri: mockUri })
+    await pickQr(w)
+    await vi.waitFor(() => expect(w.text()).not.toContain('未识别到二维码'))
   })
 })

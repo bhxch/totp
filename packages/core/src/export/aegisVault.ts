@@ -2,18 +2,20 @@ import { scrypt } from 'hash-wasm'
 import { aesGcmEncrypt, bytesToBase64, randomBytes } from '../crypto/aesgcm'
 import type { OtpEntry, Vault } from '../model'
 
-// 布局对齐 Aegis VaultFile.java（本项目 import/aegis.ts 头部注释已核对）：
+// 布局对齐 Aegis VaultFile.java / VaultEntry.java（官方 master 终审对拍结论）：
 // 顶层 {version:1, header:{slots,params}, db}；明文 header.slots=[]、db 为对象。
-// entry 字段对齐 import 侧 parseEntry 读取口径：type/name/issuer/note + info{secret,algo,digits,period,counter}；
-// group 按 Aegis 布局为 entry.groupid → db.groups[].uuid 的引用（导入侧 groups.get(entry.groupid) 查名），
-// 不直接在 entry 上写 group 名。
+// entry 字段：type/uuid/name + issuer/note 恒写（官方 toJson 无条件写、fromJson 用 getString("issuer")
+// 读取——字段缺失抛异常致整条导入失败，故空串也必须写出）+ info{secret,algo,digits,period,counter}。
+// 分组（官方 toJson）：entry 级写 `groups: [<组uuid>,...]` 数组（同名组共享 uuid，db.groups=[{uuid,name}]
+// 建引用表）；官方 fromJson 旧版回退读 `group`（组名字符串）。历史上从无 `groupid` 字段（本项目旧版
+// 自造约定，导入侧仍兼容回退读取，导出侧不再产出）。
 
 const randomUUID = (): string => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`)
 
 export interface AegisExportReport {
   /** 实际写入的 group 名（去重，条目顺序） */
   usedGroups: string[]
-  /** 多标签条目中被丢弃的标签总数（每条目保留第一个，spec §2.2） */
+  /** 遗留字段：groups 数组支持多标签后不再丢标签，恒 0（保留以免破坏 BackupCard 消费方签名） */
   droppedTagCount: number
 }
 
@@ -26,9 +28,9 @@ interface AegisEntryJson {
   type: OtpEntry['type']
   uuid: string
   name: string
-  issuer?: string
-  note?: string
-  groupid?: string
+  issuer: string
+  note: string
+  groups?: string[]
   info: { secret: string; algo: string; digits: number; period: number; counter?: number; pin?: string }
 }
 
@@ -36,15 +38,16 @@ function tagNameOf(v: Vault, id: string): string | null {
   return v.tags.find((t) => t.id === id)?.name ?? null
 }
 
-function toAegisEntry(e: OtpEntry, groupid: string | undefined): AegisEntryJson {
+function toAegisEntry(e: OtpEntry, groupUuids: string[]): AegisEntryJson {
   const name = e.issuer !== '' ? `${e.issuer}:${e.label}` : e.label
   return {
     type: e.type,
     uuid: e.uuid,
     name,
-    ...(e.issuer !== '' ? { issuer: e.issuer } : {}),
-    ...(e.note !== undefined && e.note !== '' ? { note: e.note } : {}),
-    ...(groupid !== undefined ? { groupid } : {}),
+    // 官方 toJson 无条件写 issuer/note（空串亦写）：fromJson getString("issuer") 对缺失抛异常
+    issuer: e.issuer,
+    note: e.note ?? '',
+    ...(groupUuids.length > 0 ? { groups: groupUuids } : {}),
     info: {
       secret: e.secret,
       algo: e.algorithm,
@@ -58,17 +61,13 @@ function toAegisEntry(e: OtpEntry, groupid: string | undefined): AegisEntryJson 
 }
 
 function buildDb(v: Vault, report: AegisExportReport): Record<string, unknown> {
-  // 逐条目解出首个 tag 名作 group（其余计入 droppedTagCount，spec §2.2）；
-  // 同名 group 共用一个 uuid，groups 表按首次出现顺序（Set 保序）生成
-  const groupNames = v.entries.map((e) => {
-    const names = e.tagIds.map((id) => tagNameOf(v, id)).filter((n): n is string => n !== null)
-    report.droppedTagCount += Math.max(0, names.length - 1)
-    return names[0] ?? null
-  })
-  const usedGroups = [...new Set(groupNames.filter((g): g is string => g !== null))]
+  // 逐条目解出全部 tag 名（官方 groups 数组可多值，多标签语义保留）；同名 group 共用一个 uuid，
+  // groups 表按首次出现顺序（Set 保序）生成
+  const entryGroupNames = v.entries.map((e) => e.tagIds.map((id) => tagNameOf(v, id)).filter((n): n is string => n !== null))
+  const usedGroups = [...new Set(entryGroupNames.flat())]
   report.usedGroups = usedGroups
   const groupUuid = new Map(usedGroups.map((name) => [name, randomUUID()]))
-  const entries = v.entries.map((e, i) => toAegisEntry(e, groupNames[i] === null ? undefined : groupUuid.get(groupNames[i] as string)))
+  const entries = v.entries.map((e, i) => toAegisEntry(e, entryGroupNames[i]!.map((name) => groupUuid.get(name) ?? '')))
   return { entries, groups: usedGroups.map((name) => ({ uuid: groupUuid.get(name) ?? '', name })) }
 }
 

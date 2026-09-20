@@ -95,6 +95,9 @@ async function onQrFile(ev: Event): Promise<void> {
     form.type = d.data.type; form.issuer = d.data.issuer; form.label = d.data.label
     form.secret = d.data.secret; form.algorithm = d.data.algorithm; form.digits = d.data.digits
     form.period = d.data.period; if (d.data.counter !== undefined) form.counter = d.data.counter
+    // yandex（yaotp URI）的 PIN 回填（I1b）；成功即清除上次失败残留的错误提示（Task 15 遗留）
+    if (d.data.pin !== undefined) form.pin = d.data.pin
+    error.value = ''
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('entryForm.imageReadFailed')
   }
@@ -362,8 +365,10 @@ function submit() {
     icon: form.icon,
     // type 变更时同步默认 digits：steam=5、yandex=8，其他=6（避免显示错位数）
     ...(form.type !== props.initial?.type ? { digits: form.type === 'steam' ? 5 : form.type === 'yandex' ? 8 : 6 } : {}),
-    // yandex 提交 PIN（trim；空串也提交以便编辑时清除既有 PIN）；其他类型不带
-    ...(form.type === 'yandex' ? { pin: form.pin.trim() } : {}),
+    // yandex 提交 PIN（trim；空串也提交以便编辑时清除既有 PIN）；其他类型显式 undefined——
+    // updateEntry 为 {...entry, ...patch} 普通 spread，patch 显式携带 pin:undefined 会覆盖清除旧值
+    //（M2：yandex→其他类型切换后旧 pin 残留的收口）
+    pin: form.type === 'yandex' ? form.pin.trim() : undefined,
     // HOTP 才提交 counter；其他类型不带（避免污染 TOTP/steam 模型）
     ...(form.type === 'hotp' ? { counter: form.counter } : {}),
   })

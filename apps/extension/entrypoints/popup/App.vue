@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
+import { buildOtpUri, getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
 import { BatchPastePanel, CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, MdCheckbox, MdIconButton, MdSegmentedButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, OtpQrDialog, parseUriToEntryData, resolvePopupVisible, SearchBar, TagFilterRow, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -143,16 +143,14 @@ function contextEdit(entry: OtpEntry) {
   closeContextMenu()
 }
 async function contextCopyUri(entry: OtpEntry) {
-  const params = new URLSearchParams()
-  params.set('secret', entry.secret.replace(/\s+/g, ''))
-  if (entry.algorithm !== 'SHA1') params.set('algorithm', entry.algorithm)
-  if (entry.digits !== 6) params.set('digits', String(entry.digits))
-  if (entry.type !== 'totp' && entry.period !== 30) params.set('period', String(entry.period))
-  if (entry.type === 'hotp' && typeof entry.counter === 'number') params.set('counter', String(entry.counter))
-  if (entry.issuer) params.set('issuer', entry.issuer)
-  const label = entry.issuer ? `${encodeURIComponent(entry.issuer)}:${encodeURIComponent(entry.label)}` : encodeURIComponent(entry.label)
+  // I1d：经 core buildOtpUri 产出（yandex → yaotp host + pin；此前手拼 otpauth://yandex/ 且丢 pin，
+  // parseOtpUri 白名单只认 yaotp——自产 URI 自己都拒收）
   try {
-    await navigator.clipboard.writeText(`otpauth://${entry.type}/${label}?${params.toString()}`)
+    await navigator.clipboard.writeText(buildOtpUri({
+      type: entry.type, issuer: entry.issuer, label: entry.label,
+      secret: entry.secret.replace(/\s+/g, ''), algorithm: entry.algorithm,
+      digits: entry.digits, period: entry.period, counter: entry.counter, pin: entry.pin,
+    }))
     scheduleClipboardClear()
     copied.value = true
   } catch {

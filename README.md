@@ -200,6 +200,7 @@ vault 加密支持多种解锁来源（KEK 来源）并存，在「安全」页�
 - **Duo**（files/duokit/accounts.json）：JSON 数组，含 counter 的条目按 HOTP 导入
 - **Microsoft Authenticator**（SQLite db）：`accounts` 表，普通条目 6 位、Microsoft 型 8 位 TOTP
 - **Google Authenticator / otpauth URI 文本**：每行一条 `otpauth://totp/...|hotp/...|steam/...` URI（多数应用的 URI/迁移文本导出均走此入口）
+- **Authenticator Plus**：口令加密 ZIP 备份支持导入，需输入备份口令（AES 加密 ZIP，对齐官方加密布局）
 - **通用 JSON / JSON array / JSONL**：逐字段配置点路径映射（如 `otp.params.secret`）将行对象映射为条目，secret 字段必填；单个 JSON 对象会自动探测其嵌套的行数组。secret 自动去空白并大写，非法 algorithm/digits/period 回落默认值（SHA1/6/30），Steam 条目固定 5 位。映射方案可命名保存、复用与删除：再次导入同结构文件时按列名匹配自动推荐，也可手动套用
 
 **SQLite 数据库（桌面与插件均可导入，需联网）**
@@ -209,7 +210,6 @@ vault 加密支持多种解锁来源（KEK 来源）并存，在「安全」页�
 
 **暂不支持**
 
-- **Authenticator Plus**：备份为口令加密 ZIP，无法解密；请在原应用中导出为 otpauth URI 明文文本，再用「URI 文本」入口导入
 - **Google Authenticator 旧版 SQLite 数据库**（≤5000100 版本）：需 root 提取应用私有目录数据库，暂不支持
 - **Steam Android 客户端**：Steamguard-*.json 暂不支持；Steam 令牌可经 WinAuth 导入
 

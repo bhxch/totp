@@ -26,7 +26,7 @@ export function renderQrSheet(canvas: HTMLCanvasElement, entries: OtpEntry[]): Q
   entries.forEach((e, i) => {
     const cx = (i % cols) * cellPx
     const cy = Math.floor(i / cols) * cellPx
-    const grid = qrMatrix(buildOtpUri({ type: e.type, issuer: e.issuer, label: e.label, secret: e.secret, algorithm: e.algorithm, digits: e.digits, period: e.period, counter: e.counter }))
+    const grid = qrMatrix(buildOtpUri({ type: e.type, issuer: e.issuer, label: e.label, secret: e.secret, algorithm: e.algorithm, digits: e.digits, period: e.period, counter: e.counter, pin: e.pin }))
     // module 尺寸按格内 QR 区(260-80=180px)自适应：长 URI 密度大时缩到下限 2 仍可扫
     const moduleSize = Math.max(2, Math.floor((cellPx - 80) / (grid.size + 8)))
     const sub = document.createElement('canvas')

@@ -78,7 +78,8 @@ export function parseOtpUri(uri: string): OtpUriParams {
     counter = Number(counterRaw)
     if (!Number.isFinite(counter) || counter < 0) throw new Error('invalid otpauth uri: counter out of range')
   }
-  const pinRaw = q.get('pin')
+  // M6：pin 仅 yandex host 读取产出（YAOTP 规范参数）；其余 host 不读不写，避免 totp 条目 pin 污染
+  const pinRaw = typeFinal === 'yandex' ? q.get('pin') : null
 
   // C2：按类型解码 secret——原实现只返回 base32 字符串，调用方统一用 RFC4648 解码。
   // Steam 字母表是 RFC4648 的字符子集（去除视觉混淆字符 0/1/8/I/L/O）；

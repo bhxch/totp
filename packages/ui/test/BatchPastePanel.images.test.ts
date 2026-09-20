@@ -95,6 +95,19 @@ describe('BatchPastePanel 批量图片', () => {
     expect(store.vault.entries).toHaveLength(1)
   })
 
+  it('yandex 二维码图片：pin 随 toParsed 投影落库（I1a，ParsedEntry 已有 pin 可选字段）', async () => {
+    const store = await mkStore()
+    const w = mount(BatchPastePanel, { global: { plugins: [createTestI18n()] }, props: { store } })
+    vi.mocked(decodeQrToUri).mockReturnValueOnce({
+      uri: 'otpauth://yaotp/Yandex:user?secret=KJTEUGOD5SNXVWBCWJ4G36W4IA&pin=1234',
+    })
+    await pasteItems(w, [fileItem('y.png')])
+    await vi.waitFor(() => expect(w.findAll('[data-test="paste-row"]')).toHaveLength(1))
+    await w.find('[data-test="paste-commit"]').trigger('click')
+    await vi.waitFor(() => expect(w.emitted('added')?.[0]).toEqual([1]))
+    expect(store.vault.entries[0]).toMatchObject({ type: 'yandex', pin: '1234' })
+  })
+
   it('拖放图片文件同样进入解码并出现在结果区', async () => {
     const store = await mkStore()
     const w = mount(BatchPastePanel, { global: { plugins: [createTestI18n()] }, props: { store } })

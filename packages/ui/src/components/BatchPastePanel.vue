@@ -75,6 +75,8 @@ function toParsed(d: OtpEntry): ParsedEntry {
     digits: d.digits,
     period: d.period,
     ...(d.counter !== undefined ? { counter: d.counter } : {}),
+    // yandex（yaotp URI）的 PIN 随投影保留（I1a）：缺省即无 PIN
+    ...(d.pin !== undefined ? { pin: d.pin } : {}),
   }
 }
 
