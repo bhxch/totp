@@ -13,7 +13,7 @@ const props = defineProps<{
   /** 图标视图：html=builtin path 包裹片段（svg innerHTML，fill currentColor）；src=dataUrl；均缺省回退首字母 avatar */
   icon?: { html?: string; src?: string }
 }>()
-const emit = defineEmits<{ copy: []; reveal: []; context: [event: MouseEvent] }>()
+const emit = defineEmits<{ copy: []; reveal: []; qr: []; context: [event: MouseEvent] }>()
 
 /** I52：圆周按 SVG 半径精确计算，避免硬编码 100.53 在改 viewBox/半径时产生视觉偏差 */
 const RING_R = 16
@@ -63,6 +63,7 @@ function onContextMenu(e: MouseEvent): void {
         :title="code === 'INVALID' ? `密钥非法：${error ?? ''}` : undefined"
       >{{ code === 'INVALID' ? '密钥非法' : grouped(code) }}</span>
       <MdIconButton class="reveal" :title="'显示密钥'" aria-label="显示密钥" @click.stop="emit('reveal')">🔑</MdIconButton>
+      <MdIconButton class="show-qr" title="显示二维码" aria-label="显示二维码" @click.stop="emit('qr')">▣</MdIconButton>
       <svg viewBox="0 0 36 36" class="ring" aria-hidden="true">
         <circle cx="18" cy="18" r="16" class="ring-bg" />
         <circle
@@ -90,6 +91,7 @@ function onContextMenu(e: MouseEvent): void {
 .code { font-family: ui-monospace, monospace; font-size: var(--md-sys-typescale-code-large); letter-spacing: 1px; }
 .code.invalid { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-medium); cursor: help; }
 .reveal { font-size: var(--md-sys-typescale-body-medium); }
+.show-qr { font-size: var(--md-sys-typescale-body-medium); }
 .ring { width: 32px; height: 32px; transform: rotate(-90deg); }
 .ring-bg { fill: none; stroke: var(--md-sys-color-outline-variant); stroke-width: 3; }
 .ring-fg { fill: none; stroke: var(--md-sys-color-primary); stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset 1s linear; }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
-import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, MdCheckbox, MdIconButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, parseUriToEntryData, resolvePopupVisible, SearchBar, TagFilterRow, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
+import { CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, MdCheckbox, MdIconButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, OtpQrDialog, parseUriToEntryData, resolvePopupVisible, SearchBar, TagFilterRow, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, ref, watch } from 'vue'
 import { PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
 import { storageAdapter } from '../../src/store'
@@ -111,6 +111,8 @@ let confirmTimer: ReturnType<typeof setTimeout> | null = null
 // ---------- F1：secret 揭示 + 右键菜单（spec §10「右键菜单（编辑/复制 URI/置顶）」，与 旧单页 同语义） ----------
 /** reveal：点「🔑」后弹模态显前 4 + 后 4（不在列表 DOM 常驻明文） */
 const revealing = ref<OtpEntry | null>(null)
+/** qr：单条目 otpauth 二维码（行内按钮 / 右键菜单「显示二维码」共用） */
+const qrEntry = ref<OtpEntry | null>(null)
 /** 右键菜单：菜单位置与目标条目 */
 const contextMenu = ref<{ x: number; y: number; entry: OtpEntry } | null>(null)
 
@@ -335,7 +337,7 @@ async function copy(entry: OtpEntry) {
     <div v-if="loaded && sorted.length === 0" class="empty">暂无条目，点击右上角「＋ 添加」录入。</div>
     <div v-else-if="loaded && visible.length === 0" class="empty">无匹配结果</div>
     <div v-for="e in visible" :key="e.uuid" class="item-wrap" @click="closeContextMenu">
-      <OtpListItem :entry="e" :icon="iconView(e.icon, icons)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" @reveal="onReveal(e)" @context="(ev) => onContextMenu(e, ev)" />
+      <OtpListItem :entry="e" :icon="iconView(e.icon, icons)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" @reveal="onReveal(e)" @qr="qrEntry = e" @context="(ev) => onContextMenu(e, ev)" />
       <div class="ops">
         <template v-if="confirmingDelete === e.uuid">
           <button class="danger" @click.stop="askRemove(e.uuid)">确认删除？</button>
@@ -365,9 +367,13 @@ async function copy(entry: OtpEntry) {
       @click.stop
     >
       <li><button @click="contextEdit(contextMenu.entry)">编辑</button></li>
+      <li><button @click="qrEntry = contextMenu.entry; contextMenu = null">显示二维码</button></li>
       <li><button @click="contextCopyUri(contextMenu.entry)">复制 URI</button></li>
       <li><button @click="contextTogglePin(contextMenu.entry)">{{ contextMenu.entry.pinned ? '取消置顶' : '置顶' }}</button></li>
     </ul>
+
+    <!-- 单条目 otpauth 二维码（Esc/遮罩/「关闭」按钮关闭） -->
+    <OtpQrDialog :open="qrEntry !== null" :entry="qrEntry" @close="qrEntry = null" />
   </main>
 </template>
 

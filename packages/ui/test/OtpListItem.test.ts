@@ -43,6 +43,15 @@ describe('OtpListItem 揭示与右键菜单（C16）', () => {
     expect(w.emitted('copy')).toBeUndefined()
   })
 
+  it('qr 按钮 emit qr，且不冒泡触发 copy/reveal', async () => {
+    const w = mount(OtpListItem, { props: { entry, ...base } })
+    await w.find('.show-qr').trigger('click')
+    expect(w.emitted('qr')).toHaveLength(1)
+    // @click.stop 已阻止冒泡，copy/reveal 不应被触发
+    expect(w.emitted('copy')).toBeUndefined()
+    expect(w.emitted('reveal')).toBeUndefined()
+  })
+
   it('@contextmenu.prevent 默认 + emit context 携带 MouseEvent', async () => {
     const w = mount(OtpListItem, { props: { entry, ...base } })
     await w.find('.otp-item').trigger('contextmenu', { clientX: 100, clientY: 200 })

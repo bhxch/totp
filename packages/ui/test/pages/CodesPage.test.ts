@@ -267,13 +267,13 @@ describe('CodesPage reveal / 右键菜单 / pinned（自 旧单页 C16 迁移）
     expect(w.find('.md-dialog').exists()).toBe(false)
   })
 
-  it('右键条目：MdMenu 渲染三项菜单，点「置顶」调用 updateEntryOp 并排序前置', async () => {
+  it('右键条目：MdMenu 渲染四项菜单，点「置顶」调用 updateEntryOp 并排序前置', async () => {
     const s = await storeWithTwo()
     const w = mount(CodesPage, { props: { store: s } })
     await w.find('.otp-item').trigger('contextmenu', { clientX: 100, clientY: 200 })
     expect(w.find('.md-menu').exists()).toBe(true)
-    // 菜单有「编辑」「复制 URI」「置顶」三项
-    expect(w.findAll('.md-menu button')).toHaveLength(3)
+    // 菜单有「编辑」「显示二维码」「复制 URI」「置顶」四项（Task 9 增「显示二维码」）
+    expect(w.findAll('.md-menu button')).toHaveLength(4)
     // 模拟右键第二条；再次触发覆盖菜单位置与目标
     const items = w.findAll('.otp-item')
     await items[1]!.trigger('contextmenu', { clientX: 50, clientY: 50 })

@@ -14,6 +14,7 @@ import MdFab from '../components/md/MdFab.vue'
 import MdIconButton from '../components/md/MdIconButton.vue'
 import MdMenu from '../components/md/MdMenu.vue'
 import OtpListItem from '../components/OtpListItem.vue'
+import OtpQrDialog from '../components/OtpQrDialog.vue'
 import RevealDialog from '../components/RevealDialog.vue'
 import SearchBar from '../components/SearchBar.vue'
 import type { EntryFormData } from '../components/entryForm'
@@ -63,6 +64,8 @@ watch(
 )
 /** reveal：列表点击「🔑」后弹 RevealDialog 显前 4 + 后 4（避免列表常驻明文） */
 const revealing = ref<OtpEntry | null>(null)
+/** qr：单条目 otpauth 二维码（行内按钮 / 右键菜单「显示二维码」共用） */
+const qrEntry = ref<OtpEntry | null>(null)
 /** 标签管理弹层：chips「管理标签」触发（同时向宿主 emit open-tags 保留契约） */
 const tagsOpen = ref(false)
 /** 右键菜单：菜单位置、目标条目与右键所在元素（trigger 传 MdMenu 供 Esc 关闭回焦；.otp-item 有
@@ -215,6 +218,7 @@ async function contextTogglePin(entry: OtpEntry) {
           v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }"
           @copy="onCopy(e)"
           @reveal="onReveal(e)"
+          @qr="qrEntry = e"
           @context="(ev) => onContextMenu(e, ev)"
         />
         <div class="ops">
@@ -250,11 +254,15 @@ async function contextTogglePin(entry: OtpEntry) {
     <!-- 标签管理对话框：chips「管理标签」触发 -->
     <TagManagerDialog :open="tagsOpen" :store="store" @close="tagsOpen = false" />
 
+    <!-- 单条目 otpauth 二维码（Esc/遮罩/「关闭」按钮关闭） -->
+    <OtpQrDialog :open="qrEntry !== null" :entry="qrEntry" @close="qrEntry = null" />
+
     <!-- 右键菜单：MdMenu 负责定位/越界钳制/Esc 关闭；点别处关闭（绑定在 .row @click）。
          triggerEl=右键所在条目（tabindex=0 可聚焦），Esc 关闭后焦点回该条目 -->
     <MdMenu :x="contextMenu?.x ?? 0" :y="contextMenu?.y ?? 0" :open="contextMenu !== null" :trigger-el="contextMenu?.trigger ?? null" @close="closeContextMenu">
       <template v-if="contextMenu">
         <MdButton variant="text" class="ctx-item" @click="contextEdit(contextMenu.entry)">编辑</MdButton>
+        <MdButton variant="text" class="ctx-item" @click="qrEntry = contextMenu.entry; closeContextMenu()">显示二维码</MdButton>
         <MdButton variant="text" class="ctx-item" @click="contextCopyUri(contextMenu.entry)">复制 URI</MdButton>
         <MdButton variant="text" class="ctx-item" @click="contextTogglePin(contextMenu.entry)">{{ contextMenu.entry.pinned ? '取消置顶' : '置顶' }}</MdButton>
       </template>
