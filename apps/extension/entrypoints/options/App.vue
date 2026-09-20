@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { backupFileName, createAutoRunScheduler, createBackupEnvelope, loadSourceRevs, normalizeSchemes, openBackupEnvelope, OVERWRITE_NAME, randomBytes, saveSourceRev, SCHEMES_KEY, type BackupEnvelope, type BackupSource, type CloudCred, type ImportScheme, type Retention, type Vault } from '@totp/core'
+import { backupFileName, base64ToBytes, createAutoRunScheduler, createBackupEnvelope, loadSourceRevs, normalizeSchemes, openBackupEnvelope, OVERWRITE_NAME, randomBytes, saveSourceRev, SCHEMES_KEY, type BackupEnvelope, type BackupSource, type CloudCred, type ImportScheme, type Retention, type Vault } from '@totp/core'
 import { CLIPBOARD_CLEAR_DELAY_MS, createAppI18n, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, LockScreen, NavigationShell, prfSupported, useTheme, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
 import { computed, getCurrentInstance, onMounted, onUnmounted, ref } from 'vue'
 import { conflictBackupName, formatAutoStatusText, hasLegacyCloudKeys, loadSourcesImpl, migrateLegacySources, retentionDeletedNote, saveSourcesImpl } from '../../src/cloudCredStore'
@@ -311,6 +311,17 @@ const backupPlatform: BackupPlatform = {
   // 文本导出（批① §2.3）：otpauth 文本/Aegis JSON 走 Blob 下载（downloadEnvelope 同款 a[download] 通道）；浏览器下载无「取消」回执，恒 true
   async saveTextFile(name, content) {
     const url = URL.createObjectURL(new Blob([content], { type: 'application/octet-stream' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = name
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 10_000)
+    return true
+  },
+  // 图片导出（批① §2.5 多选二维码拼版 PNG）：dataUrl 解 base64 → Blob 走同一 a[download] 通道；无「取消」回执，恒 true
+  async saveImageFile(name, dataUrl) {
+    const bytes = base64ToBytes(dataUrl.slice(dataUrl.indexOf(',') + 1))
+    const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'image/png' }))
     const a = document.createElement('a')
     a.href = url
     a.download = name

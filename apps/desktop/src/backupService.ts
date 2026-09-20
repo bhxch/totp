@@ -223,6 +223,12 @@ export async function writeTextFileOs(picked: PickedOsFile, contents: string): P
   await invoke('write_text_file_os', { path: picked.path, contents, dirToken: picked.dirToken })
 }
 
+/** 二进制写盘（批① §2.5 二维码拼版 PNG 保存）：picked 由 pickBackupSaveOs 产生，遏制基准=其登记父目录。
+ *  字节显式转 Array 再 invoke（JSON 数组，不经 UTF-8 文本管道，PNG 二进制安全；Rust 侧白名单 .png） */
+export async function writeBytesFileOs(picked: PickedOsFile, bytes: Uint8Array): Promise<void> {
+  await invoke('write_bytes_file_os', { path: picked.path, contents: Array.from(bytes), dirToken: picked.dirToken })
+}
+
 /** 导出写盘（F4）：picked 由 pickBackupSaveOs 的 Rust save 对话框产生，遏制基准=其登记父目录 */
 export async function writeBackupFileOs(picked: PickedOsFile, envelope: BackupEnvelope): Promise<void> {
   await writeTextFileOs(picked, JSON.stringify(envelope, null, 2))

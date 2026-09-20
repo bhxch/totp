@@ -423,6 +423,38 @@ fn write_text_file_os(
     write_text_file_granted(&grants, path, contents, &dir_token)
 }
 
+/// 二进制写盘（批① §2.5 多选二维码拼版 PNG 保存）：与 write_text_file_granted 同守护
+/// （固定扩展名白名单 + dirToken 登记目录遏制），但 contents 为原始字节（Vec<u8>，
+/// invoke JSON 数组通道），PNG 等二进制不经 UTF-8 文本管道防编码损坏。
+/// 扩展名集合按本命令用途固定为 .png（不复用文本侧 .totpbackup/.json/.txt，也不把 .png
+/// 加进文本命令——文本写 PNG 必然损坏，各命令用途与白名单一一对应）
+fn write_bytes_file_granted(grants: &DialogGrants, path: String, contents: Vec<u8>, dir_token: &str) -> Result<(), String> {
+    if path.is_empty() {
+        return Err("empty path".into());
+    }
+    const IMAGE_EXTENSIONS: [&str; 1] = [".png"];
+    let lower = path.to_lowercase();
+    if !IMAGE_EXTENSIONS.iter().any(|ext| lower.ends_with(ext)) {
+        return Err("invalid image file extension".into());
+    }
+    let p = std::path::Path::new(&path);
+    if p.is_dir() {
+        return Err("path is a directory".into());
+    }
+    ensure_within(p, &grants.resolve(dir_token)?)?;
+    std::fs::write(path, contents).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn write_bytes_file_os(
+    grants: tauri::State<DialogGrants>,
+    path: String,
+    contents: Vec<u8>,
+    dir_token: String,
+) -> Result<(), String> {
+    write_bytes_file_granted(&grants, path, contents, &dir_token)
+}
+
 // ---------- 导入文件命令 ----------
 // 与 read_text_file_os 同构：信任边界一致（路径经 pick_open_file_os 的登记授权，dirToken 反查登记目录遏制），
 // 扩展名白名单限定导入用途，防止被前端 XSS 当作任意文件读取原语。
@@ -866,6 +898,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             write_text_file_os,
+            write_bytes_file_os,
             read_text_file_os,
             read_import_file_os,
             read_import_file_bytes_os,
@@ -1039,6 +1072,31 @@ mod tests {
         // 登记目录之外（.totpbackup 合法名）遏制拒绝且不落盘
         let outside = base.join("vault-20260916-120000.totpbackup");
         assert!(write_text_file_granted(&grants, outside.to_str().unwrap().into(), "{}".into(), &token).is_err());
+        assert!(!outside.exists());
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn write_bytes_file_granted_enforces_extension_and_containment() {
+        let base = std::env::temp_dir().join("totp_write_bytes_os_test");
+        let allowed = base.join("allowed");
+        std::fs::create_dir_all(&allowed).unwrap();
+        let grants = DialogGrants::default();
+        let token = grants.register(std::fs::canonicalize(&allowed).unwrap());
+        // 登记目录内 .png（大小写不敏感）：字节写入成功且内容保真
+        let png = allowed.join("totp-qr-sheet.PNG");
+        let bytes: Vec<u8> = vec![0x89, 0x50, 0x4E, 0x47, 0x00, 0xFF];
+        write_bytes_file_granted(&grants, png.to_str().unwrap().into(), bytes.clone(), &token).unwrap();
+        assert_eq!(std::fs::read(&png).unwrap(), bytes);
+        // 非白名单扩展名拒绝（含文本侧合法的 .txt/.totpbackup——各命令白名单独立，不互通）
+        for name in ["evil.exe", "note.txt", "vault-20260916-120000.totpbackup"] {
+            let p = allowed.join(name);
+            assert!(write_bytes_file_granted(&grants, p.to_str().unwrap().into(), bytes.clone(), &token).is_err());
+            assert!(!p.exists());
+        }
+        // 登记目录之外（.png 合法扩展名）遏制拒绝且不落盘
+        let outside = base.join("totp-qr-sheet.png");
+        assert!(write_bytes_file_granted(&grants, outside.to_str().unwrap().into(), bytes, &token).is_err());
         assert!(!outside.exists());
         std::fs::remove_dir_all(&base).ok();
     }

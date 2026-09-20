@@ -10,11 +10,13 @@ import TagManagerDialog from '../components/TagManagerDialog.vue'
 import MdButton from '../components/md/MdButton.vue'
 import MdCard from '../components/md/MdCard.vue'
 import MdChip from '../components/md/MdChip.vue'
+import MdCheckbox from '../components/md/MdCheckbox.vue'
 import MdFab from '../components/md/MdFab.vue'
 import MdIconButton from '../components/md/MdIconButton.vue'
 import MdMenu from '../components/md/MdMenu.vue'
 import OtpListItem from '../components/OtpListItem.vue'
 import OtpQrDialog from '../components/OtpQrDialog.vue'
+import QrSheetDialog from '../components/QrSheetDialog.vue'
 import RevealDialog from '../components/RevealDialog.vue'
 import SearchBar from '../components/SearchBar.vue'
 import type { EntryFormData } from '../components/entryForm'
@@ -24,7 +26,10 @@ const props = withDefaults(defineProps<{
   store: VueStore
   /** 图标存储（stored/url dataUrl 源）；缺省时列表仅渲染 builtin 图标，EntryForm 不显示图标选择区 */
   icons?: IconStore | null
-}>(), { icons: null })
+  /** [可选] 多选拼版「保存图片」实现（spec §2.5，仅 options 宿主经 NavigationShell 分发；
+   *  popup 不用 CodesPage，不受影响）；未传时 Dialog 内隐藏保存按钮，仅展示 */
+  saveImage?: (name: string, dataUrl: string) => Promise<boolean>
+}>(), { icons: null, saveImage: undefined })
 
 const emit = defineEmits<{ copy: [code: string]; 'open-tags': [] }>()
 
@@ -192,13 +197,46 @@ async function contextTogglePin(entry: OtpEntry) {
   await props.store.updateEntryOp(entry.uuid, { pinned: !entry.pinned })
   closeContextMenu()
 }
+
+// ---------- 选择模式（spec §2.5 多选拼版，仅 options 宿主消费）----------
+/** 选择模式开关：进入即清空上次选中（会话内不跨次残留） */
+const selecting = ref(false)
+const selected = ref<Set<string>>(new Set())
+function toggleSelectMode() {
+  selecting.value = !selecting.value
+  selected.value = new Set()
+}
+function toggleSelected(uuid: string, on: boolean) {
+  const next = new Set(selected.value)
+  if (on) next.add(uuid)
+  else next.delete(uuid)
+  selected.value = next
+}
+/** 取消（操作条）：清空选中并退出选择模式 */
+function cancelSelection() {
+  selecting.value = false
+  selected.value = new Set()
+}
+/** 拼版 Dialog：条目取选中集合按展示顺序（pinned/order），不受当前搜索/标签过滤影响
+ *  （勾选时行可见即入集合；过滤变化不隐式丢条目） */
+const sheetOpen = ref(false)
+const sheetEntries = computed(() => sorted.value.filter((e) => selected.value.has(e.uuid)))
+function openSheet() {
+  if (selected.value.size === 0) return
+  sheetOpen.value = true
+}
 </script>
 
 <template>
   <section class="page">
     <!-- 条目卡走 MdCard outlined(审查 F3:独立 .card 的 outline-variant/10px 与 M3 标尺双标) -->
     <MdCard class="codes-card">
-      <h2>条目（{{ store.vault.entries.length }}）</h2>
+      <div class="card-head">
+        <h2>条目（{{ store.vault.entries.length }}）</h2>
+        <MdButton v-if="sorted.length > 0" data-test="select-mode" variant="text" @click="toggleSelectMode">
+          {{ selecting ? '取消选择' : '选择' }}
+        </MdButton>
+      </div>
       <SearchBar v-model="query" v-model:search-secret="searchSecret" />
       <!-- 标签筛选：多选 chips + 行首 AND/OR 切换（TagFilterRow）；「管理标签」打开 TagManagerDialog -->
       <div class="chips-row">
@@ -212,6 +250,12 @@ async function contextTogglePin(entry: OtpEntry) {
       <div v-if="sorted.length === 0" class="empty">暂无条目，点击右下「添加」录入。</div>
       <div v-else-if="visible.length === 0" class="empty">无匹配条目</div>
       <div v-for="e in visible" :key="e.uuid" class="row" @click="closeContextMenu">
+        <!-- 选择模式：行首勾选框（OtpListItem 之外，点击不触发条目复制） -->
+        <MdCheckbox
+          v-if="selecting" class="row-check" :model-value="selected.has(e.uuid)"
+          :aria-label="`选择 ${e.issuer} ${e.label}`"
+          @update:model-value="(v) => toggleSelected(e.uuid, v)"
+        />
         <OtpListItem
           :entry="e"
           :icon="iconView(e.icon, icons ?? undefined)"
@@ -236,6 +280,12 @@ async function contextTogglePin(entry: OtpEntry) {
     <!-- 新建入口：MdFab 替代原「＋ 添加」text button，触发同一 creating 态 -->
     <MdFab class="page-fab" aria-label="添加条目" title="添加条目" @click="creating = true; editing = null">＋</MdFab>
 
+    <!-- 选择模式底部浮动操作条（spec §2.5）：有选中才出现；取消=清空并退出 -->
+    <div v-if="selected.size > 0" class="select-bar" data-test="select-bar">
+      <MdButton data-test="sheet-open" @click="openSheet">生成二维码({{ selected.size }})</MdButton>
+      <MdButton data-test="select-cancel" variant="text" @click="cancelSelection">取消</MdButton>
+    </div>
+
     <!-- 表单对话框：编辑/新建共用（onSave 新建默认值分支保留在本页） -->
     <EntryFormDialog
       :open="creating || editing !== null"
@@ -257,6 +307,9 @@ async function contextTogglePin(entry: OtpEntry) {
     <!-- 单条目 otpauth 二维码（Esc/遮罩/「关闭」按钮关闭） -->
     <OtpQrDialog :open="qrEntry !== null" :entry="qrEntry" @close="qrEntry = null" />
 
+    <!-- 多选拼版大图（spec §2.5）：默认仅 Dialog 内展示；宿主传 saveImage 时才有「保存图片」 -->
+    <QrSheetDialog :open="sheetOpen" :entries="sheetEntries" :save-image="saveImage" @close="sheetOpen = false" />
+
     <!-- 右键菜单：MdMenu 负责定位/越界钳制/Esc 关闭；点别处关闭（绑定在 .row @click）。
          triggerEl=右键所在条目（tabindex=0 可聚焦），Esc 关闭后焦点回该条目 -->
     <MdMenu :x="contextMenu?.x ?? 0" :y="contextMenu?.y ?? 0" :open="contextMenu !== null" :trigger-el="contextMenu?.trigger ?? null" @close="closeContextMenu">
@@ -273,6 +326,8 @@ async function contextTogglePin(entry: OtpEntry) {
 <style scoped>
 .page { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .codes-card { display: flex; flex-direction: column; gap: 8px; }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.row-check { flex: none; margin-right: 4px; }
 h2 { margin: 0; font-size: var(--md-sys-typescale-title-medium); }
 .chips-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .row { position: relative; display: flex; align-items: center; }
@@ -282,6 +337,10 @@ h2 { margin: 0; font-size: var(--md-sys-typescale-title-medium); }
 .empty { text-align: center; opacity: .6; padding: 16px 0; }
 /* 新建 FAB：悬浮于页面右下 */
 .page-fab { position: fixed; right: 24px; bottom: 24px; }
+/* 选择模式底部浮动操作条（悬浮于列表上方，FAB 左侧留位） */
+.select-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: 24px; z-index: 20;
+  display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 100px;
+  background: var(--md-sys-color-surface-container-high); box-shadow: 0 4px 12px var(--md-sys-color-shadow); }
 /* 右键菜单项（MdMenu 容器自带定位与外观；MdButton text 形收紧为菜单项排版,槽内容归本组件作用域） */
 .ctx-item { display: block; width: 100%; height: 36px; justify-content: flex-start; border-radius: 0; font-size: var(--md-sys-typescale-body-medium); text-align: left; padding: 0 14px; }
 </style>

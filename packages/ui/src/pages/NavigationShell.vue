@@ -82,7 +82,8 @@ function onSelect(name: string) {
 const pageProps = computed<Record<string, unknown>>(() => {
   const p = props
   switch (route.name) {
-    case 'codes': return { store: p.store, icons: p.icons }
+    // saveImageFile（批① §2.5 多选拼版保存）随备份平台分发到 codes 页；宿主未实现时 undefined → CodesPage 隐藏「保存图片」
+    case 'codes': return { store: p.store, icons: p.icons, saveImage: p.platform?.saveImageFile?.bind(p.platform) }
     case 'import': return { store: p.store, platform: p.platform, schemesApi: p.schemesApi }
     case 'sync': return { store: p.store, platform: p.platform, cloudPlatform: p.cloudPlatform, syncPlatform: p.syncPlatform }
     case 'security': return { securityPlatform: p.securityPlatform }

@@ -2,11 +2,11 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { backupFileName, createBackupEnvelope, loadSourceRevs, loadSources, normalizeSchemes, openBackupEnvelope, randomBytes, saveSourceRev, saveSources, SCHEMES_KEY, sha256Hex, type BackupSource, type CloudCred, type ImportScheme, type KdfProfile, type Retention, type StorageAdapter, type Vault } from '@totp/core'
+import { backupFileName, base64ToBytes, createBackupEnvelope, loadSourceRevs, loadSources, normalizeSchemes, openBackupEnvelope, randomBytes, saveSourceRev, saveSources, SCHEMES_KEY, sha256Hex, type BackupSource, type CloudCred, type ImportScheme, type KdfProfile, type Retention, type StorageAdapter, type Vault } from '@totp/core'
 import { createAppI18n, createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type LocalSourceView, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, getCurrentInstance, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createDesktopAutoRunner, formatAutoStatusText } from './autoBackup'
-import { createBackupToSources, listBackupsFromSources, pickBackupDirOs, pickBackupOpenOs, pickBackupSaveOs, readBackupByName, readBackupFileOs, saveConflictBackupToDir, saveCloudSourcesPreservingLocal, writeBackupFileOs, writeTextFileOs, type DialogFilterSpec, type PickedOsFile } from './backupService'
+import { createBackupToSources, listBackupsFromSources, pickBackupDirOs, pickBackupOpenOs, pickBackupSaveOs, readBackupByName, readBackupFileOs, saveConflictBackupToDir, saveCloudSourcesPreservingLocal, writeBackupFileOs, writeBytesFileOs, writeTextFileOs, type DialogFilterSpec, type PickedOsFile } from './backupService'
 import { decryptDpapiOs, pickImportFileOs, readImportFileBytesOs, readImportFileOs } from './importService'
 import { createIdleLockExecutor } from './idleLock'
 import { lockPrefsUnsupportedKeys } from './lockPrefs'
@@ -153,6 +153,8 @@ async function openBackupText(text: string, password: string): Promise<string> {
 const BACKUP_FILE_FILTERS = [{ name: 'TOTP 备份', extensions: ['totpbackup'] }]
 // 文本导出（批① §2.3）对话框过滤器：otpauth 文本落 .txt、Aegis 导出落 .json
 const TEXT_FILE_FILTERS: DialogFilterSpec[] = [{ name: '导出文件', extensions: ['json', 'txt'] }]
+// 图片导出（批① §2.5 二维码拼版）对话框过滤器：拼版 PNG 落 .png
+const IMAGE_FILE_FILTERS: DialogFilterSpec[] = [{ name: '图片', extensions: ['png'] }]
 // 与 Rust 端 read_import_file_os 扩展名白名单一致（.json/.wauth/.xml/.txt/.aegis）+ SQLite .db/.sqlitedb/.sqlite
 // （.db 经文本读取报 UTF-8 错时由 ImportCard 转字节入口复查，见 read_import_file_bytes_os）
 const IMPORT_FILE_FILTERS = [
@@ -205,6 +207,14 @@ const backupPlatform: BackupPlatform = {
     const picked = await pickBackupSaveOs(name, TEXT_FILE_FILTERS)
     if (!picked) return false
     await writeTextFileOs(picked, content)
+    return true
+  },
+  // 图片导出（批① §2.5 多选二维码拼版 PNG）：save 对话框（Rust 登记授权）+ OS 白名单字节写
+  // （dataUrl 解 base64 为原始字节，不经文本管道）；取消=不写盘返回 false
+  async saveImageFile(name, dataUrl) {
+    const picked = await pickBackupSaveOs(name, IMAGE_FILE_FILTERS)
+    if (!picked) return false
+    await writeBytesFileOs(picked, base64ToBytes(dataUrl.slice(dataUrl.indexOf(',') + 1)))
     return true
   },
   async restoreFromPicker(password) {
