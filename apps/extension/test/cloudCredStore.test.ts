@@ -37,6 +37,20 @@ function makeAdapter(initial: Record<string, string> = {}): StorageAdapter & { d
 const WEBDAV: CloudCred = { backend: 'webdav', serverUrl: 'https://dav', username: 'u', password: 'p' }
 const GIST: CloudCred = { backend: 'gist', token: 't', gistId: 'g' }
 
+/** zh 翻译桩（D2 R1：cloudCredStore 纯函数经注入 t 取词；表与 ui locale cloudAuto 段逐字一致，
+ *  断言 zh 不改的既定策略） */
+const zhT = (key: string, params: Record<string, unknown> = {}): string => {
+  const table: Record<string, string> = {
+    'cloudAuto.retentionDeleted': '{name} 清理 {count} 份旧云备份',
+    'cloudAuto.retentionUnsupported': '{name} 后端不支持远端清理',
+    'cloudAuto.statusOk': '成功',
+    'cloudAuto.statusFailed': '失败',
+    'cloudAuto.statusSkipped': '跳过',
+    'cloudAuto.statusSep': '：',
+  }
+  return (table[key] ?? key).replace(/\{(\w+)\}/g, (_, k: string) => String(params[k]))
+}
+
 let adapter: StorageAdapter & { data: Record<string, string> }
 
 beforeEach(() => {
@@ -259,14 +273,17 @@ describe('hasLegacyCloudKeys（审查 I6：迁移跳过/失败后宿主据此置
 })
 
 describe('retentionDeletedNote（审查 Minor：deleted=0 无信息量不提示）', () => {
-  it('deleted>0 → 「{name} 清理 N 份旧云备份」', () => {
-    expect(retentionDeletedNote('WebDAV', 3)).toBe('WebDAV 清理 3 份旧云备份')
+  it('deleted>0 → 「{name} 清理 N 份旧云备份」（经注入 t 取 cloudAuto.retentionDeleted）', () => {
+    expect(retentionDeletedNote(zhT, 'WebDAV', 3)).toBe('WebDAV 清理 3 份旧云备份')
   })
   it('deleted=0 → null（宿主不追加清理提示）', () => {
-    expect(retentionDeletedNote('WebDAV', 0)).toBeNull()
+    expect(retentionDeletedNote(zhT, 'WebDAV', 0)).toBeNull()
   })
   it('deleted<0（-1 哨兵=后端不支持远端清理）→ 降级提示', () => {
-    expect(retentionDeletedNote('Gist', -1)).toBe('Gist 后端不支持远端清理')
+    expect(retentionDeletedNote(zhT, 'Gist', -1)).toBe('Gist 后端不支持远端清理')
+  })
+  it('未知 key 回退原文 key（翻译桩缺项可观测，不静默空串）', () => {
+    expect(zhT('cloudAuto.missing')).toBe('cloudAuto.missing')
   })
 })
 
@@ -282,27 +299,27 @@ describe('conflictBackupName（审查 Minor-1）', () => {
   })
 })
 
-describe('formatAutoStatusText（options App.vue formatAutoStatus 抽出，cloudAutoStatus 状态行格式化）', () => {
+describe('formatAutoStatusText（options App.vue loadAutoStatus 委托，cloudAutoStatus 状态行格式化）', () => {
   // 本地时区构造 + 本地时区格式化，断言与运行环境时区无关
   const AT = new Date(2026, 8, 17, 14, 30).getTime()
 
-  it('ok=true → 「YYYY-MM-DD HH:mm 成功：summary」', () => {
-    expect(formatAutoStatusText(JSON.stringify({ at: AT, ok: true, summary: 'webdav: 已上传' }))).toBe('2026-09-17 14:30 成功：webdav: 已上传')
+  it('ok=true → 「YYYY-MM-DD HH:mm 成功：summary」（标签/分隔符经注入 t 取 cloudAuto.status*）', () => {
+    expect(formatAutoStatusText(JSON.stringify({ at: AT, ok: true, summary: 'webdav: 已上传' }), zhT)).toBe('2026-09-17 14:30 成功：webdav: 已上传')
   })
   it('ok=false → 失败：summary', () => {
-    expect(formatAutoStatusText(JSON.stringify({ at: AT, ok: false, summary: '网络错误' }))).toBe('2026-09-17 14:30 失败：网络错误')
+    expect(formatAutoStatusText(JSON.stringify({ at: AT, ok: false, summary: '网络错误' }), zhT)).toBe('2026-09-17 14:30 失败：网络错误')
   })
   it('ok=null → 跳过：summary（写侧 summary 仅存原因，前缀由格式化拼装）', () => {
-    expect(formatAutoStatusText(JSON.stringify({ at: AT, ok: null, summary: '未启用云源' }))).toBe('2026-09-17 14:30 跳过：未启用云源')
+    expect(formatAutoStatusText(JSON.stringify({ at: AT, ok: null, summary: '未启用云源' }), zhT)).toBe('2026-09-17 14:30 跳过：未启用云源')
   })
   it('向后兼容：旧 JSON 无 ok 字段 → 按失败渲染（现状语义不变）', () => {
-    expect(formatAutoStatusText(JSON.stringify({ at: AT, summary: '旧数据' }))).toBe('2026-09-17 14:30 失败：旧数据')
+    expect(formatAutoStatusText(JSON.stringify({ at: AT, summary: '旧数据' }), zhT)).toBe('2026-09-17 14:30 失败：旧数据')
   })
   it('缺字段/空 summary/坏 JSON/undefined → null（卡片显示「暂无」）', () => {
-    expect(formatAutoStatusText(JSON.stringify({ summary: 'x' }))).toBeNull() // 缺 at
-    expect(formatAutoStatusText(JSON.stringify({ at: AT, ok: true, summary: '' }))).toBeNull() // 空 summary
-    expect(formatAutoStatusText('{bad json')).toBeNull()
-    expect(formatAutoStatusText(undefined)).toBeNull()
-    expect(formatAutoStatusText(null)).toBeNull() // storageAdapter 键不存在时现实传参
+    expect(formatAutoStatusText(JSON.stringify({ summary: 'x' }), zhT)).toBeNull() // 缺 at
+    expect(formatAutoStatusText(JSON.stringify({ at: AT, ok: true, summary: '' }), zhT)).toBeNull() // 空 summary
+    expect(formatAutoStatusText('{bad json', zhT)).toBeNull()
+    expect(formatAutoStatusText(undefined, zhT)).toBeNull()
+    expect(formatAutoStatusText(null, zhT)).toBeNull() // storageAdapter 键不存在时现实传参
   })
 })

@@ -660,5 +660,14 @@
       "conflictResolved": "冲突已解决",
       "inSync": "已是最新"
     }
+  },
+  "cloudAuto": {
+    "retentionDeleted": "{name} 清理 {count} 份旧云备份",
+    "retentionUnsupported": "{name} 后端不支持远端清理",
+    "noteSep": "；",
+    "statusOk": "成功",
+    "statusFailed": "失败",
+    "statusSkipped": "跳过",
+    "statusSep": "："
   }
 }

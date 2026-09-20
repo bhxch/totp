@@ -660,5 +660,14 @@
       "conflictResolved": "Conflict resolved",
       "inSync": "Up to date"
     }
+  },
+  "cloudAuto": {
+    "retentionDeleted": "{name}: cleaned {count} old cloud backups",
+    "retentionUnsupported": "{name}: backend does not support remote cleanup",
+    "noteSep": "; ",
+    "statusOk": "Success",
+    "statusFailed": "Failed",
+    "statusSkipped": "Skipped",
+    "statusSep": ": "
   }
 }

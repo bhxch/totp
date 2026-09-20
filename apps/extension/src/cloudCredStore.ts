@@ -187,12 +187,19 @@ export async function migrateLegacySources(
   return migrated.length
 }
 
+/** 翻译函数注入（宿主传 i18n.global.t 包装 / 测试传 key→文案映射；与 ui cloudRunner deps.t 同签名） */
+export type TranslateFn = (key: string, params?: Record<string, unknown>) => string
+
 /** 滚动删除提示文案（审查 Minor：deleted=0 时「清理 0 份旧云备份」无信息量）：
- *  deleted>0 →「{name} 清理 N 份旧云备份」；deleted=0 → null（宿主不追加提示）；
- *  deleted<0（后端不支持远端清理的哨兵值）→「{name} 后端不支持远端清理」 */
-export function retentionDeletedNote(name: string, deleted: number): string | null {
+ *  deleted>0 → cloudAuto.retentionDeleted「{name} 清理 N 份旧云备份」；deleted=0 → null（宿主不追加提示）；
+ *  deleted<0（后端不支持远端清理的哨兵值）→ cloudAuto.retentionUnsupported「{name} 后端不支持远端清理」。
+ *  D2 R1 key 化（对齐 desktop desktop.retentionCleaned/retentionUnsupported 模式）：t 由宿主注入，
+ *  记录时翻译——提示并入 summary 随 cloudAutoStatus 落盘，存什么显示什么，不回填旧记录 */
+export function retentionDeletedNote(t: TranslateFn, name: string, deleted: number): string | null {
   if (deleted === 0) return null
-  return deleted > 0 ? `${name} 清理 ${deleted} 份旧云备份` : `${name} 后端不支持远端清理`
+  return deleted > 0
+    ? t('cloudAuto.retentionDeleted', { name, count: deleted })
+    : t('cloudAuto.retentionUnsupported', { name })
 }
 
 /** 旧凭据键（cloudCreds/cloudCred）是否仍存在于 storage（审查 I6：迁移被跳过/失败后宿主据此置
@@ -222,18 +229,20 @@ export function conflictBackupName(backendKey: string | undefined, now: Date): s
 /** 自动状态 JSON → 卡片展示文本（design §4.1）：「YYYY-MM-DD HH:mm 成功/失败/跳过：summary」；
  *  缺字段/坏 JSON/空值 → null（卡片显示「暂无」）。ok=null 渲染「跳过」（写侧 summary 仅存原因，
  *  前缀由本函数拼装）；旧 JSON 的 ok 恒为 true/false，照常渲染成功/失败。
- *  与 desktop autoBackup.formatAutoStatusText 同款语义：options App.vue formatAutoStatus 委托本实现，
+ *  与 desktop autoBackup.formatAutoStatusText 同款语义：options App.vue loadAutoStatus 委托本实现，
  *  抽出供三态单测（审查 Minor-2，放 cloudCredStore 因同属 cloud 存储域纯逻辑可测模块）。
- *  入参含 storageAdapter.get 返回的 null（键不存在）：!raw 已统一兜住 null/undefined/空串 */
-export function formatAutoStatusText(raw: string | null | undefined): string | null {
+ *  入参含 storageAdapter.get 返回的 null（键不存在）：!raw 已统一兜住 null/undefined/空串。
+ *  D2 R1 key 化：三态标签与冒号分隔符走 cloudAuto.statusOk/statusFailed/statusSkipped/statusSep，
+ *  展示时取词（本函数仅渲染 cloudAutoStatus 落盘内容；summary 原文为记录时翻译，不回填旧记录） */
+export function formatAutoStatusText(raw: string | null | undefined, t: TranslateFn): string | null {
   if (!raw) return null
   try {
     const s = JSON.parse(raw) as { at?: unknown; ok?: unknown; summary?: unknown }
     if (typeof s.at !== 'number' || typeof s.summary !== 'string' || s.summary === '') return null
     const d = new Date(s.at)
     const p = (n: number) => String(n).padStart(2, '0')
-    const label = s.ok === null ? '跳过' : s.ok === true ? '成功' : '失败'
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} ${label}：${s.summary}`
+    const label = s.ok === null ? t('cloudAuto.statusSkipped') : s.ok === true ? t('cloudAuto.statusOk') : t('cloudAuto.statusFailed')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} ${label}${t('cloudAuto.statusSep')}${s.summary}`
   } catch {
     return null
   }

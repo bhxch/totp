@@ -22,6 +22,9 @@ const store = createExtensionStore('options', {
 // 内 useI18n() 不可用（注入尚未就绪），壳层翻译走 i18n.global.t——子组件不受限
 const i18n = createAppI18n(store)
 getCurrentInstance()?.appContext.app.use(i18n)
+/** 壳层翻译（i18n.global.t 包装：overload 直赋 TranslateFn 不兼容，同 runner deps.t 既有包装口径；
+ *  cloudCredStore 纯函数与 recordStatus 分隔符共用） */
+const tr = (key: string, params: Record<string, unknown> = {}): string => i18n.global.t(key, params)
 const {
   vault, initStore, registerStorageSync,
   locked, hasEncryption, unlock, lock, enableEncryption, disableEncryption, changePassphrase,
@@ -421,17 +424,19 @@ const cloudSync = createCloudSyncRunner({
   kdfProfile: () => settings.backupKdfProfile,
   sourceName: (id) => cloudSourceNames.get(id) ?? id,
   onRetentionDeleted: (name, deleted) => {
-    // 审查 Minor：deleted=0 不追加（「清理 0 份」无信息量）；负值=后端不支持远端清理
-    const note = retentionDeletedNote(name, deleted)
+    // 审查 Minor：deleted=0 不追加（「清理 0 份」无信息量）；负值=后端不支持远端清理。
+    // D2 R1 key 化（cloudAuto.retention*）：记录时翻译——提示随 cloudAutoStatus 落盘，存什么显示什么
+    const note = retentionDeletedNote(tr, name, deleted)
     if (note) retentionNotes.push(note)
   },
   // D2 抽串：runner 状态摘要经注入 t() 记录时取词（i18n 在 setup 已同步装入，回调必然晚于装入）
-  t: (key: string, params: Record<string, unknown> = {}) => i18n.global.t(key, params),
+  t: tr,
   // 状态记录不 await：storage 写失败不影响同步主流程。ok 三态（批 4）：true/false/null（跳过）
   recordStatus: (ok: boolean | null, summary) => {
-    const notes = retentionNotes.join('；')
+    // D2 R1：分隔符走 cloudAuto.noteSep（对齐 desktop.noteSep，en 为 '; '）
+    const notes = retentionNotes.join(tr('cloudAuto.noteSep'))
     retentionNotes = []
-    void storageAdapter.set('cloudAutoStatus', JSON.stringify({ at: Date.now(), ok, summary: notes ? `${summary}；${notes}` : summary })).catch(() => {})
+    void storageAdapter.set('cloudAutoStatus', JSON.stringify({ at: Date.now(), ok, summary: notes ? `${summary}${tr('cloudAuto.noteSep')}${notes}` : summary })).catch(() => {})
   },
   onError: (err) => console.warn('[cloudAutoSync]', err),
 })
@@ -485,8 +490,9 @@ const cloudPlatform: CloudPlatform = {
   },
   loadAutoStatus: async () => {
     try {
-      // cloudAutoStatus 键原文 → 三态格式化纯函数（单测覆盖；审查 Minor-2 抽出）
-      return formatAutoStatusText(await storageAdapter.get('cloudAutoStatus'))
+      // cloudAutoStatus 键原文 → 三态格式化纯函数（单测覆盖；审查 Minor-2 抽出）。
+      // D2 R1：标签/分隔符展示时取词（cloudAuto.status*），summary 原文为记录时翻译不回填
+      return formatAutoStatusText(await storageAdapter.get('cloudAutoStatus'), tr)
     } catch {
       return null
     }
