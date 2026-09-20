@@ -4,9 +4,8 @@
 // - 条目布局：salt(ks/2) || verifier(2) || ciphertext || authCode(10)；strength 1/2/3 → ks 16/24/32
 // - 加密：AES-CTR，初始 counter block = 全零 16B、整 128 位大端递增（JCE AES/CTR/NoPadding IV=0 同语义）
 // - 完整性：HMAC-SHA1(authKey, ciphertext) 前 10 字节 == authCode；口令校验：派生 verifier 与头 2 字节比对
-// 已知限制：AE-1 规范在解密数据尾部附 CRC32(4B)（AE-2 不含）——brief 布局未纳入，本实现不截除；
-// deflate 流尾部多余字节被 inflateRawSync 忽略，stored 条目如遇 AE-1 会多 4 字节（AP 文本导出实测
-// 为 AE-2 时无影响；集成测试 fixture 用 AE-2 对拍）。
+// - 尾部差异：AE-1（version=1）解密明文 = 原始数据 + CRC32(4B)（HMAC 覆盖含 CRC 的密文），须截除；
+//   AE-2（version=2）无尾巴。version 取自 extra field 0x9901 的 formatVersion 字段
 
 const encoder = new TextEncoder()
 
@@ -36,8 +35,8 @@ export async function zipAesCtrDecrypt(key: Uint8Array, data: Uint8Array, counte
 
 const STRENGTH_KS = { 1: 16, 2: 24, 3: 32 } as const
 
-/** WinZip AES 条目解密（AE-1/AE-2 通用）：salt || verifier || ciphertext || authCode(10) */
-export async function decryptZipEntryAes(password: string, entryData: Uint8Array, strength: 1 | 2 | 3): Promise<Uint8Array> {
+/** WinZip AES 条目解密：salt || verifier || ciphertext || authCode(10)；version=1（AE-1）额外截除明文尾部 CRC32(4B) */
+export async function decryptZipEntryAes(password: string, entryData: Uint8Array, strength: 1 | 2 | 3, version: 1 | 2): Promise<Uint8Array> {
   const ks = STRENGTH_KS[strength]
   const saltLen = ks / 2
   if (entryData.length < saltLen + 2 + 10) throw new Error('AP 加密条目过短')
@@ -52,5 +51,6 @@ export async function decryptZipEntryAes(password: string, entryData: Uint8Array
   const hmacKey = await crypto.subtle.importKey('raw', authKey as BufferSource, { name: 'HMAC', hash: 'SHA-1' }, false, ['sign'])
   const mac = new Uint8Array(await crypto.subtle.sign('HMAC', hmacKey, ciphertext as BufferSource)).slice(0, 10)
   for (let i = 0; i < 10; i++) if (mac[i] !== authCode[i]) throw new Error('AP 加密条目完整性校验失败（文件损坏或口令错误）')
-  return zipAesCtrDecrypt(encKey, ciphertext, ZERO_COUNTER)
+  const plain = await zipAesCtrDecrypt(encKey, ciphertext, ZERO_COUNTER)
+  return version === 1 ? plain.slice(0, plain.length - 4) : plain
 }

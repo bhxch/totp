@@ -15,7 +15,7 @@ export interface ZipEntryView {
   csize: number
   method: number
   dataOffset: number
-  aes?: { strength: 1 | 2 | 3; realMethod: number }
+  aes?: { strength: 1 | 2 | 3; realMethod: number; version: 1 | 2 }
 }
 
 /** 遍历 central directory 列出全部条目（含 AES extra field 0x9901 解析与数据区偏移计算） */
@@ -49,7 +49,7 @@ export function listZipEntries(bytes: Uint8Array): ZipEntryView[] {
       const id = dv.getUint16(q, true)
       const size = dv.getUint16(q + 2, true)
       if (id === 0x9901 && size >= 7) {
-        aes = { strength: dv.getUint8(q + 8) as 1 | 2 | 3, realMethod: dv.getUint16(q + 9, true) }
+        aes = { version: dv.getUint16(q + 4, true) as 1 | 2, strength: dv.getUint8(q + 8) as 1 | 2 | 3, realMethod: dv.getUint16(q + 9, true) }
         break
       }
       q += 4 + size

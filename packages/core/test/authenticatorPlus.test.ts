@@ -39,10 +39,12 @@ function concat(...parts: Uint8Array[]): Uint8Array {
   return out
 }
 
-/** WinZip AES 加密条目数据：salt(ks/2) || verifier(2) || ciphertext || authCode(10)；AE-2（version=2） */
-async function ae2Encrypt(
+/** WinZip AES 加密条目数据：salt(ks/2) || verifier(2) || ciphertext || authCode(10)；version 1=AE-1、2=AE-2。
+ * AE-1 语义下调用方须先把 4 字节 CRC 尾拼进 data（密文含尾巴，HMAC 覆盖之） */
+async function aeEncrypt(
   data: Uint8Array,
   password: string,
+  version: 1 | 2,
   opts: { tamper?: 'verifier' | 'auth' } = {},
 ): Promise<Uint8Array> {
   const ks = 32 as const
@@ -56,11 +58,20 @@ async function ae2Encrypt(
   return concat(salt, verifier, ct, auth)
 }
 
-/** 单条目 zip：method 99 + AES extra field 0x9901（AE-2/strength 3/real method 8 deflate）或明文 deflate */
-async function buildZip(name: string, plain: Uint8Array, password?: string, opts: { tamper?: 'verifier' | 'auth' } = {}): Promise<Uint8Array> {
-  const compressed = password ? await ae2Encrypt(deflateRawSync(plain), password, opts) : deflateRawSync(plain)
+/** 单条目 zip：method 99 + AES extra field 0x9901（AE-1/AE-2 / strength 3 / real method 0 stored、8 deflate）或明文 deflate */
+async function buildZip(
+  name: string,
+  plain: Uint8Array,
+  password?: string,
+  opts: { tamper?: 'verifier' | 'auth'; version?: 1 | 2; realMethod?: 0 | 8; crcTail?: boolean } = {},
+): Promise<Uint8Array> {
+  const version = opts.version ?? 2
+  const realMethod = opts.realMethod ?? 8
+  let payload = realMethod === 0 ? plain : deflateRawSync(plain)
+  if (password && opts.crcTail) payload = concat(payload, new Uint8Array([0xde, 0xad, 0xbe, 0xef])) // 假 CRC32(4B)
+  const compressed = password ? await aeEncrypt(payload, password, version, opts) : payload
   const nameBytes = encoder.encode(name)
-  const aesExtra = password ? concat(u16(0x9901), u16(7), u16(2), encoder.encode('AE'), new Uint8Array([3]), u16(8)) : new Uint8Array(0)
+  const aesExtra = password ? concat(u16(0x9901), u16(7), u16(version), encoder.encode('AE'), new Uint8Array([3]), u16(realMethod)) : new Uint8Array(0)
   const method = password ? 99 : 8
   const flags = password ? 1 : 0
   const loc = concat(
@@ -107,6 +118,16 @@ describe('importAuthenticatorPlus（手工构造 WinZip AE-2 zip）', () => {
     const zip = await buildZip('Accounts.txt', encoder.encode(URIS))
     const r = await importAuthenticatorPlus(zip, '')
     expect(r.entries).toHaveLength(2)
+  })
+
+  it('AE-1（version=1）截除解密尾部 4 字节 CRC32，stored 明文不受污染', async () => {
+    // stored（realMethod=0）是唯一能暴露污染的路径：deflate 会因 inflate 容忍尾部字节而侥幸通过
+    const zip = await buildZip('Accounts.txt', encoder.encode(URIS), 'secret123', { version: 1, realMethod: 0, crcTail: true })
+    const r = await importAuthenticatorPlus(zip, 'secret123')
+    expect(r.failures).toEqual([])
+    expect(r.entries).toHaveLength(2)
+    expect(r.entries[1]).toMatchObject({ issuer: 'Example', label: 'bob@example.com' })
+    expect(r.entries[1]!.issuer).toBe('Example')
   })
 })
 
