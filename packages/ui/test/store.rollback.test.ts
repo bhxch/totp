@@ -8,6 +8,8 @@ import { createVueStore } from '../src/store'
 
 function flush(): Promise<void> { return new Promise((r) => setTimeout(r, 0)) }
 const entry = (tag: string) => newEntryFromUri(`otpauth://totp/A:${tag}?secret=JBSWY3DPEHPK3PXP`, 1700000000000)
+// F6 校验后夹具统一为完整合法条目（旧 {uuid:'x'} 占位缺 10 个必填字段，任何写路径都产不出）
+const legalEntry = (uuid: string) => ({ uuid, type: 'totp', issuer: '', label: '', secret: 'JBSWY3DPEHPK3PXP', algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 1 })
 
 /** 建盘：解锁 + 三条目加密落盘（rev 2、水位 2），并捕获 rev-1 代密文供回放 */
 async function seedWithReplaySnapshot(): Promise<{
@@ -59,7 +61,7 @@ describe('vault 新鲜性水位与 AAD 迁移（F8）', () => {
   it('旧格式（无 AAD）密文经回退解锁；下次保存自动迁移为 AAD 绑定并推进 rev/水位', async () => {
     const adapter = createMemoryStorage()
     const { security, dek } = await setupVaultEncryption(JSON.stringify({ version: 2, entries: [], tags: [], updatedAt: 0 }), 'pw')
-    const legacyJson = JSON.stringify({ version: 2, entries: [{ uuid: 'legacy' }], tags: [], updatedAt: 5 })
+    const legacyJson = JSON.stringify({ version: 2, entries: [legalEntry('legacy')], tags: [], updatedAt: 5 })
     const nonce = randomBytes(12)
     await adapter.set(SECURITY_KEY, JSON.stringify(security))
     await adapter.set(VAULT_KEY, JSON.stringify({
@@ -113,7 +115,7 @@ describe('vault 新鲜性水位与 AAD 迁移（F8）', () => {
     await a.initStore()
     await a.unlock('pw')
     // 用户显式恢复旧备份：内容无 rev（旧格式），写入时 rev 取 max(内存, 水位)+1 = 3
-    await a.replaceAllOp({ version: 2, entries: [{ uuid: 'restored' }], tags: [], updatedAt: 42 } as unknown as Vault)
+    await a.replaceAllOp({ version: 2, entries: [legalEntry('restored')], tags: [], updatedAt: 42 } as unknown as Vault)
     const c = createVueStore(adapter)
     await c.initStore()
     await c.unlock('pw')
@@ -144,7 +146,7 @@ describe('vault 新鲜性水位与 AAD 迁移（F8）', () => {
     await b.enableEncryption('pwB') // b 谱系：rev 1、水位 {fpB,1}
     b.registerStorageSync()
     // 设备 A 独立加密落盘（异 DEK、无 rev）：按既有语义 b 转锁定等远端口令
-    const remote = await setupVaultEncryption(JSON.stringify({ version: 2, entries: [{ uuid: 'a' }], tags: [], updatedAt: 7 }), 'pwA')
+    const remote = await setupVaultEncryption(JSON.stringify({ version: 2, entries: [legalEntry('a')], tags: [], updatedAt: 7 }), 'pwA')
     await adapter.set(SECURITY_KEY, JSON.stringify(remote.security))
     await adapter.set(VAULT_KEY, JSON.stringify(remote.encrypted))
     notify!({ vault: true })

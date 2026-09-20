@@ -3,7 +3,7 @@ import {
   addTag, base64ToBytes, bytesToBase64, changeVaultPassphrase, createVault, decryptVaultWithDek, decryptVaultWithDekDetailed,
   dekFingerprint, emptyBag, encryptVaultWithDek, isEncryptedVault, isSecuritySettings, kekSourcesOf, loadSettings, openSecretBag, removeEntry,
   removeKekSource, removeTag, renameTag, reorderEntries, saveSettings, saveVault, sealSecretBag, setupVaultEncryption,
-  unlockVaultEncryption, updateEntry, withDpapiSource,
+  unlockVaultEncryption, updateEntry, validateVaultObject, withDpapiSource,
   type AppSettings, type CloudCred, type EncryptedVault, type KekSource, type KdfProfile, type OtpEntry, type SecretBagContent,
   type SecuritySettings, type StorageAdapter, type Vault, type VaultRevWatermark,
 } from '@totp/core'
@@ -94,6 +94,9 @@ export function createVueStore(
   const bagStored = computed(() => bagStoredRef.value)
 
   function replaceVault(v: Vault): void {
+    // F6：唯一采用收口——所有采纳点（initStore/解锁/同步回调/恢复/commit op 结果）经此校验，
+    // 结构非法整记录拒绝（fail-closed），杜绝畸形结构入库。锁定清空路径（createVault）恒合法。
+    validateVaultObject(v)
     vault.version = v.version
     vault.updatedAt = v.updatedAt
     // F8：rev 随内容前进（恢复旧备份换入低/无 rev 时由 saveVaultToAdapter 的「越水位推进」兜底，不会误拒）

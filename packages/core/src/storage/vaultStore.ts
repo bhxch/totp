@@ -3,17 +3,94 @@ import type { StorageAdapter } from './adapter'
 import { DEFAULT_KDF_PROFILE, isKdfProfile, type KdfProfile } from '../crypto/kdfProfile'
 import type { TagFilterMode } from '../tags/filter'
 import { createVault } from '../vault'
+import { MATCH_STRATEGIES, MAX_MATCH_PATTERN_LENGTH, MAX_MATCH_RULES, type MatchStrategy } from '../match/engine'
 
 export const VAULT_KEY = 'vault'
+
+// F6 结构校验口径（经写路径逐字段审计）：仅拒绝「任何写路径都产不出、且运行时不容忍」的形状。
+// 刻意容忍（渲染层按 INVALID 呈现，属受支持状态，见 useOtpCodes）：secret 空串/非 base32 串、
+// hotp 缺 counter、小数 counter、period<1、未知多余字段。收紧项为全部写路径收敛保证的不变量：
+// type/algorithm/digits 枚举（steam 恒 5）、matchRules 形态（数量/strategy 白名单/pattern 长度）。
+// 诚实边界：结构校验不能认证内容真实性（形状合法的恶意条目是独立信任问题，属同步认证/新鲜性范畴），
+// 仅防畸形结构注入、坏 matchRules 落库与解析期拒绝服务。
+
+function isFiniteNum(x: unknown): x is number {
+  return typeof x === 'number' && Number.isFinite(x)
+}
+
+function reject(): never {
+  throw new Error('vault corrupted')
+}
+
+function validateMatchRuleShape(r: unknown, at: string): void {
+  if (typeof r !== 'object' || r === null) reject()
+  const m = r as Record<string, unknown>
+  if (typeof m.strategy !== 'string' || !MATCH_STRATEGIES.includes(m.strategy as MatchStrategy)) reject()
+  if (typeof m.pattern !== 'string' || m.pattern.length > MAX_MATCH_PATTERN_LENGTH) reject()
+}
+
+function validateEntryShape(e: unknown, at: string): void {
+  if (typeof e !== 'object' || e === null) reject()
+  const o = e as Record<string, unknown>
+  if (typeof o.uuid !== 'string') reject()
+  if (o.type !== 'totp' && o.type !== 'hotp' && o.type !== 'steam') reject()
+  if (typeof o.issuer !== 'string' || typeof o.label !== 'string' || typeof o.secret !== 'string') reject()
+  if (o.algorithm !== 'SHA1' && o.algorithm !== 'SHA256' && o.algorithm !== 'SHA512') reject()
+  // steam 全路径收敛 digits=5（toOtpDigits 强制）；totp/hotp 6/7/8
+  if (o.digits !== 5 && o.digits !== 6 && o.digits !== 7 && o.digits !== 8) reject()
+  if (o.type === 'steam' && o.digits !== 5) reject()
+  if (!isFiniteNum(o.period) || o.period <= 0) reject() // toPositiveNumber 收敛为正数；<1 容忍（渲染 INVALID）
+  if (o.counter !== undefined && (!isFiniteNum(o.counter) || o.counter < 0)) reject() // 可缺省（hotp 可无 counter）；小数容忍
+  if (!Array.isArray(o.tagIds) || o.tagIds.some((t) => typeof t !== 'string')) reject()
+  if (!isFiniteNum(o.order) || !isFiniteNum(o.createdAt)) reject()
+  if (o.note !== undefined && typeof o.note !== 'string') reject()
+  if (o.pinned !== undefined && typeof o.pinned !== 'boolean') reject()
+  if (o.icon !== undefined) {
+    if (typeof o.icon !== 'object' || o.icon === null) reject()
+    const ic = o.icon as Record<string, unknown>
+    if (ic.kind !== 'builtin' && ic.kind !== 'stored' && ic.kind !== 'url') reject()
+    if (typeof ic.id !== 'string') reject()
+    if (ic.kind === 'url' && typeof ic.url !== 'string') reject()
+  }
+  if (o.matchRules !== undefined) {
+    if (!Array.isArray(o.matchRules)) reject()
+    if (o.matchRules.length > MAX_MATCH_RULES) reject()
+    o.matchRules.forEach((r, j) => validateMatchRuleShape(r, `${at}.matchRules[${j}]`))
+  }
+}
+
+/** F6：vault 采用面唯一结构校验（loadVault 与 ui replaceVault 收口共用）。
+ *  校验失败抛错（消息统一 'vault corrupted' 语义），调用方必须整记录拒绝、不得部分采纳。 */
+export function validateVaultObject(v: unknown): asserts v is Vault {
+  if (typeof v !== 'object' || v === null) reject()
+  const o = v as Record<string, unknown>
+  if (o.version !== 2) reject() // v1 旧盘本就被拒（spec 裁定零迁移硬失败）
+  if (!Array.isArray(o.entries) || !Array.isArray(o.tags)) reject()
+  if (!isFiniteNum(o.updatedAt)) reject()
+  if (o.rev !== undefined && (!isFiniteNum(o.rev) || o.rev < 0)) reject()
+  o.tags.forEach((t, i) => {
+    if (typeof t !== 'object' || t === null) reject()
+    const tag = t as Record<string, unknown>
+    if (typeof tag.id !== 'string' || typeof tag.name !== 'string') reject()
+  })
+  o.entries.forEach((e, i) => validateEntryShape(e, `entries[${i}]`))
+}
 
 export async function loadVault(adapter: StorageAdapter): Promise<Vault> {
   const raw = await adapter.get(VAULT_KEY)
   if (raw === null) return createVault()
+  let parsed: unknown
   try {
-    return JSON.parse(raw) as Vault
+    parsed = JSON.parse(raw)
   } catch {
     throw new Error('vault corrupted')
   }
+  try {
+    validateVaultObject(parsed)
+  } catch {
+    throw new Error('vault corrupted')
+  }
+  return parsed
 }
 
 export async function saveVault(adapter: StorageAdapter, vault: Vault): Promise<void> {

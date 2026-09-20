@@ -51,6 +51,7 @@ const STATUS_TEXT: Record<string, string> = {
   quota: '同步空间已满——建议配置云备份后关闭浏览器同步',
   error: '同步出错',
   conflict: '远端为明文库且本机已加密：已拒绝降级同步，请在任一设备上统一加密状态',
+  invalid: '远端同步数据无效：已拒绝应用（对端数据可能损坏或被篡改）',
   off: '未启用',
 }
 
@@ -121,6 +122,8 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .status.sync-error { color: var(--md-sys-color-error); }
 /* F14：拒绝降级同步属安全事件，同 error 色呈现 */
 .status.sync-conflict { color: var(--md-sys-color-error); }
+/* F6：拒绝非法远端数据属安全事件，同 error 色呈现 */
+.status.sync-invalid { color: var(--md-sys-color-error); }
 .status.sync-off { opacity: .65; }
 .warn { color: var(--md-sys-color-tertiary); font-size: var(--md-sys-typescale-body-medium); margin: 0; }
 .refresh { font-size: var(--md-sys-typescale-body-small); }

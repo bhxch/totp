@@ -8,6 +8,9 @@ import { createVueStore } from '../src/store'
 
 function flush(): Promise<void> { return new Promise((r) => setTimeout(r, 0)) }
 
+/** F6 校验后测试夹具统一使用完整合法条目（旧 {uuid:'x'} 占位缺 10 个必填字段，任何写路径都产不出） */
+const legalEntry = { uuid: 'x', type: 'totp', issuer: '', label: '', secret: '', algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 1 }
+
 describe('createVueStore', () => {
   it('initStore 后 vault/settings 从 adapter 加载；重复调用幂等', async () => {
     const adapter = createMemoryStorage()
@@ -17,6 +20,27 @@ describe('createVueStore', () => {
     expect(s.vault.updatedAt).toBe(5)
     await s.initStore() // 幂等：不重复加载
     expect(s.vault.updatedAt).toBe(5)
+  })
+
+  it('F6 initStore：结构非法的明文 vault 整记录拒绝（fail-closed，内存不装载）', async () => {
+    const adapter = createMemoryStorage()
+    await adapter.set('vault', JSON.stringify({ version: 2, entries: { uuid: 'x' }, tags: [], updatedAt: 1 }))
+    const s = createVueStore(adapter)
+    await expect(s.initStore()).rejects.toThrow('vault corrupted')
+    expect(s.vault.entries).toHaveLength(0)
+  })
+
+  it('F6 registerStorageSync：远端非法载荷整记录拒绝，内存保持原状', async () => {
+    const adapter = createMemoryStorage()
+    let notify: ((p: { vault?: boolean; settings?: boolean }) => void) | null = null
+    const s = createVueStore(adapter, { registerSync: (cb) => { notify = cb }, selfWriteSuppressMs: 60_000 })
+    await s.initStore()
+    s.registerStorageSync()
+    const before = JSON.stringify(s.vault)
+    await adapter.set('vault', JSON.stringify({ version: 2, entries: 'junk', tags: [], updatedAt: 2 }))
+    notify!({ vault: true })
+    await flush()
+    expect(JSON.stringify(s.vault)).toBe(before) // 非法载荷被拒收，内存未被污染
   })
 
   it('commit 后落盘完成（await 即持久）', async () => {
@@ -47,8 +71,8 @@ describe('createVueStore', () => {
     const s = createVueStore(adapter, { registerSync: (cb) => { notify = cb }, selfWriteSuppressMs: 60_000 })
     await s.initStore()
     s.registerStorageSync()
-    // 对端写入
-    await adapter.set('vault', JSON.stringify({ version: 2, entries: [{ uuid: 'x' }], tags: [], updatedAt: 9 }))
+    // 对端写入（完整合法条目——旧 {uuid:'x'} 占位缺 10 个必填字段，任何写路径都产不出）
+    await adapter.set('vault', JSON.stringify({ version: 2, entries: [legalEntry], tags: [], updatedAt: 9 }))
     notify!({ vault: true })
     await flush()
     expect(s.vault.updatedAt).toBe(9)
@@ -69,10 +93,10 @@ describe('createVueStore', () => {
     const adapter = createMemoryStorage()
     const s = createVueStore(adapter)
     await s.initStore()
-    const next = { version: 2 as const, entries: [{ uuid: 'r' }], tags: [], updatedAt: 42 }
+    const next = { version: 2 as const, entries: [{ ...legalEntry, uuid: 'r' }], tags: [], updatedAt: 42 }
     await s.replaceAllOp(next as unknown as Vault)
     expect(s.vault.updatedAt).toBe(42)
-    expect(JSON.parse((await adapter.get('vault'))!).entries[0]).toEqual({ uuid: 'r' })
+    expect(JSON.parse((await adapter.get('vault'))!).entries[0]).toEqual({ ...legalEntry, uuid: 'r' })
   })
 
   it('settings 同步：对端写入重读，未知字段丢弃', async () => {
@@ -207,7 +231,7 @@ describe('createVueStore', () => {
     b.registerStorageSync()
     // 模拟 background pull 落盘远端（设备 A 独立加密 pwA、rev 更高者胜）后的状态
     const remote = await setupVaultEncryption(
-      JSON.stringify({ version: 2, entries: [{ uuid: 'a' }], tags: [], updatedAt: 7 }),
+      JSON.stringify({ version: 2, entries: [{ ...legalEntry, uuid: 'a' }], tags: [], updatedAt: 7 }),
       'pwA',
     )
     await adapter.set(SECURITY_KEY, JSON.stringify(remote.security))

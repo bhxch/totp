@@ -19,6 +19,7 @@
 import {
   SECURITY_KEY, SETTINGS_KEY, VAULT_KEY,
   chunkKey, chunksToMeta, isEncryptedVault, mergeChunks, splitIntoChunks, staleChunkKeys,
+  validateVaultObject,
   type SyncChunk, type SyncMeta,
 } from '@totp/core'
 
@@ -31,8 +32,9 @@ const APPLIED_REV_KEY = 'sync:appliedRev'
 export const SYNC_STATUS_KEY = 'sync:status'
 const STATUS_KEY = SYNC_STATUS_KEY
 
-/** conflict（F14）：远端明文库遭本机已加密设备拒绝采纳——两端分叉待用户统一加密状态 */
-export type SyncStatusState = 'ok' | 'quota' | 'error' | 'conflict' | 'off'
+/** conflict（F14）：远端明文库遭本机已加密设备拒绝采纳——两端分叉待用户统一加密状态。
+ *  invalid（F6）：远端明文 payload 结构非法，落盘前被校验门拒绝（防绕过 replaceVault 校验的持久启动砖化） */
+export type SyncStatusState = 'ok' | 'quota' | 'error' | 'conflict' | 'invalid' | 'off'
 
 export interface SyncStatus {
   state: SyncStatusState
@@ -220,6 +222,18 @@ async function pullOnce(): Promise<void> {
       }
       // 远端明文且本机未加密（既有明文同步模式）：LWW 跟随移除本地 security（与 store 落盘时
       // 「盘上 security 已删则跟随明文」同态）
+      // F6 落盘前门控：本路径是唯一绕过 replaceVault 校验、把远端字节直接写进 local VAULT_KEY 的通道——
+      // 结构非法的 payload 拒绝落盘（否则配合启动期 fail-closed 校验会形成「一次同步写入→所有界面
+      // 持久启动失败且无应用内恢复」的砖化），仅推进 appliedRev 记账（防同 rev 反复触发）并置 invalid 状态。
+      // 密文分支不门控：payload 不透明且无 DEK 无法伪造，解密采纳面已由 store.replaceVault 校验覆盖。
+      try {
+        validateVaultObject(parsed)
+      } catch {
+        batch[APPLIED_REV_KEY] = meta.rev
+        await chrome.storage.local.set(batch)
+        await setSyncStatus('invalid')
+        return
+      }
       batch[VAULT_KEY] = payload
       removes.push(SECURITY_KEY)
     }

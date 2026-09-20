@@ -78,7 +78,8 @@ describe('needsPullBeforePush（纯函数）', () => {
 
 describe('pushOnce 编排（经 pushSync）', () => {
   it('meta.rev > appliedRev：先拉取应用远端，再重读本端推送（推送内容=拉取后的数据，非陈旧 local）', async () => {
-    const remotePayload = JSON.stringify({ entries: ['remote-newer'] })
+    // F6 门控后拉取应用的 payload 必须是合法 vault 形状（结构非法会被拒绝落盘并置 invalid）
+    const remotePayload = JSON.stringify({ version: 2, entries: [], tags: [], updatedAt: 2 })
     const { local, sync } = installChrome(
       {
         [VAULT_KEY]: JSON.stringify({ entries: ['stale-local'] }),
@@ -184,8 +185,9 @@ describe('pushOnce 编排（经 pushSync）', () => {
 })
 
 describe('pullSyncIfNewer（经 pullOnce）', () => {
-  it('远端较新：应用 payload 并保留本端 syncEnabled 位', async () => {
-    const remotePayload = JSON.stringify({ entries: ['from-other-device'], syncEnabled: true })
+  it('远端较新：应用合法 payload 并保留本端 syncEnabled 位', async () => {
+    const remotePayload = JSON.stringify({ version: 2, entries: [], tags: [], updatedAt: 123 })
+    const remoteSettings = JSON.stringify({ syncEnabled: true, theme: 'dark' })
     const { local } = installChrome(
       {
         [VAULT_KEY]: JSON.stringify({ entries: ['old'] }),
@@ -194,7 +196,7 @@ describe('pullSyncIfNewer（经 pullOnce）', () => {
       },
       {
         ...remotePush(remotePayload, 4),
-        'sync:settings': remotePayload,
+        'sync:settings': remoteSettings,
       },
     )
 
@@ -203,7 +205,31 @@ describe('pullSyncIfNewer（经 pullOnce）', () => {
     expect(local.data[VAULT_KEY]).toBe(remotePayload)
     expect(local.data[APPLIED_REV_KEY]).toBe(4)
     // 远端 settings 整体采用但开关位保留本端值
-    expect(JSON.parse(local.data[SETTINGS_KEY] as string)).toEqual({ entries: ['from-other-device'], syncEnabled: true })
+    expect(JSON.parse(local.data[SETTINGS_KEY] as string)).toEqual({ syncEnabled: true, theme: 'dark' })
+  })
+
+  it('F6 远端明文 payload 结构非法：拒绝落盘（vault 原样、推进 appliedRev 并置 invalid，无重拉循环）', async () => {
+    const localPlain = JSON.stringify({ version: 2, entries: [], tags: [], updatedAt: 1 })
+    const { local } = installChrome(
+      {
+        [VAULT_KEY]: localPlain,
+        [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }),
+        [APPLIED_REV_KEY]: 1,
+      },
+      // entries 为对象而非数组：能过 JSON.parse 但过不了 validateVaultObject
+      remotePush(JSON.stringify({ version: 2, entries: { uuid: 'x' }, tags: [], updatedAt: 2 }), 2),
+    )
+
+    await pullSyncIfNewer()
+
+    // 毒 payload 未落盘：vault 原样保留，仅记账 rev 防重拉循环
+    expect(local.data[VAULT_KEY]).toBe(localPlain)
+    expect(local.data[APPLIED_REV_KEY]).toBe(2)
+    expect(local.data[SYNC_STATUS_KEY]).toMatchObject({ state: 'invalid' })
+
+    await pullSyncIfNewer()
+    expect(local.data[VAULT_KEY]).toBe(localPlain)
+    expect(local.data[APPLIED_REV_KEY]).toBe(2)
   })
 
   it('F14 远端明文 + 本机已加密：拒绝降级（不覆写 vault、不删 security，推进 appliedRev 并置 conflict）', async () => {
