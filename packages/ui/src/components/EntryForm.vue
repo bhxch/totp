@@ -2,6 +2,9 @@
 import { base32Decode, getBuiltinIcons, recommendBuiltinIcon, type BuiltinIcon, type HashAlgorithm, type MatchRule, type MatchStrategy, type OtpEntry, type Tag } from '@totp/core'
 import { computed, onScopeDispose, reactive, ref, watch } from 'vue'
 import { MAX_ICON_PACK_ZIP_BYTES, fileToScaledDataUrl, importIconPackZip } from '../iconImport'
+import { blobToPixels } from '../qr/imageSource'
+import { decodeQrToUri } from '../qr/decodeQr'
+import { parseUriToEntryData } from '../otpauthFlow'
 import type { IconStore } from '../iconStore'
 import MdButton from './md/MdButton.vue'
 import MdCheckbox from './md/MdCheckbox.vue'
@@ -63,6 +66,28 @@ const showSecret = ref(false)
 
 function cleanSecret(): string {
   return form.secret.replace(/\s+/g, '').toUpperCase()
+}
+
+// ---------- 从图片识别（批② C2）：单图二维码解码 → otpauth 解析 → 覆盖 OTP 字段预填 ----------
+const qrFile = ref<HTMLInputElement | null>(null)
+
+async function onQrFile(ev: Event): Promise<void> {
+  const file = (ev.target as HTMLInputElement).files?.[0]
+  ;(ev.target as HTMLInputElement).value = '' // 允许重复选同一文件
+  if (!file) return
+  try {
+    const pixels = await blobToPixels(file)
+    const r = decodeQrToUri(pixels)
+    if ('error' in r) { error.value = r.error; return }
+    const d = parseUriToEntryData(r.uri)
+    if ('error' in d) { error.value = d.error; return }
+    // 预填（保留用户已填的 note/tagIds/icon，覆盖 OTP 字段）
+    form.type = d.data.type; form.issuer = d.data.issuer; form.label = d.data.label
+    form.secret = d.data.secret; form.algorithm = d.data.algorithm; form.digits = d.data.digits
+    form.period = d.data.period; if (d.data.counter !== undefined) form.counter = d.data.counter
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '图片读取失败'
+  }
 }
 
 // ---------- MdSelect 选项与回调（原生 select 收口；emit 值为泛化 string|number，赋值前收敛回精确联合类型） ----------
@@ -348,6 +373,8 @@ function submit() {
         :class="{ invalid: !isValidBase32 }"
       />
       <MdButton variant="text" class="secret-toggle" @click="showSecret = !showSecret">{{ showSecret ? '隐藏' : '显示' }}</MdButton>
+      <MdButton variant="text" data-test="qr-pick" @click="qrFile?.click()">从图片识别</MdButton>
+      <input ref="qrFile" type="file" accept="image/*" data-test="qr-file" class="visually-hidden" @change="onQrFile" />
     </div>
     <!-- I68：base32 实时校验的视觉反馈（不阻塞输入，submit 仍把关） -->
     <p v-if="base32Hint" class="base32-hint" role="status">{{ base32Hint }}</p>
@@ -476,6 +503,7 @@ fieldset { border: 1px solid var(--md-sys-color-outline-variant); border-radius:
 .icon-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .icon-actions .icon-url { flex: 1; min-width: 120px; }
 .icon-file, .pack-file { display: none; }
+.visually-hidden { display: none; }
 .pack-message { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-small); }
 .error { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); }
 .row { display: flex; gap: 8px; }
