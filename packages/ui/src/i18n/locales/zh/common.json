@@ -325,7 +325,8 @@
     "actionUploaded": "已上传",
     "actionDownloaded": "已下载",
     "actionConflictResolved": "冲突已解决",
-    "actionInSync": "已是最新"
+    "actionInSync": "已是最新",
+    "endpointPlaceholder": "Endpoint（可选，如 http://localhost:9000）"
   },
   "importCard": {
     "title": "导入",

@@ -585,7 +585,7 @@ const hasDuplicateNames = computed(() => {
             <!-- sessionToken/endpoint/prefix 为可选字段：undefined 以空串传 MdTextField（modelValue 要求 string），
                  展示与空串/undefined 均显示 placeholder 一致；isBlankCred 对 '' 与 undefined 同判空白 -->
             <MdTextField :model-value="d.sessionToken ?? ''" type="password" :label="t('cloudCard.stsLabel')" :placeholder="t('cloudCard.stsLabel')" autocomplete="new-password" @update:model-value="d.sessionToken = $event" />
-            <MdTextField :model-value="d.endpoint ?? ''" label="Endpoint" placeholder="Endpoint（可选，如 http://localhost:9000）" autocomplete="off" @update:model-value="d.endpoint = $event" />
+            <MdTextField :model-value="d.endpoint ?? ''" label="Endpoint" :placeholder="t('cloudCard.endpointPlaceholder')" autocomplete="off" @update:model-value="d.endpoint = $event" />
             <!-- F11：同 WebDAV，非本机 http endpoint 明文警告（缺省 endpoint 为 AWS https 域名，不触发） -->
             <p v-if="hasPlaintextUrl(d)" class="warn" role="alert">{{ t('cloudCard.s3PlaintextWarn') }}</p>
             <MdTextField :model-value="d.prefix ?? ''" :label="t('cloudCard.prefixLabel')" :placeholder="t('cloudCard.prefixLabel')" autocomplete="off" @update:model-value="d.prefix = $event" />
@@ -610,7 +610,7 @@ const hasDuplicateNames = computed(() => {
             <MdTextField v-model="d.accessToken" type="password" :label="t('cloudCard.onedriveTokenLabel')" :placeholder="t('cloudCard.onedriveTokenLabel')" autocomplete="new-password" />
           </div>
           <!-- v-if="d" 兼作类型窄化：v-for 单元素 d 在守卫链外无 undefined 窄化，vue-tsc 会报 TS18048 -->
-          <MdTextField v-if="d" :model-value="d.objectPath ?? ''" label="目标文件路径" :placeholder="DEFAULT_OBJECT_PATH" :aria-label="t('cloudCard.objectPathLabel')" :disabled="busy" @update:model-value="d.objectPath = $event.trim()" />
+          <MdTextField v-if="d" :model-value="d.objectPath ?? ''" :label="t('cloudCard.objectPathLabel')" :placeholder="DEFAULT_OBJECT_PATH" :aria-label="t('cloudCard.objectPathLabel')" :disabled="busy" @update:model-value="d.objectPath = $event.trim()" />
         </template>
       </template>
       <span v-if="statusFor(s.id)" class="target-status">{{ statusFor(s.id) }}</span>
@@ -639,11 +639,11 @@ const hasDuplicateNames = computed(() => {
       <p class="hint">{{ t('cloudCard.autoHint') }}</p>
       <div class="auto-row">
         <div class="auto-item">
-          <MdSwitch :model-value="autoPrefs.onChange" aria-label="变更后自动同步" @update:model-value="onAutoOnChange" />
+          <MdSwitch :model-value="autoPrefs.onChange" :aria-label="t('cloudCard.autoOnChange')" @update:model-value="onAutoOnChange" />
           <span>{{ t('cloudCard.autoOnChange') }}</span>
         </div>
         <div class="auto-item">
-          <MdSwitch :model-value="autoPrefs.onInterval" aria-label="定时自动同步" @update:model-value="onAutoIntervalToggle" />
+          <MdSwitch :model-value="autoPrefs.onInterval" :aria-label="t('cloudCard.autoInterval')" @update:model-value="onAutoIntervalToggle" />
           <span>{{ t('cloudCard.autoInterval') }}</span>
         </div>
         <div class="auto-item">

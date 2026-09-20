@@ -325,7 +325,8 @@
     "actionUploaded": "Uploaded",
     "actionDownloaded": "Downloaded",
     "actionConflictResolved": "Conflict resolved",
-    "actionInSync": "Up to date"
+    "actionInSync": "Up to date",
+    "endpointPlaceholder": "Endpoint (optional, e.g. http://localhost:9000)"
   },
   "importCard": {
     "title": "Import",
