@@ -30,6 +30,33 @@ export interface EncryptedVault { v: 1; enc: true; dataNonce: string; ciphertext
 
 export const SECURITY_KEY = 'security'
 
+// F8：vault 密文的记录身份标签，作为 AES-GCM AAD 绑定进认证标签。确定性常量（与单次 nonce 无关，
+// 解密方可原样重建），防跨记录密文移植/混淆——非本记录身份的密文在 GCM 校验层即失败。
+// 新鲜性（防历史密文回滚）不靠 AAD，由密文明文内 rev + 存储侧水位键（VAULT_REV_WATERMARK_KEY）承担；
+// 备份信封（envelope）属独立发现，此处不涉及。
+export const VAULT_RECORD_AAD = 'totp-vault:v1'
+
+// F8：vault 新鲜性水位键（与本库同 adapter 的独立存储键，UI store 在采纳/保存成功后推进）。
+// 诚实边界：水位与密文同存一处，能整体回卷存储的攻击者同样能回卷水位——本防线只覆盖
+// 「部分状态回放」（如仅回放 VAULT_KEY 密文而水位键留存）与朴素重放；完整新鲜性需 adapter 之外的带外状态。
+export const VAULT_REV_WATERMARK_KEY = 'vault_rev_watermark'
+
+export interface VaultRevWatermark { v: 1; /** DEK 指纹（谱系标识）：双端独立加密/轮换后的新谱系 rev 不可比 */ dek: string; rev: number }
+
+/** F8 回滚拒绝：解密产物 rev 低于同谱系本地水位时抛出（拒绝静默采纳，区别于解密失败/损坏类错误） */
+export class VaultRollbackError extends Error {
+  constructor() {
+    super('vault 回滚被拒绝：密文 rev 低于本地水位')
+    this.name = 'VaultRollbackError'
+  }
+}
+
+/** DEK 指纹（水位谱系标识）：SHA-256(DEK) 前 16B base64。单向派生，不泄漏 DEK 本体 */
+export async function dekFingerprint(dek: Uint8Array): Promise<string> {
+  const h = new Uint8Array(await crypto.subtle.digest('SHA-256', dek as BufferSource))
+  return bytesToBase64(h.subarray(0, 16))
+}
+
 // 钳制 security 自带的 KDF 参数：恶意数据可声明超大/超小 m/t/p 使 argon2id 资源耗尽或被旁路；
 // 边界与 backup/envelope 共用 KDF_DECRYPT_CLAMP（下限=OWASP 最低推荐；上限=已发布档位最大展开值，
 // 与写侧同源防漂移），超限在 deriveKek（口令验证）之前按结构非法拒绝（F9：旧上限 2**21/t=10/p=8
@@ -125,15 +152,39 @@ export async function unlockVaultEncryption(security: SecuritySettings, password
 export async function encryptVaultWithDek(dek: Uint8Array, vaultJson: string): Promise<EncryptedVault> {
   if (dek.length !== 32) throw new Error('invalid dek')
   const dataNonce = randomBytes(12)
-  const ciphertext = await aesGcmEncrypt(dek, new TextEncoder().encode(vaultJson), dataNonce)
+  // F8：AAD 绑定记录身份标签（确定性，解密方可重建）；nonce 仍独立随机，不进 AAD
+  const ciphertext = await aesGcmEncrypt(
+    dek, new TextEncoder().encode(vaultJson), dataNonce, new TextEncoder().encode(VAULT_RECORD_AAD),
+  )
   return { v: 1, enc: true, dataNonce: bytesToBase64(dataNonce), ciphertext: bytesToBase64(ciphertext) }
 }
 
-export async function decryptVaultWithDek(dek: Uint8Array, enc: EncryptedVault): Promise<string> {
+export interface VaultDecryptResult {
+  json: string
+  /** true=旧格式（无 AAD）历史密文经回退解出。写路径恒全量重加密（ui store saveVaultToAdapter），
+   *  故 legacy 密文在下次保存时自动迁移为 AAD 绑定，无需专门迁移器；此标记仅供测试/诊断 */
+  legacy: boolean
+}
+
+/** 详细解密：优先按 AAD 绑定解（新格式）；失败回退无 AAD 解（旧格式历史密文），并返回是否 legacy。
+ *  GCM 认证保证旧格式密文不可能被 AAD 误解（除 2^-128 概率），回退不削弱绑定 */
+export async function decryptVaultWithDekDetailed(dek: Uint8Array, enc: EncryptedVault): Promise<VaultDecryptResult> {
   if (dek.length !== 32) throw new Error('invalid dek')
   if (!isEncryptedVault(enc)) throw new Error('invalid encrypted vault')
-  const pt = await aesGcmDecrypt(dek, base64ToBytes(enc.ciphertext), base64ToBytes(enc.dataNonce))
-  return new TextDecoder().decode(pt)
+  const data = base64ToBytes(enc.ciphertext)
+  const nonce = base64ToBytes(enc.dataNonce)
+  const aad = new TextEncoder().encode(VAULT_RECORD_AAD)
+  try {
+    const pt = await aesGcmDecrypt(dek, data, nonce, aad)
+    return { json: new TextDecoder().decode(pt), legacy: false }
+  } catch {
+    const pt = await aesGcmDecrypt(dek, data, nonce)
+    return { json: new TextDecoder().decode(pt), legacy: true }
+  }
+}
+
+export async function decryptVaultWithDek(dek: Uint8Array, enc: EncryptedVault): Promise<string> {
+  return (await decryptVaultWithDekDetailed(dek, enc)).json
 }
 
 export async function changeVaultPassphrase(
@@ -150,7 +201,9 @@ export async function changeVaultPassphrase(
   const m = profile ? KDF_PROFILES[profile].m : security.kdf.m
   const t = profile ? KDF_PROFILES[profile].t : security.kdf.t
   const p = profile ? KDF_PROFILES[profile].p : security.kdf.p
-  // 被动轮换（设计 §2）：rotateDek=true 时重生成 DEK 作被包裹对象并返回，调用方须全库重加密 + 保管区重封
+  // 被动轮换（设计 §2）：rotateDek=true 时重生成 DEK 作被包裹对象并返回，调用方须全库重加密 + 保管区重封。
+  // F8 裁定：本函数 rotateDek 缺省保持 false（不轮换）——改密默认轮换会放大 F12 锁死窗口（旧凭证源全部失效）；
+  // 重放窗口收窄由 AAD 绑定（VAULT_RECORD_AAD）+ rev 水位（VAULT_REV_WATERMARK_KEY）承担，不动轮换默认值
   const nextDek = opts.rotateDek ? randomBytes(32) : dek
   // 仅重包裹 DEK：salt/wrapNonce 全新随机（数据无需重加密）
   const salt = randomBytes(16)

@@ -36,4 +36,7 @@ export interface Vault {
   entries: OtpEntry[]
   tags: Tag[]
   updatedAt: number
+  /** F8 单调版本号（新鲜性水位）：加密写路径推进、随密文明文落盘，采纳时与存储侧水位键比对防回滚。
+   *  旧数据缺省视为 0；明文库同样携带以保持谱系连续（明文形态下无防篡改意义） */
+  rev?: number
 }

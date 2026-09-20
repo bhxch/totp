@@ -1,10 +1,11 @@
 import {
-  DEFAULT_SETTINGS, SECRET_BAG_KEY, SECURITY_KEY, VAULT_KEY, addEntry, addPrfSource, addTag, base64ToBytes, bytesToBase64,
-  changeVaultPassphrase, createVault, decryptVaultWithDek, emptyBag, encryptVaultWithDek, isEncryptedVault, kekSourcesOf,
-  loadSettings, openSecretBag, removeEntry, removeKekSource, removeTag, renameTag, reorderEntries, saveSettings, saveVault,
-  sealSecretBag, setupVaultEncryption, unlockVaultEncryption, updateEntry, withDpapiSource,
-  type AppSettings, type CloudCred, type KekSource, type KdfProfile, type OtpEntry, type SecretBagContent,
-  type SecuritySettings, type StorageAdapter, type Vault,
+  DEFAULT_SETTINGS, SECRET_BAG_KEY, SECURITY_KEY, VAULT_KEY, VAULT_REV_WATERMARK_KEY, VaultRollbackError, addEntry, addPrfSource,
+  addTag, base64ToBytes, bytesToBase64, changeVaultPassphrase, createVault, decryptVaultWithDek, decryptVaultWithDekDetailed,
+  dekFingerprint, emptyBag, encryptVaultWithDek, isEncryptedVault, kekSourcesOf, loadSettings, openSecretBag, removeEntry,
+  removeKekSource, removeTag, renameTag, reorderEntries, saveSettings, saveVault, sealSecretBag, setupVaultEncryption,
+  unlockVaultEncryption, updateEntry, withDpapiSource,
+  type AppSettings, type CloudCred, type EncryptedVault, type KekSource, type KdfProfile, type OtpEntry, type SecretBagContent,
+  type SecuritySettings, type StorageAdapter, type Vault, type VaultRevWatermark,
 } from '@totp/core'
 import { computed, reactive, ref, toRaw, type Ref } from 'vue'
 
@@ -84,6 +85,8 @@ export function createVueStore(
   function replaceVault(v: Vault): void {
     vault.version = v.version
     vault.updatedAt = v.updatedAt
+    // F8：rev 随内容前进（恢复旧备份换入低/无 rev 时由 saveVaultToAdapter 的「越水位推进」兜底，不会误拒）
+    vault.rev = v.rev
     vault.entries.splice(0, vault.entries.length, ...v.entries)
     vault.tags.splice(0, vault.tags.length, ...v.tags)
     // backupSecret 字段已随 T2 从 Vault 模型删除（保管区接管）：源 JSON 里的遗留字段在此自然丢弃
@@ -151,6 +154,52 @@ export function createVueStore(
     }
   }
 
+  // ---- F8 vault 新鲜性水位（防密文回滚）----
+  // 诚实边界：水位键与 vault 同存于同一 adapter，能整体回卷存储的攻击者同样能回卷水位——本防线只覆盖
+  // 「部分状态回放」（如仅回放 VAULT_KEY 密文而水位键留存）与朴素重放；完整新鲜性需 adapter 之外的带外状态。
+  async function readVaultRevWatermark(): Promise<VaultRevWatermark | null> {
+    const raw = await adapter.get(VAULT_REV_WATERMARK_KEY)
+    if (raw === null) return null
+    try {
+      const p = JSON.parse(raw) as Record<string, unknown>
+      if (p['v'] !== 1 || typeof p['dek'] !== 'string') return null
+      const rev = p['rev']
+      if (typeof rev !== 'number' || !Number.isInteger(rev) || rev < 0) return null
+      return { v: 1, dek: p['dek'], rev }
+    } catch {
+      return null
+    }
+  }
+
+  /** 采纳前守卫：同 DEK 谱系下密文 rev 低于本地水位 → 抛 VaultRollbackError（拒绝静默采纳）。
+   *  谱系不同（双端独立加密/换口令轮换后的新 DEK）rev 不可比，跳过守卫以维持既有「远端者胜」语义。
+   *  rev 缺失/非法按 0 计（旧格式密文重放同样受检）。
+   *  合法恢复路径：应用内恢复/导入走 replaceAllOp→commit，写入 rev 恒超水位（见 saveVaultToAdapter），无需降水位；
+   *  仅 adapter 层整库回灌旧密文这类显式外部操作需同时删除 vault_rev_watermark 键（或整库清空重置）解除拒绝 */
+  async function guardVaultRev(dek: Uint8Array, loaded: Vault): Promise<void> {
+    const wm = await readVaultRevWatermark()
+    if (!wm || wm.dek !== (await dekFingerprint(dek))) return
+    const rev = typeof loaded.rev === 'number' && Number.isInteger(loaded.rev) && loaded.rev >= 0 ? loaded.rev : 0
+    if (rev < wm.rev) throw new VaultRollbackError()
+  }
+
+  /** 解密 + 回滚守卫 + 解析（三处采纳点共用）：守卫通过才返回，回滚时抛 VaultRollbackError 且不产出可采纳内容 */
+  async function decryptGuardedVault(dek: Uint8Array, enc: EncryptedVault): Promise<Vault> {
+    const { json } = await decryptVaultWithDekDetailed(dek, enc)
+    const loaded = JSON.parse(json) as Vault
+    await guardVaultRev(dek, loaded)
+    return loaded
+  }
+
+  /** 采纳/保存成功后推进水位（只进不退；谱系不同则整条覆盖为新谱系起点） */
+  async function advanceVaultRevWatermark(dek: Uint8Array, loaded: Vault): Promise<void> {
+    const rev = typeof loaded.rev === 'number' && Number.isInteger(loaded.rev) && loaded.rev >= 0 ? loaded.rev : 0
+    const fp = await dekFingerprint(dek)
+    const wm = await readVaultRevWatermark()
+    if (wm && wm.dek === fp && wm.rev >= rev) return
+    await adapter.set(VAULT_REV_WATERMARK_KEY, JSON.stringify({ v: 1, dek: fp, rev } satisfies VaultRevWatermark))
+  }
+
   async function initStore(): Promise<void> {
     if (inited) return
     const [parsed, s, sec] = await Promise.all([readRawVault(), loadSettings(adapter), readSecurity()])
@@ -161,9 +210,10 @@ export function createVueStore(
         // 同进程本窗口已持有 DEK（如 unlock 后重建 store / 刷新场景）：先完成可能失败的副步骤（保管区装载），
         // 再一次性前进内存态（replaceVault+退出锁定）——与 applyDekAndUnlock 同序，消除「锁定但持明文+DEK」瞬态
         const dek = dekByWin.get(windowId)!
-        const loaded = JSON.parse(await decryptVaultWithDek(dek, parsed)) as Vault
+        const loaded = await decryptGuardedVault(dek, parsed) // F8：回滚密文在此拒绝（抛 VaultRollbackError）
         advanceBag(await loadBagFromDisk(dek)) // 解锁恢复同步装载保管区（口令+凭据）
         replaceVault(loaded)
+        await advanceVaultRevWatermark(dek, loaded)
         lockedByWin.set(windowId, false)
         currentLockedRef().value = false
       } else {
@@ -260,8 +310,18 @@ export function createVueStore(
       }
     }
     if (security.value && dekByWin.get(windowId)) {
-      const encrypted = await encryptVaultWithDek(dekByWin.get(windowId)!, JSON.stringify(vault))
+      // F8：加密写推进单调 rev（进密文明文）且必须越过本地水位——覆盖「恢复旧备份（replaceAllOp 换入低/无 rev
+      // 内容）后继续写」场景：新记录 rev 若低于水位会被采纳守卫误拒。记录写成功后再推进水位键（先记录后水位：
+      // 中途失败只会让水位暂时落后——宁可漏检一次，不可误拒未回放的合法记录）
+      const dek = dekByWin.get(windowId)!
+      const fp = await dekFingerprint(dek)
+      const wm = await readVaultRevWatermark()
+      const floor = wm && wm.dek === fp ? wm.rev : 0
+      const cur = typeof vault.rev === 'number' && Number.isInteger(vault.rev) && vault.rev >= 0 ? vault.rev : 0
+      vault.rev = Math.max(cur, floor) + 1
+      const encrypted = await encryptVaultWithDek(dek, JSON.stringify(vault))
       await adapter.set(VAULT_KEY, JSON.stringify(encrypted))
+      await adapter.set(VAULT_REV_WATERMARK_KEY, JSON.stringify({ v: 1, dek: fp, rev: vault.rev } satisfies VaultRevWatermark))
     } else {
       await saveVault(adapter, toRaw(vault) as Vault)
     }
@@ -301,16 +361,20 @@ export function createVueStore(
               // 双端独立加密防线（浏览器同步）：本窗口 DEK 解不开远端密文 → 远端 rev 高者胜，
               // 采用远端状态：丢弃本窗口 DEK、转锁定、security 缓存刷新为盘上（远端）值，等待输入远端口令。
               // 不拦截则本窗口后续写 op 会以本端 DEK 加密 + 远端 security 落盘 → 无人可解的幽灵密文
-              let remoteJson: string
+              let remoteVault: Vault
               try {
-                remoteJson = await decryptVaultWithDek(dekByWin.get(windowId)!, parsed)
-              } catch {
+                remoteVault = await decryptGuardedVault(dekByWin.get(windowId)!, parsed)
+              } catch (e) {
+                // F8：同谱系回滚密文（rev 低于水位）→ 拒绝采纳且不上锁，保留本地较新内存态
+                // （本地 rev ≥ 水位，下次自愈写会覆盖盘上旧密文）；其余按不可解处理（转锁定等远端口令）
+                if (e instanceof VaultRollbackError) return
                 lock()
                 security.value = await readSecurity().catch(() => null)
                 return
               }
               // 持有 DEK 才解密填充（远端未轮换时旧 DEK 仍可解；默认轮换后旧 DEK 解不开 → 上方 catch 转锁定）
-              replaceVault(JSON.parse(remoteJson) as Vault)
+              replaceVault(remoteVault)
+              await advanceVaultRevWatermark(dekByWin.get(windowId)!, remoteVault)
               // 远端覆盖后必须强制锁定：注释承诺了「丢弃本端 DEK、转锁定」但未执行，
               // 否则下次 commit 会以本端 DEK 加密 + 远端 security 落盘（仍属幽灵密文）。
               // security 缓存同步重读为盘上值，与下次 unlock 的口令入口对齐
@@ -421,7 +485,7 @@ export function createVueStore(
     const parsed = await readRawVault()
     let loaded: Vault
     if (isEncryptedVault(parsed)) {
-      loaded = JSON.parse(await decryptVaultWithDek(key, parsed)) as Vault
+      loaded = await decryptGuardedVault(key, parsed) // F8：回滚密文在此拒绝（抛 VaultRollbackError，锁定态不前进）
     } else {
       loaded = parsed !== null ? (parsed as Vault) : createVault()
     }
@@ -429,6 +493,7 @@ export function createVueStore(
     // （bag/会话口令 → vault → 持 DEK → 退出锁定）：消除「locked=true 但内存持明文+DEK」瞬态窗口（T7 审查 R1）
     advanceBag(await loadBagFromDisk(key)) // 解锁自动装载保管区（password 与 unlockWithDek/PRF 两条路径均汇于此）
     replaceVault(loaded)
+    await advanceVaultRevWatermark(key, loaded)
     dekByWin.set(windowId, key)
     lockedByWin.set(windowId, false)
     currentLockedRef().value = false

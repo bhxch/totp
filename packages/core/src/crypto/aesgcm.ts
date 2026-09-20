@@ -44,17 +44,27 @@ async function importAesKey(keyBytes: Uint8Array): Promise<CryptoKey> {
   return crypto.subtle.importKey('raw', keyBytes as BufferSource, 'AES-GCM', false, ['encrypt', 'decrypt'])
 }
 
-export async function aesGcmEncrypt(keyBytes: Uint8Array, plaintext: Uint8Array, nonce: Uint8Array): Promise<Uint8Array> {
+// F8：additionalData 可选参数（undefined 时与无 AAD 完全同字节——WebIDL 字典成员 undefined 视为缺省，
+// 此处仍显式展开以杜绝运行时差异）；既有调用方不传即保持原行为
+export async function aesGcmEncrypt(
+  keyBytes: Uint8Array, plaintext: Uint8Array, nonce: Uint8Array, additionalData?: Uint8Array,
+): Promise<Uint8Array> {
   if (nonce.length !== 12) throw new Error('nonce must be 12 bytes')
   const key = await importAesKey(keyBytes)
-  return new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce as BufferSource }, key, plaintext as BufferSource))
+  const params: AesGcmParams = { name: 'AES-GCM', iv: nonce as BufferSource }
+  if (additionalData) params.additionalData = additionalData as BufferSource
+  return new Uint8Array(await crypto.subtle.encrypt(params, key, plaintext as BufferSource))
 }
 
-export async function aesGcmDecrypt(keyBytes: Uint8Array, data: Uint8Array, nonce: Uint8Array): Promise<Uint8Array> {
+export async function aesGcmDecrypt(
+  keyBytes: Uint8Array, data: Uint8Array, nonce: Uint8Array, additionalData?: Uint8Array,
+): Promise<Uint8Array> {
   if (nonce.length !== 12) throw new Error('nonce must be 12 bytes')
   // AES-GCM 16B 认证标签：密文若不足 16B 即不可能含完整 tag，subtle 在底层可能返回不可预期结果；
   // 显式抛错让上层统一捕获「bad password or corrupted」语义，不向调用方泄漏底层细节。
   if (data.length < 16) throw new Error('ciphertext too short')
   const key = await importAesKey(keyBytes)
-  return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: nonce as BufferSource }, key, data as BufferSource))
+  const params: AesGcmParams = { name: 'AES-GCM', iv: nonce as BufferSource }
+  if (additionalData) params.additionalData = additionalData as BufferSource
+  return new Uint8Array(await crypto.subtle.decrypt(params, key, data as BufferSource))
 }
