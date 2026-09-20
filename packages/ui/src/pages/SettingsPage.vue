@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { AppSettings } from '@totp/core'
+import { useI18n } from 'vue-i18n'
 import type { SecurityPlatform } from '../components/securityPlatform'
 import MdCard from '../components/md/MdCard.vue'
 import MdSegmentedButton from '../components/md/MdSegmentedButton.vue'
@@ -25,14 +26,20 @@ const props = withDefaults(defineProps<{
 // （set 内部已写 settings + localStorage 镜像 + commitSettings，无需页面重复处理）
 const { mode, color, resolvedMode } = useTheme(props.store)
 
-const MODE_OPTIONS = [
-  { value: 'auto', label: '自动' },
-  { value: 'light', label: '浅色' },
-  { value: 'dark', label: '深色' },
-]
+// D2 抽串：设置页文案走 i18n（settingsPage.*）；选项表为 computed——locale 切换后文案联动
+const { t } = useI18n()
+
+const MODE_OPTIONS = computed(() => [
+  { value: 'auto', label: t('settingsPage.modeAuto') },
+  { value: 'light', label: t('settingsPage.modeLight') },
+  { value: 'dark', label: t('settingsPage.modeDark') },
+])
 
 /** 当前生效模式文案（resolvedMode 由 useTheme 按 auto+系统偏好解析） */
-const resolvedLabel = computed(() => (resolvedMode.value === 'dark' ? '深色' : '浅色'))
+const resolvedLabel = computed(() => (resolvedMode.value === 'dark' ? t('settingsPage.modeDark') : t('settingsPage.modeLight')))
+
+/** 色板显示名（D2）：palettes.json 的 zh label 为数据文件不在 i18n 侧，按 id 映射到 settingsPage.palette.* */
+const paletteLabel = (id: string): string => t(`settingsPage.palette.${id}`)
 
 // Task 6 审查裁定：设置项直写 settings + commitSettings，不做「条件否决 v-model」
 type BoolKey = 'blurHideEnabled' | 'urlFilterEnabled' | 'clipboardClearEnabled' | 'rememberTagFilter'
@@ -42,11 +49,11 @@ async function setBool(key: BoolKey, v: boolean): Promise<void> {
 }
 
 // ---------- 语言选择（D1）：MdSelect emit 值为泛化 string|number，赋值前收敛回 AppSettings['locale'] ----------
-const LOCALE_OPTIONS: Array<{ value: AppSettings['locale']; label: string }> = [
-  { value: 'auto', label: '跟随浏览器' },
-  { value: 'zh', label: '中文' },
-  { value: 'en', label: 'English' },
-]
+const LOCALE_OPTIONS = computed<Array<{ value: AppSettings['locale']; label: string }>>(() => [
+  { value: 'auto', label: t('settingsPage.localeAuto') },
+  { value: 'zh', label: t('settingsPage.localeZh') },
+  { value: 'en', label: t('settingsPage.localeEn') },
+])
 /** 语言切换：写 settings.locale 后 commitSettings 落盘；i18n locale 由 createAppI18n 的 watch 联动 */
 async function setLocale(v: string | number): Promise<void> {
   props.store.settings.locale = v as AppSettings['locale']
@@ -77,17 +84,17 @@ const hasGeneralItems = computed(() => true)
 <template>
   <section class="page">
     <MdCard class="block">
-      <template #header>外观</template>
+      <template #header>{{ t('settingsPage.appearance') }}</template>
       <div class="row">
-        <span class="row-label">主题模式</span>
+        <span class="row-label">{{ t('settingsPage.themeMode') }}</span>
         <MdSegmentedButton v-model="mode" :options="MODE_OPTIONS" />
       </div>
       <div class="row">
-        <span class="row-label">主题色</span>
-        <div class="dots" role="group" aria-label="主题色">
+        <span class="row-label">{{ t('settingsPage.themeColor') }}</span>
+        <div class="dots" role="group" :aria-label="t('settingsPage.themeColor')">
           <button v-for="p in THEME_PALETTES" :key="p.id" type="button" class="theme-dot md-swatch"
             :class="{ 'theme-dot--selected': color === p.id }" :style="{ background: p.hex }"
-            :data-color-id="p.id" :title="p.label" :aria-label="p.label" :aria-pressed="color === p.id"
+            :data-color-id="p.id" :title="paletteLabel(p.id)" :aria-label="paletteLabel(p.id)" :aria-pressed="color === p.id"
             @click="color = p.id"
           >
             <span v-if="color === p.id" class="theme-dot__check" aria-hidden="true">✓</span>
@@ -95,26 +102,26 @@ const hasGeneralItems = computed(() => true)
         </div>
       </div>
       <div class="row">
-        <span class="row-label">纯黑（AMOLED）<span class="row-hint">暗色模式下生效</span></span>
+        <span class="row-label">{{ t('settingsPage.amoled') }}<span class="row-hint">{{ t('settingsPage.amoledHint') }}</span></span>
         <MdSwitch
           class="set-theme-contrast" :model-value="store.settings.themeContrast === 'amoled'"
           @update:model-value="setThemeContrast"
         />
       </div>
       <div class="row">
-        <span class="row-label">语言</span>
+        <span class="row-label">{{ t('settingsPage.language') }}</span>
         <MdSelect
-          class="set-locale" label="界面语言" aria-label="界面语言"
+          class="set-locale" :label="t('settingsPage.uiLanguage')" :aria-label="t('settingsPage.uiLanguage')"
           :model-value="store.settings.locale" :options="LOCALE_OPTIONS" @update:model-value="setLocale"
         />
       </div>
-      <p class="theme-resolved">当前生效：{{ resolvedLabel }}{{ mode === 'auto' ? '（跟随系统）' : '' }}</p>
+      <p class="theme-resolved">{{ t('settingsPage.resolved', { label: resolvedLabel, suffix: mode === 'auto' ? t('settingsPage.autoSuffix') : '' }) }}</p>
     </MdCard>
 
     <MdCard v-if="hasGeneralItems" class="block">
-      <template #header>通用</template>
+      <template #header>{{ t('settingsPage.general') }}</template>
       <div v-if="showDesktop" class="row">
-        <span class="row-label">失焦自动隐藏</span>
+        <span class="row-label">{{ t('settingsPage.blurHide') }}</span>
         <MdSwitch
           class="set-blur-hide" :model-value="store.settings.blurHideEnabled"
           @update:model-value="setBool('blurHideEnabled', $event)"
@@ -122,29 +129,29 @@ const hasGeneralItems = computed(() => true)
       </div>
       <template v-if="showExtension">
         <div class="row">
-          <span class="row-label">URL 过滤</span>
+          <span class="row-label">{{ t('settingsPage.urlFilter') }}</span>
           <MdSwitch
             class="set-url-filter" :model-value="store.settings.urlFilterEnabled"
             @update:model-value="setBool('urlFilterEnabled', $event)"
           />
         </div>
         <div class="row">
-          <span class="row-label">弹窗关闭延迟（毫秒）</span>
+          <span class="row-label">{{ t('settingsPage.popupDelay') }}</span>
           <MdTextField
-            class="set-popup-delay" label="弹窗关闭延迟（毫秒）" type="number"
+            class="set-popup-delay" :label="t('settingsPage.popupDelay')" type="number"
             :model-value="String(store.settings.popupCloseDelayMs)" @update:model-value="setPopupDelay"
           />
         </div>
       </template>
       <div v-if="hasClipboardClear" class="row">
-        <span class="row-label">复制后自动清除剪贴板</span>
+        <span class="row-label">{{ t('settingsPage.clipboardClear') }}</span>
         <MdSwitch
           class="set-clipboard-clear" :model-value="store.settings.clipboardClearEnabled"
           @update:model-value="setBool('clipboardClearEnabled', $event)"
         />
       </div>
       <div class="row">
-        <span class="row-label">记住标签筛选</span>
+        <span class="row-label">{{ t('settingsPage.rememberTagFilter') }}</span>
         <MdSwitch
           class="set-remember-tag-filter" :model-value="store.settings.rememberTagFilter"
           @update:model-value="setBool('rememberTagFilter', $event)"

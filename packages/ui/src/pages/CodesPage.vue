@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { filterByTags, getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useOtpCodes } from '../composables/useOtpCodes'
 import { iconView, type IconStore } from '../iconStore'
 import type { VueStore } from '../store'
@@ -32,6 +33,9 @@ const props = withDefaults(defineProps<{
 }>(), { icons: null, saveImage: undefined })
 
 const emit = defineEmits<{ copy: [code: string]; 'open-tags': [] }>()
+
+// D2 抽串：页面文案走 i18n（codesPage.*）
+const { t } = useI18n()
 
 const query = ref('')
 /** I49：搜 secret 开关（默认关闭，开启后过滤会包含 secret 串匹配；用户主动启用避免密钥常驻列表） */
@@ -232,9 +236,9 @@ function openSheet() {
     <!-- 条目卡走 MdCard outlined(审查 F3:独立 .card 的 outline-variant/10px 与 M3 标尺双标) -->
     <MdCard class="codes-card">
       <div class="card-head">
-        <h2>条目（{{ store.vault.entries.length }}）</h2>
+        <h2>{{ t('codesPage.entryCount', { count: store.vault.entries.length }) }}</h2>
         <MdButton v-if="sorted.length > 0" data-test="select-mode" variant="text" @click="toggleSelectMode">
-          {{ selecting ? '取消选择' : '选择' }}
+          {{ selecting ? t('codesPage.cancelSelect') : t('codesPage.select') }}
         </MdButton>
       </div>
       <SearchBar v-model="query" v-model:search-secret="searchSecret" />
@@ -245,15 +249,15 @@ function openSheet() {
           :tags="store.vault.tags" v-model:selected-ids="selectedTagIds"
           :mode="tagMode" @update:mode="setTagMode"
         />
-        <MdChip label="管理标签" @click="tagsOpen = true; emit('open-tags')" />
+        <MdChip :label="t('codesPage.manageTags')" @click="tagsOpen = true; emit('open-tags')" />
       </div>
-      <div v-if="sorted.length === 0" class="empty">暂无条目，点击右下「添加」录入。</div>
-      <div v-else-if="visible.length === 0" class="empty">无匹配条目</div>
+      <div v-if="sorted.length === 0" class="empty">{{ t('codesPage.empty') }}</div>
+      <div v-else-if="visible.length === 0" class="empty">{{ t('codesPage.noMatch') }}</div>
       <div v-for="e in visible" :key="e.uuid" class="row" @click="closeContextMenu">
         <!-- 选择模式：行首勾选框（OtpListItem 之外，点击不触发条目复制） -->
         <MdCheckbox
           v-if="selecting" class="row-check" :model-value="selected.has(e.uuid)"
-          :aria-label="`选择 ${e.issuer} ${e.label}`"
+          :aria-label="t('codesPage.selectEntry', { issuer: e.issuer, label: e.label })"
           @update:model-value="(v) => toggleSelected(e.uuid, v)"
         />
         <OtpListItem
@@ -267,23 +271,23 @@ function openSheet() {
         />
         <div class="ops">
           <template v-if="confirmingDelete === e.uuid">
-            <MdButton danger @click.stop="askRemove(e.uuid)">确认删除？</MdButton>
+            <MdButton danger @click.stop="askRemove(e.uuid)">{{ t('codesPage.confirmDelete') }}</MdButton>
           </template>
           <template v-else>
-            <MdIconButton :title="'编辑 ' + e.label" :aria-label="'编辑 ' + e.label" @click.stop="editing = e; creating = false">编辑</MdIconButton>
-            <MdIconButton :title="'删除 ' + e.label" :aria-label="'删除 ' + e.label" @click.stop="askRemove(e.uuid)">删除</MdIconButton>
+            <MdIconButton :title="t('codesPage.editEntry', { label: e.label })" :aria-label="t('codesPage.editEntry', { label: e.label })" @click.stop="editing = e; creating = false">{{ t('codesPage.edit') }}</MdIconButton>
+            <MdIconButton :title="t('codesPage.deleteEntry', { label: e.label })" :aria-label="t('codesPage.deleteEntry', { label: e.label })" @click.stop="askRemove(e.uuid)">{{ t('codesPage.delete') }}</MdIconButton>
           </template>
         </div>
       </div>
     </MdCard>
 
     <!-- 新建入口：MdFab 替代原「＋ 添加」text button，触发同一 creating 态 -->
-    <MdFab class="page-fab" aria-label="添加条目" title="添加条目" @click="creating = true; editing = null">＋</MdFab>
+    <MdFab class="page-fab" :aria-label="t('codesPage.addEntry')" :title="t('codesPage.addEntry')" @click="creating = true; editing = null">＋</MdFab>
 
     <!-- 选择模式底部浮动操作条（spec §2.5）：有选中才出现；取消=清空并退出 -->
     <div v-if="selected.size > 0" class="select-bar" data-test="select-bar">
-      <MdButton data-test="sheet-open" @click="openSheet">生成二维码({{ selected.size }})</MdButton>
-      <MdButton data-test="select-cancel" variant="text" @click="cancelSelection">取消</MdButton>
+      <MdButton data-test="sheet-open" @click="openSheet">{{ t('codesPage.generateQr', { count: selected.size }) }}</MdButton>
+      <MdButton data-test="select-cancel" variant="text" @click="cancelSelection">{{ t('codesPage.cancel') }}</MdButton>
     </div>
 
     <!-- 表单对话框：编辑/新建共用（onSave 新建默认值分支保留在本页）。
@@ -317,10 +321,10 @@ function openSheet() {
          triggerEl=右键所在条目（tabindex=0 可聚焦），Esc 关闭后焦点回该条目 -->
     <MdMenu :x="contextMenu?.x ?? 0" :y="contextMenu?.y ?? 0" :open="contextMenu !== null" :trigger-el="contextMenu?.trigger ?? null" @close="closeContextMenu">
       <template v-if="contextMenu">
-        <MdButton variant="text" class="ctx-item" @click="contextEdit(contextMenu.entry)">编辑</MdButton>
-        <MdButton variant="text" class="ctx-item" @click="qrEntry = contextMenu.entry; closeContextMenu()">显示二维码</MdButton>
-        <MdButton variant="text" class="ctx-item" @click="contextCopyUri(contextMenu.entry)">复制 URI</MdButton>
-        <MdButton variant="text" class="ctx-item" @click="contextTogglePin(contextMenu.entry)">{{ contextMenu.entry.pinned ? '取消置顶' : '置顶' }}</MdButton>
+        <MdButton variant="text" class="ctx-item" @click="contextEdit(contextMenu.entry)">{{ t('codesPage.edit') }}</MdButton>
+        <MdButton variant="text" class="ctx-item" @click="qrEntry = contextMenu.entry; closeContextMenu()">{{ t('codesPage.showQr') }}</MdButton>
+        <MdButton variant="text" class="ctx-item" @click="contextCopyUri(contextMenu.entry)">{{ t('codesPage.copyUri') }}</MdButton>
+        <MdButton variant="text" class="ctx-item" @click="contextTogglePin(contextMenu.entry)">{{ contextMenu.entry.pinned ? t('codesPage.unpin') : t('codesPage.pin') }}</MdButton>
       </template>
     </MdMenu>
   </section>
