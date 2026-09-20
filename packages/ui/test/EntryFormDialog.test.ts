@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { getBuiltinIcons, type OtpEntry } from '@totp/core'
+import { createMemoryStorage, getBuiltinIcons, type OtpEntry } from '@totp/core'
+import { createVueStore } from '../src/store'
 import EntryFormDialog from '../src/components/EntryFormDialog.vue'
 
 const entry: OtpEntry = {
@@ -10,10 +11,24 @@ const entry: OtpEntry = {
 
 const icons = { builtin: getBuiltinIcons(), stored: {} }
 
+const URI_A = 'otpauth://totp/GitHub:alice?secret=JBSWY3DPEHPK3PXP&issuer=GitHub'
+
+/** 智能粘贴 Tab 数据源：内存 storage mock（BatchPastePanel.test 同口径），须 initStore 后 vault 可写 */
+async function mkStore() {
+  const store = createVueStore(createMemoryStorage())
+  await store.initStore()
+  return store
+}
+
 function mountDialog(over: Partial<{ open: boolean; editing: OtpEntry | null }> = {}) {
   return mount(EntryFormDialog, {
-    props: { open: true, editing: null, tags: [], icons, ...over },
+    props: { open: true, editing: null, tags: [], icons, store: createVueStore(createMemoryStorage()), ...over },
   })
+}
+
+/** Tab 按钮：MdSegmentedButton 渲染 .md-seg__item 按钮（SettingsPage/BackupCard 同款） */
+function pasteTab(w: ReturnType<typeof mount>) {
+  return w.findAll('.md-seg__item').find((b) => b.text() === '智能粘贴')!
 }
 
 describe('EntryFormDialog', () => {
@@ -64,7 +79,7 @@ describe('EntryFormDialog', () => {
   it('createTag 透传 EntryForm：内联建 tag 回车创建后自动勾选（CodesPage 接 store.addTagOp）', async () => {
     const w = mount(EntryFormDialog, {
       props: {
-        open: true, editing: null, tags: [{ id: 't1', name: '工作' }], icons,
+        open: true, editing: null, tags: [{ id: 't1', name: '工作' }], icons, store: await mkStore(),
         createTag: async (name: string) => (name === '银行' ? 't9' : ''),
       },
     })
@@ -79,9 +94,34 @@ describe('EntryFormDialog', () => {
   })
 
   it('Esc 关闭 → emit close', async () => {
-    const w = mount(EntryFormDialog, { props: { open: true, editing: entry, tags: [], icons }, attachTo: document.body })
+    const w = mount(EntryFormDialog, { props: { open: true, editing: entry, tags: [], icons, store: await mkStore() }, attachTo: document.body })
     await w.find('.md-dialog__scrim').trigger('keydown', { key: 'Escape' })
     expect(w.emitted('close')).toHaveLength(1)
     w.unmount()
+  })
+
+  it('双 Tab：默认「手动填写」渲染 EntryForm；切「智能粘贴」渲染 BatchPastePanel 且 EntryForm 卸载', async () => {
+    const w = mountDialog()
+    expect(w.find('form.entry-form').exists()).toBe(true)
+    expect(w.find('.batch-paste').exists()).toBe(false)
+    await pasteTab(w).trigger('click')
+    expect(w.find('form.entry-form').exists()).toBe(false)
+    expect(w.find('.batch-paste').exists()).toBe(true)
+    // 切回手动：EntryForm 重建（:key 现状保持），粘贴面板卸载即重置
+    await w.findAll('.md-seg__item').find((b) => b.text() === '手动填写')!.trigger('click')
+    expect(w.find('form.entry-form').exists()).toBe(true)
+    expect(w.find('.batch-paste').exists()).toBe(false)
+  })
+
+  it('粘贴 Tab 提交落库后冒泡 batch-added [count]（宿主收后关弹窗）', async () => {
+    const store = await mkStore()
+    const w = mount(EntryFormDialog, { props: { open: true, editing: null, tags: [], icons, store } })
+    await pasteTab(w).trigger('click')
+    await w.find('.batch-paste textarea').setValue(URI_A)
+    await w.find('[data-test="paste-parse"]').trigger('click')
+    await w.find('[data-test="paste-commit"]').trigger('click')
+    // added 在 commit 落盘 await 完成后才发出（BatchPastePanel.test 同口径）
+    await vi.waitFor(() => expect(w.emitted('batch-added')?.[0]).toEqual([1]))
+    expect(store.vault.entries).toHaveLength(1)
   })
 })

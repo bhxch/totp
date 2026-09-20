@@ -286,7 +286,8 @@ function openSheet() {
       <MdButton data-test="select-cancel" variant="text" @click="cancelSelection">取消</MdButton>
     </div>
 
-    <!-- 表单对话框：编辑/新建共用（onSave 新建默认值分支保留在本页） -->
+    <!-- 表单对话框：编辑/新建共用（onSave 新建默认值分支保留在本页）。
+         store 供智能粘贴 Tab 落库（14b）；batch-added 后关弹窗，与 @close 同口径 -->
     <EntryFormDialog
       :open="creating || editing !== null"
       :editing="editing"
@@ -294,8 +295,10 @@ function openSheet() {
       :create-tag="(name) => store.addTagOp(name)"
       :icons="entryIcons"
       :icon-store="icons ?? undefined"
+      :store="store"
       @save="onSave"
       @close="creating = false; editing = null"
+      @batch-added="creating = false; editing = null"
     />
 
     <!-- reveal 对话框：仅在被请求时显前 4 + 后 4 形态的密钥；Esc/遮罩/「关闭」按钮关闭 -->
