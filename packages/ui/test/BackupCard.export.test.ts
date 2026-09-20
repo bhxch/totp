@@ -48,9 +48,18 @@ describe('BackupCard 导出格式（spec §2.3）', () => {
     await pickFormat(w, 'Aegis 加密 JSON')
     await w.find('[data-test="export-password"]').setValue('pw2')
     await w.find('[data-test="export-remember"] input').setValue(true)
-    await w.find('[data-test="export-run"]').trigger('click')
-    await w.find('[data-test="export-confirm"]').trigger('click')
+    await w.find('[data-test="export-run"]').trigger('click') // 加密免二次确认，直接落盘（评审 R1）
     await vi.waitFor(() => expect(saveTextFile).toHaveBeenCalledOnce())
     expect(w.emitted('remember-secret')?.[0]).toEqual(['pw2'])
+  })
+  it('Aegis 加密导出免二次确认：点导出后确认行不出现，saveTextFile 直接调用（评审 R1）', async () => {
+    const saveTextFile = vi.fn(async (_name: string, _content: string) => true)
+    const w = mountCard(basePlatform({ saveTextFile }))
+    await pickFormat(w, 'Aegis 加密 JSON')
+    await w.find('[data-test="export-password"]').setValue('pw2')
+    await w.find('[data-test="export-run"]').trigger('click')
+    expect(w.find('[data-test="export-confirm"]').exists()).toBe(false) // 加密无明文泄密风险，不进确认行
+    await vi.waitFor(() => expect(saveTextFile).toHaveBeenCalledOnce())
+    expect(saveTextFile.mock.calls[0]![0]).toBe('aegis-export.json')
   })
 })

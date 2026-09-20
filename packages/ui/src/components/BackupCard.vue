@@ -116,16 +116,19 @@ const EXPORT_FORMAT_OPTIONS: Array<{ value: string; label: string }> = [
 const encPw = ref('')
 /** 「记住到保管区」：导出成功后上抛 remember-secret（宿主 setBackupSecret 落保管区） */
 const remember = ref(false)
-/** 两步确认挂起态（明文两种警示风险；加密一种普通确认；totp-backup 不经确认） */
+/** 两步确认挂起态：仅明文两种（otpauth-text/aegis-plain）需二次确认；加密无明文泄密风险、totp-backup 走现状，均不经确认（评审 R1） */
 const exportPending = ref(false)
 
-/** 加密导出必须先有口令；busy 防重入 */
-const runDisabled = computed(() => busy.value || (fmt.value === 'aegis-encrypted' && encPw.value === ''))
-
-/** 确认行文案：明文两种用 spec §2.3 固定警示；加密为普通确认 */
-const exportConfirmText = computed(() =>
-  fmt.value === 'aegis-encrypted' ? '确认导出 Aegis 加密文件？' : '导出为明文，任何人读取该内容即可获取全部密钥，确认继续？',
+/** 加密导出必须先有口令；totp-backup 复用会话口令与 exportToFile 能力，缺一即禁用（评审 R1 补守卫）；busy 防重入 */
+const runDisabled = computed(
+  () =>
+    busy.value
+    || (fmt.value === 'aegis-encrypted' && encPw.value === '')
+    || (fmt.value === 'totp-backup' && (!props.sessionSecret || !props.platform?.exportToFile)),
 )
+
+/** 确认行文案（评审 R1：确认行仅服务明文两种，spec §2.3 固定警示；加密导出点「导出」直接执行） */
+const EXPORT_CONFIRM_TEXT = '导出为明文，任何人读取该内容即可获取全部密钥，确认继续？'
 
 /** 切格式收起上一格式挂起的确认行 */
 function onFmtChange(v: string | number): void {
@@ -133,10 +136,14 @@ function onFmtChange(v: string | number): void {
   exportPending.value = false
 }
 
-/** 「导出」：totp-backup 走现状 exportToFile（onExport 不动）；文本格式先进两步确认 */
+/** 「导出」：totp-backup 走现状 exportToFile（onExport 不动）；明文两种先进两步确认；加密免确认直接执行（评审 R1，spec §2.3 仅要求明文二次确认） */
 function onExportRun(): void {
   if (fmt.value === 'totp-backup') {
     void onExport()
+    return
+  }
+  if (fmt.value === 'aegis-encrypted') {
+    void runExport()
     return
   }
   exportPending.value = true
@@ -476,7 +483,7 @@ function onBackupProfileChange(v: string | number): void {
       <MdButton v-if="platform.exportToFile" variant="tonal" :disabled="busy || !sessionSecret" @click="onExport">导出到文件</MdButton>
       <MdButton v-if="platform.restoreFromPicker" variant="tonal" :disabled="busy" @click="startRestore('picker')">从文件恢复</MdButton>
     </div>
-    <!-- 导出格式区（批① §2.3）：宿主提供 saveTextFile 才渲染；文本格式经两步确认后落盘 -->
+    <!-- 导出格式区（批① §2.3）：宿主提供 saveTextFile 才渲染；明文格式经两步确认后落盘（加密免确认，评审 R1） -->
     <div v-if="platform.saveTextFile" class="export-block">
       <MdSelect
         data-test="export-format" class="export-format"
@@ -497,7 +504,7 @@ function onBackupProfileChange(v: string | number): void {
         <MdButton data-test="export-run" variant="tonal" :disabled="runDisabled" @click="onExportRun">导出</MdButton>
       </div>
       <div v-if="exportPending" class="confirm-row export-confirm-row">
-        <span>{{ exportConfirmText }}</span>
+        <span>{{ EXPORT_CONFIRM_TEXT }}</span>
         <MdButton data-test="export-confirm" :disabled="busy" @click="runExport">确认导出</MdButton>
         <MdButton variant="text" :disabled="busy" @click="exportPending = false">取消</MdButton>
       </div>
