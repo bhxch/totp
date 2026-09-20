@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { base32Decode, getBuiltinIcons, recommendBuiltinIcon, type BuiltinIcon, type HashAlgorithm, type MatchRule, type MatchStrategy, type OtpEntry, type Tag } from '@totp/core'
 import { computed, onScopeDispose, reactive, ref, watch } from 'vue'
-import { fileToScaledDataUrl, importIconPackZip } from '../iconImport'
+import { MAX_ICON_PACK_ZIP_BYTES, fileToScaledDataUrl, importIconPackZip } from '../iconImport'
 import type { IconStore } from '../iconStore'
 import MdButton from './md/MdButton.vue'
 import MdCheckbox from './md/MdCheckbox.vue'
@@ -256,6 +256,10 @@ async function onPackFile(e: Event) {
   iconError.value = ''
   packMessage.value = ''
   try {
+    // F15：读入前按文件大小前置拦截（解压预算之外的第一道闸）
+    if (file.size > MAX_ICON_PACK_ZIP_BYTES) {
+      throw new Error(`图标包超过 ${Math.floor(MAX_ICON_PACK_ZIP_BYTES / 1024 / 1024)}MB 大小上限`)
+    }
     const bytes = new Uint8Array(await file.arrayBuffer())
     const result = await importIconPackZip(bytes, props.iconStore)
     packMessage.value = `已导入 ${result.imported} 个图标（跳过 ${result.skipped} 个）`
