@@ -34,6 +34,19 @@ describe('OtpListItem 图标渲染', () => {
   })
 })
 
+describe('OtpListItem avatar 多彩取色（批④ §5）', () => {
+  it('icon 缺省时 avatar 带 color-mix 内联 style（按 issuer 哈希取色）', () => {
+    const w = mount(OtpListItem, { props: { entry, ...base } })
+    expect(w.find('.avatar').attributes('style')).toMatch(/^background: color-mix\(in srgb, #/)
+  })
+
+  it('传入 icon.html 时 avatar 不带 style（保留 .avatar 默认底色）', () => {
+    const path = getBuiltinIcons()['github']!.path
+    const w = mount(OtpListItem, { props: { entry, icon: { html: `<path d="${path}"></path>` }, ...base } })
+    expect(w.find('.avatar').attributes('style')).toBeUndefined()
+  })
+})
+
 describe('OtpListItem 揭示与右键菜单（C16）', () => {
   it('reveal 按钮 emit reveal，且不冒泡触发 copy', async () => {
     const w = mount(OtpListItem, { props: { entry, ...base } })

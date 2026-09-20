@@ -2,6 +2,7 @@
 import type { OtpEntry } from '@totp/core'
 import { computed } from 'vue'
 import MdIconButton from './md/MdIconButton.vue'
+import { avatarStyleOf } from './avatarColor'
 
 const props = defineProps<{
   entry: OtpEntry
@@ -21,6 +22,9 @@ const CIRCUMFERENCE = 2 * Math.PI * RING_R
 
 /** I61：环形按剩余比例绘制；外层 CSS transition: stroke-dashoffset 1s linear 实现平滑过渡（每秒一次重算 progress） */
 const dashOffset = computed(() => CIRCUMFERENCE * (1 - props.progress))
+
+/** 批④ §5：无图标时首字母 avatar 按 issuer 哈希从主题 10 子色取底色；有图标时 undefined 保留 .avatar 默认底色 */
+const avatarStyle = computed(() => (props.icon?.html || props.icon?.src ? undefined : avatarStyleOf(props.entry.issuer)))
 
 function grouped(code: string): string {
   return code.length === 5 || code.length === 7 || code.length === 8 ? code : code.replace(/(\d{3})(\d+)/, '$1 $2')
@@ -45,7 +49,7 @@ function onContextMenu(e: MouseEvent): void {
     @keydown.enter="emit('copy')"
     @contextmenu="onContextMenu"
   >
-    <span class="avatar">
+    <span class="avatar" :style="avatarStyle ?? undefined">
       <svg v-if="icon?.html" viewBox="0 0 24 24" class="icon-svg" aria-hidden="true" v-html="icon.html" />
       <img v-else-if="icon?.src" :src="icon.src" class="icon-img" alt="" />
       <template v-else>{{ entry.issuer.slice(0, 1).toUpperCase() || '?' }}</template>
