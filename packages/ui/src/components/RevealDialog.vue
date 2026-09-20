@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import type { OtpEntry } from '@totp/core'
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import MdButton from './md/MdButton.vue'
 import MdDialog from './md/MdDialog.vue'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   open: boolean
@@ -14,7 +17,7 @@ const emit = defineEmits<{ close: [] }>()
 
 /** 审查 Minor：headline 兜底——契约破坏（entry=null）时原插值渲染「undefined — 密钥」，
  *  改计算属性回退中性占位「密钥」 */
-const headline = computed(() => (props.entry ? `${props.entry.issuer} — 密钥` : '密钥'))
+const headline = computed(() => (props.entry ? t('revealDialog.headline', { issuer: props.entry.issuer }) : t('revealDialog.secret')))
 
 /** 自 旧单页 reveal 模态逐字迁移：显前 4 + 后 4，中间遮蔽（≤8 全显），避免整段密钥常驻 DOM */
 function maskSecret(secret: string): string {
@@ -27,9 +30,9 @@ function maskSecret(secret: string): string {
 <template>
   <MdDialog :open="open" :headline="headline" @close="emit('close')">
     <code v-if="entry" class="reveal-secret">{{ maskSecret(entry.secret) }}</code>
-    <p class="reveal-hint">出于安全考虑，仅显示密钥前后各 4 位；如需完整密钥请使用编辑功能。</p>
+    <p class="reveal-hint">{{ t('revealDialog.hint') }}</p>
     <template #actions>
-      <MdButton variant="text" data-md-close>关闭</MdButton>
+      <MdButton variant="text" data-md-close>{{ t('revealDialog.close') }}</MdButton>
     </template>
   </MdDialog>
 </template>

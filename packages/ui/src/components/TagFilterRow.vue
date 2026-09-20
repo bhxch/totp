@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import type { Tag, TagFilterMode } from '@totp/core'
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import MdChip from './md/MdChip.vue'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   tags: Tag[]
@@ -23,14 +26,14 @@ function toggle(id: string) {
 }
 </script>
 <template>
-  <div class="tag-filter-row" role="group" aria-label="标签筛选">
+  <div class="tag-filter-row" role="group" :aria-label="t('tagFilterRow.groupAria')">
     <button
       type="button" class="mode-toggle"
       :disabled="disabled || selectedIds.length < 2"
-      :title="mode === 'any' ? '当前：命中任一选中标签；点击切换为需命中全部' : '当前：需命中全部选中标签；点击切换为任一命中'"
+      :title="mode === 'any' ? t('tagFilterRow.titleAny') : t('tagFilterRow.titleAll')"
       @click="emit('update:mode', mode === 'any' ? 'all' : 'any')"
-    >{{ mode === 'any' ? '任一' : '全部' }}</button>
-    <MdChip label="全部" :selected="selectedIds.length === 0" @click="emit('update:selectedIds', [])" />
+    >{{ mode === 'any' ? t('tagFilterRow.any') : t('tagFilterRow.all') }}</button>
+    <MdChip :label="t('tagFilterRow.all')" :selected="selectedIds.length === 0" @click="emit('update:selectedIds', [])" />
     <MdChip
       v-for="t in sorted" :key="t.id" :label="t.name"
       :selected="selectedIds.includes(t.id)" @click="toggle(t.id)"

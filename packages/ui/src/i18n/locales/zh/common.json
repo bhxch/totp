@@ -125,5 +125,40 @@
     "canvasAria": "{issuer} {label} 的 otpauth 二维码",
     "qrWarning": "二维码包含完整密钥，请勿截图或分享",
     "close": "关闭"
+  },
+  "qrSheetDialog": {
+    "headline": "扫码迁移（{count} 个条目）",
+    "canvasAria": "包含 {count} 个条目密钥的二维码拼版",
+    "qrWarning": "二维码包含完整密钥，请勿截图或分享",
+    "saveImage": "保存图片",
+    "close": "关闭"
+  },
+  "tagManagerDialog": {
+    "headline": "标签管理",
+    "newTagNameLabel": "新标签名称",
+    "createTag": "创建标签",
+    "tagNameLabel": "标签名称",
+    "save": "保存",
+    "cancel": "取消",
+    "count": "{count} 条",
+    "editTag": "编辑标签 {name}",
+    "edit": "编辑",
+    "confirmDelete": "确认删除？",
+    "deleteTag": "删除标签 {name}",
+    "delete": "删除",
+    "empty": "暂无标签"
+  },
+  "tagFilterRow": {
+    "groupAria": "标签筛选",
+    "any": "任一",
+    "all": "全部",
+    "titleAny": "当前：命中任一选中标签；点击切换为需命中全部",
+    "titleAll": "当前：需命中全部选中标签；点击切换为任一命中"
+  },
+  "revealDialog": {
+    "headline": "{issuer} — 密钥",
+    "secret": "密钥",
+    "hint": "出于安全考虑，仅显示密钥前后各 4 位；如需完整密钥请使用编辑功能。",
+    "close": "关闭"
   }
 }

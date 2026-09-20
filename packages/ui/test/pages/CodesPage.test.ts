@@ -4,6 +4,7 @@ import { nextTick } from 'vue'
 import { createMemoryStorage, newEntryFromUri, type OtpEntry } from '@totp/core'
 import { createVueStore } from '../../src/store'
 import CodesPage from '../../src/pages/CodesPage.vue'
+import { createTestI18n } from '../helpers/i18n'
 
 async function readyStore() {
   const s = createVueStore(createMemoryStorage())
@@ -15,7 +16,7 @@ async function readyStore() {
 describe('CodesPage 列表与搜索（自 旧单页 迁移）', () => {
   it('渲染条目与搜索过滤', async () => {
     const s = await readyStore()
-    const w = mount(CodesPage, { props: { store: s } })
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
     await vi.waitFor(() => expect(w.text()).toContain('GitHub'))
     const input = w.find('input[type="search"]')
     await input.setValue('不存在')
@@ -24,7 +25,7 @@ describe('CodesPage 列表与搜索（自 旧单页 迁移）', () => {
 
   it('点击条目恒 emit copy 且携带验证码（enableCopy 语义由宿主 @copy 决定）', async () => {
     const s = await readyStore()
-    const w = mount(CodesPage, { props: { store: s } })
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
     // 等验证码就绪（recompute 异步，未就绪时显示占位 '------'）
     await vi.waitFor(() => expect(w.find('.otp-item .code').text()).not.toBe('------'))
     await w.find('.otp-item').trigger('click')
@@ -36,7 +37,7 @@ describe('CodesPage 列表与搜索（自 旧单页 迁移）', () => {
     const s = createVueStore(createMemoryStorage())
     await s.initStore()
     await s.addEntryOp(newEntryFromUri('otpauth://hotp/H:h?secret=JBSWY3DPEHPK3PXP&counter=7', 1))
-    const w = mount(CodesPage, { props: { store: s } })
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
     await vi.waitFor(() => expect(w.find('.otp-item .code').text()).not.toBe('------'))
     await w.find('.otp-item').trigger('click')
     expect(w.emitted('copy')).toHaveLength(1)
@@ -45,7 +46,7 @@ describe('CodesPage 列表与搜索（自 旧单页 迁移）', () => {
 
   it('删除：两击确认（首击仅进入确认态，再击才删除）', async () => {
     const s = await readyStore()
-    const w = mount(CodesPage, { props: { store: s } })
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
     await vi.waitFor(() => expect(w.text()).toContain('GitHub'))
     const del = w.findAll('.ops button').find((b) => b.text() === '删除')!
     await del.trigger('click')
@@ -63,7 +64,7 @@ describe('CodesPage 列表与搜索（自 旧单页 迁移）', () => {
 describe('CodesPage I49 搜 secret 开关（自 旧单页 迁移）', () => {
   it('默认关闭：搜密钥片段不命中（issuer/label 不含密钥）；开启后命中', async () => {
     const s = await readyStore() // 条目 issuer=GitHub, secret=JBSWY3DPEHPK3PXP
-    const w = mount(CodesPage, { props: { store: s } })
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
     await vi.waitFor(() => expect(w.text()).toContain('GitHub'))
     const input = w.find('input[type="search"]')
     await input.setValue('JBSWY') // 密钥片段
@@ -101,7 +102,7 @@ describe('CodesPage 标签筛选（spec §3 管理页）', () => {
     const s = createVueStore(createMemoryStorage())
     await s.initStore()
     await twoTags(s)
-    const w = mount(CodesPage, { props: { store: s } })
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
     await vi.waitFor(() => expect(w.text()).toContain('GitHub'))
     const chips = w.findAll('button.md-chip')
     await chips.find((c) => c.text() === '工作')!.trigger('click')
@@ -118,7 +119,7 @@ describe('CodesPage 标签筛选（spec §3 管理页）', () => {
     await s.initStore()
     await s.addTagOp('工作')
     s.settings.rememberTagFilter = true
-    const w = mount(CodesPage, { props: { store: s } })
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
     await vi.waitFor(() => expect(w.text()).toContain('全部'))
     await w.findAll('button.md-chip').find((c) => c.text() === '工作')!.trigger('click')
     await vi.waitFor(() => expect(s.settings.lastTagFilterIds).toHaveLength(1))
@@ -132,7 +133,7 @@ describe('CodesPage 标签筛选（spec §3 管理页）', () => {
     await s.initStore()
     const tid = await s.addTagOp('临时')
     await s.addTagOp('留存') // 保底 1 个 tag：删除「临时」后筛选行仍渲染（TagFilterRow v-if tags.length>0），可断言「全部」选中态
-    const w = mount(CodesPage, { props: { store: s } })
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
     await vi.waitFor(() => expect(w.text()).toContain('临时'))
     await w.findAll('button.md-chip').find((c) => c.text() === '临时')!.trigger('click')
     expect(chip(w, '临时').classes()).toContain('md-chip--selected')
@@ -146,7 +147,7 @@ describe('CodesPage 标签筛选（spec §3 管理页）', () => {
   it('点「管理标签」emit open-tags 并打开 TagManagerDialog，遮罩关闭', async () => {
     const s = createVueStore(createMemoryStorage())
     await s.initStore()
-    const w = mount(CodesPage, { props: { store: s } })
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
     await chip(w, '管理标签').trigger('click')
     expect(w.emitted('open-tags')).toHaveLength(1)
     expect(w.find('.md-dialog').exists()).toBe(true)
@@ -165,7 +166,7 @@ describe('CodesPage 标签筛选（spec §3 管理页）', () => {
     await storage.set('settings', JSON.stringify({ rememberTagFilter: true, lastTagFilterIds: [tid] }))
     // options 时序：先 mount（settings 尚未装载，setup 初始化读到默认值）再 initStore
     const s = createVueStore(storage)
-    const w = mount(CodesPage, { props: { store: s } })
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
     await s.initStore()
     // 补偿 watch 恢复：「工作」chip 处于选中态
     await vi.waitFor(() => {
@@ -186,7 +187,7 @@ describe('CodesPage 标签筛选（spec §3 管理页）', () => {
     // mount 先于 initStore 的时序里恢复 watch 与清理 watch 同轮 flush 自愈，测不到该缺陷
     const s = createVueStore(storage)
     await s.initStore()
-    const w = mount(CodesPage, { props: { store: s } })
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
     // 仅真实 id 恢复为选中（悬空 id 无对应 chip，不进选中集合）
     await vi.waitFor(() => {
       const c = w.findAll('button.md-chip').find((x) => x.text() === '工作')
@@ -205,7 +206,7 @@ describe('CodesPage 标签筛选（spec §3 管理页）', () => {
     // rememberTagFilter 缺省 false：即使盘上有 lastTagFilterIds 也不恢复
     await storage.set('settings', JSON.stringify({ lastTagFilterIds: [tid] }))
     const s = createVueStore(storage)
-    const w = mount(CodesPage, { props: { store: s } })
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
     await s.initStore()
     await vi.waitFor(() => expect(w.text()).toContain('工作')) // chip 渲染（tags 已装载）
     const c = w.findAll('button.md-chip').find((x) => x.text() === '工作')!
@@ -216,7 +217,7 @@ describe('CodesPage 标签筛选（spec §3 管理页）', () => {
 describe('CodesPage FAB 新建入口', () => {
   it('点 MdFab 打开 EntryFormDialog（新建态）渲染 EntryForm，取消后弹层收起', async () => {
     const s = await readyStore()
-    const w = mount(CodesPage, { props: { store: s } })
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
     expect(w.find('.md-dialog').exists()).toBe(false)
     await w.find('.md-fab').trigger('click')
     expect(w.find('.md-dialog').exists()).toBe(true)
@@ -229,7 +230,7 @@ describe('CodesPage FAB 新建入口', () => {
 
   it('行内「编辑」打开 EntryFormDialog 编辑态，save 后写库并关弹（新建默认值分支留在本页）', async () => {
     const s = await readyStore()
-    const w = mount(CodesPage, { props: { store: s } })
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
     await vi.waitFor(() => expect(w.text()).toContain('GitHub'))
     const editBtn = w.findAll('.ops button').find((b) => b.text() === '编辑')!
     await editBtn.trigger('click')
@@ -254,7 +255,7 @@ describe('CodesPage reveal / 右键菜单 / pinned（自 旧单页 C16 迁移）
 
   it('点击 reveal 按钮弹 RevealDialog 显示前 4 + 后 4 形态密钥，不在页面 DOM 留明文', async () => {
     const s = await storeWithTwo()
-    const w = mount(CodesPage, { props: { store: s } })
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
     await w.find('button[title="显示密钥"]').trigger('click')
     await vi.waitFor(() => expect(w.find('.md-dialog').exists()).toBe(true))
     expect(w.find('.md-dialog__headline').text()).toBe('A — 密钥')
@@ -269,7 +270,7 @@ describe('CodesPage reveal / 右键菜单 / pinned（自 旧单页 C16 迁移）
 
   it('右键条目：MdMenu 渲染四项菜单，点「置顶」调用 updateEntryOp 并排序前置', async () => {
     const s = await storeWithTwo()
-    const w = mount(CodesPage, { props: { store: s } })
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
     await w.find('.otp-item').trigger('contextmenu', { clientX: 100, clientY: 200 })
     expect(w.find('.md-menu').exists()).toBe(true)
     // 菜单有「编辑」「显示二维码」「复制 URI」「置顶」四项（Task 9 增「显示二维码」）
@@ -295,7 +296,7 @@ describe('CodesPage reveal / 右键菜单 / pinned（自 旧单页 C16 迁移）
     const s = await storeWithTwo()
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.assign(navigator, { clipboard: { writeText } })
-    const w = mount(CodesPage, { props: { store: s } })
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
     await w.find('.otp-item').trigger('contextmenu', { clientX: 10, clientY: 10 })
     const copyBtn = w.findAll('.md-menu button').find((b) => b.text() === '复制 URI')!
     await copyBtn.trigger('click')
@@ -309,7 +310,7 @@ describe('CodesPage reveal / 右键菜单 / pinned（自 旧单页 C16 迁移）
 
   it('右键菜单键盘化：条目带 aria-haspopup=menu；开启聚焦首项；Esc 关闭后焦点回右键条目（批 6 a11y）', async () => {
     const s = await storeWithTwo()
-    const w = mount(CodesPage, { props: { store: s }, attachTo: document.body })
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s }, attachTo: document.body })
     const item = w.find('.otp-item')
     // contextmenu 键/Shift+F10 会在焦点元素上派发 contextmenu → 条目可键盘触达，载体补 aria-haspopup
     expect(item.attributes('aria-haspopup')).toBe('menu')

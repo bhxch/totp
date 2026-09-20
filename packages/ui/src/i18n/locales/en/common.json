@@ -125,5 +125,40 @@
     "canvasAria": "otpauth QR code for {issuer} {label}",
     "qrWarning": "The QR code contains the full secret. Do not screenshot or share it",
     "close": "Close"
+  },
+  "qrSheetDialog": {
+    "headline": "Scan to migrate ({count} entries)",
+    "canvasAria": "QR code sheet containing the secrets of {count} entries",
+    "qrWarning": "The QR code contains the full secret. Do not screenshot or share it",
+    "saveImage": "Save image",
+    "close": "Close"
+  },
+  "tagManagerDialog": {
+    "headline": "Tag management",
+    "newTagNameLabel": "New tag name",
+    "createTag": "Create tag",
+    "tagNameLabel": "Tag name",
+    "save": "Save",
+    "cancel": "Cancel",
+    "count": "{count} entries",
+    "editTag": "Edit tag {name}",
+    "edit": "Edit",
+    "confirmDelete": "Confirm delete?",
+    "deleteTag": "Delete tag {name}",
+    "delete": "Delete",
+    "empty": "No tags yet"
+  },
+  "tagFilterRow": {
+    "groupAria": "Tag filter",
+    "any": "Any",
+    "all": "All",
+    "titleAny": "Currently: match any selected tag; click to require matching all",
+    "titleAll": "Currently: require matching all selected tags; click to match any"
+  },
+  "revealDialog": {
+    "headline": "{issuer} — Secret",
+    "secret": "Secret",
+    "hint": "For security, only the first and last 4 characters of the secret are shown; use the edit function to view the full secret.",
+    "close": "Close"
   }
 }

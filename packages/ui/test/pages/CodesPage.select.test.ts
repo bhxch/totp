@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { createMemoryStorage, newEntryFromUri } from '@totp/core'
 import { createVueStore } from '../../src/store'
 import CodesPage from '../../src/pages/CodesPage.vue'
+import { createTestI18n } from '../helpers/i18n'
 
 // jsdom 无 2d 上下文：ctx stub null（QrSheetDialog 绘制早退）；toDataURL stub 固定 PNG dataUrl
 vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
@@ -18,7 +19,7 @@ async function storeWithTwo() {
 
 async function mountInSelectMode(props: Record<string, unknown> = {}) {
   const s = await storeWithTwo()
-  const w = mount(CodesPage, { props: { store: s, ...props } })
+  const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s, ...props } })
   await vi.waitFor(() => expect(w.text()).toContain('Alpha'))
   await w.find('[data-test="select-mode"]').trigger('click')
   return { s, w }

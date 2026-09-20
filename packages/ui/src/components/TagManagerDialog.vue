@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import type { Tag } from '@totp/core'
 import { onBeforeUnmount, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { VueStore } from '../store'
 import MdButton from './md/MdButton.vue'
 import MdDialog from './md/MdDialog.vue'
 import MdIconButton from './md/MdIconButton.vue'
 import MdTextField from './md/MdTextField.vue'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   open: boolean
@@ -66,28 +69,28 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <MdDialog :open="open" headline="标签管理" @close="emit('close')">
+  <MdDialog :open="open" :headline="t('tagManagerDialog.headline')" @close="emit('close')">
     <form class="tag-add" @submit.prevent="addTag">
-      <MdTextField v-model="newTagName" class="grow" label="新标签名称" aria-label="新标签名称" />
-      <MdButton type="submit">创建标签</MdButton>
+      <MdTextField v-model="newTagName" class="grow" :label="t('tagManagerDialog.newTagNameLabel')" :aria-label="t('tagManagerDialog.newTagNameLabel')" />
+      <MdButton type="submit">{{ t('tagManagerDialog.createTag') }}</MdButton>
     </form>
     <ul class="tag-list">
-      <li v-for="t in store.vault.tags" :key="t.id">
-        <template v-if="renaming === t.id">
-          <MdTextField v-model="renameValue" class="grow" label="标签名称" aria-label="标签名称" @keydown.enter="saveRename(t)" />
-          <MdButton @click="saveRename(t)">保存</MdButton>
-          <MdButton variant="text" @click="renaming = null">取消</MdButton>
+      <li v-for="tg in store.vault.tags" :key="tg.id">
+        <template v-if="renaming === tg.id">
+          <MdTextField v-model="renameValue" class="grow" :label="t('tagManagerDialog.tagNameLabel')" :aria-label="t('tagManagerDialog.tagNameLabel')" @keydown.enter="saveRename(tg)" />
+          <MdButton @click="saveRename(tg)">{{ t('tagManagerDialog.save') }}</MdButton>
+          <MdButton variant="text" @click="renaming = null">{{ t('tagManagerDialog.cancel') }}</MdButton>
         </template>
         <template v-else>
-          <span class="tname">{{ t.name }}</span>
-          <span class="tcount">{{ store.vault.entries.filter((e) => e.tagIds.includes(t.id)).length }} 条</span>
-          <MdIconButton :title="'编辑标签 ' + t.name" :aria-label="'编辑标签 ' + t.name" @click="renaming = t.id; renameValue = t.name">编辑</MdIconButton>
+          <span class="tname">{{ tg.name }}</span>
+          <span class="tcount">{{ t('tagManagerDialog.count', { count: store.vault.entries.filter((e) => e.tagIds.includes(tg.id)).length }) }}</span>
+          <MdIconButton :title="t('tagManagerDialog.editTag', { name: tg.name })" :aria-label="t('tagManagerDialog.editTag', { name: tg.name })" @click="renaming = tg.id; renameValue = tg.name">{{ t('tagManagerDialog.edit') }}</MdIconButton>
           <!-- 确认态换 danger MdButton（error 色视觉警示，与 CodesPage 条目删除一致） -->
-          <MdButton v-if="confirmingDelete === t.id" danger @click="removeTag(t)">确认删除？</MdButton>
-          <MdIconButton v-else :title="'删除标签 ' + t.name" :aria-label="'删除标签 ' + t.name" @click="removeTag(t)">删除</MdIconButton>
+          <MdButton v-if="confirmingDelete === tg.id" danger @click="removeTag(tg)">{{ t('tagManagerDialog.confirmDelete') }}</MdButton>
+          <MdIconButton v-else :title="t('tagManagerDialog.deleteTag', { name: tg.name })" :aria-label="t('tagManagerDialog.deleteTag', { name: tg.name })" @click="removeTag(tg)">{{ t('tagManagerDialog.delete') }}</MdIconButton>
         </template>
       </li>
-      <li v-if="store.vault.tags.length === 0" class="empty">暂无标签</li>
+      <li v-if="store.vault.tags.length === 0" class="empty">{{ t('tagManagerDialog.empty') }}</li>
     </ul>
   </MdDialog>
 </template>

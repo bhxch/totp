@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import type { OtpEntry } from '@totp/core'
 import { ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import MdButton from './md/MdButton.vue'
 import MdDialog from './md/MdDialog.vue'
 import { renderQrSheet } from './qrSheet'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   open: boolean
@@ -33,14 +36,14 @@ function onSave() {
 }
 </script>
 <template>
-  <MdDialog class="sheet-dialog" :open="open && entries.length > 0" :headline="`扫码迁移（${entries.length} 个条目）`" @close="emit('close')">
+  <MdDialog class="sheet-dialog" :open="open && entries.length > 0" :headline="t('qrSheetDialog.headline', { count: entries.length })" @close="emit('close')">
     <div class="sheet-wrap">
-      <canvas ref="canvasRef" role="img" :aria-label="`包含 ${entries.length} 个条目密钥的二维码拼版`"></canvas>
-      <p class="sheet-warn">二维码包含完整密钥，请勿截图或分享</p>
+      <canvas ref="canvasRef" role="img" :aria-label="t('qrSheetDialog.canvasAria', { count: entries.length })"></canvas>
+      <p class="sheet-warn">{{ t('qrSheetDialog.qrWarning') }}</p>
     </div>
     <template #actions>
-      <MdButton v-if="saveImage" data-test="sheet-save" @click="onSave">保存图片</MdButton>
-      <MdButton data-test="sheet-close" @click="emit('close')">关闭</MdButton>
+      <MdButton v-if="saveImage" data-test="sheet-save" @click="onSave">{{ t('qrSheetDialog.saveImage') }}</MdButton>
+      <MdButton data-test="sheet-close" @click="emit('close')">{{ t('qrSheetDialog.close') }}</MdButton>
     </template>
   </MdDialog>
 </template>

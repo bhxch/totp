@@ -4,6 +4,7 @@ import { nextTick } from 'vue'
 import { createMemoryStorage } from '@totp/core'
 import { createVueStore } from '../src/store'
 import TagManagerDialog from '../src/components/TagManagerDialog.vue'
+import { createTestI18n } from './helpers/i18n'
 
 async function readyStore() {
   const s = createVueStore(createMemoryStorage())
@@ -16,13 +17,13 @@ async function readyStore() {
 describe('TagManagerDialog', () => {
   it('open=false 不渲染弹层', () => {
     const s = createVueStore(createMemoryStorage())
-    const w = mount(TagManagerDialog, { props: { open: false, store: s } })
+    const w = mount(TagManagerDialog, { global: { plugins: [createTestI18n()] }, props: { open: false, store: s } })
     expect(w.find('.md-dialog').exists()).toBe(false)
   })
 
   it('headline「标签管理」；建标签表单提交走 addTagOp 且清空输入', async () => {
     const s = await readyStore()
-    const w = mount(TagManagerDialog, { props: { open: true, store: s } })
+    const w = mount(TagManagerDialog, { global: { plugins: [createTestI18n()] }, props: { open: true, store: s } })
     expect(w.find('.md-dialog__headline').text()).toBe('标签管理')
     await w.find('.tag-add input').setValue('新标签')
     await w.find('form.tag-add').trigger('submit')
@@ -34,7 +35,7 @@ describe('TagManagerDialog', () => {
   it('空名称不调用 addTagOp', async () => {
     const s = await readyStore()
     const before = s.vault.tags.length
-    const w = mount(TagManagerDialog, { props: { open: true, store: s } })
+    const w = mount(TagManagerDialog, { global: { plugins: [createTestI18n()] }, props: { open: true, store: s } })
     await w.find('form.tag-add').trigger('submit')
     await w.find('.tag-add input').setValue('   ')
     await w.find('form.tag-add').trigger('submit')
@@ -44,7 +45,7 @@ describe('TagManagerDialog', () => {
   it('行内重命名：enter 保存走 renameTagOp', async () => {
     const s = await readyStore()
     const tid = s.vault.tags[0]!.id
-    const w = mount(TagManagerDialog, { props: { open: true, store: s } })
+    const w = mount(TagManagerDialog, { global: { plugins: [createTestI18n()] }, props: { open: true, store: s } })
     const row = w.findAll('.tag-list li').find((li) => li.text().includes('工作'))!
     await row.findAll('button').find((b) => b.text() === '编辑')!.trigger('click') // 编辑按钮 → 进入行内编辑
     const input = w.find('.tag-list input')
@@ -57,7 +58,7 @@ describe('TagManagerDialog', () => {
   it('行内重命名：取消不改动', async () => {
     const s = await readyStore()
     const tid = s.vault.tags[0]!.id
-    const w = mount(TagManagerDialog, { props: { open: true, store: s } })
+    const w = mount(TagManagerDialog, { global: { plugins: [createTestI18n()] }, props: { open: true, store: s } })
     const row = w.findAll('.tag-list li').find((li) => li.text().includes('工作'))!
     await row.findAll('button').find((b) => b.text() === '编辑')!.trigger('click')
     await w.find('.tag-list input').setValue('改动')
@@ -68,7 +69,7 @@ describe('TagManagerDialog', () => {
 
   it('关闭后状态复位：重开无行内编辑残留、新建输入为空', async () => {
     const s = await readyStore()
-    const w = mount(TagManagerDialog, { props: { open: true, store: s } })
+    const w = mount(TagManagerDialog, { global: { plugins: [createTestI18n()] }, props: { open: true, store: s } })
     const row = w.findAll('.tag-list li').find((li) => li.text().includes('工作'))!
     await row.findAll('button').find((b) => b.text() === '编辑')!.trigger('click') // 进入行内编辑
     expect(w.find('.tag-list input').exists()).toBe(true)
@@ -82,7 +83,7 @@ describe('TagManagerDialog', () => {
   it('删除两击确认：首击仅进入 danger 确认态不删，再击才 removeTagOp（级联清理 tagIds）', async () => {
     const s = await readyStore()
     const tid = s.vault.tags[0]!.id
-    const w = mount(TagManagerDialog, { props: { open: true, store: s } })
+    const w = mount(TagManagerDialog, { global: { plugins: [createTestI18n()] }, props: { open: true, store: s } })
     const row = w.findAll('.tag-list li').find((li) => li.text().includes('工作'))!
     // 首击：进入确认态（danger 视觉），标签未删
     await row.findAll('button').find((b) => b.text() === '删除')!.trigger('click')
@@ -100,7 +101,7 @@ describe('TagManagerDialog', () => {
     try {
       const s = await readyStore()
       const tid = s.vault.tags[0]!.id
-      const w = mount(TagManagerDialog, { props: { open: true, store: s } })
+      const w = mount(TagManagerDialog, { global: { plugins: [createTestI18n()] }, props: { open: true, store: s } })
       const row = w.findAll('.tag-list li').find((li) => li.text().includes('工作'))!
       await row.findAll('button').find((b) => b.text() === '删除')!.trigger('click')
       expect(w.find('.md-btn--danger').exists()).toBe(true)
@@ -116,7 +117,7 @@ describe('TagManagerDialog', () => {
 
   it('确认态随关闭复位：重开后无「确认删除？」残留', async () => {
     const s = await readyStore()
-    const w = mount(TagManagerDialog, { props: { open: true, store: s } })
+    const w = mount(TagManagerDialog, { global: { plugins: [createTestI18n()] }, props: { open: true, store: s } })
     const row = w.findAll('.tag-list li').find((li) => li.text().includes('工作'))!
     await row.findAll('button').find((b) => b.text() === '删除')!.trigger('click')
     expect(w.find('.md-btn--danger').exists()).toBe(true)
@@ -128,18 +129,18 @@ describe('TagManagerDialog', () => {
 
   it('标签列表显示计数与空态', async () => {
     const s = await readyStore()
-    const w = mount(TagManagerDialog, { props: { open: true, store: s } })
+    const w = mount(TagManagerDialog, { global: { plugins: [createTestI18n()] }, props: { open: true, store: s } })
     expect(w.findAll('.tag-list li')).toHaveLength(2)
     expect(w.find('.tag-list').text()).toContain('0 条')
     const emptyStore = createVueStore(createMemoryStorage())
     await emptyStore.initStore()
-    const w2 = mount(TagManagerDialog, { props: { open: true, store: emptyStore } })
+    const w2 = mount(TagManagerDialog, { global: { plugins: [createTestI18n()] }, props: { open: true, store: emptyStore } })
     expect(w2.text()).toContain('暂无标签')
   })
 
   it('scrim 点击/Esc → emit close', async () => {
     const s = await readyStore()
-    const w = mount(TagManagerDialog, { props: { open: true, store: s }, attachTo: document.body })
+    const w = mount(TagManagerDialog, { global: { plugins: [createTestI18n()] }, props: { open: true, store: s }, attachTo: document.body })
     await w.find('.md-dialog__scrim').trigger('keydown', { key: 'Escape' })
     expect(w.emitted('close')).toHaveLength(1)
     await w.find('.md-dialog__scrim').trigger('click')
