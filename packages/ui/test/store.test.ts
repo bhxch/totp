@@ -329,6 +329,58 @@ describe('createVueStore', () => {
     expect(raw.enc).toBe(true) // 自愈：写 op 走加密分支转回密文
   })
 
+  it('崩溃窗口盘态「明文 vault + SECURITY_KEY」：initStore 保持锁定不无认证采纳，口令解锁采纳并重加密自愈', async () => {
+    const adapter = createMemoryStorage()
+    // 造崩溃窗口盘态：enableEncryption 写 security 后、写密文前崩溃 → 盘上 security 在、vault 仍是旧明文
+    const a = createVueStore(adapter)
+    await a.initStore()
+    await a.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    const { security } = await setupVaultEncryption(JSON.stringify(a.vault), 'pw')
+    await adapter.set(SECURITY_KEY, JSON.stringify(security))
+    expect(JSON.parse((await adapter.get('vault'))!).enc).toBeUndefined() // 崩溃窗口：vault 仍明文
+
+    const s = createVueStore(adapter)
+    await s.initStore()
+    // 不无认证采纳：锁定屏不被静默跳过，内存无明文残留
+    expect(s.hasEncryption.value).toBe(true)
+    expect(s.locked.value).toBe(true)
+    expect(s.vault.entries).toHaveLength(0)
+    await expect(s.addEntryOp(newEntryFromUri('otpauth://totp/B:c?secret=JBSWY3DPEHPK3PXP', 1700000000000))).rejects.toThrow('vault locked')
+    // 口令解锁：applyDekAndUnlock 宽容明文路径采纳盘上明文（恢复路径）
+    await s.unlock('pw')
+    expect(s.locked.value).toBe(false)
+    expect(s.vault.entries).toHaveLength(1)
+    // 后续写 op 走加密分支重写密文自愈
+    await s.addEntryOp(newEntryFromUri('otpauth://totp/B:c?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    expect(s.vault.entries).toHaveLength(2)
+    expect(JSON.parse((await adapter.get('vault'))!).enc).toBe(true)
+  })
+
+  it('registerStorageSync：security 存在时拒绝远端明文 vault 载荷（不采纳、不动 SECURITY_KEY）', async () => {
+    const adapter = createMemoryStorage()
+    let notify: ((p: { vault?: boolean; settings?: boolean }) => void) | null = null
+    const a = createVueStore(adapter)
+    await a.initStore()
+    await a.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await a.enableEncryption('pw')
+    // 解锁窗口 b（持 security 缓存与 DEK）：对端盘态经半失败写成明文后同步过来
+    const b = createVueStore(adapter, { registerSync: (cb) => { notify = cb }, selfWriteSuppressMs: 0 })
+    await b.initStore()
+    await b.unlock('pw')
+    expect(b.locked.value).toBe(false)
+    b.registerStorageSync()
+    const secBefore = await adapter.get(SECURITY_KEY)
+    await adapter.set('vault', JSON.stringify({ version: 2, entries: [{ uuid: 'x' }], tags: [], updatedAt: 9 }))
+    notify!({ vault: true })
+    await flush()
+    // 不消费明文载荷：内存 vault 保持原解密内容，SECURITY_KEY 原样保留
+    expect(b.vault.entries).toHaveLength(1)
+    expect(b.vault.entries.map((e) => e.uuid)).not.toContain('x')
+    expect(b.locked.value).toBe(false)
+    expect(b.hasEncryption.value).toBe(true)
+    expect(await adapter.get(SECURITY_KEY)).toBe(secBefore)
+  })
+
   it('跨窗口：同进程两个 windowId 各自独立持有 DEK；A unlock/lock 不污染 B', async () => {
     const adapter = createMemoryStorage()
     // 自写抑制关：通知立即生效

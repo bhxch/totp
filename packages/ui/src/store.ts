@@ -236,6 +236,12 @@ export function createVueStore(
           currentLockedRef().value = true
         }
       }
+    } else if (parsed && security.value) {
+      // 不变量：『明文 vault 与 SECURITY_KEY 共存 = 需认证的恢复态』——enable/disable 加密两步写
+      // 非原子的半失败窗口盘态。写路径有防降级核对（commit/saveVaultToAdapter），读路径同样不得
+      // 无认证采纳为已解锁（否则锁定屏被静默跳过）：本窗口保持锁定、vault 不装载（防内存残留读取）；
+      // 口令解锁经 applyDekAndUnlock 的宽容明文路径采纳盘上明文，其后写 op 走加密分支重写密文自愈
+      lock()
     } else if (parsed) {
       replaceVault(parsed as Vault)
       lockedByWin.set(windowId, false)
@@ -393,6 +399,12 @@ export function createVueStore(
               // security 缓存同步重读为盘上值，与下次 unlock 的口令入口对齐
               lock()
               security.value = await readSecurity().catch(() => null)
+              return
+            }
+            if (security.value) {
+              // 不变量：『明文 vault 与 SECURITY_KEY 共存 = 需认证的恢复态』——security 存在时
+              // 拒绝消费远端明文 vault 载荷：不 replaceVault（防无认证内容混入内存）、不动盘上
+              // SECURITY_KEY；后续写 op 的盘上 security 对称核对保持与远端最终一致
               return
             }
             replaceVault(parsed as Vault)
