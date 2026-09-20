@@ -1,6 +1,6 @@
 // 导入框架共享类型：与 OtpEntry 字段子集对齐的解析结果
 export interface ParsedEntry {
-  type: 'totp' | 'hotp' | 'steam'
+  type: 'totp' | 'hotp' | 'steam' | 'yandex'
   issuer: string
   label: string
   secret: string
@@ -9,6 +9,8 @@ export interface ParsedEntry {
   period: number
   counter?: number
   note?: string
+  /** Yandex（yaotp）的 PIN，可选；仅 type=yandex 时产出 */
+  pin?: string
   /** 源格式 group 键映射出的标签名（原始名，仅 trim；无 group 键的格式缺省） */
   tags?: string[]
 }

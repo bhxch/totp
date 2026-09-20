@@ -89,6 +89,8 @@ function parseEntry(raw: unknown, index: number, groups: Map<string, string>): P
   }
   const counter = Number(info.counter)
   if (Number.isFinite(counter) && counter >= 0) parsed.counter = counter
+  // Yandex（type=yandex）：Aegis YandexInfo 序列化把 PIN 放 info.pin；仅字符串形态采纳
+  if (parsed.type === 'yandex' && typeof info.pin === 'string') parsed.pin = info.pin
   if (typeof entry.note === 'string' && entry.note !== '') parsed.note = entry.note
   if (typeof entry.groupid === 'string') {
     const tagName = groups.get(entry.groupid)

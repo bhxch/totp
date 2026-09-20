@@ -2,7 +2,7 @@ import { base32Decode, STEAM_ALPHABET } from '../encoding/base32'
 import type { HashAlgorithm } from './hotp'
 
 export interface OtpUriParams {
-  type: 'totp' | 'hotp' | 'steam'
+  type: 'totp' | 'hotp' | 'steam' | 'yandex'
   issuer: string
   label: string
   /** 原始 base32 字符串（按 RFC4648 / Steam 字母表由 secretBytes 字段编码） */
@@ -13,6 +13,8 @@ export interface OtpUriParams {
   digits: number
   period: number
   counter?: number
+  /** Yandex（otpauth://yaotp/）的 PIN 参数；其余类型不产出 */
+  pin?: string
 }
 
 const ALGORITHMS: HashAlgorithm[] = ['SHA1', 'SHA256', 'SHA512']
@@ -28,8 +30,10 @@ export function parseOtpUri(uri: string): OtpUriParams {
     throw new Error('invalid otpauth uri')
   }
   if (url.protocol !== 'otpauth:') throw new Error('invalid otpauth uri')
-  const type = url.host.toLowerCase() as OtpUriParams['type']
-  if (!['totp', 'hotp', 'steam'].includes(type)) throw new Error('invalid otpauth uri')
+  // host 原始串（string）：'yaotp' 不在 OtpUriParams['type'] 联合内，归一比较须走 string
+  const host = url.host.toLowerCase()
+  // yaotp 是 Yandex 的 otpauth host（otpauth://yaotp/...），归一为内部 type 'yandex'
+  if (!['totp', 'hotp', 'steam', 'yaotp'].includes(host)) throw new Error('invalid otpauth uri')
 
   const q = url.searchParams
   const secret = q.get('secret')?.replace(/\s+/g, '') ?? ''
@@ -51,14 +55,20 @@ export function parseOtpUri(uri: string): OtpUriParams {
   }
 
   const issuer = q.get('issuer') ?? prefixIssuer
-  const algRaw = (q.get('algorithm') ?? 'SHA1').toUpperCase() as HashAlgorithm
+  const algRaw = (q.get('algorithm') ?? '').toUpperCase() as HashAlgorithm
   // I32：仅按 host 判定 steam，不再看 issuer（避免 hotp/totp URI 因 issuer='Steam' 误转）
-  const typeFinal: OtpUriParams['type'] = type === 'steam' ? 'steam' : type
-  // I34：steam 强制 SHA1（Steam 官方规范只支持 SHA-1，query 写其他值忽略）
-  const algorithm: HashAlgorithm = typeFinal === 'steam' ? 'SHA1' : (ALGORITHMS.includes(algRaw) ? algRaw : 'SHA1')
+  const typeFinal: OtpUriParams['type'] = host === 'steam' ? 'steam' : host === 'yaotp' ? 'yandex' : (host as OtpUriParams['type'])
+  // I34：steam 强制 SHA1（Steam 官方规范只支持 SHA-1，query 写其他值忽略）；
+  // yandex 默认 SHA256（YAOTP 规范），query 显式白名单值仍覆盖、白名单外回落默认
+  const algorithm: HashAlgorithm =
+    typeFinal === 'steam'
+      ? 'SHA1'
+      : ALGORITHMS.includes(algRaw)
+        ? algRaw
+        : typeFinal === 'yandex' ? 'SHA256' : 'SHA1'
 
   // I33：digits/period/counter 范围校验
-  let digits = typeFinal === 'steam' ? 5 : Number(q.get('digits') ?? 6)
+  let digits = typeFinal === 'steam' ? 5 : typeFinal === 'yandex' ? 8 : Number(q.get('digits') ?? 6)
   if (!ALLOWED_DIGITS.has(digits)) throw new Error('invalid otpauth uri: digits out of range')
   let period = Number(q.get('period') ?? 30)
   if (!Number.isFinite(period) || period < 1) throw new Error('invalid otpauth uri: period out of range')
@@ -68,6 +78,7 @@ export function parseOtpUri(uri: string): OtpUriParams {
     counter = Number(counterRaw)
     if (!Number.isFinite(counter) || counter < 0) throw new Error('invalid otpauth uri: counter out of range')
   }
+  const pinRaw = q.get('pin')
 
   // C2：按类型解码 secret——原实现只返回 base32 字符串，调用方统一用 RFC4648 解码。
   // Steam 字母表是 RFC4648 的字符子集（去除视觉混淆字符 0/1/8/I/L/O）；
@@ -94,19 +105,23 @@ export function parseOtpUri(uri: string): OtpUriParams {
     digits,
     period,
     ...(counter !== undefined ? { counter } : {}),
+    ...(pinRaw !== null ? { pin: pinRaw } : {}),
   }
 }
 
 export function buildOtpUri(p: OtpUriParams): string {
   const labelPart = p.issuer ? `${p.issuer}:${p.label}` : p.label
-  const host = p.type === 'steam' ? 'steam' : p.type
+  const host = p.type === 'steam' ? 'steam' : p.type === 'yandex' ? 'yaotp' : p.type
+  // 各类型默认参数不写出（yandex 默认 SHA256/8 位；steam 默认 SHA1/5 位；其余 SHA1/6 位）
+  const defaultDigits = p.type === 'steam' ? 5 : p.type === 'yandex' ? 8 : 6
+  const defaultAlgo: HashAlgorithm = p.type === 'yandex' ? 'SHA256' : 'SHA1'
   const q = new URLSearchParams()
   q.set('secret', p.secret)
   if (p.issuer) q.set('issuer', p.issuer)
-  // I34：steam 强制 SHA1，不写 algorithm 参数（默认即 SHA1）
-  if (p.algorithm !== 'SHA1' && p.type !== 'steam') q.set('algorithm', p.algorithm)
-  if (p.type !== 'steam' && p.digits !== 6) q.set('digits', String(p.digits))
+  if (p.algorithm !== defaultAlgo && p.type !== 'steam') q.set('algorithm', p.algorithm)
+  if (p.type !== 'steam' && p.digits !== defaultDigits) q.set('digits', String(p.digits))
   if (p.period !== 30) q.set('period', String(p.period))
+  if (p.type === 'yandex' && p.pin !== undefined) q.set('pin', p.pin)
   // I35：hotp 始终输出 counter（默认 0），跨工具导入时对方默认处理不一致
   if (p.type === 'hotp') q.set('counter', String(p.counter ?? 0))
   return `otpauth://${host}/${encodeURIComponent(labelPart)}?${q.toString()}`

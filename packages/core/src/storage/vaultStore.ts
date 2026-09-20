@@ -33,18 +33,21 @@ function validateEntryShape(e: unknown, at: string): void {
   if (typeof e !== 'object' || e === null) reject()
   const o = e as Record<string, unknown>
   if (typeof o.uuid !== 'string') reject()
-  if (o.type !== 'totp' && o.type !== 'hotp' && o.type !== 'steam') reject()
+  if (o.type !== 'totp' && o.type !== 'hotp' && o.type !== 'steam' && o.type !== 'yandex') reject()
   if (typeof o.issuer !== 'string' || typeof o.label !== 'string' || typeof o.secret !== 'string') reject()
   if (o.algorithm !== 'SHA1' && o.algorithm !== 'SHA256' && o.algorithm !== 'SHA512') reject()
-  // steam 全路径收敛 digits=5（toOtpDigits 强制）；totp/hotp 6/7/8
+  // steam 全路径收敛 digits=5、yandex 全路径收敛 digits=8（toOtpDigits 强制）；totp/hotp 6/7/8
   if (o.digits !== 5 && o.digits !== 6 && o.digits !== 7 && o.digits !== 8) reject()
   if (o.type === 'steam' && o.digits !== 5) reject()
+  if (o.type === 'yandex' && o.digits !== 8) reject()
   if (!isFiniteNum(o.period) || o.period <= 0) reject() // toPositiveNumber 收敛为正数；<1 容忍（渲染 INVALID）
   if (o.counter !== undefined && (!isFiniteNum(o.counter) || o.counter < 0)) reject() // 可缺省（hotp 可无 counter）；小数容忍
   if (!Array.isArray(o.tagIds) || o.tagIds.some((t) => typeof t !== 'string')) reject()
   if (!isFiniteNum(o.order) || !isFiniteNum(o.createdAt)) reject()
   if (o.note !== undefined && typeof o.note !== 'string') reject()
   if (o.pinned !== undefined && typeof o.pinned !== 'boolean') reject()
+  // yandex PIN 可选；出现时必须是字符串（空串合法）
+  if (o.pin !== undefined && typeof o.pin !== 'string') reject()
   if (o.icon !== undefined) {
     if (typeof o.icon !== 'object' || o.icon === null) reject()
     const ic = o.icon as Record<string, unknown>

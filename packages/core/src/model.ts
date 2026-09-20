@@ -2,7 +2,7 @@ import type { HashAlgorithm } from './otp/hotp'
 import type { MatchRule } from './match/engine'
 import type { IconRef } from './icons/registry'
 
-export type EntryType = 'totp' | 'hotp' | 'steam'
+export type EntryType = 'totp' | 'hotp' | 'steam' | 'yandex'
 /** spec §4：digits 支持 5/6/7/8——5 为 Steam 专用（URI 解析/导入/表单层强制），6/7/8 对应 RFC 6238 */
 export type OtpDigits = 5 | 6 | 7 | 8
 
@@ -24,6 +24,8 @@ export interface OtpEntry {
   createdAt: number
   /** 是否置顶：列表渲染时优先；缺省 false（向后兼容旧 vault） */
   pinned?: boolean
+  /** Yandex（yaotp）的 PIN，可选；缺省/空串按无 PIN 计算（空 pin 亦是合法输入）。不参与 Vault.version 语义 */
+  pin?: string
 }
 
 export interface Tag {

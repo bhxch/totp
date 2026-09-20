@@ -68,6 +68,7 @@ export function newEntryFromUri(uri: string, nowMs: number = Date.now()): OtpEnt
     digits: toOtpDigits(p.digits, p.type),
     period: p.period,
     ...(p.counter !== undefined ? { counter: p.counter } : {}),
+    ...(p.pin !== undefined ? { pin: p.pin } : {}),
     tagIds: [],
     order: 0,
     createdAt: nowMs,

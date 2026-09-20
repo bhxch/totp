@@ -35,7 +35,7 @@ const props = defineProps<{
 const emit = defineEmits<{ save: [data: EntryFormData]; cancel: [] }>()
 
 const form = reactive({
-  type: (props.initial?.type ?? 'totp') as 'totp' | 'hotp' | 'steam',
+  type: (props.initial?.type ?? 'totp') as 'totp' | 'hotp' | 'steam' | 'yandex',
   issuer: props.initial?.issuer ?? '',
   label: props.initial?.label ?? '',
   secret: props.initial?.secret ?? '',
@@ -43,20 +43,22 @@ const form = reactive({
   digits: (props.initial?.digits ?? 6) as number,
   period: (props.initial?.period ?? 30) as number,
   counter: (props.initial?.counter ?? 0) as number,
+  pin: props.initial?.pin ?? '',
   note: props.initial?.note ?? '',
   tagIds: [...(props.initial?.tagIds ?? [])],
   matchRules: (props.initial?.matchRules ?? []).map((r) => ({ ...r })),
   icon: props.initial?.icon as EntryFormData['icon'],
 })
 const error = ref('')
-// F2：type 切换时实时同步 digits（steam 固定 5；从 steam 切回其他类型回落 6），输入框所见即所存，
-// 不再依赖 submit 时的静默纠正（此前 UI 显示 6 但保存为 5，视觉与数据不一致）
+// F2：type 切换时实时同步 digits（steam 固定 5、yandex 固定 8；离开这两类回落 6），
+// 输入框所见即所存，不再依赖 submit 时的静默纠正（此前 UI 显示 6 但保存为 5，视觉与数据不一致）
 watch(
   () => form.type,
   (t, old) => {
     if (t === old) return
     if (t === 'steam') form.digits = 5
-    else if (old === 'steam') form.digits = 6
+    else if (t === 'yandex') form.digits = 8
+    else if (old === 'steam' || old === 'yandex') form.digits = 6
   },
 )
 // isNew：预填对象（URI 导入）uuid 为哑值空串，须按新建处理（按钮「添加」而非「保存」）
@@ -95,6 +97,7 @@ const TYPE_OPTIONS = [
   { value: 'totp', label: 'TOTP' },
   { value: 'hotp', label: 'HOTP（计数器）' },
   { value: 'steam', label: 'Steam' },
+  { value: 'yandex', label: 'Yandex（yaotp）' },
 ]
 const ALGO_OPTIONS: Array<{ value: HashAlgorithm; label: string }> = [
   { value: 'SHA1', label: 'SHA1' },
@@ -312,7 +315,11 @@ function submit() {
     error.value = 'Steam 类型的位数必须为 5'
     return
   }
-  if (form.type !== 'steam' && ![6, 7, 8].includes(digits)) {
+  if (form.type === 'yandex' && digits !== 8) {
+    error.value = 'Yandex 类型的位数必须为 8'
+    return
+  }
+  if (form.type !== 'steam' && form.type !== 'yandex' && ![6, 7, 8].includes(digits)) {
     error.value = '位数必须为 6/7/8'
     return
   }
@@ -345,8 +352,10 @@ function submit() {
     tagIds: form.tagIds,
     matchRules: form.matchRules.filter((r) => r.pattern.trim()),
     icon: form.icon,
-    // type 变更时同步默认 digits：steam=5，其他=6（避免显示错位数）
-    ...(form.type !== props.initial?.type ? { digits: form.type === 'steam' ? 5 : 6 } : {}),
+    // type 变更时同步默认 digits：steam=5、yandex=8，其他=6（避免显示错位数）
+    ...(form.type !== props.initial?.type ? { digits: form.type === 'steam' ? 5 : form.type === 'yandex' ? 8 : 6 } : {}),
+    // yandex 提交 PIN（trim；空串也提交以便编辑时清除既有 PIN）；其他类型不带
+    ...(form.type === 'yandex' ? { pin: form.pin.trim() } : {}),
     // HOTP 才提交 counter；其他类型不带（避免污染 TOTP/steam 模型）
     ...(form.type === 'hotp' ? { counter: form.counter } : {}),
   })
@@ -393,6 +402,11 @@ function submit() {
       />
       <!-- steam 强制 5 位提示 -->
       <p v-if="form.type === 'steam'" class="steam-hint">Steam 类型位数固定为 5</p>
+      <!-- yandex PIN（可选）：空缺省按无 PIN 计算 -->
+      <MdTextField
+        v-if="form.type === 'yandex'" v-model="form.pin" class="pin" label="PIN（可选）"
+        placeholder="Yandex PIN" aria-label="Yandex PIN（可选）"
+      />
       <MdTextField
         v-if="form.type === 'hotp'" class="counter" type="number" label="计数器" aria-label="计数器" min="0"
         :model-value="String(form.counter)" @update:model-value="form.counter = looseToNumber($event)"
@@ -483,7 +497,7 @@ function submit() {
 .entry-form .secret-field.invalid :deep(.md-text-field__box) { border-bottom-color: var(--md-sys-color-error); }
 .advanced-row { display: flex; gap: 8px; flex-wrap: wrap; font-size: var(--md-sys-typescale-body-small); align-items: flex-start; }
 .advanced-row .algorithm { flex: 1; min-width: 110px; } /* MdSelect 根随行内 flex 伸展（弹窗窄宽语境触发端 100%） */
-.advanced-row .digits, .advanced-row .period, .advanced-row .counter { flex: 1; min-width: 80px; }
+.advanced-row .digits, .advanced-row .period, .advanced-row .counter, .advanced-row .pin { flex: 1; min-width: 80px; }
 .steam-hint { font-size: var(--md-sys-typescale-label-small); opacity: .65; margin: 0; width: 100%; }
 fieldset { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 6px; display: flex; gap: 10px; flex-wrap: wrap; }
 .tag-check { font-size: var(--md-sys-typescale-body-medium); }

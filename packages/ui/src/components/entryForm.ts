@@ -1,18 +1,20 @@
 import { hasNestedQuantifierRisk, MAX_MATCH_PATTERN_LENGTH, type HashAlgorithm, type IconRef, type MatchRule } from '@totp/core'
 
 export interface EntryFormData {
-  type: 'totp' | 'hotp' | 'steam'
+  type: 'totp' | 'hotp' | 'steam' | 'yandex'
   issuer: string
   label: string
   secret: string
   /** 哈希算法；缺省表示沿用服务端默认（SHA1），避免编辑既有条目时隐式重置 */
   algorithm?: HashAlgorithm
-  /** 验证码位数；缺省表示沿用服务端默认（totp/hotp=6，steam=5） */
+  /** 验证码位数；缺省表示沿用服务端默认（totp/hotp=6，steam=5，yandex=8） */
   digits?: number
   /** TOTP 周期（秒）；缺省 30 */
   period?: number
   /** HOTP 计数器（仅 hotp 类型有效） */
   counter?: number
+  /** Yandex（yaotp）的 PIN，可选；仅 yandex 类型提交（缺省/空串按无 PIN 计算） */
+  pin?: string
   note: string
   tagIds: string[]
   matchRules: MatchRule[]

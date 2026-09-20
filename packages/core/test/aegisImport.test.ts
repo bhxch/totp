@@ -25,12 +25,20 @@ describe('importAegisPlaintext', () => {
               name: 'Steam:player1',
               info: { secret: 'JBSWY3DPEHPK3PXP', algo: 'SHA1', digits: 5, period: 30 },
             },
+            {
+              // Aegis YandexInfo 序列化：type=yandex + info.pin
+              type: 'yandex',
+              uuid: 'u3',
+              name: 'Yandex:user',
+              info: { secret: 'KJTEUGOD5SNXVWBCWJ4G36W4IA', algo: 'SHA256', digits: 8, period: 30, pin: '1234' },
+            },
           ],
         },
       }),
     )
     expect(r.entries[0]).toMatchObject({ issuer: 'GitHub', label: 'me@x.com', type: 'totp' })
     expect(r.entries[1]).toMatchObject({ type: 'steam', digits: 5 })
+    expect(r.entries[2]).toMatchObject({ type: 'yandex', digits: 8, algorithm: 'SHA256', pin: '1234' })
     expect(r.failures).toHaveLength(0)
   })
   it('坏条目进 failures 不阻断', () => {

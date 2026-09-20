@@ -24,9 +24,9 @@ export function parseVaultJson(json: string): Vault {
 }
 
 const ALGORITHMS: HashAlgorithm[] = ['SHA1', 'SHA256', 'SHA512']
-/** steam 强制 5；totp/hotp 仅允许 6/7/8 */
+/** steam 强制 5、yandex 强制 8；totp/hotp 仅允许 6/7/8 */
 function allowedDigits(type: OtpEntry['type']): number[] {
-  return type === 'steam' ? [5] : [6, 7, 8]
+  return type === 'steam' ? [5] : type === 'yandex' ? [8] : [6, 7, 8]
 }
 
 function isBase32String(s: string): boolean {
@@ -41,8 +41,8 @@ function validateEntry(e: unknown, index: number): asserts e is OtpEntry {
 
   if (typeof o.uuid !== 'string' || !o.uuid) throw new Error(`${at} uuid 缺失`)
 
-  if (o.type !== 'totp' && o.type !== 'hotp' && o.type !== 'steam') {
-    throw new Error(`${at} type 必须是 totp/hotp/steam`)
+  if (o.type !== 'totp' && o.type !== 'hotp' && o.type !== 'steam' && o.type !== 'yandex') {
+    throw new Error(`${at} type 必须是 totp/hotp/steam/yandex`)
   }
 
   if (typeof o.issuer !== 'string') throw new Error(`${at} issuer 必须为字符串`)
@@ -67,6 +67,11 @@ function validateEntry(e: unknown, index: number): asserts e is OtpEntry {
 
   if (!Array.isArray(o.tagIds) || o.tagIds.some((g) => typeof g !== 'string')) {
     throw new Error(`${at} tagIds 必须为字符串数组`)
+  }
+
+  // yandex PIN 可选；出现时必须是字符串（与 core validateEntryShape 同口径）
+  if (o.pin !== undefined && typeof o.pin !== 'string') {
+    throw new Error(`${at} pin 必须为字符串`)
   }
 
   if (typeof o.order !== 'number') throw new Error(`${at} order 必须为数字`)

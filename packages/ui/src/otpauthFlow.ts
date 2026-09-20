@@ -23,6 +23,7 @@ export function parseUriToEntryData(uri: string): ParseUriResult {
         digits: toOtpDigits(p.digits, p.type),
         period: p.period,
         ...(p.counter !== undefined ? { counter: p.counter } : {}),
+        ...(p.pin !== undefined ? { pin: p.pin } : {}),
         note: '',
         tagIds: [],
         matchRules: [],

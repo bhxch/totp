@@ -70,16 +70,16 @@ describe('EntryForm', () => {
     // 新 tag 已出现于复选列表且勾选（t1 未勾、t9 勾）
     expect(checks).toEqual([false, true])
   })
-  it('编辑既有条目：type 下拉始终含 totp/hotp/steam 三选项（C15 解除 type 锁定）', async () => {
+  it('编辑既有条目：type 下拉始终含 totp/hotp/steam/yandex 四选项（C15 解除 type 锁定）', async () => {
     const w = mount(EntryForm, { props: { initial: { ...entry, type: 'hotp' }, tags: [] } })
     const trigger = w.find('button[aria-label="类型"]')
     // 取消 :disabled：type 现在可自由切换（type 变更时 digits 会自动重算）
     expect(trigger.attributes('disabled')).toBeUndefined()
     await trigger.trigger('click')
     const opts = w.findAll('[role="option"]')
-    expect(opts.map((o) => o.text())).toEqual(['TOTP', 'HOTP（计数器）', 'Steam'])
+    expect(opts.map((o) => o.text())).toEqual(['TOTP', 'HOTP（计数器）', 'Steam', 'Yandex（yaotp）'])
     // 既有 hotp 回填为选中项
-    expect(opts.map((o) => o.attributes('aria-selected'))).toEqual(['false', 'true', 'false'])
+    expect(opts.map((o) => o.attributes('aria-selected'))).toEqual(['false', 'true', 'false', 'false'])
   })
   it('F2：type 切 steam 时 digits 实时置 5，切回落回 6（所见即所存）', async () => {
     const w = mount(EntryForm, { props: { initial: null, tags: [] } })

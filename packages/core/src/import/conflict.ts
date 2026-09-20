@@ -22,6 +22,7 @@ export function newEntryFromParsed(p: ParsedEntry, uuid: string, nowMs: number, 
     period: p.period,
     ...(p.counter !== undefined ? { counter: p.counter } : {}),
     ...(p.note !== undefined ? { note: p.note } : {}),
+    ...(p.pin !== undefined ? { pin: p.pin } : {}),
     tagIds,
     order,
     createdAt: nowMs,
@@ -41,7 +42,8 @@ export function findConflicts(existing: OtpEntry[] | Vault, incoming: ParsedEntr
 
 // 覆盖白名单（conflict replace 与 dedup suspect replace 共用，保证两处不漂移）：
 // 仅更新导入来源明确的字段（type/issuer/label/secret/algorithm/digits/period/createdAt）；
-// counter/note 若解析结果中未提供则省略（避免静默覆盖本地 HOTP 计数或用户笔记）
+// counter/note 若解析结果中未提供则省略（避免静默覆盖本地 HOTP 计数或用户笔记）；
+// yandex 的 pin 显式覆盖（无 pin 时写 undefined 清除，避免旧 pin 残留导致算码错误）
 export function parsedPatch(p: ParsedEntry, nowMs: number): Partial<Omit<OtpEntry, 'uuid'>> {
   return {
     type: p.type,
@@ -53,6 +55,7 @@ export function parsedPatch(p: ParsedEntry, nowMs: number): Partial<Omit<OtpEntr
     period: p.period,
     ...(p.counter !== undefined ? { counter: p.counter } : {}),
     ...(p.note !== undefined ? { note: p.note } : {}),
+    ...(p.type === 'yandex' ? { pin: p.pin } : {}),
     createdAt: nowMs,
   }
 }

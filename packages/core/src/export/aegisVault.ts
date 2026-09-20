@@ -29,7 +29,7 @@ interface AegisEntryJson {
   issuer?: string
   note?: string
   groupid?: string
-  info: { secret: string; algo: string; digits: number; period: number; counter?: number }
+  info: { secret: string; algo: string; digits: number; period: number; counter?: number; pin?: string }
 }
 
 function tagNameOf(v: Vault, id: string): string | null {
@@ -51,6 +51,8 @@ function toAegisEntry(e: OtpEntry, groupid: string | undefined): AegisEntryJson 
       digits: e.digits,
       period: e.period,
       ...(e.type === 'hotp' ? { counter: e.counter ?? 0 } : {}),
+      // Aegis YandexInfo.toJson 把 pin 放 info.pin（导入侧同口径读取）；无 pin 不写
+      ...(e.type === 'yandex' && e.pin !== undefined ? { pin: e.pin } : {}),
     },
   }
 }

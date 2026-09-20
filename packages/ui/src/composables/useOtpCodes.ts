@@ -1,4 +1,4 @@
-import { base32Decode, hotp, steamCode, totp, type OtpEntry } from '@totp/core'
+import { base32Decode, hotp, steamCode, totp, yandexCode, type OtpEntry } from '@totp/core'
 import { onScopeDispose, ref, type Ref } from 'vue'
 
 export interface CodeState {
@@ -38,6 +38,7 @@ export function useOtpCodes(entries: Ref<OtpEntry[]>) {
       try {
         let code: string
         if (e.type === 'steam') code = await steamCode(secretOf(e), nowMs.value)
+        else if (e.type === 'yandex') code = await yandexCode(e.secret, e.pin ?? '', nowMs.value, period, e.digits)
         else if (e.type === 'hotp') code = await hotp(secretOf(e), e.counter ?? 0, { algorithm: e.algorithm, digits: e.digits })
         else code = await totp(secretOf(e), nowMs.value, { algorithm: e.algorithm, digits: e.digits, period })
         next.set(e.uuid, { code, remaining, progress: remaining / period })

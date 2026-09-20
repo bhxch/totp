@@ -21,6 +21,16 @@ describe('exportOtpauthText', () => {
     expect(b?.type).toBe('hotp'); expect(b?.counter).toBe(7)
     expect(c?.type).toBe('steam'); expect(c?.digits).toBe(5)
   })
+  it('yandex 导出走 yaotp host 且携带 pin（round-trip 保真）', () => {
+    const ya = newEntryFromUri('otpauth://yaotp/Yandex:user?secret=KJTEUGOD5SNXVWBCWJ4G36W4IA&pin=1234')
+    expect(ya.type).toBe('yandex')
+    expect(ya.pin).toBe('1234')
+    const [line] = exportOtpauthText(vaultWith([ya])).split('\n')
+    const back = parseOtpUri(line!)
+    expect(back.type).toBe('yandex')
+    expect(back.digits).toBe(8)
+    expect(back.pin).toBe('1234')
+  })
   it('空 vault 导出空串', () => {
     expect(exportOtpauthText(createVault())).toBe('')
   })

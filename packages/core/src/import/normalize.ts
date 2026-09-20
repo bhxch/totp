@@ -17,9 +17,10 @@ export function normalizeAlgorithm(raw: unknown): ParsedEntry['algorithm'] {
   return s === 'SHA256' || s === 'SHA512' ? s : 'SHA1'
 }
 
-/** type 规整：含 steam（大小写不敏感）→ 'steam'，含 hotp → 'hotp'，其余 'totp' */
+/** type 规整：含 yandex → 'yandex'，含 steam（大小写不敏感）→ 'steam'，含 hotp → 'hotp'，其余 'totp' */
 export function normalizeType(raw: unknown): ParsedEntry['type'] {
   const s = String(raw ?? '').toLowerCase()
+  if (s.includes('yandex')) return 'yandex'
   if (s.includes('steam')) return 'steam'
   if (s.includes('hotp')) return 'hotp'
   return 'totp'
@@ -37,9 +38,10 @@ export function toNonNegativeNumber(raw: unknown, fallback: number): number {
   return Number.isFinite(n) && n >= 0 ? n : fallback
 }
 
-/** digits 收口到 OtpDigits（I36 类型收紧的运行时边界）：steam 强制 5，其余仅接受 6/7/8、非法回落 6 */
+/** digits 收口到 OtpDigits（I36 类型收紧的运行时边界）：steam 强制 5、yandex 强制 8，其余仅接受 6/7/8、非法回落 6 */
 export function toOtpDigits(raw: number, type: ParsedEntry['type']): OtpDigits {
   if (type === 'steam') return 5
+  if (type === 'yandex') return 8
   return raw === 6 || raw === 7 || raw === 8 ? raw : 6
 }
 
