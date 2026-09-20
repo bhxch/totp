@@ -17,6 +17,12 @@ const icons = ref<IconStore | null>(null)
 // 装入一次，首次就绪的 store 驱动 locale（仅首次生效，重载为 no-op）
 const appForI18n = getCurrentInstance()?.appContext.app
 let i18nInstalled = false
+// D2 抽串：mini 壳层 t() 走捕获的 i18n 实例（本组件 script setup 内 useI18n 注入不可用，沿 options 页口径）。
+// 模板仅在 store 就绪后渲染，而装入与 store 赋值同步——tr 兜底回原文 key 仅极端时序可见
+const i18nRef = shallowRef<ReturnType<typeof createAppI18n> | null>(null)
+function tr(key: string, params: Record<string, unknown> = {}): string {
+  return i18nRef.value ? i18nRef.value.global.t(key, params) : key
+}
 
 async function load() {
   try {
@@ -27,9 +33,13 @@ async function load() {
     await s.initStore()
     store.value = s
     // D1 i18n 挂载：设置已从盘载入（含 locale）；仅首次生效，重载不再装入
-    if (appForI18n && !i18nInstalled) {
-      appForI18n.use(createAppI18n(s))
-      i18nInstalled = true
+    if (!i18nInstalled) {
+      const i18nInst = createAppI18n(s)
+      if (appForI18n) {
+        appForI18n.use(i18nInst)
+        i18nInstalled = true
+      }
+      i18nRef.value = i18nInst
     }
     // 主题接线:initStore 成功后挂 useTheme(设置已加载为真实值;首帧属性由 html 内联脚本负责)
     useTheme(s)
@@ -88,17 +98,17 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
 
 <template>
   <main class="mini">
-    <div v-if="store && locked" class="empty">加密启用后迷你窗不可用，请在主窗口解锁使用</div>
-    <div v-else-if="!store || sorted.length === 0" class="empty">暂无条目</div>
+    <div v-if="store && locked" class="empty">{{ tr('mini.lockedNote') }}</div>
+    <div v-else-if="!store || sorted.length === 0" class="empty">{{ tr('mini.empty') }}</div>
     <OtpListItem v-for="e in sorted" :key="e.uuid" :entry="e" :icon="iconView(e.icon, icons ?? undefined)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" @reveal="revealing = e" />
 
     <!-- F1：reveal 模态（只读展示密钥前后各 4 位） -->
     <div v-if="revealing" class="reveal-mask" @click="revealing = null">
       <div class="reveal-card" @click.stop>
-        <h3>{{ revealing.issuer }} — 密钥</h3>
+        <h3>{{ tr('mini.revealTitle', { issuer: revealing.issuer }) }}</h3>
         <code class="reveal-secret">{{ maskSecret(revealing.secret) }}</code>
-        <p class="reveal-hint">仅显示密钥前后各 4 位；完整密钥请在主窗口编辑查看。</p>
-        <button class="reveal-close" @click="revealing = null">关闭</button>
+        <p class="reveal-hint">{{ tr('mini.revealHint') }}</p>
+        <button class="reveal-close" @click="revealing = null">{{ tr('mini.close') }}</button>
       </div>
     </div>
   </main>

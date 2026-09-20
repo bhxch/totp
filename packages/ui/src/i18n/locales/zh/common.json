@@ -626,5 +626,26 @@
     "readError": "本地数据读取失败：{message}",
     "exported": "已导出备份文件：{name}",
     "exportedOverwrite": "已导出备份文件（覆盖）：{name}"
+  },
+  "desktop": {
+    "loadFailed": "本地数据初始化失败：{message}",
+    "filterBackup": "TOTP 备份",
+    "filterExport": "导出文件",
+    "filterImage": "图片",
+    "filterImport": "导入文件",
+    "retentionCleaned": "{name} 清理 {count} 份旧云备份",
+    "retentionUnsupported": "{name} 后端不支持远端清理",
+    "noteSep": "；",
+    "hideToTray": "隐藏到托盘",
+    "unlockKeychain": "钥匙串自动解锁",
+    "unlockWindows": "Windows 自动解锁",
+    "unlockKeyring": "密钥环自动解锁"
+  },
+  "mini": {
+    "lockedNote": "加密启用后迷你窗不可用，请在主窗口解锁使用",
+    "empty": "暂无条目",
+    "revealTitle": "{issuer} — 密钥",
+    "revealHint": "仅显示密钥前后各 4 位；完整密钥请在主窗口编辑查看。",
+    "close": "关闭"
   }
 }

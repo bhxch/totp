@@ -626,5 +626,26 @@
     "readError": "Failed to read local data: {message}",
     "exported": "Backup file exported: {name}",
     "exportedOverwrite": "Backup file exported (overwrite): {name}"
+  },
+  "desktop": {
+    "loadFailed": "Failed to initialize local data: {message}",
+    "filterBackup": "TOTP backup",
+    "filterExport": "Export file",
+    "filterImage": "Image",
+    "filterImport": "Import file",
+    "retentionCleaned": "{name}: cleaned {count} old cloud backups",
+    "retentionUnsupported": "{name}: backend does not support remote cleanup",
+    "noteSep": "; ",
+    "hideToTray": "Hide to tray",
+    "unlockKeychain": "Keychain auto-unlock",
+    "unlockWindows": "Windows auto-unlock",
+    "unlockKeyring": "Keyring auto-unlock"
+  },
+  "mini": {
+    "lockedNote": "Mini window is unavailable while encryption is enabled; unlock in the main window",
+    "empty": "No entries",
+    "revealTitle": "{issuer} — Secret",
+    "revealHint": "Only the first and last 4 characters of the secret are shown; view or edit the full secret in the main window.",
+    "close": "Close"
   }
 }

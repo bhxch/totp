@@ -29,9 +29,17 @@ let unlistenFocus: (() => void) | null = null
 // （onMounted await 之后 instance 上下文已失效）；本组件 store 仅在挂载时创建一次
 const appForI18n = getCurrentInstance()?.appContext.app
 let i18nInstalled = false
+// D2 抽串：壳层 t() 走捕获的 i18n 实例（本组件 script setup 内 useI18n 注入不可用，沿 options 页口径）。
+// 未装入（初始化失败等）时兜底回原文 key
+const i18nRef = shallowRef<ReturnType<typeof createAppI18n> | null>(null)
+function tr(key: string, params: Record<string, unknown> = {}): string {
+  return i18nRef.value ? i18nRef.value.global.t(key, params) : key
+}
 function mountI18n(s: VueStore): void {
   if (appForI18n && !i18nInstalled) {
-    appForI18n.use(createAppI18n(s))
+    const i18nInst = createAppI18n(s)
+    appForI18n.use(i18nInst)
+    i18nRef.value = i18nInst
     i18nInstalled = true
   }
 }
@@ -150,15 +158,16 @@ async function openBackupText(text: string, password: string): Promise<string> {
   return openBackupEnvelope(JSON.parse(text), password)
 }
 
-const BACKUP_FILE_FILTERS = [{ name: 'TOTP 备份', extensions: ['totpbackup'] }]
+// 文件对话框过滤器名（D2 抽串）：i18n 随 store 就绪装入，而平台方法均在其后调用——改为工厂函数调用时取词
+const backupFileFilters = (): DialogFilterSpec[] => [{ name: tr('desktop.filterBackup'), extensions: ['totpbackup'] }]
 // 文本导出（批① §2.3）对话框过滤器：otpauth 文本落 .txt、Aegis 导出落 .json
-const TEXT_FILE_FILTERS: DialogFilterSpec[] = [{ name: '导出文件', extensions: ['json', 'txt'] }]
+const textFileFilters = (): DialogFilterSpec[] => [{ name: tr('desktop.filterExport'), extensions: ['json', 'txt'] }]
 // 图片导出（批① §2.5 二维码拼版）对话框过滤器：拼版 PNG 落 .png
-const IMAGE_FILE_FILTERS: DialogFilterSpec[] = [{ name: '图片', extensions: ['png'] }]
+const imageFileFilters = (): DialogFilterSpec[] => [{ name: tr('desktop.filterImage'), extensions: ['png'] }]
 // 与 Rust 端 read_import_file_os 扩展名白名单一致（.json/.wauth/.xml/.txt/.aegis）+ SQLite .db/.sqlitedb/.sqlite
 // （.db 经文本读取报 UTF-8 错时由 ImportCard 转字节入口复查，见 read_import_file_bytes_os）+ AP .zip（手动选择字节通道）
-const IMPORT_FILE_FILTERS = [
-  { name: '导入文件', extensions: ['json', 'wauth', 'txt', 'aegis', 'xml', 'db', 'sqlitedb', 'sqlite', 'zip'] },
+const importFileFilters = (): DialogFilterSpec[] => [
+  { name: tr('desktop.filterImport'), extensions: ['json', 'wauth', 'txt', 'aegis', 'xml', 'db', 'sqlitedb', 'sqlite', 'zip'] },
 ]
 
 /**
@@ -196,7 +205,7 @@ const backupPlatform: BackupPlatform = {
   async exportToFile(vaultJson, password) {
     // F4：save 对话框改由 Rust 打开并登记保存位置父目录（取消则直接 false），
     // 再做 Argon2id 加密写文件，省一次白跑的 KDF（档位随备份设置）
-    const picked = await pickBackupSaveOs(backupFileName(new Date()), BACKUP_FILE_FILTERS)
+    const picked = await pickBackupSaveOs(backupFileName(new Date()), backupFileFilters())
     if (!picked) return false
     const envelope = await createBackupEnvelope(vaultJson, password, kdfProfileOf())
     await writeBackupFileOs(picked, envelope)
@@ -204,7 +213,7 @@ const backupPlatform: BackupPlatform = {
   },
   // 文本导出（批① §2.3）：save 对话框（Rust 登记授权）+ OS 白名单写；取消=不写盘返回 false
   async saveTextFile(name, content) {
-    const picked = await pickBackupSaveOs(name, TEXT_FILE_FILTERS)
+    const picked = await pickBackupSaveOs(name, textFileFilters())
     if (!picked) return false
     await writeTextFileOs(picked, content)
     return true
@@ -212,14 +221,14 @@ const backupPlatform: BackupPlatform = {
   // 图片导出（批① §2.5 多选二维码拼版 PNG）：save 对话框（Rust 登记授权）+ OS 白名单字节写
   // （dataUrl 解 base64 为原始字节，不经文本管道）；取消=不写盘返回 false
   async saveImageFile(name, dataUrl) {
-    const picked = await pickBackupSaveOs(name, IMAGE_FILE_FILTERS)
+    const picked = await pickBackupSaveOs(name, imageFileFilters())
     if (!picked) return false
     await writeBytesFileOs(picked, base64ToBytes(dataUrl.slice(dataUrl.indexOf(',') + 1)))
     return true
   },
   async restoreFromPicker(password) {
     // F4：open 对话框由 Rust 打开（path+dirToken 成对返回），遏制基准=后端登记父目录
-    const picked = await pickBackupOpenOs(BACKUP_FILE_FILTERS)
+    const picked = await pickBackupOpenOs(backupFileFilters())
     if (!picked) return null
     return { json: await openBackupText(await readBackupFileOs(picked), password) }
   },
@@ -246,14 +255,14 @@ const backupPlatform: BackupPlatform = {
   },
   async readImportFile() {
     // F4：open 对话框由 Rust 打开（登记父目录返回 token），文本/字节入口共用同一登记结果
-    const picked = await pickImportFileOs(IMPORT_FILE_FILTERS)
+    const picked = await pickImportFileOs(importFileFilters())
     if (!picked) return null
     lastImportPick = picked
     return { text: await readImportFileOs(picked), name: picked.path.split(/[\\/]/).pop() ?? picked.path }
   },
   // SQLite 字节入口：复用最近一次选择的登记结果（避免二次弹窗）；无最近选择时补弹对话框
   async readImportFileBytes() {
-    const picked = lastImportPick ?? (await pickImportFileOs(IMPORT_FILE_FILTERS))
+    const picked = lastImportPick ?? (await pickImportFileOs(importFileFilters()))
     if (!picked) return null
     return { bytes: await readImportFileBytesOs(picked), name: picked.path.split(/[\\/]/).pop() ?? picked.path }
   },
@@ -412,12 +421,13 @@ const cloudSync = createCloudSyncRunner({
   kdfProfile: () => kdfProfileOf(),
   sourceName: (id) => cloudSourceNames.get(id) ?? id,
   onRetentionDeleted: (name, deleted) => {
-    retentionNotes.push(deleted >= 0 ? `${name} 清理 ${deleted} 份旧云备份` : `${name} 后端不支持远端清理`)
+    // D2 抽串：记录时取词（摘要持久化于 cloudAutoStatus，展示端按落盘内容显示）
+    retentionNotes.push(deleted >= 0 ? tr('desktop.retentionCleaned', { name, count: deleted }) : tr('desktop.retentionUnsupported', { name }))
   },
   recordStatus: (ok, summary) => {
-    const notes = retentionNotes.join('；')
+    const notes = retentionNotes.join(tr('desktop.noteSep'))
     retentionNotes = []
-    recordAutoStatus(CLOUD_AUTO_STATUS_KEY, ok, notes ? `${summary}；${notes}` : summary)
+    recordAutoStatus(CLOUD_AUTO_STATUS_KEY, ok, notes ? `${summary}${tr('desktop.noteSep')}${notes}` : summary)
   },
   onError: (err) => console.warn('[cloudAutoSync]', err),
 })
@@ -429,11 +439,14 @@ const cloudSync = createCloudSyncRunner({
 const ua = navigator.userAgent
 const isMac = /Mac/i.test(ua) && !/iPhone|iPad/i.test(ua)
 const isWin = /Windows/i.test(ua)
-const unlockNaming = isMac
-  ? { prfLabel: 'Touch ID (Passkey)', osAutoLabel: '钥匙串自动解锁' }
-  : isWin
-    ? { prfLabel: 'Windows Hello (Passkey)', osAutoLabel: 'Windows 自动解锁' }
-    : { prfLabel: 'Passkey', osAutoLabel: '密钥环自动解锁' }
+/** 解锁方式显示名（D2 抽串）：改工厂调用时取词——securityPlatform computed 求值与 dpapiOps.label
+ *  getter 读取均发生在 i18n 装入后，且经 locale ref 建立响应依赖（locale 切换联动） */
+const unlockNaming = (): { prfLabel: string; osAutoLabel: string | null } =>
+  isMac
+    ? { prfLabel: 'Touch ID (Passkey)', osAutoLabel: tr('desktop.unlockKeychain') }
+    : isWin
+      ? { prfLabel: 'Windows Hello (Passkey)', osAutoLabel: tr('desktop.unlockWindows') }
+      : { prfLabel: 'Passkey', osAutoLabel: tr('desktop.unlockKeyring') }
 
 /** OS 自动解锁通道（三平台统一，见 lib.rs os_auto_protect/unprotect）：Windows 下委托同一
  *  DEK 通道（运行时行为与旧 dpapi_* 命令等价），macOS/Linux 经 keyring。Rust os_auto_* 与
@@ -443,7 +456,8 @@ const unlockNaming = isMac
  *  SecurityCard（启用/移除）与 LockScreen（挂载静默解锁）共用同一对象；label 注入按端显示名
  *  （?? 回退防未来分支 osAutoLabel 变 null 时静默 undefined），techSuffix 为已绑定行技术标注 */
 const dpapiOps: DpapiUnlockOps = {
-  label: unlockNaming.osAutoLabel ?? 'Windows 自动解锁',
+  // getter：读取时取词（SecurityCard/LockScreen 渲染期读取，晚于 i18n 装入；?? 回退防未来分支为 null）
+  get label() { return unlockNaming().osAutoLabel ?? tr('desktop.unlockWindows') },
   techSuffix: isWin ? '（DPAPI）' : isMac ? '（Keychain）' : '（Secret Service）',
   source: computed(() => store.value?.dpapiSource.value ?? null),
   getCurrentDek: () => store.value?.getCurrentDek() ?? null,
@@ -516,7 +530,7 @@ const securityPlatform = computed<SecurityPlatform | null>(() => {
       },
     },
     dpapi: dpapiOps,
-    unlockNaming,
+    unlockNaming: unlockNaming(),
     clipboardClearEnabled: computed(() => s.settings.clipboardClearEnabled),
     async setClipboardClear(v) {
       s.settings.clipboardClearEnabled = v
@@ -622,7 +636,8 @@ onMounted(async () => {
     await iconStore.init()
     icons.value = iconStore
   } catch (e) {
-    loadError.value = '本地数据初始化失败：' + (e instanceof Error ? e.message : String(e))
+    // D2 抽串：前缀文案移至模板 tr()（i18n 可能未装入——initStore 失败先于 mountI18n），此处只存原始消息
+    loadError.value = e instanceof Error ? e.message : String(e)
   }
 })
 
@@ -650,12 +665,13 @@ async function copyToClipboard(code: string) {
   clearer.notifyCopied()
 }
 
-/** Rail 底部「隐藏到托盘」：原 header 按钮迁移为 Shell 动作（失焦自动隐藏开关迁至设置页） */
-const railActions = [{ label: '隐藏到托盘', onClick: () => void getCurrentWindow().hide() }]
+/** Rail 底部「隐藏到托盘」：原 header 按钮迁移为 Shell 动作（失焦自动隐藏开关迁至设置页）。
+ *  label 用 getter 读取时取词（Shell 渲染期晚于 i18n 装入，随 locale 联动） */
+const railActions = [{ get label() { return tr('desktop.hideToTray') }, onClick: () => void getCurrentWindow().hide() }]
 </script>
 
 <template>
-  <div v-if="loadError && !store" class="error">{{ loadError }}</div>
+  <div v-if="loadError && !store" class="error">{{ tr('desktop.loadFailed', { message: loadError }) }}</div>
   <!-- 解锁成功回调补跑迁移（plan16 T14，幂等）：口令/PRF 解锁各路径在 LockScreen 内 emit unlocked -->
   <LockScreen v-else-if="store && locked" :store="store" :dpapi="dpapiOps" @unlocked="runLegacyMigrations" />
   <NavigationShell v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :cloud-platform="cloudPlatform" :icons="icons" :schemes-api="schemesApi" :rail-actions="railActions" @copy="copyToClipboard" />
