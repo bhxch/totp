@@ -3,6 +3,7 @@
  * - 仅 creating 显「手动填写/智能粘贴」Tab；默认手动；切智能粘贴渲染 BatchPastePanel
  * - 粘贴落库（added）→ 关表单回列表；再次新建回到默认手动 Tab
  * - 编辑态不显 Tab（保持原纯手动表单）
+ * - 评审 R1 回归：新建 yandex 条目 digits=8 经 toOtpDigits 收口直传 addEntryOp，不被覆写为 6
  * store 模块整体 mock：真实模块 import 期即建 chrome 侧 store 单例（src/store.ts 顶层
  * createExtensionStore），node/jsdom 测试环境不可用；组件树其余走真实实现。
  */
@@ -53,7 +54,7 @@ vi.mock('../src/store', async () => {
 })
 
 import App from '../entrypoints/popup/App.vue'
-import { vault } from '../src/store'
+import { addEntryOp, vault } from '../src/store'
 
 /** BatchPastePanel 桩：保留 added 事件发射能力（点内嵌按钮触发），data-test 判定渲染 */
 const BatchPastePanelStub = {
@@ -145,5 +146,62 @@ describe('popup App 新建表单双 Tab（14c）', () => {
     } finally {
       vault.entries.length = 0
     }
+  })
+})
+
+describe('popup 新建条目 digits 经 toOtpDigits 收口（评审 R1 回归）', () => {
+  it('新建 yandex 条目：表单提交 digits=8 直传 addEntryOp，不被覆写为 6；pin 原样透传', async () => {
+    vi.mocked(addEntryOp).mockClear()
+    const wrapper = await mountApp()
+    await findAddButton(wrapper).trigger('click')
+    expect(wrapper.find('entry-form-stub').exists()).toBe(true)
+
+    // 模拟共享 EntryForm submit 的 payload（表单校验已保证 yandex digits=8；pin 仅 yandex 携带）
+    wrapper.findComponent({ name: 'EntryForm' }).vm.$emit('save', {
+      type: 'yandex',
+      issuer: 'Yandex',
+      label: 'me',
+      secret: 'JBSWY3DPEHPK3PXP',
+      algorithm: 'SHA1',
+      digits: 8,
+      period: 30,
+      note: '',
+      tagIds: [],
+      matchRules: [],
+      pin: '1234',
+    })
+    await flushPromises()
+
+    expect(addEntryOp).toHaveBeenCalledTimes(1)
+    const entry = vi.mocked(addEntryOp).mock.calls[0]![0]
+    expect(entry.type).toBe('yandex')
+    // 此前 create 路径字面量 `steam ? 5 : 6` 把 8 覆写为 6，写路径不校验直接落盘，
+    // 下次 loadVault 经 validateVaultObject 整记录拒绝致 vault 不可用
+    expect(entry.digits).toBe(8)
+    expect(entry.pin).toBe('1234')
+  })
+
+  it('新建 totp 条目：表单提交 digits=7 经 toOtpDigits 白名单放行，不回落 6', async () => {
+    vi.mocked(addEntryOp).mockClear()
+    const wrapper = await mountApp()
+    await findAddButton(wrapper).trigger('click')
+    wrapper.findComponent({ name: 'EntryForm' }).vm.$emit('save', {
+      type: 'totp',
+      issuer: 'GitHub',
+      label: 'me',
+      secret: 'JBSWY3DPEHPK3PXP',
+      algorithm: 'SHA1',
+      digits: 7,
+      period: 30,
+      note: '',
+      tagIds: [],
+      matchRules: [],
+    })
+    await flushPromises()
+
+    expect(addEntryOp).toHaveBeenCalledTimes(1)
+    const entry = vi.mocked(addEntryOp).mock.calls[0]![0]
+    expect(entry.type).toBe('totp')
+    expect(entry.digits).toBe(7)
   })
 })

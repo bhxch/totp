@@ -265,7 +265,11 @@ async function onSave(data: EntryFormData) {
       ...data,
       uuid: crypto.randomUUID(),
       algorithm: carried?.algorithm ?? 'SHA1',
-      digits: carried?.digits ?? (data.type === 'steam' ? 5 : 6),
+      // digits 经 toOtpDigits 收口（与编辑路径同口径）：carried 来自 parseUriToEntryData 已收口可直传，
+      // 纯手写路径以表单提交值收口——steam 恒 5、yandex 恒 8、其余 6/7/8。不得回退字面量 5/6：
+      // 此前 `steam ? 5 : 6` 把表单提交的 yandex digits=8 覆写为 6，addEntry 写路径不校验直接落盘，
+      // 下次 loadVault 经 validateVaultObject 整记录拒绝（'vault corrupted'）致整个 vault 不可用
+      digits: carried?.digits ?? toOtpDigits(data.digits ?? 6, data.type),
       period: carried?.period ?? 30,
       ...(carried?.type === 'hotp' ? { counter: carried.counter ?? 0 } : {}),
       order: 0,
