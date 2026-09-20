@@ -131,6 +131,8 @@ export interface AppSettings {
   rememberTagFilter: boolean
   /** 选中 tag 集合持久化载体；仅 rememberTagFilter 开启时读写（关闭不清除已存值） */
   lastTagFilterIds: string[]
+  /** 界面语言：auto=跟随浏览器语言（非 en 即 zh）；zh 源语言兼回退（spec §1） */
+  locale: 'auto' | 'zh' | 'en'
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -146,6 +148,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lockOnSystemLock: true,
   backupKdfProfile: DEFAULT_KDF_PROFILE,
   tagFilterMode: 'any', rememberTagFilter: false, lastTagFilterIds: [],
+  locale: 'auto',
 }
 
 export async function loadSettings(adapter: StorageAdapter): Promise<AppSettings> {
@@ -171,6 +174,7 @@ export async function loadSettings(adapter: StorageAdapter): Promise<AppSettings
       tagFilterMode: merged.tagFilterMode === 'any' || merged.tagFilterMode === 'all' ? merged.tagFilterMode : DEFAULT_SETTINGS.tagFilterMode,
       rememberTagFilter: typeof merged.rememberTagFilter === 'boolean' ? (merged.rememberTagFilter as boolean) : DEFAULT_SETTINGS.rememberTagFilter,
       lastTagFilterIds: Array.isArray(merged.lastTagFilterIds) && merged.lastTagFilterIds.every((x) => typeof x === 'string') ? (merged.lastTagFilterIds as string[]) : DEFAULT_SETTINGS.lastTagFilterIds,
+      locale: merged.locale === 'zh' || merged.locale === 'en' || merged.locale === 'auto' ? merged.locale : DEFAULT_SETTINGS.locale,
     }
   } catch {
     return { ...DEFAULT_SETTINGS }
