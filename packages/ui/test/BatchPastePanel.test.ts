@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { createMemoryStorage } from '@totp/core'
 import { createVueStore } from '../src/store'
 import BatchPastePanel from '../src/components/BatchPastePanel.vue'
+import { createTestI18n } from './helpers/i18n'
 
 const URI_A = 'otpauth://totp/GitHub:alice?secret=JBSWY3DPEHPK3PXP&issuer=GitHub'
 const URI_B = 'otpauth://totp/GitLab:bob?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=GitLab'
@@ -15,7 +16,7 @@ function mkStore() {
 describe('BatchPastePanel', () => {
   it('粘贴两条 URI：显示 2 行解析结果且可添加', async () => {
     const store = await mkStore()
-    const w = mount(BatchPastePanel, { props: { store } })
+    const w = mount(BatchPastePanel, { global: { plugins: [createTestI18n()] }, props: { store } })
     await w.find('textarea').setValue(`${URI_A}\n${URI_B}`)
     await w.find('[data-test="paste-parse"]').trigger('click')
     expect(w.findAll('[data-test="paste-row"]')).toHaveLength(2)
@@ -26,7 +27,7 @@ describe('BatchPastePanel', () => {
   })
   it('重复粘贴同一条：identical 行默认跳过，第二次添加不产生重复', async () => {
     const store = await mkStore()
-    const w = mount(BatchPastePanel, { props: { store } })
+    const w = mount(BatchPastePanel, { global: { plugins: [createTestI18n()] }, props: { store } })
     await w.find('textarea').setValue(URI_A)
     await w.find('[data-test="paste-parse"]').trigger('click')
     await w.find('[data-test="paste-commit"]').trigger('click')
@@ -41,7 +42,7 @@ describe('BatchPastePanel', () => {
   })
   it('批内重复行去重：同一 URI 粘两遍仅出 1 行 new，落库恰 1 条', async () => {
     const store = await mkStore()
-    const w = mount(BatchPastePanel, { props: { store } })
+    const w = mount(BatchPastePanel, { global: { plugins: [createTestI18n()] }, props: { store } })
     await w.find('textarea').setValue(`${URI_A}\n${URI_A}`)
     await w.find('[data-test="paste-parse"]').trigger('click')
     expect(w.findAll('[data-test="paste-row"]')).toHaveLength(1)
@@ -51,7 +52,7 @@ describe('BatchPastePanel', () => {
   })
   it('失败行显示原因且不阻塞其他行', async () => {
     const store = await mkStore()
-    const w = mount(BatchPastePanel, { props: { store } })
+    const w = mount(BatchPastePanel, { global: { plugins: [createTestI18n()] }, props: { store } })
     await w.find('textarea').setValue(`${URI_A}\nnot-a-uri`)
     await w.find('[data-test="paste-parse"]').trigger('click')
     expect(w.findAll('[data-test="paste-row"]')).toHaveLength(1)

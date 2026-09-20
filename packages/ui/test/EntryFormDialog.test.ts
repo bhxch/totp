@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { createMemoryStorage, getBuiltinIcons, type OtpEntry } from '@totp/core'
 import { createVueStore } from '../src/store'
 import EntryFormDialog from '../src/components/EntryFormDialog.vue'
+import { createTestI18n } from './helpers/i18n'
 
 const entry: OtpEntry = {
   uuid: 'u1', type: 'totp', issuer: 'GitHub', label: 'me@ex.com', secret: 'JBSWY3DPEHPK3PXP',
@@ -21,7 +22,7 @@ async function mkStore() {
 }
 
 function mountDialog(over: Partial<{ open: boolean; editing: OtpEntry | null }> = {}) {
-  return mount(EntryFormDialog, {
+  return mount(EntryFormDialog, { global: { plugins: [createTestI18n()] },
     props: { open: true, editing: null, tags: [], icons, store: createVueStore(createMemoryStorage()), ...over },
   })
 }
@@ -77,7 +78,7 @@ describe('EntryFormDialog', () => {
   })
 
   it('createTag 透传 EntryForm：内联建 tag 回车创建后自动勾选（CodesPage 接 store.addTagOp）', async () => {
-    const w = mount(EntryFormDialog, {
+    const w = mount(EntryFormDialog, { global: { plugins: [createTestI18n()] },
       props: {
         open: true, editing: null, tags: [{ id: 't1', name: '工作' }], icons, store: await mkStore(),
         createTag: async (name: string) => (name === '银行' ? 't9' : ''),
@@ -94,7 +95,7 @@ describe('EntryFormDialog', () => {
   })
 
   it('Esc 关闭 → emit close', async () => {
-    const w = mount(EntryFormDialog, { props: { open: true, editing: entry, tags: [], icons, store: await mkStore() }, attachTo: document.body })
+    const w = mount(EntryFormDialog, { global: { plugins: [createTestI18n()] }, props: { open: true, editing: entry, tags: [], icons, store: await mkStore() }, attachTo: document.body })
     await w.find('.md-dialog__scrim').trigger('keydown', { key: 'Escape' })
     expect(w.emitted('close')).toHaveLength(1)
     w.unmount()
@@ -115,7 +116,7 @@ describe('EntryFormDialog', () => {
 
   it('粘贴 Tab 提交落库后冒泡 batch-added [count]（宿主收后关弹窗）', async () => {
     const store = await mkStore()
-    const w = mount(EntryFormDialog, { props: { open: true, editing: null, tags: [], icons, store } })
+    const w = mount(EntryFormDialog, { global: { plugins: [createTestI18n()] }, props: { open: true, editing: null, tags: [], icons, store } })
     await pasteTab(w).trigger('click')
     await w.find('.batch-paste textarea').setValue(URI_A)
     await w.find('[data-test="paste-parse"]').trigger('click')

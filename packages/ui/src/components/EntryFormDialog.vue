@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { getBuiltinIcons, type BuiltinIcon, type OtpEntry, type Tag } from '@totp/core'
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import BatchPastePanel from './BatchPastePanel.vue'
 import EntryForm from './EntryForm.vue'
 import type { EntryFormData } from './entryForm'
@@ -8,6 +9,8 @@ import MdDialog from './md/MdDialog.vue'
 import MdSegmentedButton from './md/MdSegmentedButton.vue'
 import type { IconStore } from '../iconStore'
 import type { VueStore } from '../store'
+
+const { t } = useI18n()
 
 defineProps<{
   open: boolean
@@ -33,14 +36,14 @@ const emit = defineEmits<{ save: [data: EntryFormData]; close: []; 'batch-added'
  *  EntryForm :key 保持 uuid 口径，切回手动时按 key 重建回填 */
 const tab = ref<'manual' | 'paste'>('manual')
 const TAB_OPTIONS = [
-  { value: 'manual', label: '手动填写' },
-  { value: 'paste', label: '智能粘贴' },
+  { value: 'manual', label: t('entryFormDialog.tabManual') },
+  { value: 'paste', label: t('entryFormDialog.tabPaste') },
 ]
 </script>
 
 <template>
-  <MdDialog :open="open" :headline="editing ? '编辑条目' : '新建条目'" @close="emit('close')">
-    <MdSegmentedButton v-model="tab" :options="TAB_OPTIONS" aria-label="录入方式" class="entry-tabs" />
+  <MdDialog :open="open" :headline="editing ? t('entryFormDialog.headlineEdit') : t('entryFormDialog.headlineNew')" @close="emit('close')">
+    <MdSegmentedButton v-model="tab" :options="TAB_OPTIONS" :aria-label="t('entryFormDialog.tabsAria')" class="entry-tabs" />
     <EntryForm
       v-if="tab === 'manual'"
       :key="editing?.uuid ?? 'new'"

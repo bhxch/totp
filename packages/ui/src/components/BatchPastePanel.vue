@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { applyImport, dedupeWithinFile, parsePastedText, planImport, type ImportKind, type OtpEntry, type ParsedEntry, type Vault } from '@totp/core'
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { parseUriToEntryData } from '../otpauthFlow'
 import { decodeQrToUri } from '../qr/decodeQr'
 import { blobToPixels, imagesFromClipboard } from '../qr/imageSource'
 import type { VueStore } from '../store'
 import MdButton from './md/MdButton.vue'
 import MdSelect from './md/MdSelect.vue'
+
+const { t } = useI18n()
 
 type RowKind = ImportKind
 type RowChoice = 'skip' | 'add' | 'replace' | 'merge'
@@ -45,7 +48,7 @@ function parse(): void {
     return
   }
   if (r.entries.length === 0 && r.failures.length > 0) {
-    error.value = `没有可导入的条目（${r.failures.length} 行无法解析）`
+    error.value = t('batchPastePanel.noEntries', { count: r.failures.length })
     return
   }
   // 批内先去重再判定（dedupeWithinFile 返回 { kept, removed }，core import/dedup.ts:24）：
@@ -58,7 +61,7 @@ function parse(): void {
     const kind = plan.kinds[i] ?? 'new'
     return { entry, kind, choice: kind === 'new' ? ('add' as const) : ('skip' as const) }
   })
-  failureLines.value = r.failures.map((f) => `第 ${f.index + 1} 行：${f.message}`)
+  failureLines.value = r.failures.map((f) => t('batchPastePanel.failureLine', { index: f.index + 1, message: f.message }))
 }
 
 /** OtpEntry 哑值 → ParsedEntry 字段投影：仅导入判定/落库相关字段，uuid/order/createdAt 等管理字段不投影 */
@@ -96,16 +99,16 @@ async function decodeImages(files: File[]): Promise<void> {
     for (const f of files) {
       try {
         const r = decodeQrToUri(await blobToPixels(f))
-        if ('error' in r) { imageErrors.value.push(`${f.name}：${r.error}`); continue }
+        if ('error' in r) { imageErrors.value.push(t('batchPastePanel.imageError', { name: f.name, message: r.error })); continue }
         const d = parseUriToEntryData(r.uri)
-        if ('error' in d) { imageErrors.value.push(`${f.name}：${d.error}`); continue }
+        if ('error' in d) { imageErrors.value.push(t('batchPastePanel.imageError', { name: f.name, message: d.error })); continue }
         const parsed = toParsed(d.data)
         const prior = rows.value.map((row) => row.entry)
         if (dedupeWithinFile([...prior, parsed]).kept.length !== prior.length + 1) continue
         const plan = planImport(props.store.vault, [parsed])
         rows.value.push({ entry: parsed, kind: plan.kinds[0] ?? 'new', choice: plan.kinds[0] === 'new' ? 'add' : 'skip' })
       } catch {
-        imageErrors.value.push(`${f.name}：图片读取失败`)
+        imageErrors.value.push(t('batchPastePanel.imageError', { name: f.name, message: t('batchPastePanel.imageReadFailed') }))
       }
     }
   } finally {
@@ -140,22 +143,22 @@ function applyByChoices(v: Vault, active: RowDecision[]): Vault {
 const activeCount = computed(() => rows.value.filter((r) => r.choice !== 'skip' && r.kind !== 'identical').length)
 
 function kindLabel(k: RowKind): string {
-  return k === 'identical' ? '已存在' : k === 'suspect' ? '疑似重复' : k === 'conflict' ? '冲突' : '新条目'
+  return k === 'identical' ? t('batchPastePanel.kindIdentical') : k === 'suspect' ? t('batchPastePanel.kindSuspect') : k === 'conflict' ? t('batchPastePanel.kindConflict') : t('batchPastePanel.kindNew')
 }
 
 /** MdSelect 选项随 kind 收敛：suspect 无覆盖/并集语义（无 issuer+label 定位目标） */
 function choiceOptions(kind: RowKind): Array<{ value: string | number; label: string }> {
   if (kind === 'conflict') {
     return [
-      { value: 'skip', label: '跳过' },
-      { value: 'add', label: '仍然添加' },
-      { value: 'replace', label: '覆盖现有' },
-      { value: 'merge', label: '并存并集' },
+      { value: 'skip', label: t('batchPastePanel.choiceSkip') },
+      { value: 'add', label: t('batchPastePanel.choiceAdd') },
+      { value: 'replace', label: t('batchPastePanel.choiceReplace') },
+      { value: 'merge', label: t('batchPastePanel.choiceMerge') },
     ]
   }
   return [
-    { value: 'skip', label: '跳过' },
-    { value: 'add', label: '仍然添加' },
+    { value: 'skip', label: t('batchPastePanel.choiceSkip') },
+    { value: 'add', label: t('batchPastePanel.choiceAdd') },
   ]
 }
 
@@ -166,13 +169,13 @@ function onChoiceSelect(r: RowDecision, v: string | number): void {
 </script>
 <template>
   <div class="batch-paste" data-test="paste-zone" @paste="onPasteImages" @dragover.prevent @drop="onDropImages">
-    <textarea v-model="text" rows="6" aria-label="粘贴文本"
-      placeholder="粘贴 otpauth URI（可多行）或各应用明文导出 JSON，也可直接粘贴/拖入二维码图片"></textarea>
-    <p v-if="pendingImages > 0" class="pending" data-test="paste-decoding">解码中…</p>
+    <textarea v-model="text" rows="6" :aria-label="t('batchPastePanel.pasteAria')"
+      :placeholder="t('batchPastePanel.pastePlaceholder')"></textarea>
+    <p v-if="pendingImages > 0" class="pending" data-test="paste-decoding">{{ t('batchPastePanel.decoding') }}</p>
     <div class="actions">
-      <MdButton data-test="paste-parse" :disabled="text.trim() === ''" @click="parse">解析</MdButton>
+      <MdButton data-test="paste-parse" :disabled="text.trim() === ''" @click="parse">{{ t('batchPastePanel.parse') }}</MdButton>
       <MdButton data-test="paste-commit" variant="filled" :disabled="rows.length === 0" @click="commit">
-        添加（{{ activeCount }}）
+        {{ t('batchPastePanel.addBtn', { count: activeCount }) }}
       </MdButton>
     </div>
     <p v-if="error" class="err">{{ error }}</p>
@@ -182,9 +185,9 @@ function onChoiceSelect(r: RowDecision, v: string | number): void {
       <li v-for="(r, i) in rows" :key="i" data-test="paste-row">
         <span class="meta">{{ r.entry.issuer }} · {{ r.entry.label }}</span>
         <span class="kind" :class="`kind--${r.kind}`">{{ kindLabel(r.kind) }}</span>
-        <MdSelect v-if="r.kind !== 'new' && r.kind !== 'identical'" class="choice" label="处理方式"
+        <MdSelect v-if="r.kind !== 'new' && r.kind !== 'identical'" class="choice" :label="t('batchPastePanel.choiceLabel')"
           :model-value="r.choice" :options="choiceOptions(r.kind)"
-          :aria-label="`处理方式 ${r.entry.issuer || r.entry.label}`"
+          :aria-label="t('batchPastePanel.choiceAria', { target: r.entry.issuer || r.entry.label })"
           @update:model-value="onChoiceSelect(r, $event)" />
       </li>
     </ul>

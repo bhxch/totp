@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { buildOtpUri, type OtpEntry } from '@totp/core'
 import { watch, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import MdButton from './md/MdButton.vue'
 import MdDialog from './md/MdDialog.vue'
 import { drawQrToCanvas, qrMatrix } from '../qr/qrDraw'
+
+const { t } = useI18n()
 
 const props = defineProps<{ open: boolean; entry: OtpEntry | null }>()
 const emit = defineEmits<{ close: [] }>()
@@ -24,11 +27,11 @@ watch(
 <template>
   <MdDialog :open="open && entry !== null" :headline="entry ? `${entry.issuer} · ${entry.label}` : ''" @close="emit('close')">
     <div class="qr-wrap">
-      <canvas ref="canvasRef" role="img" :aria-label="entry ? `${entry.issuer} ${entry.label} 的 otpauth 二维码` : ''"></canvas>
-      <p class="qr-warn">二维码包含完整密钥，请勿截图或分享</p>
+      <canvas ref="canvasRef" role="img" :aria-label="entry ? t('otpQrDialog.canvasAria', { issuer: entry.issuer, label: entry.label }) : ''"></canvas>
+      <p class="qr-warn">{{ t('otpQrDialog.qrWarning') }}</p>
     </div>
     <template #actions>
-      <MdButton data-test="qr-close" @click="emit('close')">关闭</MdButton>
+      <MdButton data-test="qr-close" @click="emit('close')">{{ t('otpQrDialog.close') }}</MdButton>
     </template>
   </MdDialog>
 </template>

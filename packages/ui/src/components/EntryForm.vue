@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { base32Decode, getBuiltinIcons, recommendBuiltinIcon, type BuiltinIcon, type HashAlgorithm, type MatchRule, type MatchStrategy, type OtpEntry, type Tag } from '@totp/core'
 import { computed, onScopeDispose, reactive, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { MAX_ICON_PACK_ZIP_BYTES, fileToScaledDataUrl, importIconPackZip } from '../iconImport'
 import { blobToPixels } from '../qr/imageSource'
 import { decodeQrToUri } from '../qr/decodeQr'
@@ -11,7 +12,14 @@ import MdCheckbox from './md/MdCheckbox.vue'
 import MdIconButton from './md/MdIconButton.vue'
 import MdSelect from './md/MdSelect.vue'
 import MdTextField from './md/MdTextField.vue'
-import { type EntryFormData, validateRegex } from './entryForm'
+import { type EntryFormData, validateRegex, type RegexIssue } from './entryForm'
+
+const { t } = useI18n()
+
+/** RegexIssue → 成品文案：raw（浏览器本地化消息）优先，否则 t(key, params) */
+function regexIssueMessage(issue: RegexIssue): string {
+  return issue.raw ?? t(issue.key, issue.params ?? {})
+}
 
 export type { EntryFormData }
 
@@ -54,10 +62,10 @@ const error = ref('')
 // 输入框所见即所存，不再依赖 submit 时的静默纠正（此前 UI 显示 6 但保存为 5，视觉与数据不一致）
 watch(
   () => form.type,
-  (t, old) => {
-    if (t === old) return
-    if (t === 'steam') form.digits = 5
-    else if (t === 'yandex') form.digits = 8
+  (type, old) => {
+    if (type === old) return
+    if (type === 'steam') form.digits = 5
+    else if (type === 'yandex') form.digits = 8
     else if (old === 'steam' || old === 'yandex') form.digits = 6
   },
 )
@@ -88,16 +96,16 @@ async function onQrFile(ev: Event): Promise<void> {
     form.secret = d.data.secret; form.algorithm = d.data.algorithm; form.digits = d.data.digits
     form.period = d.data.period; if (d.data.counter !== undefined) form.counter = d.data.counter
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '图片读取失败'
+    error.value = e instanceof Error ? e.message : t('entryForm.imageReadFailed')
   }
 }
 
 // ---------- MdSelect 选项与回调（原生 select 收口；emit 值为泛化 string|number，赋值前收敛回精确联合类型） ----------
 const TYPE_OPTIONS = [
   { value: 'totp', label: 'TOTP' },
-  { value: 'hotp', label: 'HOTP（计数器）' },
+  { value: 'hotp', label: t('entryForm.typeHotp') },
   { value: 'steam', label: 'Steam' },
-  { value: 'yandex', label: 'Yandex（yaotp）' },
+  { value: 'yandex', label: t('entryForm.typeYandex') },
 ]
 const ALGO_OPTIONS: Array<{ value: HashAlgorithm; label: string }> = [
   { value: 'SHA1', label: 'SHA1' },
@@ -105,11 +113,11 @@ const ALGO_OPTIONS: Array<{ value: HashAlgorithm; label: string }> = [
   { value: 'SHA512', label: 'SHA512' },
 ]
 const STRATEGY_OPTIONS: Array<{ value: MatchStrategy; label: string }> = [
-  { value: 'baseDomain', label: '基础域名' },
-  { value: 'host', label: '主机' },
-  { value: 'exact', label: '精确' },
-  { value: 'startsWith', label: '前缀' },
-  { value: 'regex', label: '正则' },
+  { value: 'baseDomain', label: t('entryForm.strategyBaseDomain') },
+  { value: 'host', label: t('entryForm.strategyHost') },
+  { value: 'exact', label: t('entryForm.strategyExact') },
+  { value: 'startsWith', label: t('entryForm.strategyStartsWith') },
+  { value: 'regex', label: t('entryForm.strategyRegex') },
 ]
 /** type 下拉回调：赋值触发 digits 联动 watch（steam=5，离开 steam 回 6） */
 function onTypeSelect(v: string | number): void {
@@ -139,8 +147,8 @@ const createdTags = ref<Tag[]>([])
 /** 复选列表 = 宿主 tags + 内联新建（按 id 去重，宿主回流后自然收敛） */
 const shownTags = computed(() => {
   const list = props.tags ? [...props.tags] : []
-  for (const t of createdTags.value) {
-    if (!list.some((x) => x.id === t.id)) list.push(t)
+  for (const created of createdTags.value) {
+    if (!list.some((x) => x.id === created.id)) list.push(created)
   }
   return list
 })
@@ -169,7 +177,7 @@ const isValidBase32 = computed(() => {
 /** I68：inline 错误文案——非空 + 不合法时给提示，但不阻塞输入；submit 时 base32Decode 仍把关 */
 const base32Hint = computed(() => {
   if (isValidBase32.value) return ''
-  return '密钥字符仅允许 A–Z 与 2–7（base32）'
+  return t('entryForm.base32Hint')
 })
 
 // ---------- 图标推荐（issuer 防抖 300ms） ----------
@@ -257,12 +265,12 @@ async function onFetchIcon() {
   } else {
     // I59：根据失败原因展示对应文案
     const tip: Record<string, string> = {
-      cors: '图标拉取失败（站点不允许跨域 CORS 或网络不通）',
-      notfound: '图标拉取失败（资源不存在，HTTP 错误）',
-      toolarge: '图标拉取失败（文件超过 200KB 上限）',
-      other: '图标拉取失败',
+      cors: t('entryForm.iconFetchCors'),
+      notfound: t('entryForm.iconFetchNotfound'),
+      toolarge: t('entryForm.iconFetchToolarge'),
+      other: t('entryForm.iconFetchOther'),
     }
-    iconError.value = `${tip[result.kind] ?? tip.other}（${result.message}）`
+    iconError.value = t('entryForm.iconFetchFailed', { reason: tip[result.kind] ?? tip.other, message: result.message })
   }
 }
 
@@ -286,11 +294,11 @@ async function onPackFile(e: Event) {
   try {
     // F15：读入前按文件大小前置拦截（解压预算之外的第一道闸）
     if (file.size > MAX_ICON_PACK_ZIP_BYTES) {
-      throw new Error(`图标包超过 ${Math.floor(MAX_ICON_PACK_ZIP_BYTES / 1024 / 1024)}MB 大小上限`)
+      throw new Error(t('entryForm.iconPackTooLarge', { limit: Math.floor(MAX_ICON_PACK_ZIP_BYTES / 1024 / 1024) }))
     }
     const bytes = new Uint8Array(await file.arrayBuffer())
     const result = await importIconPackZip(bytes, props.iconStore)
-    packMessage.value = `已导入 ${result.imported} 个图标（跳过 ${result.skipped} 个）`
+    packMessage.value = t('entryForm.iconPackImported', { imported: result.imported, skipped: result.skipped })
   } catch (err) {
     iconError.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -306,37 +314,37 @@ function submit() {
     try {
       base32Decode(cleanSecret())
     } catch {
-      error.value = '密钥不是有效的 base32 编码（base32 仅允许字母 A–Z 和数字 2–7）'
+      error.value = t('entryForm.invalidBase32')
       return
     }
   }
   const digits = form.digits
   if (form.type === 'steam' && digits !== 5) {
-    error.value = 'Steam 类型的位数必须为 5'
+    error.value = t('entryForm.steamDigitsError')
     return
   }
   if (form.type === 'yandex' && digits !== 8) {
-    error.value = 'Yandex 类型的位数必须为 8'
+    error.value = t('entryForm.yandexDigitsError')
     return
   }
   if (form.type !== 'steam' && form.type !== 'yandex' && ![6, 7, 8].includes(digits)) {
-    error.value = '位数必须为 6/7/8'
+    error.value = t('entryForm.digitsError')
     return
   }
   if (!Number.isFinite(form.period) || form.period < 1) {
-    error.value = '周期必须为 ≥1 的数字'
+    error.value = t('entryForm.periodError')
     return
   }
   if (form.type === 'hotp' && (!Number.isInteger(form.counter) || form.counter < 0)) {
-    error.value = '计数器必须为非负整数'
+    error.value = t('entryForm.counterError')
     return
   }
   // I51：regex 策略客户端预校验；非 regex 策略由浏览器插件侧自行判定
   for (const r of form.matchRules) {
     if (r.strategy !== 'regex') continue
-    const msg = validateRegex(r.pattern)
-    if (msg) {
-      error.value = `匹配规则正则非法：${msg}`
+    const issue = validateRegex(r.pattern)
+    if (issue) {
+      error.value = t('entryForm.ruleRegexInvalid', { message: regexIssueMessage(issue) })
       return
     }
   }
@@ -365,121 +373,121 @@ function submit() {
 <template>
   <form class="entry-form" @submit.prevent="submit">
     <MdSelect
-      class="type-select" label="类型" aria-label="类型"
+      class="type-select" :label="t('entryForm.typeLabel')" :aria-label="t('entryForm.typeLabel')"
       :model-value="form.type" :options="TYPE_OPTIONS" @update:model-value="onTypeSelect"
     />
-    <MdTextField v-model="form.issuer" label="服务名" placeholder="服务名（如 GitHub）" aria-label="服务名" />
+    <MdTextField v-model="form.issuer" :label="t('entryForm.issuerLabel')" :placeholder="t('entryForm.issuerPlaceholder')" :aria-label="t('entryForm.issuerLabel')" />
     <div v-if="recommendVisible && recommended" class="icon-recommend">
-      检测到图标：
+      {{ t('entryForm.iconDetected') }}
       <svg viewBox="0 0 24 24" class="icon-preview" aria-hidden="true" v-html="builtinHtml(recommended.path)" />
-      <MdButton variant="text" class="use-recommend-icon" @click="useRecommended">使用</MdButton>
+      <MdButton variant="text" class="use-recommend-icon" @click="useRecommended">{{ t('entryForm.useIcon') }}</MdButton>
     </div>
-    <MdTextField v-model="form.label" label="账户名" aria-label="账户名" />
+    <MdTextField v-model="form.label" :label="t('entryForm.labelLabel')" :aria-label="t('entryForm.labelLabel')" />
     <div class="secret-row">
       <MdTextField
         v-model="form.secret" class="secret-field" :type="showSecret ? 'text' : 'password'"
-        label="密钥" placeholder="密钥 base32" aria-label="密钥 base32"
+        :label="t('entryForm.secretLabel')" :placeholder="t('entryForm.secretPlaceholder')" :aria-label="t('entryForm.secretPlaceholder')"
         :class="{ invalid: !isValidBase32 }"
       />
-      <MdButton variant="text" class="secret-toggle" @click="showSecret = !showSecret">{{ showSecret ? '隐藏' : '显示' }}</MdButton>
-      <MdButton variant="text" data-test="qr-pick" @click="qrFile?.click()">从图片识别</MdButton>
+      <MdButton variant="text" class="secret-toggle" @click="showSecret = !showSecret">{{ showSecret ? t('entryForm.hide') : t('entryForm.show') }}</MdButton>
+      <MdButton variant="text" data-test="qr-pick" @click="qrFile?.click()">{{ t('entryForm.fromImage') }}</MdButton>
       <input ref="qrFile" type="file" accept="image/*" data-test="qr-file" class="visually-hidden" @change="onQrFile" />
     </div>
     <!-- I68：base32 实时校验的视觉反馈（不阻塞输入，submit 仍把关） -->
     <p v-if="base32Hint" class="base32-hint" role="status">{{ base32Hint }}</p>
     <div class="advanced-row">
       <MdSelect
-        class="algorithm" label="算法" aria-label="算法"
+        class="algorithm" :label="t('entryForm.algorithmLabel')" :aria-label="t('entryForm.algorithmLabel')"
         :model-value="form.algorithm" :options="ALGO_OPTIONS" @update:model-value="onAlgoSelect"
       />
       <MdTextField
-        class="digits" type="number" label="位数" aria-label="位数" min="5" max="8"
+        class="digits" type="number" :label="t('entryForm.digitsLabel')" :aria-label="t('entryForm.digitsLabel')" min="5" max="8"
         :model-value="String(form.digits)" @update:model-value="form.digits = looseToNumber($event)"
       />
       <MdTextField
-        v-if="form.type !== 'hotp'" class="period" type="number" label="周期（秒）" aria-label="周期（秒）" min="1"
+        v-if="form.type !== 'hotp'" class="period" type="number" :label="t('entryForm.periodLabel')" :aria-label="t('entryForm.periodLabel')" min="1"
         :model-value="String(form.period)" @update:model-value="form.period = looseToNumber($event)"
       />
       <!-- steam 强制 5 位提示 -->
-      <p v-if="form.type === 'steam'" class="steam-hint">Steam 类型位数固定为 5</p>
+      <p v-if="form.type === 'steam'" class="steam-hint">{{ t('entryForm.steamDigitsHint') }}</p>
       <!-- yandex PIN（可选）：空缺省按无 PIN 计算 -->
       <MdTextField
-        v-if="form.type === 'yandex'" v-model="form.pin" class="pin" label="PIN（可选）"
-        placeholder="Yandex PIN" aria-label="Yandex PIN（可选）"
+        v-if="form.type === 'yandex'" v-model="form.pin" class="pin" :label="t('entryForm.pinLabel')"
+        placeholder="Yandex PIN" :aria-label="t('entryForm.pinAria')"
       />
       <MdTextField
-        v-if="form.type === 'hotp'" class="counter" type="number" label="计数器" aria-label="计数器" min="0"
+        v-if="form.type === 'hotp'" class="counter" type="number" :label="t('entryForm.counterLabel')" :aria-label="t('entryForm.counterLabel')" min="0"
         :model-value="String(form.counter)" @update:model-value="form.counter = looseToNumber($event)"
       />
     </div>
-    <textarea v-model="form.note" placeholder="备注（可选）" rows="2" aria-label="备注" />
+    <textarea v-model="form.note" :placeholder="t('entryForm.notePlaceholder')" rows="2" :aria-label="t('entryForm.noteAria')" />
     <fieldset v-if="shownTags.length > 0 || createTag">
-      <legend>标签</legend>
+      <legend>{{ t('entryForm.tagsLegend') }}</legend>
       <MdCheckbox
-        v-for="t in shownTags" :key="t.id" class="tag-check"
-        :model-value="form.tagIds.includes(t.id)" :label="t.name" :aria-label="t.name"
-        @update:model-value="toggleTag(t.id, $event)"
+        v-for="tg in shownTags" :key="tg.id" class="tag-check"
+        :model-value="form.tagIds.includes(tg.id)" :label="tg.name" :aria-label="tg.name"
+        @update:model-value="toggleTag(tg.id, $event)"
       />
       <div v-if="createTag" class="new-tag-row">
         <MdTextField
-          v-model="newTagName" class="new-tag" label="新标签" placeholder="新标签，回车创建" aria-label="新标签名称"
+          v-model="newTagName" class="new-tag" :label="t('entryForm.newTagLabel')" :placeholder="t('entryForm.newTagPlaceholder')" :aria-label="t('entryForm.newTagAria')"
           @keydown.enter.prevent="createTagAndCheck"
         />
-        <MdButton variant="text" :disabled="creatingTag" @click="createTagAndCheck">添加</MdButton>
+        <MdButton variant="text" :disabled="creatingTag" @click="createTagAndCheck">{{ t('entryForm.add') }}</MdButton>
       </div>
     </fieldset>
     <!-- 图标选择区：默认收起 -->
     <details v-if="icons" class="icon-picker">
-      <summary>图标</summary>
+      <summary>{{ t('entryForm.iconsSummary') }}</summary>
       <div class="icon-current">
         <svg v-if="currentIcon?.html" viewBox="0 0 24 24" class="icon-preview" aria-hidden="true" v-html="currentIcon.html" />
-        <img v-else-if="currentIcon?.src" :src="currentIcon.src" class="icon-current-img" alt="当前图标" />
-        <span v-else class="icon-none">未设置（列表显示首字母）</span>
+        <img v-else-if="currentIcon?.src" :src="currentIcon.src" class="icon-current-img" :alt="t('entryForm.currentIconAlt')" />
+        <span v-else class="icon-none">{{ t('entryForm.iconNone') }}</span>
       </div>
       <div class="icon-actions">
-        <MdButton v-if="iconStore" variant="text" class="upload-icon" @click="fileInput?.click()">上传</MdButton>
+        <MdButton v-if="iconStore" variant="text" class="upload-icon" @click="fileInput?.click()">{{ t('entryForm.upload') }}</MdButton>
         <input ref="fileInput" type="file" accept="image/*" class="icon-file" @change="onIconFile" />
-        <MdButton v-if="iconStore" variant="text" class="import-pack" :disabled="packBusy" @click="packInput?.click()">导入图标包（zip）</MdButton>
+        <MdButton v-if="iconStore" variant="text" class="import-pack" :disabled="packBusy" @click="packInput?.click()">{{ t('entryForm.importIconPack') }}</MdButton>
         <input ref="packInput" type="file" accept=".zip" class="pack-file" @change="onPackFile" />
         <template v-if="iconStore">
           <MdTextField
-            v-model="iconUrlInput" class="icon-url" label="图标 URL" placeholder="图标图片 URL" aria-label="图标图片 URL"
+            v-model="iconUrlInput" class="icon-url" :label="t('entryForm.iconUrlLabel')" :placeholder="t('entryForm.iconUrlPlaceholder')" :aria-label="t('entryForm.iconUrlPlaceholder')"
           />
-          <MdButton variant="text" class="fetch-icon" @click="onFetchIcon">拉取</MdButton>
+          <MdButton variant="text" class="fetch-icon" @click="onFetchIcon">{{ t('entryForm.fetchIcon') }}</MdButton>
         </template>
-        <MdButton v-if="form.icon" variant="text" class="clear-icon" @click="clearIcon">清除</MdButton>
+        <MdButton v-if="form.icon" variant="text" class="clear-icon" @click="clearIcon">{{ t('entryForm.clearIcon') }}</MdButton>
       </div>
       <div v-if="packMessage" class="pack-message">{{ packMessage }}</div>
       <div v-if="iconError" class="error">{{ iconError }}</div>
     </details>
     <!-- matchRules 编辑区 -->
     <fieldset>
-      <legend>URL 匹配规则（浏览器插件按当前页过滤用）</legend>
+      <legend>{{ t('entryForm.matchRulesLegend') }}</legend>
       <div v-for="(r, i) in form.matchRules" :key="i" class="rule-row">
         <MdSelect
-          class="rule-strategy" label="策略" aria-label="匹配策略"
+          class="rule-strategy" :label="t('entryForm.strategyLabel')" :aria-label="t('entryForm.strategyAria')"
           :model-value="r.strategy" :options="STRATEGY_OPTIONS" @update:model-value="setRuleStrategy(r, $event)"
         />
         <MdTextField
-          v-model="r.pattern" class="rule-pattern" label="模式" placeholder="如 github.com 或 ^https://" aria-label="匹配模式"
+          v-model="r.pattern" class="rule-pattern" :label="t('entryForm.patternLabel')" :placeholder="t('entryForm.patternPlaceholder')" :aria-label="t('entryForm.patternAria')"
           :class="{ invalid: r.strategy === 'regex' && r.pattern.trim() !== '' && validateRegex(r.pattern) !== null }"
         />
-        <MdIconButton class="rm-rule" title="删除规则" aria-label="删除规则" @click="form.matchRules.splice(i, 1)">✕</MdIconButton>
+        <MdIconButton class="rm-rule" :title="t('entryForm.deleteRule')" :aria-label="t('entryForm.deleteRule')" @click="form.matchRules.splice(i, 1)">✕</MdIconButton>
         <!-- I51：regex 策略且 pattern 非空但非法 → 行内错误提示 -->
         <span
           v-if="r.strategy === 'regex' && r.pattern.trim() !== '' && validateRegex(r.pattern) !== null"
           class="rule-error"
           role="alert"
         >
-          {{ validateRegex(r.pattern) }}
+          {{ regexIssueMessage(validateRegex(r.pattern)!) }}
         </span>
       </div>
-      <MdButton variant="text" class="add-rule" @click="form.matchRules.push({ strategy: 'baseDomain', pattern: '' })">＋ 添加匹配规则</MdButton>
+      <MdButton variant="text" class="add-rule" @click="form.matchRules.push({ strategy: 'baseDomain', pattern: '' })">{{ t('entryForm.addRule') }}</MdButton>
     </fieldset>
     <div v-if="error" class="error">{{ error }}</div>
     <div class="row">
-      <MdButton type="submit">{{ isNew ? '添加' : '保存' }}</MdButton>
-      <MdButton variant="text" @click="emit('cancel')">取消</MdButton>
+      <MdButton type="submit">{{ isNew ? t('entryForm.add') : t('entryForm.save') }}</MdButton>
+      <MdButton variant="text" @click="emit('cancel')">{{ t('entryForm.cancel') }}</MdButton>
     </div>
   </form>
 </template>

@@ -2,6 +2,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { createMemoryStorage } from '@totp/core'
+import { createTestI18n } from './helpers/i18n'
 
 const mockUriA = 'otpauth://totp/GitHub:alice?secret=JBSWY3DPEHPK3PXP&issuer=GitHub'
 const mockUriB = 'otpauth://totp/GitLab:bob?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=GitLab'
@@ -48,7 +49,7 @@ async function pasteItems(w: ReturnType<typeof mount>, items: DataTransferItem[]
 describe('BatchPastePanel 批量图片', () => {
   it('粘贴 2 张图 1 成 1 败：结果区 1 行可添加 + 1 行失败提示，添加计 1', async () => {
     const store = await mkStore()
-    const w = mount(BatchPastePanel, { props: { store } })
+    const w = mount(BatchPastePanel, { global: { plugins: [createTestI18n()] }, props: { store } })
     vi.mocked(decodeQrToUri).mockReturnValueOnce({ uri: mockUriB }).mockReturnValueOnce({ error: '未识别到二维码' })
     await pasteItems(w, [fileItem('a.png'), fileItem('b.png')])
     await vi.waitFor(() => expect(w.findAll('[data-test="paste-row"]')).toHaveLength(1))
@@ -61,7 +62,7 @@ describe('BatchPastePanel 批量图片', () => {
 
   it('成功图片与文本解析结果合并计数：1 文本行 + 1 图行，添加计 2', async () => {
     const store = await mkStore()
-    const w = mount(BatchPastePanel, { props: { store } })
+    const w = mount(BatchPastePanel, { global: { plugins: [createTestI18n()] }, props: { store } })
     await w.find('textarea').setValue(mockUriA)
     await w.find('[data-test="paste-parse"]').trigger('click')
     expect(w.findAll('[data-test="paste-row"]')).toHaveLength(1)
@@ -75,7 +76,7 @@ describe('BatchPastePanel 批量图片', () => {
 
   it('同一二维码贴两次：去重不双写，落库恰 1 条', async () => {
     const store = await mkStore()
-    const w = mount(BatchPastePanel, { props: { store } })
+    const w = mount(BatchPastePanel, { global: { plugins: [createTestI18n()] }, props: { store } })
     const zone = w.find('[data-test="paste-zone"]')
     await pasteItems(w, [fileItem('a.png')])
     await vi.waitFor(() => expect(w.findAll('[data-test="paste-row"]')).toHaveLength(1))
@@ -96,7 +97,7 @@ describe('BatchPastePanel 批量图片', () => {
 
   it('拖放图片文件同样进入解码并出现在结果区', async () => {
     const store = await mkStore()
-    const w = mount(BatchPastePanel, { props: { store } })
+    const w = mount(BatchPastePanel, { global: { plugins: [createTestI18n()] }, props: { store } })
     const file = new File(['x'], 'drop.png', { type: 'image/png' })
     await w.find('[data-test="paste-zone"]').trigger('drop', { dataTransfer: { files: [file] } })
     await vi.waitFor(() => expect(w.findAll('[data-test="paste-row"]')).toHaveLength(1))
@@ -105,7 +106,7 @@ describe('BatchPastePanel 批量图片', () => {
 
   it('拖入非图片文件：preventDefault 兜底取消导航，rows/imageErrors 不变', async () => {
     const store = await mkStore()
-    const w = mount(BatchPastePanel, { props: { store } })
+    const w = mount(BatchPastePanel, { global: { plugins: [createTestI18n()] }, props: { store } })
     // VTU 2.5 的 trigger 会跳过原型上无 setter 的属性（preventDefault 正是），无法注入 mock；
     // 构造真实 drop 事件 spy preventDefault，并以 defaultPrevented 断言导航确被取消
     const event = new Event('drop', { bubbles: true, cancelable: true })

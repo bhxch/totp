@@ -1,4 +1,5 @@
 import { mount, type VueWrapper } from '@vue/test-utils'
+import { createTestI18n } from './helpers/i18n'
 import { describe, expect, it, vi } from 'vitest'
 
 const mockUri = 'otpauth://totp/Gen:pix?secret=JBSWY3DPEHPK3PXP&issuer=Gen'
@@ -23,7 +24,7 @@ async function pickQr(w: VueWrapper): Promise<void> {
 
 describe('EntryForm 从图片识别', () => {
   it('识别成功回填 issuer/label/secret', async () => {
-    const w = mount(EntryForm)
+    const w = mount(EntryForm, { global: { plugins: [createTestI18n()] } })
     await pickQr(w)
     await vi.waitFor(() => {
       const issuer = w.find('[aria-label="服务名"] input, [aria-label="服务名"]').element as HTMLInputElement
@@ -33,7 +34,7 @@ describe('EntryForm 从图片识别', () => {
   it('识别失败显示中文原因', async () => {
     const { decodeQrToUri } = await import('../src/qr/decodeQr')
     vi.mocked(decodeQrToUri).mockReturnValueOnce({ error: '未识别到二维码' })
-    const w = mount(EntryForm)
+    const w = mount(EntryForm, { global: { plugins: [createTestI18n()] } })
     await pickQr(w)
     await vi.waitFor(() => expect(w.text()).toContain('未识别到二维码'))
   })
