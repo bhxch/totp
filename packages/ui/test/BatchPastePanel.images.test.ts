@@ -1,5 +1,6 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { createMemoryStorage } from '@totp/core'
 
 const mockUriA = 'otpauth://totp/GitHub:alice?secret=JBSWY3DPEHPK3PXP&issuer=GitHub'
@@ -100,5 +101,23 @@ describe('BatchPastePanel 批量图片', () => {
     await w.find('[data-test="paste-zone"]').trigger('drop', { dataTransfer: { files: [file] } })
     await vi.waitFor(() => expect(w.findAll('[data-test="paste-row"]')).toHaveLength(1))
     expect(w.text()).toContain('GitHub')
+  })
+
+  it('拖入非图片文件：preventDefault 兜底取消导航，rows/imageErrors 不变', async () => {
+    const store = await mkStore()
+    const w = mount(BatchPastePanel, { props: { store } })
+    // VTU 2.5 的 trigger 会跳过原型上无 setter 的属性（preventDefault 正是），无法注入 mock；
+    // 构造真实 drop 事件 spy preventDefault，并以 defaultPrevented 断言导航确被取消
+    const event = new Event('drop', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'dataTransfer', {
+      value: { files: [new File(['x'], 'doc.pdf', { type: 'application/pdf' })] },
+    })
+    const preventDefault = vi.spyOn(event, 'preventDefault')
+    w.find('[data-test="paste-zone"]').element.dispatchEvent(event)
+    await nextTick()
+    expect(preventDefault).toHaveBeenCalledTimes(1)
+    expect(event.defaultPrevented).toBe(true)
+    expect(w.findAll('[data-test="paste-row"]')).toHaveLength(0)
+    expect(w.findAll('[data-test="paste-image-error"]')).toHaveLength(0)
   })
 })

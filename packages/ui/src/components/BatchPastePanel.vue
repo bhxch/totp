@@ -81,8 +81,11 @@ async function onPasteImages(e: ClipboardEvent): Promise<void> {
 }
 
 async function onDropImages(e: DragEvent): Promise<void> {
+  // @dragover.prevent 已无条件把面板标记为投放目标，drop 必须兜底取消默认导航：
+  // 非图片（或 MIME 为空）文件落入时若不 preventDefault，浏览器会导航打开该文件（popup 关闭丢状态）
+  if ((e.dataTransfer?.files.length ?? 0) > 0) e.preventDefault()
   const files = Array.from(e.dataTransfer?.files ?? []).filter((f) => f.type.startsWith('image/'))
-  if (files.length > 0) { e.preventDefault(); await decodeImages(files) }
+  if (files.length > 0) await decodeImages(files)
 }
 
 /** 逐图解码合并进结果列表：单图失败不阻塞后续（记入 imageErrors）；
