@@ -5,3 +5,8 @@ declare module '*.vue' {
 }
 
 declare module '*.css'
+
+declare module '*.wasm?url' {
+  const src: string
+  export default src
+}

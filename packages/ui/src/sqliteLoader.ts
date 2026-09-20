@@ -1,14 +1,22 @@
 // sql.js 懒加载执行器（计划 8 Task 3；SQLite 类导入的 ui 侧执行层）。
 // 裁定口径：
 // - sql.js 仅进 ui 包 dependencies，动态 import 保证不进主 chunk（vite/wxt 按 chunk 分离）
-// - wasm 经 locateFile 指向 jsdelivr CDN（版本固定 1.14.2，与 dependencies 严格一致）；
-//   离线（桌面/插件无网）时 wasm 下载失败 → 明确中文报错，SQLite 类导入不可用
+// - wasm 二进制随应用打包为本地资产 src/assets/sql-wasm.wasm（自 sql.js@1.14.2 dist 复制），
+//   实例化前按固定 SHA-256 强校验；运行时无任何远程可执行代码下载路径（桌面/插件一致，
+//   且满足 MV3 默认 CSP 禁远程代码）。刷新流程：用新版 dist/sql-wasm.wasm 覆盖资产文件、
+//   同步更新 SQL_WASM_SHA256，并保持 dependencies 的 sql.js 版本与之一致
 // - SQLite 文件为二进制，经文本读取管道会损坏：字节级检测与 openSqlite 接线由 ImportCard
 //   层在 Task 5 完成（platform 提供 readImportFileBytes）；本模块只负责 bytes → query
 // - 行转换纯函数（msAuthRowsToEntries 等）在 @totp/core import/sqlite.ts，此处不涉及
 
-const SQLJS_VERSION = '1.14.2' // 与 ui/package.json dependencies 固定版本一致
-const SQLJS_WASM_CDN = `https://cdn.jsdelivr.net/npm/sql.js@${SQLJS_VERSION}/dist/`
+import { sha256Hex } from '@totp/core'
+import wasmUrl from './assets/sql-wasm.wasm?url'
+
+/** src/assets/sql-wasm.wasm（sql.js@1.14.2 dist 原件）的固定 SHA-256，实例化前强校验 */
+const SQL_WASM_SHA256 = '38c14f6e379210bc942bdc4ebca44e7bfdb4318ecc1c72ca666a28fdce96670a'
+
+/** 本地打包的 wasm 资产 URL（Vite ?url 注入，与宿主产物同源分发；导出供测试断言非远程） */
+export const sqlWasmAssetUrl = wasmUrl
 
 export interface SqliteDb {
   /** 执行只读查询（SqlImporterHelper 口径：SELECT * FROM <table>），返回列名→值行数组 */
@@ -18,8 +26,16 @@ export interface SqliteDb {
 }
 
 /**
+ * wasm 字节完整性校验：与固定 SHA-256 不一致（被篡改/损坏/换版本未同步常量）→ 抛错拒绝实例化。
+ */
+export async function verifyWasmBytes(bytes: Uint8Array): Promise<void> {
+  const hex = await sha256Hex(bytes)
+  if (hex !== SQL_WASM_SHA256) throw new Error(`sql.js wasm 完整性校验失败（sha256=${hex}），已拒绝实例化`)
+}
+
+/**
  * 打开内存中的 SQLite 数据库（sql.js 懒加载：首次调用才拉取 js/wasm）。
- * 打开失败（文件损坏/非 SQLite）或 wasm 加载失败（离线）→ 中文报错。
+ * 打开失败（文件损坏/非 SQLite）或 wasm 本地资产缺失/校验不过 → 中文报错。
  */
 export async function openSqlite(bytes: Uint8Array): Promise<SqliteDb> {
   let initSqlJs: typeof import('sql.js')['default']
@@ -29,12 +45,23 @@ export async function openSqlite(bytes: Uint8Array): Promise<SqliteDb> {
     throw new Error('sql.js 模块加载失败，SQLite 类导入不可用')
   }
 
+  let wasmBinary: ArrayBuffer
+  try {
+    // 同源获取本地打包资产（无网络依赖）；失败即资产缺失或宿主构建异常
+    const resp = await fetch(sqlWasmAssetUrl)
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    wasmBinary = await resp.arrayBuffer()
+  } catch {
+    throw new Error(`sql.js wasm 本地资产加载失败（${sqlWasmAssetUrl}），SQLite 类导入不可用`)
+  }
+  await verifyWasmBytes(new Uint8Array(wasmBinary))
+
   let SQL: import('sql.js').SqlJsStatic
   try {
-    // wasm 二进制不在 npm js 内联，经 locateFile 指向 CDN；离线时此处失败
-    SQL = await initSqlJs({ locateFile: (file: string) => SQLJS_WASM_CDN + file })
+    // wasmBinary 直注字节：emscripten 跳过 locateFile，不做任何远程获取
+    SQL = await initSqlJs({ wasmBinary })
   } catch {
-    throw new Error(`sql.js wasm 加载失败（需联网下载 ${SQLJS_WASM_CDN}）；离线时 SQLite 类导入不可用`)
+    throw new Error('sql.js wasm 实例化失败，SQLite 类导入不可用')
   }
 
   let db: import('sql.js').Database
