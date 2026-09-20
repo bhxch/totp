@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createBackupEnvelope, loadSources, type BackupSource, type StorageAdapter } from '@totp/core'
-import { createBackupToSources, joinBackupPath, listBackupsFromSources, readBackupByName, saveCloudSourcesPreservingLocal, type BackupSourceInput } from './backupService'
+import { createBackupToSources, joinBackupPath, listBackupsFromSources, pickBackupDirOs, readBackupByName, readBackupFileOs, saveCloudSourcesPreservingLocal, type BackupSourceInput } from './backupService'
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }))
 // 只 mock Tauri invoke/plugin-fs 边界；@totp/core 的文件名与滚动策略用真实现（另一处 mock 掉慢的 KDF）
@@ -67,6 +67,7 @@ describe('joinBackupPath', () => {
 describe('createBackupToSources（每源备份）', () => {
   it('keep/overwrite 混合多目录：禁用源跳过、envelope 一次生成、各源走各自分支', async () => {
     invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'dir_token_os') return 'tok-A'
       if (cmd === 'list_backup_files_os') {
         return ['vault-20260916-120000.totpbackup', 'vault-20260916-120001.totpbackup', 'conflict-20260916-120000.totpbackup', 'other.txt']
       }
@@ -80,16 +81,18 @@ describe('createBackupToSources（每源备份）', () => {
     // envelope 一次生成（Argon2id 昂贵，多目录复用同一密文）且档位第三参透传
     expect(envMock()).toHaveBeenCalledTimes(1)
     expect(envMock()).toHaveBeenCalledWith('{"v":1}', 'pw', 'paranoid')
-    // 源 A（自选目录 keep）：os 写时间戳名 + 滚动删除最旧（overwrite/conflict 名不参与）
+    // 源 A（自选目录 keep）：os 写时间戳名 + 滚动删除最旧（overwrite/conflict 名不参与）；
+    // F4：目录路径经 dir_token_os 重取后端登记句柄，文件命令携带 dirToken（不再有自证 allowedDir）
+    expect(invokeMock).toHaveBeenCalledWith('dir_token_os', { dir: 'C:\\bkA' })
     const writeCall = invokeMock.mock.calls.find((c) => c[0] === 'write_text_file_os')
     expect(writeCall).toBeDefined()
-    const writeArgs = writeCall?.[1] as { path: string; allowedDir: string }
-    expect(writeArgs).toMatchObject({ allowedDir: 'C:\\bkA' })
+    const writeArgs = writeCall?.[1] as { path: string; dirToken: string }
+    expect(writeArgs).toMatchObject({ dirToken: 'tok-A' })
     expect(writeArgs.path).toMatch(/^C:\\bkA\\vault-\d{8}-\d{6}\.totpbackup$/)
-    expect(invokeMock).toHaveBeenCalledWith('list_backup_files_os', { dir: 'C:\\bkA' })
+    expect(invokeMock).toHaveBeenCalledWith('list_backup_files_os', { dirToken: 'tok-A' })
     expect(invokeMock).toHaveBeenCalledWith('remove_backup_file_os', {
       path: 'C:\\bkA\\vault-20260916-120000.totpbackup',
-      allowedDir: 'C:\\bkA',
+      dirToken: 'tok-A',
     })
     // 源 B（默认目录 overwrite）：plugin-fs 写固定名，不走 os 命令之外的目录
     expect(fsMocks.writeTextFile).toHaveBeenCalledWith(
@@ -118,6 +121,7 @@ describe('createBackupToSources（每源备份）', () => {
 
   it('单源失败不阻断其余源：outcome=partial，failed 带错误消息，摘要列出失败源名（审查 I8）', async () => {
     invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'dir_token_os') return 'tok'
       if (cmd === 'write_text_file_os') throw new Error('disk full')
       return null
     })
@@ -201,6 +205,7 @@ describe('saveCloudSourcesPreservingLocal（审查 I11：云源保存不丢本�
 describe('listBackupsFromSources（聚合列表）', () => {
   it('多源聚合：标注 sourceId、过滤 .totpbackup、文件名倒序=新在前', async () => {
     invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'dir_token_os') return 'tok'
       if (cmd === 'list_backup_files_os') {
         return ['vault-20260916-120000.totpbackup', 'conflict-20260916-130000.totpbackup', 'other.txt']
       }
@@ -217,7 +222,7 @@ describe('listBackupsFromSources（聚合列表）', () => {
       { sourceId: 'a', name: 'conflict-20260916-130000.totpbackup' },
       { sourceId: 'c', name: 'conflict-20260916-130000.totpbackup' },
     ])
-    expect(invokeMock).toHaveBeenCalledWith('list_backup_files_os', { dir: 'C:\\bkA' })
+    expect(invokeMock).toHaveBeenCalledWith('list_backup_files_os', { dirToken: 'tok' })
   })
 
   it('单源列表失败跳过（目录被移除等），其余源照常返回', async () => {
@@ -243,13 +248,13 @@ describe('listBackupsFromSources（聚合列表）', () => {
 })
 
 describe('readBackupByName（按 sourceId 读取）', () => {
-  it('自选目录源：read_text_file_os 带 allowedDir', async () => {
-    invokeMock.mockResolvedValue('envelope-text')
+  it('自选目录源：先 dir_token_os 取登记句柄，read_text_file_os 带 dirToken', async () => {
+    invokeMock.mockImplementation(async (cmd: string) => (cmd === 'dir_token_os' ? 'tok-A' : 'envelope-text'))
     const text = await readBackupByName('a', 'vault-20260916-120000.totpbackup', sources)
     expect(text).toBe('envelope-text')
     expect(invokeMock).toHaveBeenCalledWith('read_text_file_os', {
       path: 'C:\\bkA\\vault-20260916-120000.totpbackup',
-      allowedDir: 'C:\\bkA',
+      dirToken: 'tok-A',
     })
   })
 
@@ -271,10 +276,29 @@ describe('readBackupByName（按 sourceId 读取）', () => {
   })
 
   it('多源冲突副本名（conflict-{sourceId}-{ts}）通过 RE 校验可读：旧 backend 单段与 uuid 五段均可恢复（审查 C2）', async () => {
-    invokeMock.mockResolvedValue('envelope-text')
+    invokeMock.mockImplementation(async (cmd: string) => (cmd === 'dir_token_os' ? 'tok-A' : 'envelope-text'))
     const text = await readBackupByName('a', 'conflict-webdav-20260916-120000.totpbackup', sources)
     expect(text).toBe('envelope-text')
     await expect(readBackupByName('a', 'conflict-2dc4bf8a-5ca7-4087-8b3e-2f1a4d5c6b7e-20260918-024714.totpbackup', sources)).resolves.toBe('envelope-text')
     await expect(readBackupByName('a', '../evil.totpbackup', sources)).rejects.toThrow('invalid backup name')
+  })
+})
+
+describe('对话框授权句柄（F4：授权源头收归后端）', () => {
+  it('pickBackupDirOs 仅透出 Rust 目录选择 path；readBackupFileOs 以 {path, dirToken} 调用（不再自证 allowedDir）', async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'pick_dir_os') return { dirToken: 'tok', path: 'C:\\bk' }
+      if (cmd === 'read_text_file_os') return 'envelope-text'
+      return null
+    })
+    expect(await pickBackupDirOs()).toBe('C:\\bk')
+    const picked = { path: 'C:\\bk\\vault-20260916-120000.totpbackup', dirToken: 'tok' }
+    await expect(readBackupFileOs(picked)).resolves.toBe('envelope-text')
+    expect(invokeMock).toHaveBeenCalledWith('read_text_file_os', { path: picked.path, dirToken: 'tok' })
+  })
+
+  it('Rust pick_* 取消（返回 null）：pickBackupDirOs 为 null', async () => {
+    invokeMock.mockResolvedValue(null)
+    expect(await pickBackupDirOs()).toBeNull()
   })
 })

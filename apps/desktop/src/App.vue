@@ -2,13 +2,12 @@
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
-import { open, save } from '@tauri-apps/plugin-dialog'
 import { backupFileName, createBackupEnvelope, loadSourceRevs, loadSources, normalizeSchemes, openBackupEnvelope, randomBytes, saveSourceRev, saveSources, SCHEMES_KEY, sha256Hex, type BackupSource, type CloudCred, type ImportScheme, type KdfProfile, type Retention, type StorageAdapter, type Vault } from '@totp/core'
 import { createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type LocalSourceView, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createDesktopAutoRunner, formatAutoStatusText } from './autoBackup'
-import { createBackupToSources, listBackupsFromSources, readBackupByName, readBackupFileOs, saveConflictBackupToDir, saveCloudSourcesPreservingLocal, writeBackupFileOs } from './backupService'
-import { decryptDpapiOs, readImportFileBytesOs, readImportFileOs } from './importService'
+import { createBackupToSources, listBackupsFromSources, pickBackupDirOs, pickBackupOpenOs, pickBackupSaveOs, readBackupByName, readBackupFileOs, saveConflictBackupToDir, saveCloudSourcesPreservingLocal, writeBackupFileOs, type PickedOsFile } from './backupService'
+import { decryptDpapiOs, pickImportFileOs, readImportFileBytesOs, readImportFileOs } from './importService'
 import { createIdleLockExecutor } from './idleLock'
 import { lockPrefsUnsupportedKeys } from './lockPrefs'
 import { BACKUP_DIR_KEY, migrateLegacyCloudSources, migrateLegacyLocalSource } from './legacyMigrate'
@@ -133,8 +132,8 @@ async function replaceAllOps(v: Vault): Promise<void> {
   await requireStore().replaceAllOp(v)
 }
 
-// 最后一次导入选择的路径（模块级缓存）：SQLite 字节入口复用，避免同一文件二次弹窗
-let lastImportPath: string | null = null
+// 最后一次导入选择的 Rust 对话框结果（F4：path+token 成对缓存）：SQLite 字节入口复用，避免同一文件二次弹窗
+let lastImportPick: PickedOsFile | null = null
 
 /** envelope 文本 → 解密出明文 vault JSON（口令错误/文件损坏由 openBackupEnvelope 抛错，卡片统一展示） */
 async function openBackupText(text: string, password: string): Promise<string> {
@@ -181,17 +180,19 @@ const backupPlatform: BackupPlatform = {
     await saveSources(adapter, (await loadSources(adapter)).filter((s) => s.id !== id))
   },
   async exportToFile(vaultJson, password) {
-    // 先出 save 对话框拿路径（取消则直接 false），再做 Argon2id 加密写文件，省一次白跑的 KDF（档位随备份设置）
-    const path = await save({ defaultPath: backupFileName(new Date()), filters: BACKUP_FILE_FILTERS })
-    if (!path) return false
+    // F4：save 对话框改由 Rust 打开并登记保存位置父目录（取消则直接 false），
+    // 再做 Argon2id 加密写文件，省一次白跑的 KDF（档位随备份设置）
+    const picked = await pickBackupSaveOs(backupFileName(new Date()), BACKUP_FILE_FILTERS)
+    if (!picked) return false
     const envelope = await createBackupEnvelope(vaultJson, password, kdfProfileOf())
-    await writeBackupFileOs(path, envelope)
+    await writeBackupFileOs(picked, envelope)
     return true
   },
   async restoreFromPicker(password) {
-    const path = await open({ multiple: false, directory: false, filters: BACKUP_FILE_FILTERS })
-    if (typeof path !== 'string') return null
-    return { json: await openBackupText(await readBackupFileOs(path), password) }
+    // F4：open 对话框由 Rust 打开（path+dirToken 成对返回），遏制基准=后端登记父目录
+    const picked = await pickBackupOpenOs(BACKUP_FILE_FILTERS)
+    if (!picked) return null
+    return { json: await openBackupText(await readBackupFileOs(picked), password) }
   },
   listBackups: async () => listBackupsFromSources(await loadAllSources()),
   async restoreByName(sourceId, name, password) {
@@ -201,8 +202,8 @@ const backupPlatform: BackupPlatform = {
   setAutoPrefs: (p) => persistBackupPrefs(p),
   getAutoStatus: async () => readAutoStatusText(BACKUP_AUTO_STATUS_KEY),
   pickBackupDir: async () => {
-    const path = await open({ directory: true, multiple: false })
-    return typeof path === 'string' ? path : null
+    // F4：目录选择经 Rust pick_dir_os（canonical 登记 + 跨会话持久化），前端仍只持久化 path
+    return pickBackupDirOs()
   },
   replaceAllOp: async (v) => replaceAllOps(v),
   // 备份加密强度档位（plan16 T11.5）：settings 持久化（backupKdfProfile 字段 + commitSettings）
@@ -215,16 +216,17 @@ const backupPlatform: BackupPlatform = {
     },
   },
   async readImportFile() {
-    const path = await open({ multiple: false, directory: false, filters: IMPORT_FILE_FILTERS })
-    if (typeof path !== 'string') return null
-    lastImportPath = path
-    return { text: await readImportFileOs(path), name: path.split(/[\\/]/).pop() ?? path }
+    // F4：open 对话框由 Rust 打开（登记父目录返回 token），文本/字节入口共用同一登记结果
+    const picked = await pickImportFileOs(IMPORT_FILE_FILTERS)
+    if (!picked) return null
+    lastImportPick = picked
+    return { text: await readImportFileOs(picked), name: picked.path.split(/[\\/]/).pop() ?? picked.path }
   },
-  // SQLite 字节入口：复用最近一次选择的路径（避免二次弹窗）；无最近选择时补弹对话框
+  // SQLite 字节入口：复用最近一次选择的登记结果（避免二次弹窗）；无最近选择时补弹对话框
   async readImportFileBytes() {
-    const path = lastImportPath ?? (await open({ multiple: false, directory: false, filters: IMPORT_FILE_FILTERS }))
-    if (typeof path !== 'string') return null
-    return { bytes: await readImportFileBytesOs(path), name: path.split(/[\\/]/).pop() ?? path }
+    const picked = lastImportPick ?? (await pickImportFileOs(IMPORT_FILE_FILTERS))
+    if (!picked) return null
+    return { bytes: await readImportFileBytesOs(picked), name: picked.path.split(/[\\/]/).pop() ?? picked.path }
   },
   decryptDpapi: (b64) => decryptDpapiOs(b64),
 }

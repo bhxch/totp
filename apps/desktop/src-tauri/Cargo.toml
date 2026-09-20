@@ -18,6 +18,8 @@ tauri-plugin-fs = "2"
 tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# F4 对话框授权 token 的 CSPRNG（tauri 传递依赖已在树中，不新增编译产物）
+getrandom = "0.3"
 
 # DPAPI 解密（WinAuth 导入）+ 系统锁屏事件（plan16 T15，WTS 会话通知与隐藏窗口）：
 # 仅 Windows 目标编译

@@ -5,6 +5,7 @@ use tauri::{
     menu::{Menu, MenuItem},
     tray::{TrayIconBuilder, TrayIconEvent},
 };
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 mod lock_events;
@@ -90,10 +91,105 @@ fn show_main(app: &AppHandle) {
     }
 }
 
-// ---------- 备份文件命令 ----------
-// 信任边界（C9 加固）：read/write_text_file_os 的路径由前端系统对话框产生，并须在 JS 传入
-// 的 allowed_dir 内（含父目录）；扩展名 .totpbackup 白名单防被前端脚本当任意读写原语。
+// ---------- 备份/导入文件命令 ----------
+// 信任边界（F4 根修）：read/write_text_file_os 等命令的遏制基准不再接受前端 IPC 自证的
+// allowed_dir（前端以 parentDirOf(同一路径) 自证派生，遏制比较按构造恒真）。现在对话框由
+// Rust 侧打开（pick_dir_os / pick_open_file_os / pick_save_file_os），选中目录 canonicalize
+// 后登记进 DialogGrants 并返回不透明 token，文件命令以 dirToken 反查登记目录做遏制；
+// 扩展名白名单（备份 .totpbackup / 导入扩展名组）保持不变，防被前端脚本当任意读写原语。
 // remove_backup_file 仅允许 AppData/backups 下的合法备份名（白名单防路径穿越）。
+
+/// 会话授权登记容量上限（简易 LRU：超出逐出最旧；持久化文件同受此约束）
+const GRANT_CAP: usize = 16;
+/// 跨会话授权文件（AppData 下：目录对话框登记时后端写入，启动时装载）
+const GRANTS_FILE: &str = "dialog_grants.json";
+
+/** 对话框授权登记：token（OS CSPRNG 随机，不可预测）→ canonical 目录。
+ *  跨会话说明：备份源目录的自动/手动备份在重启后仍需静默写盘，无法要求每次重弹对话框，
+ *  故 pick_dir_os 登记时把目录持久化到 GRANTS_FILE、启动时装载。诚实边界：该文件位于
+ *  webview 可写的 AppData（fs:allow-appdata-write-recursive），被持久化 XSS 污染的下一个
+ *  会话可借篡改该文件登记任意目录——跨会话授权弱于本会话对话框登记；本设计消除的是
+ *  运行中会话「自证参数直通任意路径」的读/写/删原语。文件对话框（导出/恢复/导入）只在
+ *  会话内登记，不落盘。 */
+#[derive(Default)]
+struct DialogGrants {
+    // 简易 LRU：front=最旧（登记/命中序），容量 GRANT_CAP
+    entries: Mutex<Vec<(String, std::path::PathBuf)>>,
+}
+
+fn random_token() -> String {
+    let mut buf = [0u8; 16];
+    getrandom::fill(&mut buf).expect("OS CSPRNG 不可用");
+    buf.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+impl DialogGrants {
+    /** 登记目录（须已 canonicalize）：同目录复用既有 token（刷新为最近使用），超限逐出最旧 */
+    fn register(&self, canonical: std::path::PathBuf) -> String {
+        let mut g = self.entries.lock().unwrap();
+        if let Some(i) = g.iter().position(|(_, d)| *d == canonical) {
+            let (token, dir) = g.remove(i);
+            g.push((token.clone(), dir));
+            return token;
+        }
+        if g.len() >= GRANT_CAP {
+            g.remove(0);
+        }
+        let token = random_token();
+        g.push((token.clone(), canonical));
+        token
+    }
+
+    /** token 反查登记目录（命中刷新为最近使用）；未知 token 拒绝 */
+    fn resolve(&self, token: &str) -> Result<std::path::PathBuf, String> {
+        let mut g = self.entries.lock().unwrap();
+        let Some(i) = g.iter().position(|(t, _)| t == token) else {
+            return Err("unknown dir token".into());
+        };
+        let (t, d) = g.remove(i);
+        g.push((t, d.clone()));
+        Ok(d)
+    }
+
+    /** 按已 canonicalize 的目录反查 token：备份源仅持久化路径字符串，重启后经此重取句柄 */
+    fn token_for(&self, canonical: &std::path::Path) -> Option<String> {
+        self.entries
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(_, d)| d == canonical)
+            .map(|(t, _)| t.clone())
+    }
+
+    fn canonical_dirs(&self) -> Vec<std::path::PathBuf> {
+        self.entries.lock().unwrap().iter().map(|(_, d)| d.clone()).collect()
+    }
+}
+
+fn grants_store_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    app.path().app_data_dir().ok().map(|d| d.join(GRANTS_FILE))
+}
+
+/// 启动装载：持久化授权 → 会话登记（目录已不存在则丢弃）
+fn load_grants(app: &tauri::AppHandle) {
+    let Some(p) = grants_store_path(app) else { return };
+    let Ok(text) = std::fs::read_to_string(p) else { return };
+    let Ok(dirs) = serde_json::from_str::<Vec<String>>(&text) else { return };
+    let state = app.state::<DialogGrants>();
+    for d in dirs {
+        if let Ok(c) = std::fs::canonicalize(&d) {
+            state.register(c);
+        }
+    }
+}
+
+/// 目录登记后的持久化（best-effort：写失败不影响本会话授权，仅影响重启后的自动备份）
+fn persist_grants(app: &tauri::AppHandle) {
+    let Some(p) = grants_store_path(app) else { return };
+    if let Ok(json) = serde_json::to_string_pretty(&app.state::<DialogGrants>().canonical_dirs()) {
+        let _ = std::fs::write(p, json);
+    }
+}
 
 fn valid_backup_name(name: &str) -> bool {
     // 白名单：vault- 前缀、.totpbackup 后缀、不含路径分隔符与 ..，防路径穿越
@@ -104,11 +200,8 @@ fn valid_backup_name(name: &str) -> bool {
         && !name.contains("..")
 }
 
-/** C9：校验 path.parent() 必须落在 allowed_dir 内，canonicalize 防止 symlink/相对路径逃逸 */
-fn ensure_within(path: &std::path::Path, allowed_dir: &str) -> Result<(), String> {
-    if allowed_dir.is_empty() {
-        return Err("empty allowed dir".into());
-    }
+/** C9/F4：校验 path.parent() 必须落在后端登记目录内，canonicalize 双侧防 symlink/相对路径逃逸 */
+fn ensure_within(path: &std::path::Path, allowed_dir: &std::path::Path) -> Result<(), String> {
     let parent = path.parent().ok_or_else(|| "invalid path: no parent".to_string())?;
     let abs_parent = std::fs::canonicalize(parent).map_err(|e| e.to_string())?;
     let abs_allowed = std::fs::canonicalize(allowed_dir).map_err(|e| e.to_string())?;
@@ -116,6 +209,78 @@ fn ensure_within(path: &std::path::Path, allowed_dir: &str) -> Result<(), String
         return Err("path outside allowed dir".into());
     }
     Ok(())
+}
+
+// ---------- 对话框命令（F4：授权源头收归后端）----------
+// 对话框只在用户交互时出现：前端即便被 XSS 调 pick_* 也只能弹出用户可见的系统对话框，
+// 无法静默取得授权；文件命令全部要 dirToken，前端自证 allowed_dir 参数已删除。
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PickedPath {
+    dir_token: String,
+    path: String,
+}
+
+#[derive(serde::Deserialize)]
+struct DialogFilter {
+    name: String,
+    extensions: Vec<String>,
+}
+
+/// 登记选中「目录」本身（备份源目录），并持久化跨会话授权
+fn grant_dir(app: &tauri::AppHandle, dir: std::path::PathBuf) -> Result<PickedPath, String> {
+    let canonical = std::fs::canonicalize(&dir).map_err(|e| e.to_string())?;
+    let token = app.state::<DialogGrants>().register(canonical);
+    persist_grants(app);
+    Ok(PickedPath { dir_token: token, path: dir.to_string_lossy().to_string() })
+}
+
+/// 登记选中「文件所在父目录」（导出保存/打开读取为单次会话流，不落盘）。
+/// save 选中的新文件尚不存在，须对父目录 canonicalize（对话框保证父目录已存在）
+fn grant_file_parent(app: &tauri::AppHandle, file: std::path::PathBuf) -> Result<PickedPath, String> {
+    let dir = file.parent().ok_or_else(|| "invalid path: no parent".to_string())?.to_path_buf();
+    let canonical = std::fs::canonicalize(&dir).map_err(|e| e.to_string())?;
+    let token = app.state::<DialogGrants>().register(canonical);
+    Ok(PickedPath { dir_token: token, path: file.to_string_lossy().to_string() })
+}
+
+/// 目录选择（备份源目录）：Rust 打开系统对话框 → canonical 登记 + 持久化 → {token, path}
+#[tauri::command]
+async fn pick_dir_os(app: tauri::AppHandle) -> Result<Option<PickedPath>, String> {
+    let Some(fp) = app.dialog().file().blocking_pick_folder() else { return Ok(None) };
+    grant_dir(&app, fp.into_path().map_err(|e| e.to_string())?).map(Some)
+}
+
+/// 文件打开（备份恢复/导入）：同上，登记父目录，过滤器与旧前端对话框一致
+#[tauri::command]
+async fn pick_open_file_os(app: tauri::AppHandle, filters: Vec<DialogFilter>) -> Result<Option<PickedPath>, String> {
+    let mut b = app.dialog().file();
+    for f in &filters {
+        let exts: Vec<&str> = f.extensions.iter().map(|s| s.as_str()).collect();
+        b = b.add_filter(f.name.clone(), &exts);
+    }
+    let Some(fp) = b.blocking_pick_file() else { return Ok(None) };
+    grant_file_parent(&app, fp.into_path().map_err(|e| e.to_string())?).map(Some)
+}
+
+/// 文件保存（备份导出）：default_name 为缺省文件名，登记保存位置父目录
+#[tauri::command]
+async fn pick_save_file_os(app: tauri::AppHandle, default_name: String, filters: Vec<DialogFilter>) -> Result<Option<PickedPath>, String> {
+    let mut b = app.dialog().file().set_file_name(default_name);
+    for f in &filters {
+        let exts: Vec<&str> = f.extensions.iter().map(|s| s.as_str()).collect();
+        b = b.add_filter(f.name.clone(), &exts);
+    }
+    let Some(fp) = b.blocking_save_file() else { return Ok(None) };
+    grant_file_parent(&app, fp.into_path().map_err(|e| e.to_string())?).map(Some)
+}
+
+/// 备份源目录重取会话 token：仅对已登记（对话框授权过/启动装载）的 canonical 目录发放
+#[tauri::command]
+fn dir_token_os(app: tauri::AppHandle, dir: String) -> Result<String, String> {
+    let canonical = std::fs::canonicalize(&dir).map_err(|e| e.to_string())?;
+    app.state::<DialogGrants>().token_for(&canonical).ok_or_else(|| "dir not granted via dialog".into())
 }
 
 #[tauri::command]
@@ -131,11 +296,9 @@ fn remove_backup_file(app: tauri::AppHandle, name: String) -> Result<(), String>
     std::fs::remove_file(dir.join(name)).map_err(|e| e.to_string())
 }
 
-/// 用户自选备份目录的删除命令（D4）：与 remove_backup_file 同守护（白名单名 + ensure_within），
-/// 只是 allowed_dir 从「AppData/backups 固定值」改为「前端对话框返回并持久化的目录」
-#[tauri::command]
-fn remove_backup_file_os(path: String, allowed_dir: String) -> Result<(), String> {
-    let p = std::path::Path::new(&path);
+/// 命令本体抽为 *_granted inner（tauri::State 单测无法构造，测试直打 inner，单一代码路径）
+fn remove_backup_file_granted(grants: &DialogGrants, path: &str, dir_token: &str) -> Result<(), String> {
+    let p = std::path::Path::new(path);
     let name = p
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
@@ -143,15 +306,19 @@ fn remove_backup_file_os(path: String, allowed_dir: String) -> Result<(), String
     if !valid_backup_name(&name) {
         return Err("invalid backup name".into());
     }
-    ensure_within(p, &allowed_dir)?;
+    ensure_within(p, &grants.resolve(dir_token)?)?;
     std::fs::remove_file(p).map_err(|e| e.to_string())
 }
 
-/// 用户自选备份目录的列举命令（D4）：不做 ensure_within——dir 本身即用户显式授权目标
-/// （与写/读命令的 allowed_dir 同源，均来自系统对话框），列举仅返回白名单名
-/// （vault-*.totpbackup 与 conflict-*.totpbackup），不泄露目录内其他文件
+/// 用户自选备份目录的删除命令（D4/F4）：与 remove_backup_file 同守护（白名单名 + ensure_within），
+/// 只是授权目录从「AppData/backups 固定值」改为「dirToken 反查的后端登记目录（对话框授权）」
 #[tauri::command]
-fn list_backup_files_os(dir: String) -> Result<Vec<String>, String> {
+fn remove_backup_file_os(grants: tauri::State<DialogGrants>, path: String, dir_token: String) -> Result<(), String> {
+    remove_backup_file_granted(&grants, &path, &dir_token)
+}
+
+fn list_backup_files_granted(grants: &DialogGrants, dir_token: &str) -> Result<Vec<String>, String> {
+    let dir = grants.resolve(dir_token)?;
     let rd = std::fs::read_dir(&dir).map_err(|e| e.to_string())?;
     let mut names: Vec<String> = rd
         .flatten()
@@ -162,8 +329,16 @@ fn list_backup_files_os(dir: String) -> Result<Vec<String>, String> {
     Ok(names)
 }
 
+/// 用户自选备份目录的列举命令（D4/F4）：不做 ensure_within——dir 本身即对话框授权目标
+/// （dirToken 反查登记目录），列举仅返回白名单名
+/// （vault-*.totpbackup 与 conflict-*.totpbackup），不泄露目录内其他文件
 #[tauri::command]
-fn read_text_file_os(path: String, allowed_dir: String) -> Result<String, String> {
+fn list_backup_files_os(grants: tauri::State<DialogGrants>, dir_token: String) -> Result<Vec<String>, String> {
+    list_backup_files_granted(&grants, &dir_token)
+}
+
+#[tauri::command]
+fn read_text_file_os(grants: tauri::State<DialogGrants>, path: String, dir_token: String) -> Result<String, String> {
     // 扩展名白名单：与写侧对齐；本命令唯一用途是读取备份文件，
     // 限定 .totpbackup 防止被前端 XSS 当作任意文件读取原语
     if !path.ends_with(".totpbackup") {
@@ -173,16 +348,11 @@ fn read_text_file_os(path: String, allowed_dir: String) -> Result<String, String
     if !p.is_file() {
         return Err("not a file".into());
     }
-    ensure_within(p, &allowed_dir)?;
+    ensure_within(p, &grants.resolve(&dir_token)?)?;
     std::fs::read_to_string(p).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-fn write_text_file_os(
-    path: String,
-    contents: String,
-    allowed_dir: String,
-) -> Result<(), String> {
+fn write_text_file_granted(grants: &DialogGrants, path: String, contents: String, dir_token: &str) -> Result<(), String> {
     if path.is_empty() {
         return Err("empty path".into());
     }
@@ -195,16 +365,26 @@ fn write_text_file_os(
     if p.is_dir() {
         return Err("path is a directory".into());
     }
-    ensure_within(p, &allowed_dir)?;
+    ensure_within(p, &grants.resolve(dir_token)?)?;
     std::fs::write(path, contents).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn write_text_file_os(
+    grants: tauri::State<DialogGrants>,
+    path: String,
+    contents: String,
+    dir_token: String,
+) -> Result<(), String> {
+    write_text_file_granted(&grants, path, contents, &dir_token)
+}
+
 // ---------- 导入文件命令 ----------
-// 与 read_text_file_os 同构：信任边界一致（路径由前端系统对话框产生，且须落在传入 allowed_dir 内），
+// 与 read_text_file_os 同构：信任边界一致（路径经 pick_open_file_os 的登记授权，dirToken 反查登记目录遏制），
 // 扩展名白名单限定导入用途，防止被前端 XSS 当作任意文件读取原语。
 
 #[tauri::command]
-fn read_import_file_os(path: String, allowed_dir: String) -> Result<String, String> {
+fn read_import_file_os(grants: tauri::State<DialogGrants>, path: String, dir_token: String) -> Result<String, String> {
     // WinAuth(.wauth/.xml)、Aegis(.json/.aegis)、纯文本 URI 批量(.txt)
     const IMPORT_EXTENSIONS: [&str; 5] = [".json", ".wauth", ".xml", ".txt", ".aegis"];
     let lower = path.to_lowercase();
@@ -215,14 +395,14 @@ fn read_import_file_os(path: String, allowed_dir: String) -> Result<String, Stri
     if !p.is_file() {
         return Err("not a file".into());
     }
-    ensure_within(p, &allowed_dir)?;
+    ensure_within(p, &grants.resolve(&dir_token)?)?;
     std::fs::read_to_string(p).map_err(|e| e.to_string())
 }
 
 // 导入文件字节读取（SQLite 等二进制格式，ImportCard 字节入口）：与 read_import_file_os 同构，
 // 白名单在其基础上加 .db/.sqlitedb/.sqlite；返回原始字节（invoke JSON 数组），不经 UTF-8 文本管道
 #[tauri::command]
-fn read_import_file_bytes_os(path: String, allowed_dir: String) -> Result<Vec<u8>, String> {
+fn read_import_file_bytes_os(grants: tauri::State<DialogGrants>, path: String, dir_token: String) -> Result<Vec<u8>, String> {
     const IMPORT_BYTE_EXTENSIONS: [&str; 8] =
         [".json", ".wauth", ".xml", ".txt", ".aegis", ".db", ".sqlitedb", ".sqlite"];
     let lower = path.to_lowercase();
@@ -233,7 +413,7 @@ fn read_import_file_bytes_os(path: String, allowed_dir: String) -> Result<Vec<u8
     if !p.is_file() {
         return Err("not a file".into());
     }
-    ensure_within(p, &allowed_dir)?;
+    ensure_within(p, &grants.resolve(&dir_token)?)?;
     std::fs::read(p).map_err(|e| e.to_string())
 }
 
@@ -552,6 +732,8 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        // F4：对话框授权登记（会话 LRU；setup 内再装载跨会话持久化授权）
+        .manage(DialogGrants::default())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_shortcuts(["alt+shift+t"])
@@ -564,6 +746,8 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            // F4：装载跨会话对话框授权（备份源目录）进会话登记
+            load_grants(app.handle());
             // 系统锁屏事件监听（plan16 T15）：Windows 下订阅 WTS_SESSION_LOCK → 前端广播
             // system-lock；非 Windows no-op（mac/Linux 挂账）。前端 App.vue 按设置执行锁定
             lock_events::start(app.handle().clone());
@@ -639,6 +823,10 @@ pub fn run() {
             remove_backup_file,
             remove_backup_file_os,
             list_backup_files_os,
+            pick_dir_os,
+            pick_open_file_os,
+            pick_save_file_os,
+            dir_token_os,
             decrypt_dpapi,
             dpapi_protect,
             dpapi_unprotect,
@@ -658,7 +846,8 @@ pub fn run() {
         });
 }
 
-// repo 首批 Rust 单测：覆盖备份 os 命令的纯守护逻辑（白名单/目录边界），
+// repo 首批 Rust 单测：覆盖备份 os 命令的纯守护逻辑（白名单/登记目录遏制）与
+// F4 对话框授权登记（token 发放反查/未知拒绝/LRU 上限），
 // 文件系统用 std::env::temp_dir 隔离，不依赖 Tauri runtime
 #[cfg(test)]
 mod tests {
@@ -685,54 +874,142 @@ mod tests {
         std::fs::create_dir_all(&other).unwrap();
         let outside = other.join("vault-20260916-120000.totpbackup");
         std::fs::write(&outside, "x").unwrap();
-        assert!(ensure_within(&outside, allowed.to_str().unwrap()).is_err());
+        assert!(ensure_within(&outside, &allowed).is_err());
         let inside = allowed.join("vault-20260916-120000.totpbackup");
         std::fs::write(&inside, "x").unwrap();
-        assert!(ensure_within(&inside, allowed.to_str().unwrap()).is_ok());
+        assert!(ensure_within(&inside, &allowed).is_ok());
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    // ---------- F4 对话框授权登记（DialogGrants）单测 ----------
+
+    #[test]
+    fn grants_register_resolve_roundtrip_and_token_for() {
+        let g = DialogGrants::default();
+        let dir = std::env::temp_dir().join("totp_grants_roundtrip");
+        std::fs::create_dir_all(&dir).unwrap();
+        let canonical = std::fs::canonicalize(&dir).unwrap();
+        let token = g.register(canonical.clone());
+        assert_eq!(g.resolve(&token).unwrap(), canonical);
+        assert_eq!(g.token_for(&canonical).as_deref(), Some(token.as_str()));
+        // 未登记目录无 token 可反查
+        assert_eq!(g.token_for(&canonical.parent().unwrap().to_path_buf()), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn grants_unknown_token_rejected() {
+        let g = DialogGrants::default();
+        let dir = std::env::temp_dir().join("totp_grants_unknown");
+        std::fs::create_dir_all(&dir).unwrap();
+        g.register(std::fs::canonicalize(&dir).unwrap());
+        assert!(g.resolve("forged-token").is_err());
+        assert!(g.resolve("").is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn grants_same_dir_reuses_token_and_stays_single_entry() {
+        let g = DialogGrants::default();
+        let dir = std::env::temp_dir().join("totp_grants_dedupe");
+        std::fs::create_dir_all(&dir).unwrap();
+        let canonical = std::fs::canonicalize(&dir).unwrap();
+        let t1 = g.register(canonical.clone());
+        let t2 = g.register(canonical.clone());
+        assert_eq!(t1, t2);
+        assert_eq!(g.canonical_dirs().len(), 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn grants_lru_cap_evicts_oldest() {
+        let g = DialogGrants::default();
+        let base = std::env::temp_dir().join("totp_grants_lru");
+        std::fs::create_dir_all(&base).unwrap();
+        let mut tokens = Vec::new();
+        // 登记 GRANT_CAP+1 个目录：首个被逐出，登记总量稳定在 GRANT_CAP
+        for i in 0..=GRANT_CAP {
+            let d = base.join(format!("d{i}"));
+            std::fs::create_dir_all(&d).unwrap();
+            tokens.push(g.register(std::fs::canonicalize(&d).unwrap()));
+        }
+        assert!(g.resolve(&tokens[0]).is_err(), "最旧授权必须被 LRU 逐出");
+        assert!(g.resolve(&tokens[GRANT_CAP]).is_ok(), "最新授权必须仍在登记");
+        assert_eq!(g.canonical_dirs().len(), GRANT_CAP);
         std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]
-    fn remove_backup_file_os_deletes_within_allowed_dir_only() {
+    fn remove_backup_file_os_deletes_within_granted_dir_only() {
         let base = std::env::temp_dir().join("totp_rm_os_test");
         let allowed = base.join("allowed");
         std::fs::create_dir_all(&allowed).unwrap();
+        let grants = DialogGrants::default();
+        let token = grants.register(std::fs::canonicalize(&allowed).unwrap());
         let name = "vault-20260916-120000.totpbackup";
         let target = allowed.join(name);
         std::fs::write(&target, "x").unwrap();
-        remove_backup_file_os(target.to_str().unwrap().into(), allowed.to_str().unwrap().into()).unwrap();
+        remove_backup_file_granted(&grants, target.to_str().unwrap(), &token).unwrap();
         assert!(!target.exists());
-        // allowed_dir 之外的同名文件：白名单名也必须拒绝删除
+        // 登记目录之外的同名文件：白名单名也必须拒绝删除（遏制基准=后端登记目录，非前端自证）
         let outside = base.join(name);
         std::fs::write(&outside, "x").unwrap();
-        assert!(remove_backup_file_os(outside.to_str().unwrap().into(), allowed.to_str().unwrap().into()).is_err());
+        assert!(remove_backup_file_granted(&grants, outside.to_str().unwrap(), &token).is_err());
         assert!(outside.exists());
+        // 未知 token（未授权句柄）拒绝删除
+        std::fs::write(&target, "x").unwrap();
+        assert!(remove_backup_file_granted(&grants, target.to_str().unwrap(), "forged-token").is_err());
+        assert!(target.exists());
         std::fs::remove_dir_all(&base).ok();
     }
 
-    // 审查 I12：allowed_dir 的 Windows 特有形态（前端对话框/持久化值可能带大小写差异或
-    // verbatim 前缀）必须同样可授权——ensure_within 双侧 canonicalize 归一后比较，两种形态
-    // 均应命中同一目录。仅 Windows 可跑（依赖 NTFS 大小写不敏感与 \\?\ 前缀语义）
+    #[test]
+    fn write_text_file_granted_enforces_extension_and_containment() {
+        let base = std::env::temp_dir().join("totp_write_os_test");
+        let allowed = base.join("allowed");
+        std::fs::create_dir_all(&allowed).unwrap();
+        let grants = DialogGrants::default();
+        let token = grants.register(std::fs::canonicalize(&allowed).unwrap());
+        // 登记目录内合法备份名：写入成功
+        let target = allowed.join("vault-20260916-120000.totpbackup");
+        write_text_file_granted(&grants, target.to_str().unwrap().into(), "{}".into(), &token).unwrap();
+        assert!(target.exists());
+        // 非白名单扩展名拒绝
+        let txt = allowed.join("evil.txt");
+        assert!(write_text_file_granted(&grants, txt.to_str().unwrap().into(), "{}".into(), &token).is_err());
+        assert!(!txt.exists());
+        // 登记目录之外（.totpbackup 合法名）遏制拒绝且不落盘
+        let outside = base.join("vault-20260916-120000.totpbackup");
+        assert!(write_text_file_granted(&grants, outside.to_str().unwrap().into(), "{}".into(), &token).is_err());
+        assert!(!outside.exists());
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    // 审查 I12（F4 重写）：授权基准不再有 allowed_dir IPC 入参；等价保障为「非规范形态的
+    // 目录路径（大小写差异/\\?\ verbatim 前缀，对话框或持久化值可能携带）canonicalize 后
+    // 与登记目录归一，文件路径同样归一命中」。仅 Windows 可跑（依赖 NTFS 大小写不敏感与 \\?\ 语义）
     #[cfg(windows)]
     #[test]
-    fn remove_backup_file_os_accepts_case_variant_and_verbatim_allowed_dir() {
-        let base = std::env::temp_dir().join("totp_rm_os_case_test");
+    fn dir_grants_normalize_case_variant_and_verbatim_forms() {
+        let base = std::env::temp_dir().join("totp_grants_case_test");
         let allowed = base.join("Allowed");
         std::fs::create_dir_all(&allowed).unwrap();
+        let grants = DialogGrants::default();
+        let canonical = std::fs::canonicalize(&allowed).unwrap();
+        assert!(canonical.to_str().unwrap().starts_with(r"\\?\"));
+        // 形态一：小写形态登记（canonicalize 归一为磁盘实际大小写）与真实形态为同一登记
+        let lower = std::fs::canonicalize(allowed.to_str().unwrap().to_lowercase()).unwrap();
+        let t_lower = grants.register(lower);
+        let t_canonical = grants.register(canonical.clone());
+        assert_eq!(t_lower, t_canonical, "同目录不同大小写形态归一为同一登记");
+        // 形态二：verbatim 形态文件路径删除命中同一登记（ensure_within canonicalize(父) 归一）；
+        // canonical 本身即 \\?\ 前缀形态，直接拼子路径构造 verbatim 文件路径
         let name = "vault-20260916-120000.totpbackup";
-        // 形态一：allowed_dir 大小写与磁盘真实大小写不同（canonicalize 归一为实际大小写后命中）
-        let target = allowed.join(name);
+        let target = canonical.join(name);
         std::fs::write(&target, "x").unwrap();
-        let lowercased = allowed.to_str().unwrap().to_lowercase();
-        remove_backup_file_os(target.to_str().unwrap().into(), lowercased).unwrap();
+        let verbatim_path = format!("{}{}{name}", canonical.display(), std::path::MAIN_SEPARATOR);
+        remove_backup_file_granted(&grants, &verbatim_path, &t_canonical).unwrap();
         assert!(!target.exists());
-        // 形态二：\\?\ verbatim 前缀形态（canonicalize 的返回形态；对话框路径偶带此前缀）
-        let target2 = allowed.join(name);
-        std::fs::write(&target2, "x").unwrap();
-        let verbatim = std::fs::canonicalize(&allowed).unwrap();
-        assert!(verbatim.to_str().unwrap().starts_with(r"\\?\"));
-        remove_backup_file_os(target2.to_str().unwrap().into(), verbatim.to_str().unwrap().into()).unwrap();
-        assert!(!target2.exists());
         std::fs::remove_dir_all(&base).ok();
     }
 
@@ -743,7 +1020,9 @@ mod tests {
         for n in ["vault-20260916-120001.totpbackup", "vault-20260916-120000.totpbackup", "conflict-20260916-120000.totpbackup", "conflict-foo.txt", "secret.txt"] {
             std::fs::write(base.join(n), "x").unwrap();
         }
-        let names = list_backup_files_os(base.to_str().unwrap().into()).unwrap();
+        let grants = DialogGrants::default();
+        let token = grants.register(std::fs::canonicalize(&base).unwrap());
+        let names = list_backup_files_granted(&grants, &token).unwrap();
         assert_eq!(
             names,
             vec![
