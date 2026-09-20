@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { applyImport, dedupeWithinFile, parsePastedText, planImport, type ImportKind, type ParsedEntry, type Vault } from '@totp/core'
+import { applyImport, dedupeWithinFile, parsePastedText, planImport, type ImportKind, type OtpEntry, type ParsedEntry, type Vault } from '@totp/core'
 import { computed, ref } from 'vue'
+import { parseUriToEntryData } from '../otpauthFlow'
+import { decodeQrToUri } from '../qr/decodeQr'
+import { blobToPixels, imagesFromClipboard } from '../qr/imageSource'
 import type { VueStore } from '../store'
 import MdButton from './md/MdButton.vue'
 import MdSelect from './md/MdSelect.vue'
@@ -21,11 +24,14 @@ const text = ref('')
 const error = ref('')
 const rows = ref<RowDecision[]>([])
 const failureLines = ref<string[]>([])
+const imageErrors = ref<string[]>([])
+const pendingImages = ref(0)
 
 function parse(): void {
   error.value = ''
   failureLines.value = []
   rows.value = []
+  imageErrors.value = []
   // parser 对结构畸形输入可能直接抛错（如嗅探为 aegis 后解析中断）：兜底展示，不让点击崩掉
   let r: ReturnType<typeof parsePastedText>
   try {
@@ -53,6 +59,55 @@ function parse(): void {
     return { entry, kind, choice: kind === 'new' ? ('add' as const) : ('skip' as const) }
   })
   failureLines.value = r.failures.map((f) => `第 ${f.index + 1} 行：${f.message}`)
+}
+
+/** OtpEntry 哑值 → ParsedEntry 字段投影：仅导入判定/落库相关字段，uuid/order/createdAt 等管理字段不投影 */
+function toParsed(d: OtpEntry): ParsedEntry {
+  return {
+    type: d.type,
+    issuer: d.issuer,
+    label: d.label,
+    secret: d.secret,
+    algorithm: d.algorithm,
+    digits: d.digits,
+    period: d.period,
+    ...(d.counter !== undefined ? { counter: d.counter } : {}),
+  }
+}
+
+async function onPasteImages(e: ClipboardEvent): Promise<void> {
+  const files = imagesFromClipboard(e)
+  if (files.length > 0) { e.preventDefault(); await decodeImages(files) }
+}
+
+async function onDropImages(e: DragEvent): Promise<void> {
+  const files = Array.from(e.dataTransfer?.files ?? []).filter((f) => f.type.startsWith('image/'))
+  if (files.length > 0) { e.preventDefault(); await decodeImages(files) }
+}
+
+/** 逐图解码合并进结果列表：单图失败不阻塞后续（记入 imageErrors）；
+ * 入列表前走文本路径同一去重键（dedupeWithinFile 保首条）——同一二维码贴两次不双写 */
+async function decodeImages(files: File[]): Promise<void> {
+  pendingImages.value += files.length
+  try {
+    for (const f of files) {
+      try {
+        const r = decodeQrToUri(await blobToPixels(f))
+        if ('error' in r) { imageErrors.value.push(`${f.name}：${r.error}`); continue }
+        const d = parseUriToEntryData(r.uri)
+        if ('error' in d) { imageErrors.value.push(`${f.name}：${d.error}`); continue }
+        const parsed = toParsed(d.data)
+        const prior = rows.value.map((row) => row.entry)
+        if (dedupeWithinFile([...prior, parsed]).kept.length !== prior.length + 1) continue
+        const plan = planImport(props.store.vault, [parsed])
+        rows.value.push({ entry: parsed, kind: plan.kinds[0] ?? 'new', choice: plan.kinds[0] === 'new' ? 'add' : 'skip' })
+      } catch {
+        imageErrors.value.push(`${f.name}：图片读取失败`)
+      }
+    }
+  } finally {
+    pendingImages.value -= files.length
+  }
 }
 
 async function commit(): Promise<void> {
@@ -107,9 +162,10 @@ function onChoiceSelect(r: RowDecision, v: string | number): void {
 }
 </script>
 <template>
-  <div class="batch-paste">
+  <div class="batch-paste" data-test="paste-zone" @paste="onPasteImages" @dragover.prevent @drop="onDropImages">
     <textarea v-model="text" rows="6" aria-label="粘贴文本"
-      placeholder="粘贴 otpauth URI（可多行）或各应用明文导出 JSON"></textarea>
+      placeholder="粘贴 otpauth URI（可多行）或各应用明文导出 JSON，也可直接粘贴/拖入二维码图片"></textarea>
+    <p v-if="pendingImages > 0" class="pending" data-test="paste-decoding">解码中…</p>
     <div class="actions">
       <MdButton data-test="paste-parse" :disabled="text.trim() === ''" @click="parse">解析</MdButton>
       <MdButton data-test="paste-commit" variant="filled" :disabled="rows.length === 0" @click="commit">
@@ -118,6 +174,7 @@ function onChoiceSelect(r: RowDecision, v: string | number): void {
     </div>
     <p v-if="error" class="err">{{ error }}</p>
     <p v-for="f in failureLines" :key="f" class="err">{{ f }}</p>
+    <p v-for="(ie, i) in imageErrors" :key="`img-${i}`" class="err" data-test="paste-image-error">{{ ie }}</p>
     <ul v-if="rows.length > 0" class="rows">
       <li v-for="(r, i) in rows" :key="i" data-test="paste-row">
         <span class="meta">{{ r.entry.issuer }} · {{ r.entry.label }}</span>
@@ -138,6 +195,7 @@ function onChoiceSelect(r: RowDecision, v: string | number): void {
 .batch-paste textarea:focus-visible { outline: 3px solid var(--md-sys-color-primary); outline-offset: 2px; }
 .actions { display: flex; gap: 8px; align-items: center; }
 .err { margin: 0; color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); }
+.pending { margin: 0; color: var(--md-sys-color-on-surface-variant); font-size: var(--md-sys-typescale-body-small); }
 .rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .rows li { display: flex; align-items: center; gap: 12px; padding: 8px 12px;
   border-radius: 8px; background: var(--md-sys-color-surface-container); }
