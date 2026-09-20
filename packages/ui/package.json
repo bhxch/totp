@@ -16,7 +16,8 @@
     "@totp/core": "workspace:*",
     "fflate": "^0.8.3",
     "sql.js": "1.14.2",
-    "vue": "^3.5.0"
+    "vue": "^3.5.0",
+    "vue-i18n": "^11.4.12"
   },
   "devDependencies": {
     "@material/material-color-utilities": "0.2.7",

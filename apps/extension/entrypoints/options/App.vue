@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { backupFileName, createAutoRunScheduler, createBackupEnvelope, loadSourceRevs, normalizeSchemes, openBackupEnvelope, OVERWRITE_NAME, randomBytes, saveSourceRev, SCHEMES_KEY, type BackupEnvelope, type BackupSource, type CloudCred, type ImportScheme, type Retention, type Vault } from '@totp/core'
-import { CLIPBOARD_CLEAR_DELAY_MS, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, LockScreen, NavigationShell, prfSupported, useTheme, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { CLIPBOARD_CLEAR_DELAY_MS, createAppI18n, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, LockScreen, NavigationShell, prfSupported, useTheme, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
+import { computed, getCurrentInstance, onMounted, onUnmounted, ref } from 'vue'
 import { conflictBackupName, formatAutoStatusText, hasLegacyCloudKeys, loadSourcesImpl, migrateLegacySources, retentionDeletedNote, saveSourcesImpl } from '../../src/cloudCredStore'
 import { createDekSession } from '../../src/dekSession'
 import { createIdleLockWatcher } from '../../src/lockEnforcer'
@@ -17,6 +17,10 @@ const store = createExtensionStore('options', {
   onCommittedExtra: () => scheduler.notifyChanged(),
   dekPersist: createDekSession(),
 })
+// D1 i18n 挂载：store 在本组件 setup 创建（页面生命周期内唯一实例），装入当前 app 供全部子组件
+// useI18n/$t。appContext.app 须在 setup 同步段取；装入发生在 setup 中段，本组件自身的 script setup
+// 内 useI18n() 不可用（注入尚未就绪），壳层翻译走 i18n.global.t——子组件不受限
+getCurrentInstance()?.appContext.app.use(createAppI18n(store))
 const {
   vault, initStore, registerStorageSync,
   locked, hasEncryption, unlock, lock, enableEncryption, disableEncryption, changePassphrase,

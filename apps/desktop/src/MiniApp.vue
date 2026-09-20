@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { OtpListItem, createClipboardClearer, createIconStore, createVueStore, iconView, useOtpCodes, useTheme, type IconStore, type VueStore } from '@totp/ui'
-import { computed, onMounted, ref, shallowRef } from 'vue'
+import { OtpListItem, createAppI18n, createClipboardClearer, createIconStore, createVueStore, iconView, useOtpCodes, useTheme, type IconStore, type VueStore } from '@totp/ui'
+import { computed, getCurrentInstance, onMounted, ref, shallowRef } from 'vue'
 import { createTauriFs } from './tauriFs'
 
 // store 浅包装（T14 审查根修，与 App.vue 同款）：深 ref 会对嵌套 ref/computed 成员自动解包，
@@ -12,6 +12,11 @@ const store = shallowRef<VueStore | null>(null)
 /** 模板锁定态（mini 未就绪/未加密库显示条目，锁定显示不可用） */
 const locked = computed(() => store.value?.locked.value ?? false)
 const icons = ref<IconStore | null>(null)
+// D1 i18n 挂载（store 就绪后装入，见 load 内）：app 引用必须在 setup 同步段获取；
+// mini 的 store 在每次聚焦重载时重建（既有模式，useTheme 同样重新接线）——i18n 插件只能
+// 装入一次，首次就绪的 store 驱动 locale（仅首次生效，重载为 no-op）
+const appForI18n = getCurrentInstance()?.appContext.app
+let i18nInstalled = false
 
 async function load() {
   try {
@@ -21,6 +26,11 @@ async function load() {
     const s = createVueStore(adapter, { windowId: 'mini' })
     await s.initStore()
     store.value = s
+    // D1 i18n 挂载：设置已从盘载入（含 locale）；仅首次生效，重载不再装入
+    if (appForI18n && !i18nInstalled) {
+      appForI18n.use(createAppI18n(s))
+      i18nInstalled = true
+    }
     // 主题接线:initStore 成功后挂 useTheme(设置已加载为真实值;首帧属性由 html 内联脚本负责)
     useTheme(s)
     const iconStore = createIconStore(adapter)

@@ -3,8 +3,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { backupFileName, createBackupEnvelope, loadSourceRevs, loadSources, normalizeSchemes, openBackupEnvelope, randomBytes, saveSourceRev, saveSources, SCHEMES_KEY, sha256Hex, type BackupSource, type CloudCred, type ImportScheme, type KdfProfile, type Retention, type StorageAdapter, type Vault } from '@totp/core'
-import { createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type LocalSourceView, type SecurityPlatform, type VueStore } from '@totp/ui'
-import { computed, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
+import { createAppI18n, createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type LocalSourceView, type SecurityPlatform, type VueStore } from '@totp/ui'
+import { computed, getCurrentInstance, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createDesktopAutoRunner, formatAutoStatusText } from './autoBackup'
 import { createBackupToSources, listBackupsFromSources, pickBackupDirOs, pickBackupOpenOs, pickBackupSaveOs, readBackupByName, readBackupFileOs, saveConflictBackupToDir, saveCloudSourcesPreservingLocal, writeBackupFileOs, type PickedOsFile } from './backupService'
 import { decryptDpapiOs, pickImportFileOs, readImportFileBytesOs, readImportFileOs } from './importService'
@@ -25,6 +25,16 @@ const locked = computed(() => store.value?.locked.value ?? false)
 const icons = ref<IconStore | null>(null)
 const loadError = ref('')
 let unlistenFocus: (() => void) | null = null
+// D1 i18n 挂载（store 就绪后装入，见 onMounted 内 mountI18n）：app 引用必须在 setup 同步段获取
+// （onMounted await 之后 instance 上下文已失效）；本组件 store 仅在挂载时创建一次
+const appForI18n = getCurrentInstance()?.appContext.app
+let i18nInstalled = false
+function mountI18n(s: VueStore): void {
+  if (appForI18n && !i18nInstalled) {
+    appForI18n.use(createAppI18n(s))
+    i18nInstalled = true
+  }
+}
 
 /** platform 工厂与迁移共用的就绪断言：store/adapter 未就绪时统一中文报错（卡片展示） */
 function requireStore(): VueStore {
@@ -581,6 +591,8 @@ onMounted(async () => {
     const s = createVueStore(adapter, { windowId: 'main', onCommitted: () => auto.notifyChanged() })
     await s.initStore()
     store.value = s
+    // D1 i18n 挂载：设置已从盘载入（含 locale），装入 i18n 供组件树 useI18n/$t
+    mountI18n(s)
     // 旧数据迁移（plan16 T14）：initStore 已完成解锁态判定，解锁态在此直接跑（幂等）；
     // 第二汇合点在模板 LockScreen @unlocked（口令/PRF 解锁成功后补跑）
     await runLegacyMigrations()
