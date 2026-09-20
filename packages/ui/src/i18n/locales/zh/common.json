@@ -1,1 +1,24 @@
-{ "app": { "title": "TOTP 验证码工具" } }
+{
+  "app": { "title": "TOTP 验证码工具" },
+  "nav": {
+    "codes": "验证码",
+    "import": "导入",
+    "sync": "同步",
+    "security": "安全",
+    "settings": "设置"
+  },
+  "lock": {
+    "title": "已锁定",
+    "hint": "输入口令解锁本地数据",
+    "passphrase": "口令",
+    "unlockPassphrase": "解锁口令",
+    "showPassphrase": "显示口令",
+    "hidePassphrase": "隐藏口令",
+    "enterPassphrase": "请输入口令",
+    "unlock": "解锁",
+    "unlockWithPasskey": "使用 Passkey 解锁",
+    "passkeyUnsupported": "当前浏览器不支持 Passkey 解锁",
+    "passkeyFailed": "passkey 解锁失败",
+    "retry": "重试"
+  }
+}

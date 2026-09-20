@@ -62,6 +62,19 @@ describe('SettingsPage 外观区', () => {
     const w = mount(SettingsPage, { props: { store: s } })
     expect(w.find('.theme-resolved').text()).toContain('深色')
   })
+
+  it('语言选择：点选 English → settings.locale=en + commitSettings 调用（D1）', async () => {
+    const s = await readyStore()
+    const commit = vi.spyOn(s, 'commitSettings')
+    const w = mount(SettingsPage, { props: { store: s } })
+    // 默认 auto：「跟随浏览器」为当前选中项
+    expect(w.find('.set-locale .md-select__value').text()).toBe('跟随浏览器')
+    await w.find('.set-locale .md-select__trigger').trigger('click')
+    await w.findAll('.set-locale .md-select__option').find((o) => o.text() === 'English')!.trigger('click')
+    expect(s.settings.locale).toBe('en')
+    expect(commit).toHaveBeenCalled()
+    expect(w.find('.set-locale .md-select__value').text()).toBe('English')
+  })
 })
 
 describe('SettingsPage 通用区', () => {

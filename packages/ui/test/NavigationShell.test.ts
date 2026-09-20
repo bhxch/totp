@@ -6,6 +6,7 @@ import SettingsPage from '../src/pages/SettingsPage.vue'
 import CodesPage from '../src/pages/CodesPage.vue'
 import NavigationShell from '../src/pages/NavigationShell.vue'
 import { themeRoutes } from '../src/pages/routes'
+import { createTestI18n } from './helpers/i18n'
 
 // SettingsPage 真实现(Task 11)消费 settings/useTheme:stub 补外观区所需
 // 最小字段与 commitSettings;CodesPage 真实现消费 vault.entries/tags 与标签筛选三设置。
@@ -14,7 +15,7 @@ const stubStore = {
   settings: {
     themeMode: 'auto', themeColor: 'blue',
     urlFilterEnabled: true, blurHideEnabled: false, clipboardClearEnabled: true,
-    popupCloseDelayMs: 2000, syncEnabled: false,
+    popupCloseDelayMs: 2000, syncEnabled: false, locale: 'auto',
     tagFilterMode: 'any', rememberTagFilter: false, lastTagFilterIds: [],
   },
   commitSettings: vi.fn(async () => {}),
@@ -28,7 +29,7 @@ describe('NavigationShell', () => {
   it('默认路由重定向 /codes 且渲染 Rail 5 项', async () => {
     const router = makeRouter()
     await router.push('/'); await router.isReady()
-    const w = mount(NavigationShell, { global: { plugins: [router] }, props: { store: stubStore } })
+    const w = mount(NavigationShell, { global: { plugins: [router, createTestI18n()] }, props: { store: stubStore } })
     expect(router.currentRoute.value.path).toBe('/codes')
     expect(w.findAll('.md-rail__item')).toHaveLength(5)
   })
@@ -36,7 +37,7 @@ describe('NavigationShell', () => {
   it('未匹配路径（catch-all）重定向 /codes（错误 hash 深链兜底）', async () => {
     const router = makeRouter()
     await router.push('/setings'); await router.isReady()
-    const w = mount(NavigationShell, { global: { plugins: [router] }, props: { store: stubStore } })
+    const w = mount(NavigationShell, { global: { plugins: [router, createTestI18n()] }, props: { store: stubStore } })
     expect(router.currentRoute.value.path).toBe('/codes')
     expect(w.findAll('.md-rail__item')).toHaveLength(5)
     w.unmount()
@@ -45,7 +46,7 @@ describe('NavigationShell', () => {
   it('router.push(/settings) 后 settings 页拿到 store(pageProps 分发)', async () => {
     const router = makeRouter()
     await router.push('/settings'); await router.isReady()
-    const w = mount(NavigationShell, { global: { plugins: [router] }, props: { store: stubStore } })
+    const w = mount(NavigationShell, { global: { plugins: [router, createTestI18n()] }, props: { store: stubStore } })
     // SettingsPage 真实现已声明 store prop(pageProps 直传,不再落 $attrs);
     // 对象 prop 经挂载链路会包成 reactive 代理,toRaw 还原后比对引用
     const storeProp = w.findComponent(SettingsPage).props('store') as object
@@ -57,7 +58,7 @@ describe('NavigationShell', () => {
     await router.push('/'); await router.isReady()
     const onClick = vi.fn()
     const w = mount(NavigationShell, {
-      global: { plugins: [router] },
+      global: { plugins: [router, createTestI18n()] },
       props: { store: stubStore, railActions: [{ label: '托盘', onClick }] },
     })
     const btn = w.find('.nav-shell__rail-action')
@@ -69,7 +70,7 @@ describe('NavigationShell', () => {
   it('点击 Rail 项路由跳转', async () => {
     const router = makeRouter()
     await router.push('/'); await router.isReady()
-    const w = mount(NavigationShell, { global: { plugins: [router] }, props: { store: stubStore } })
+    const w = mount(NavigationShell, { global: { plugins: [router, createTestI18n()] }, props: { store: stubStore } })
     await w.findAll('.md-rail__item')[4]!.trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.path).toBe('/settings')
@@ -78,7 +79,7 @@ describe('NavigationShell', () => {
   it('CodesPage copy 事件上抛为 Shell copy（宿主剪贴板链路）', async () => {
     const router = makeRouter()
     await router.push('/codes'); await router.isReady()
-    const w = mount(NavigationShell, { global: { plugins: [router] }, props: { store: stubStore } })
+    const w = mount(NavigationShell, { global: { plugins: [router, createTestI18n()] }, props: { store: stubStore } })
     w.findComponent(CodesPage).vm.$emit('copy', '123456')
     await flushPromises()
     expect(w.emitted('copy')).toEqual([['123456']])
@@ -95,7 +96,7 @@ describe('NavigationShell', () => {
     vi.spyOn(window, 'matchMedia').mockReturnValue(mql as unknown as MediaQueryList)
     const router = makeRouter()
     await router.push('/'); await router.isReady()
-    const w = mount(NavigationShell, { global: { plugins: [router] }, props: { store: stubStore } })
+    const w = mount(NavigationShell, { global: { plugins: [router, createTestI18n()] }, props: { store: stubStore } })
     // setup 初值同步生效：窄窗首帧直接渲染 Tabs（不先 Rail 再闪变）
     expect(w.find('.md-rail').exists()).toBe(false)
     expect(w.find('.md-tabs').exists()).toBe(true)

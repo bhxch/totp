@@ -1,1 +1,24 @@
-{ "app": { "title": "TOTP Code Tool" } }
+{
+  "app": { "title": "TOTP Code Tool" },
+  "nav": {
+    "codes": "Codes",
+    "import": "Import",
+    "sync": "Sync",
+    "security": "Security",
+    "settings": "Settings"
+  },
+  "lock": {
+    "title": "Locked",
+    "hint": "Enter your passphrase to unlock local data",
+    "passphrase": "Passphrase",
+    "unlockPassphrase": "Unlock passphrase",
+    "showPassphrase": "Show passphrase",
+    "hidePassphrase": "Hide passphrase",
+    "enterPassphrase": "Please enter your passphrase",
+    "unlock": "Unlock",
+    "unlockWithPasskey": "Unlock with Passkey",
+    "passkeyUnsupported": "Passkey unlock is not supported in this browser",
+    "passkeyFailed": "Passkey unlock failed",
+    "retry": "Retry"
+  }
+}

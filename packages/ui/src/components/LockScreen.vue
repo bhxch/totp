@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { base64ToBytes, unlockWithPrf } from '@totp/core'
 import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { DpapiUnlockOps } from './securityPlatform'
 import { getPrfOutput, prfSupported } from '../prf'
 import type { VueStore } from '../store'
@@ -22,6 +23,9 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{ (e: 'unlocked'): void }>()
+
+// D1 抽串示范：锁定页文案走 i18n（lock.*）
+const { t } = useI18n()
 
 const password = ref('')
 const busy = ref(false)
@@ -81,7 +85,7 @@ async function onRetryDpapi(): Promise<void> {
 async function onUnlock(): Promise<void> {
   if (busy.value) return
   if (!password.value) {
-    msg.value = '请输入口令'
+    msg.value = t('lock.enterPassphrase')
     return
   }
   busy.value = true
@@ -113,7 +117,7 @@ async function onPasskeyUnlock(): Promise<void> {
       emit('unlocked')
       return
     }
-    msg.value = 'passkey 解锁失败'
+    msg.value = t('lock.passkeyFailed')
   } catch (e) {
     msg.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -124,31 +128,32 @@ async function onPasskeyUnlock(): Promise<void> {
 
 <template>
   <section class="lockscreen">
-    <h2>已锁定</h2>
-    <p class="hint">输入口令解锁本地数据</p>
+    <h2>{{ t('lock.title') }}</h2>
+    <p class="hint">{{ t('lock.hint') }}</p>
     <form class="unlock-form" @submit.prevent="onUnlock">
       <div class="pw-row">
         <MdTextField
-          v-model="password" class="grow" label="口令" placeholder="口令"
-          :type="showPassword ? 'text' : 'password'" aria-label="解锁口令"
+          v-model="password" class="grow" :label="t('lock.passphrase')" :placeholder="t('lock.passphrase')"
+          :type="showPassword ? 'text' : 'password'" :aria-label="t('lock.unlockPassphrase')"
           autocomplete="current-password" :disabled="busy"
         />
         <MdIconButton
-          :title="showPassword ? '隐藏口令' : '显示口令'" :aria-label="showPassword ? '隐藏口令' : '显示口令'"
+          :title="showPassword ? t('lock.hidePassphrase') : t('lock.showPassphrase')"
+          :aria-label="showPassword ? t('lock.hidePassphrase') : t('lock.showPassphrase')"
           @click="showPassword = !showPassword"
         >{{ showPassword ? '🙈' : '👁' }}</MdIconButton>
       </div>
-      <MdButton class="unlock" type="submit" :disabled="busy">解锁</MdButton>
+      <MdButton class="unlock" type="submit" :disabled="busy">{{ t('lock.unlock') }}</MdButton>
     </form>
     <MdButton
       v-if="showPasskey"
       variant="tonal"
       class="passkey"
       :disabled="busy || !passkeySupported"
-      :title="passkeySupported ? undefined : '当前浏览器不支持 Passkey 解锁'"
+      :title="passkeySupported ? undefined : t('lock.passkeyUnsupported')"
       @click="onPasskeyUnlock"
     >
-      使用 Passkey 解锁
+      {{ t('lock.unlockWithPasskey') }}
     </MdButton>
     <!-- I44：DPAPI 已绑定但静默解锁失败 1s 后仍锁定 → 显示重试入口（文案取 dpapi.label 按端动态化） -->
     <MdButton
@@ -158,7 +163,7 @@ async function onPasskeyUnlock(): Promise<void> {
       :disabled="dpapiRetrying || busy"
       @click="onRetryDpapi"
     >
-      重试 {{ dpapi?.label }}
+      {{ t('lock.retry') }} {{ dpapi?.label }}
     </MdButton>
     <div v-if="msg" class="err" role="alert">{{ msg }}</div>
   </section>

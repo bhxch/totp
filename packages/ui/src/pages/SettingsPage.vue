@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import type { AppSettings } from '@totp/core'
 import type { SecurityPlatform } from '../components/securityPlatform'
 import MdCard from '../components/md/MdCard.vue'
 import MdSegmentedButton from '../components/md/MdSegmentedButton.vue'
+import MdSelect from '../components/md/MdSelect.vue'
 import MdSwitch from '../components/md/MdSwitch.vue'
 import MdTextField from '../components/md/MdTextField.vue'
 import type { VueStore } from '../store'
@@ -36,6 +38,18 @@ const resolvedLabel = computed(() => (resolvedMode.value === 'dark' ? '深色' :
 type BoolKey = 'blurHideEnabled' | 'urlFilterEnabled' | 'clipboardClearEnabled' | 'rememberTagFilter'
 async function setBool(key: BoolKey, v: boolean): Promise<void> {
   props.store.settings[key] = v
+  await props.store.commitSettings()
+}
+
+// ---------- 语言选择（D1）：MdSelect emit 值为泛化 string|number，赋值前收敛回 AppSettings['locale'] ----------
+const LOCALE_OPTIONS: Array<{ value: AppSettings['locale']; label: string }> = [
+  { value: 'auto', label: '跟随浏览器' },
+  { value: 'zh', label: '中文' },
+  { value: 'en', label: 'English' },
+]
+/** 语言切换：写 settings.locale 后 commitSettings 落盘；i18n locale 由 createAppI18n 的 watch 联动 */
+async function setLocale(v: string | number): Promise<void> {
+  props.store.settings.locale = v as AppSettings['locale']
   await props.store.commitSettings()
 }
 
@@ -73,6 +87,13 @@ const hasGeneralItems = computed(() => true)
             <span v-if="color === p.id" class="theme-dot__check" aria-hidden="true">✓</span>
           </button>
         </div>
+      </div>
+      <div class="row">
+        <span class="row-label">语言</span>
+        <MdSelect
+          class="set-locale" label="界面语言" aria-label="界面语言"
+          :model-value="store.settings.locale" :options="LOCALE_OPTIONS" @update:model-value="setLocale"
+        />
       </div>
       <p class="theme-resolved">当前生效：{{ resolvedLabel }}{{ mode === 'auto' ? '（跟随系统）' : '' }}</p>
     </MdCard>

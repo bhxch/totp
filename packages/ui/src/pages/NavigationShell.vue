@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import MdNavigationRail from '../components/md/MdNavigationRail.vue'
 import MdTabs from '../components/md/MdTabs.vue'
@@ -38,6 +39,8 @@ const props = withDefaults(defineProps<{
 
 const route = useRoute()
 const router = useRouter()
+// D1 抽串示范：导航项文案走 i18n（nav.*）。computed 保持 locale 切换后 Rail/Tabs 文案联动
+const { t } = useI18n()
 
 // 宿主剪贴板链路：仅 /codes 路由挂 copy 监听（其余页面未声明 copy emit，
 // 恒挂会经 attrs 落到根元素变成原生 copy(DOM 事件) 监听，误传 ClipboardEvent）
@@ -46,13 +49,13 @@ const pageListeners = computed(() =>
   route.name === 'codes' ? { copy: (code: string) => emit('copy', code) } : {},
 )
 
-const navItems: { name: string; label: string; icon: string; to: string }[] = [
-  { name: 'codes', label: '验证码', icon: NAV_ICONS.codes, to: '/codes' },
-  { name: 'import', label: '导入', icon: NAV_ICONS.import, to: '/import' },
-  { name: 'sync', label: '同步', icon: NAV_ICONS.sync, to: '/sync' },
-  { name: 'security', label: '安全', icon: NAV_ICONS.security, to: '/security' },
-  { name: 'settings', label: '设置', icon: NAV_ICONS.settings, to: '/settings' },
-]
+const navItems = computed<{ name: string; label: string; icon: string; to: string }[]>(() => [
+  { name: 'codes', label: t('nav.codes'), icon: NAV_ICONS.codes, to: '/codes' },
+  { name: 'import', label: t('nav.import'), icon: NAV_ICONS.import, to: '/import' },
+  { name: 'sync', label: t('nav.sync'), icon: NAV_ICONS.sync, to: '/sync' },
+  { name: 'security', label: t('nav.security'), icon: NAV_ICONS.security, to: '/security' },
+  { name: 'settings', label: t('nav.settings'), icon: NAV_ICONS.settings, to: '/settings' },
+])
 
 const active = computed(() => String(route.name ?? ''))
 
@@ -71,7 +74,7 @@ onMounted(() => {
 onBeforeUnmount(() => { mql?.removeEventListener('change', onMqlChange); mql = null })
 
 function onSelect(name: string) {
-  const item = navItems.find((i) => i.name === name)
+  const item = navItems.value.find((i) => i.name === name)
   if (item) void router.push(item.to)
 }
 

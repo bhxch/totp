@@ -5,6 +5,7 @@ import { addPrfSource, base64ToBytes, bytesToBase64, randomBytes, setupVaultEncr
 import LockScreen from '../src/components/LockScreen.vue'
 import type { VueStore } from '../src/store'
 import type { DpapiUnlockOps } from '../src/components/securityPlatform'
+import { createTestI18n } from './helpers/i18n'
 
 /** 模拟 PRF 能力可用：通过 PublicKeyCredential.getClientCapabilities().prf=true 让 prfSupported() 返回 true */
 function stubPrfSupported(): void {
@@ -71,7 +72,7 @@ afterEach(() => {
 describe('LockScreen', () => {
   it('解锁成功：调用 unlock、清空口令与错误、emit unlocked', async () => {
     const store = plainStore(vi.fn().mockResolvedValue(undefined))
-    const w = mount(LockScreen, { props: { store } })
+    const w = mount(LockScreen, { props: { store }, global: { plugins: [createTestI18n()] } })
     await w.find('input[type="password"]').setValue('pw')
     await w.find('form').trigger('submit')
     await vi.waitFor(() => expect(store.unlock).toHaveBeenCalledWith('pw'))
@@ -82,7 +83,7 @@ describe('LockScreen', () => {
 
   it('口令错误：显示错误消息、不清 busy、不 emit unlocked', async () => {
     const store = plainStore(vi.fn().mockRejectedValue(new Error('口令错误或数据已损坏')))
-    const w = mount(LockScreen, { props: { store } })
+    const w = mount(LockScreen, { props: { store }, global: { plugins: [createTestI18n()] } })
     await w.find('input[type="password"]').setValue('bad')
     await w.find('form').trigger('submit')
     await vi.waitFor(() => expect(w.text()).toContain('口令错误或数据已损坏'))
@@ -90,7 +91,7 @@ describe('LockScreen', () => {
   })
 
   it('口令明/密文切换：初始遮蔽，点切换钮变明文，再点恢复遮蔽（title/aria-label 随态翻转）', async () => {
-    const w = mount(LockScreen, { props: { store: plainStore(vi.fn()) } })
+    const w = mount(LockScreen, { props: { store: plainStore(vi.fn()) }, global: { plugins: [createTestI18n()] } })
     expect(w.find('input[type="password"]').exists()).toBe(true)
     const show = w.find('button[aria-label="显示口令"]')
     expect(show.exists()).toBe(true)
@@ -106,7 +107,7 @@ describe('LockScreen', () => {
   })
 
   it('无 prf 绑定：不渲染「使用 Passkey 解锁」按钮', () => {
-    const w = mount(LockScreen, { props: { store: plainStore(vi.fn()) } })
+    const w = mount(LockScreen, { props: { store: plainStore(vi.fn()) }, global: { plugins: [createTestI18n()] } })
     expect(w.find('button.passkey').exists()).toBe(false)
   })
 
@@ -115,7 +116,7 @@ describe('LockScreen', () => {
       prfSources: computed(() => [{ credentialId: 'Y3JlZC0x', salt: 'cw==' }]),
       securitySettings: ref(null),
     })
-    const w = mount(LockScreen, { props: { store, allowPasskey: false } })
+    const w = mount(LockScreen, { props: { store, allowPasskey: false }, global: { plugins: [createTestI18n()] } })
     expect(w.find('button.passkey').exists()).toBe(false)
     expect(w.find('input[type="password"]').exists()).toBe(true)
   })
@@ -129,7 +130,7 @@ describe('LockScreen', () => {
       unlockWithDek,
     })
     mockWebAuthnGet([prfOutput])
-    const w = mount(LockScreen, { props: { store } })
+    const w = mount(LockScreen, { props: { store }, global: { plugins: [createTestI18n()] } })
     expect(w.find('button.passkey').exists()).toBe(true)
     // 等 prfSupported 异步探测完成：直接给若干 microtask 推进 onMounted 的 promise 链
     for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 5))
@@ -153,7 +154,7 @@ describe('LockScreen', () => {
       securitySettings: ref(security),
     })
     mockWebAuthnGet([]) // results.first 缺失 → getPrfOutput null
-    const w = mount(LockScreen, { props: { store } })
+    const w = mount(LockScreen, { props: { store }, global: { plugins: [createTestI18n()] } })
     // 等 prfSupported 探测完成
     for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 5))
     // 直接调组件方法
@@ -171,7 +172,7 @@ describe('LockScreen', () => {
       unlockWithDek: vi.fn().mockRejectedValue(new Error('vault corrupted')),
     })
     mockWebAuthnGet([prfOutput])
-    const w = mount(LockScreen, { props: { store } })
+    const w = mount(LockScreen, { props: { store }, global: { plugins: [createTestI18n()] } })
     // 等 prfSupported 探测完成
     for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 5))
     void (w.vm as unknown as { onPasskeyUnlock: () => Promise<void> }).onPasskeyUnlock()
@@ -186,7 +187,7 @@ describe('LockScreen', () => {
     const unprotect = vi.fn().mockResolvedValue(dek)
     const unlockWithDek = vi.fn().mockResolvedValue(undefined)
     const store = mockStore({ unlockWithDek, prfSources: computed(() => []), securitySettings: ref(null) })
-    const w = mount(LockScreen, { props: { store, dpapi: makeDpapi({ unprotect }) } })
+    const w = mount(LockScreen, { props: { store, dpapi: makeDpapi({ unprotect }) }, global: { plugins: [createTestI18n()] } })
     await vi.waitFor(() => expect(unlockWithDek).toHaveBeenCalledWith(dek))
     expect(unprotect).toHaveBeenCalledWith('WRAPPED-DEK')
     expect(store.unlock).not.toHaveBeenCalled()
@@ -196,7 +197,7 @@ describe('LockScreen', () => {
   it('dpapi unprotect 失败（跨机器/跨用户）：静默保留口令解锁路径，不 emit unlocked', async () => {
     const unprotect = vi.fn().mockRejectedValue(new Error('DPAPI 解密失败'))
     const store = mockStore({ prfSources: computed(() => []), securitySettings: ref(null) })
-    const w = mount(LockScreen, { props: { store, dpapi: makeDpapi({ unprotect }) } })
+    const w = mount(LockScreen, { props: { store, dpapi: makeDpapi({ unprotect }) }, global: { plugins: [createTestI18n()] } })
     await vi.waitFor(() => expect(unprotect).toHaveBeenCalled())
     await new Promise((r) => setTimeout(r, 0))
     expect(store.unlockWithDek).not.toHaveBeenCalled()
@@ -213,7 +214,7 @@ describe('LockScreen', () => {
     try {
       const unprotect = vi.fn().mockRejectedValue(new Error('DPAPI 解密失败'))
       const store = mockStore({ locked: computed(() => true), prfSources: computed(() => []), securitySettings: ref(null) })
-      const w = mount(LockScreen, { props: { store, dpapi: makeDpapi({ unprotect }) } })
+      const w = mount(LockScreen, { props: { store, dpapi: makeDpapi({ unprotect }) }, global: { plugins: [createTestI18n()] } })
       // 0：尚未显示重试按钮
       expect(w.find('button.dpapi-retry').exists()).toBe(false)
       // 1s 后显示
@@ -236,7 +237,7 @@ describe('LockScreen', () => {
     try {
       const unprotect = vi.fn().mockRejectedValue(new Error('Keychain 取回失败'))
       const store = mockStore({ locked: computed(() => true), prfSources: computed(() => []), securitySettings: ref(null) })
-      const w = mount(LockScreen, { props: { store, dpapi: makeDpapi({ unprotect, label: '钥匙串自动解锁' }) } })
+      const w = mount(LockScreen, { props: { store, dpapi: makeDpapi({ unprotect, label: '钥匙串自动解锁' }) }, global: { plugins: [createTestI18n()] } })
       await vi.advanceTimersByTimeAsync(1100)
       expect(w.find('button.dpapi-retry').exists()).toBe(true)
       expect(w.text()).toContain('重试 钥匙串自动解锁')
@@ -252,7 +253,7 @@ describe('LockScreen', () => {
       const unprotect = vi.fn().mockResolvedValue(randomBytes(32))
       const unlockWithDek = vi.fn().mockResolvedValue(undefined)
       const store = mockStore({ unlockWithDek, prfSources: computed(() => []), securitySettings: ref(null) })
-      mount(LockScreen, { props: { store, dpapi: makeDpapi({ unprotect }) } })
+      mount(LockScreen, { props: { store, dpapi: makeDpapi({ unprotect }) }, global: { plugins: [createTestI18n()] } })
       await vi.advanceTimersByTimeAsync(1100)
       // 渲染时 store 已解锁，不显示 dpapi 入口（button dpapi-retry 不存在）
       // 验证 unlockWithDek 已被调用
@@ -264,9 +265,10 @@ describe('LockScreen', () => {
 
   it('未提供 dpapi 通道或未绑定来源：挂载后不做自动解锁', () => {
     const unprotect = vi.fn()
-    mount(LockScreen, { props: { store: plainStore(vi.fn()) } })
+    mount(LockScreen, { props: { store: plainStore(vi.fn()) }, global: { plugins: [createTestI18n()] } })
     mount(LockScreen, {
       props: { store: plainStore(vi.fn()), dpapi: makeDpapi({ source: computed(() => null), unprotect }) },
+      global: { plugins: [createTestI18n()] },
     })
     expect(unprotect).not.toHaveBeenCalled()
   })
@@ -284,7 +286,7 @@ describe('LockScreen PRF 能力显隐（C17）', () => {
       prfSources: computed(() => [{ credentialId: 'Y3JlZC0x', salt: 'cw==' }]),
       securitySettings: ref(null),
     })
-    const w = mount(LockScreen, { props: { store } })
+    const w = mount(LockScreen, { props: { store }, global: { plugins: [createTestI18n()] } })
     await vi.waitFor(() => {
       const btn = w.find('button.passkey')
       expect(btn.exists()).toBe(true)
@@ -300,7 +302,7 @@ describe('LockScreen PRF 能力显隐（C17）', () => {
       prfSources: computed(() => [{ credentialId: 'Y3JlZC0x', salt: 'cw==' }]),
       securitySettings: ref(null),
     })
-    const w = mount(LockScreen, { props: { store } })
+    const w = mount(LockScreen, { props: { store }, global: { plugins: [createTestI18n()] } })
     await vi.waitFor(() => {
       const btn = w.find('button.passkey')
       expect(btn.exists()).toBe(true)
