@@ -34,6 +34,10 @@ export function createVueStore(
   let inited = false
   const lastSelfWrite = { vault: 0, settings: 0, bag: 0 }
   let queue: Promise<void> = Promise.resolve()
+  // 锁定代数（F1）：lock() 不入写队列（同步清 DEK/内存 vault），可能与在途 commit 交叉。
+  // commit 在任务起点捕获代数，saveVaultToAdapter 每次 await 后复查——代数已变即锁定发生在途，
+  // 本任务视为被锁定取代，中止写盘；否则 DEK 已清的续延会把被清空的空库明文覆盖写到盘上密文位置
+  let lockGeneration = 0
   // 加密态按 windowId 隔离：spec §7 末尾「窗口独立解锁」——一个窗口 unlock 不应让另一个窗口同时解锁
   // security 是数据（盘上唯一真相），所有窗口共享；dek/locked 是解锁态，按 windowId 索引
   const dekByWin = new Map<string, Uint8Array | null>()
@@ -258,6 +262,8 @@ export function createVueStore(
     return enqueue(async () => {
       // 锁定时拒绝写操作：在 fn 执行前抛出，本次 commit reject 但队列继续
       if (lockedByWin.get(windowId)) throw new Error('vault locked')
+      // 捕获锁定代数（F1）：saveVaultToAdapter 在每次 await 后复查，lock() 发生在途即中止写盘
+      const gen = lockGeneration
       // 防加密降级：本端 security 缓存为空时核对盘上 security（远端已启用而本端陈旧→转锁定并拒绝本次明文写，
       // 避免明文覆盖密文造成降级与「security 在但 vault 明文」的不一致态）。代价：未加密用户每次写多一次 adapter.get
       if (!security.value) {
@@ -271,7 +277,7 @@ export function createVueStore(
       replaceVault(fn(vault))
       try {
         lastSelfWrite.vault = Date.now()
-        await saveVaultToAdapter()
+        await saveVaultToAdapter(gen)
       } catch (e) {
         console.error('[store] saveVault failed:', e)
       }
@@ -279,13 +285,16 @@ export function createVueStore(
   }
 
   /** 落盘：已启用加密且持有本窗口 DEK → 写 EncryptedVault 密文；否则明文 Vault。
+   *  gen=commit 起点的锁定代数：任一 await 后复查，代数已变（lock() 发生在途）即静默中止写盘
+   *  （任务被锁定取代）——尤其不得落入明文分支把已被 lock 清空的空库覆盖写到盘上密文位置。
    *  加密分支写盘前对称核对盘上 security（与未加密分支的防降级核对对称）：
    *  - 读不到（远端已 disableEncryption）→ 本窗口丢弃加密态、保持解锁、改写明文，跟随远端；
    *    否则「security 缓存非 null 但盘上已删」时密文写回会造成 EncryptedVault 无 security 键的不可恢复死锁
    *  - 存在但与本端缓存不同（远端已换口令）→ 刷新缓存后照常加密写（DEK 是内容密钥不受换口令影响，
    *    wrappedDek 与本端 dek 无关）
    *  - 核对读瞬态失败 → 保守视为存在，照常加密写 */
-  async function saveVaultToAdapter(): Promise<void> {
+  async function saveVaultToAdapter(gen: number): Promise<void> {
+    if (lockGeneration !== gen) return // 锁定发生在途（含 commit 防降级 await 期间）：任务被取代，中止
     if (security.value && dekByWin.get(windowId)) {
       let disk: SecuritySettings | null
       try {
@@ -293,6 +302,7 @@ export function createVueStore(
       } catch {
         disk = security.value // 瞬态 IO 失败：保守视为存在
       }
+      if (lockGeneration !== gen) return // await 窗口内 lock() 已清 DEK/内存 vault：不得续延分支判定
       if (disk === null) {
         // 远端已 disableEncryption：丢 DEK 必清 persist（T7 审查 R2 对称语义），
         // 保管区缓存/会话口令一并丢弃（保管区键已被远端删除，密文不可解）
@@ -309,23 +319,26 @@ export function createVueStore(
         security.value = disk
       }
     }
-    if (security.value && dekByWin.get(windowId)) {
-      // F8：加密写推进单调 rev（进密文明文）且必须越过本地水位——覆盖「恢复旧备份（replaceAllOp 换入低/无 rev
-      // 内容）后继续写」场景：新记录 rev 若低于水位会被采纳守卫误拒。记录写成功后再推进水位键（先记录后水位：
-      // 中途失败只会让水位暂时落后——宁可漏检一次，不可误拒未回放的合法记录）
-      const dek = dekByWin.get(windowId)!
-      const fp = await dekFingerprint(dek)
-      const wm = await readVaultRevWatermark()
-      const floor = wm && wm.dek === fp ? wm.rev : 0
-      const cur = typeof vault.rev === 'number' && Number.isInteger(vault.rev) && vault.rev >= 0 ? vault.rev : 0
-      vault.rev = Math.max(cur, floor) + 1
-      const encrypted = await encryptVaultWithDek(dek, JSON.stringify(vault))
-      await adapter.set(VAULT_KEY, JSON.stringify(encrypted))
-      await adapter.set(VAULT_REV_WATERMARK_KEY, JSON.stringify({ v: 1, dek: fp, rev: vault.rev } satisfies VaultRevWatermark))
-    } else {
-      await saveVault(adapter, toRaw(vault) as Vault)
-    }
+  if (lockGeneration !== gen) return
+  if (security.value && dekByWin.get(windowId)) {
+    // F8：加密写推进单调 rev（进密文明文）且必须越过本地水位——覆盖「恢复旧备份（replaceAllOp 换入低/无 rev
+    // 内容）后继续写」场景：新记录 rev 若低于水位会被采纳守卫误拒。记录写成功后再推进水位键（先记录后水位：
+    // 中途失败只会让水位暂时落后——宁可漏检一次，不可误拒未回放的合法记录）
+    const dek = dekByWin.get(windowId)!
+    const fp = await dekFingerprint(dek)
+    const wm = await readVaultRevWatermark()
+    if (lockGeneration !== gen) return // await 窗口内 lock() 发生：任务被取代，中止
+    const floor = wm && wm.dek === fp ? wm.rev : 0
+    const cur = typeof vault.rev === 'number' && Number.isInteger(vault.rev) && vault.rev >= 0 ? vault.rev : 0
+    vault.rev = Math.max(cur, floor) + 1
+    const encrypted = await encryptVaultWithDek(dek, JSON.stringify(vault))
+    if (lockGeneration !== gen) return // 加密 await 后、写盘前复查：lock 已清 DEK/内存 vault，不得以旧 gen 写盘
+    await adapter.set(VAULT_KEY, JSON.stringify(encrypted))
+    await adapter.set(VAULT_REV_WATERMARK_KEY, JSON.stringify({ v: 1, dek: fp, rev: vault.rev } satisfies VaultRevWatermark))
+  } else {
+    await saveVault(adapter, toRaw(vault) as Vault)
   }
+}
 
   async function commitSettings(): Promise<void> {
     queue = queue.then(async () => {
@@ -650,6 +663,7 @@ export function createVueStore(
    *  注意：security.value 不在此清空 — 锁定态下 LockScreen 仍需枚举 kekSources 渲染
    *  解锁按钮（passkey/DPAPI 静默解锁），security 本身不包含敏感运行时数据。 */
   function lock(): void {
+    lockGeneration++ // F1：使在途 commit 的落盘写失效（saveVaultToAdapter 每次 await 后复查代数即中止）
     dekByWin.set(windowId, null)
     lockedByWin.set(windowId, true)
     currentLockedRef().value = true

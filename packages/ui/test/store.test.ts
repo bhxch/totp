@@ -560,3 +560,82 @@ describe('DPAPI 解锁来源（plan11 Task3）', () => {
     expect(s3.getCurrentDek()).toBeNull()
   })
 })
+
+describe('lock() 与在途 commit 竞态（F1）', () => {
+  async function setupEncrypted(): Promise<{ adapter: ReturnType<typeof createMemoryStorage>; s: ReturnType<typeof createVueStore> }> {
+    const adapter = createMemoryStorage()
+    const s = createVueStore(adapter)
+    await s.initStore()
+    await s.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await s.enableEncryption('pw')
+    return { adapter, s }
+  }
+
+  /** SECURITY_KEY 读闸门：让在途 commit 的 saveVaultToAdapter 停在 readSecurity await 窗口，
+   *  测试在该窗口内注入同步 lock()（不入写队列）精确复现竞态，release() 后续延 */
+  function gateSecurityReads(adapter: ReturnType<typeof createMemoryStorage>): { arm(): void; entered(): boolean; release(): void } {
+    let armed = false
+    let entered = false
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    const origGet = adapter.get.bind(adapter)
+    ;(adapter as { get: unknown }).get = async (k: string) => {
+      if (armed && k === SECURITY_KEY) {
+        entered = true
+        await gate
+      }
+      return origGet(k)
+    }
+    return { arm: () => { armed = true }, entered: () => entered, release }
+  }
+
+  it('lock 落在在途 commit 的 readSecurity await 窗口：中止写盘，盘上密文不被清空后的空库明文覆盖', async () => {
+    const { adapter, s } = await setupEncrypted()
+    const blobBefore = await adapter.get('vault')
+    expect(JSON.parse(blobBefore!).enc).toBe(true)
+    const g = gateSecurityReads(adapter)
+    g.arm()
+    const p = s.addEntryOp(newEntryFromUri('otpauth://totp/B:c?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await flush()
+    expect(g.entered()).toBe(true) // 写已停在 readSecurity await
+    s.lock() // 同步清 DEK + 清空内存 vault；此前续延会落入明文分支覆盖密文
+    g.release()
+    await p
+    expect(await adapter.get('vault')).toBe(blobBefore) // 盘上密文原样保留
+    expect(s.locked.value).toBe(true)
+  })
+
+  it('lock mid-commit 后 unlock：从盘上密文恢复，后续 commit 正常重加密写盘', async () => {
+    const { adapter, s } = await setupEncrypted()
+    const blobBefore = await adapter.get('vault')
+    const g = gateSecurityReads(adapter)
+    g.arm()
+    const p = s.addEntryOp(newEntryFromUri('otpauth://totp/B:c?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await flush()
+    s.lock()
+    g.release()
+    await p
+    expect(await adapter.get('vault')).toBe(blobBefore) // 在途写已中止
+    await s.unlock('pw')
+    expect(s.locked.value).toBe(false)
+    expect(s.vault.entries).toHaveLength(1) // 从盘上密文恢复（被锁定取代的 B 不在）
+    await s.addEntryOp(newEntryFromUri('otpauth://totp/C:d?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    const raw = JSON.parse((await adapter.get('vault'))!)
+    expect(raw.enc).toBe(true) // 后续 commit 重回加密分支
+    const c = createVueStore(adapter)
+    await c.initStore()
+    await c.unlock('pw')
+    expect(c.vault.entries).toHaveLength(2) // A + C 持久且口令可解
+  })
+
+  it('明文模式（无 security）commit 不受锁定代数复查影响：照常落盘明文', async () => {
+    const adapter = createMemoryStorage()
+    const s = createVueStore(adapter)
+    await s.initStore()
+    await s.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await s.addEntryOp(newEntryFromUri('otpauth://totp/B:c?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    const raw = JSON.parse((await adapter.get('vault'))!)
+    expect(raw.enc).toBeUndefined()
+    expect(raw.entries).toHaveLength(2)
+  })
+})
