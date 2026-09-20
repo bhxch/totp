@@ -13,7 +13,7 @@ import { createIdleLockExecutor } from './idleLock'
 import { lockPrefsUnsupportedKeys } from './lockPrefs'
 import { BACKUP_DIR_KEY, migrateLegacyCloudSources, migrateLegacyLocalSource } from './legacyMigrate'
 import { createTauriFs } from './tauriFs'
-import { osAutoForgetOs, osAutoProtectOs, osAutoUnprotectOs } from './tauriSecurity'
+import { isEntropyBoundDekWrap, osAutoForgetOs, osAutoProtectOs, osAutoUnprotectOs } from './tauriSecurity'
 
 // store 必须浅包装（T14 审查根修）：深 ref 会对值做 reactive 深代理，代理 get 对嵌套
 // ref/computed 成员自动解包——闭包 `store.value.locked.value` / 组件 prop `props.store.X.value`
@@ -405,8 +405,10 @@ const unlockNaming = isMac
     : { prfLabel: 'Passkey', osAutoLabel: '密钥环自动解锁' }
 
 /** OS 自动解锁通道（三平台统一，见 lib.rs os_auto_protect/unprotect）：Windows 下委托同一
- *  DPAPI（运行时行为与旧 dpapi_* 命令等价），macOS/Linux 经 keyring。Rust os_auto_* 与
+ *  DEK 通道（运行时行为与旧 dpapi_* 命令等价），macOS/Linux 经 keyring。Rust os_auto_* 与
  *  dpapi_* 命令并存，dpapi_* 保留供语义兼容（kekSources kind 仍 'dpapi'）。
+ *  F3：Windows 侧 v2 格式 = TOTPDEK1 前缀 + DPAPI(DEK, 应用附加熵)，仅主窗口可调用，
+ *  旧格式（无熵）由 Rust 32B 兜底解出并在解锁后迁移（migrateDekWrapToEntropyBound）。
  *  SecurityCard（启用/移除）与 LockScreen（挂载静默解锁）共用同一对象；label 注入按端显示名
  *  （?? 回退防未来分支 osAutoLabel 变 null 时静默 undefined），techSuffix 为已绑定行技术标注 */
 const dpapiOps: DpapiUnlockOps = {
@@ -431,6 +433,22 @@ const dpapiOps: DpapiUnlockOps = {
     // 失败不吞进黑洞：warn 留痕（排查残留条目时需要失败原因），不弹 UI
     void osAutoForgetOs().catch((e: unknown) => { console.warn('[desktop] keyring 条目清理失败', e) })
   },
+}
+
+/** F3 迁移：历史 wrappedDekD（无应用附加熵的旧格式）在下一次成功解锁后重包为 v2 应用熵绑定
+ *  格式（TOTPDEK1 前缀 + DPAPI(DEK, 熵)，见 tauriSecurity 与 lib.rs dek 通道）。幂等（已是 v2 跳过）；
+ *  best-effort：失败仅告警——Rust 端旧格式 32B 兜底仍可解锁，下次成功解锁重试 */
+async function migrateDekWrapToEntropyBound(): Promise<void> {
+  const s = store.value
+  const src = dpapiOps.source.value
+  const dek = s?.getCurrentDek()
+  if (!s || s.locked.value || !src || !dek) return
+  if (isEntropyBoundDekWrap(src.wrappedDekD)) return
+  try {
+    await dpapiOps.add(await dpapiOps.protect(dek))
+  } catch (e) {
+    console.warn('[migrate] DEK 包裹升级为应用熵绑定格式失败（旧格式仍可解锁，下次重试）', e)
+  }
 }
 
 /** 安全平台：security 闭包绑 store；剪贴板开关走 settings+commitSettings；desktop 无 popup，不提供 popupCloseDelayMs；
@@ -489,8 +507,9 @@ const securityPlatform = computed<SecurityPlatform | null>(() => {
 })
 
 /**
- * 旧数据迁移编排（plan16 T14，幂等可重复跑）：vault.backupSecret → 保管区（store op）→
- * localStorage 备份偏好 + AppData backupDir → 默认本地源 → 旧云多目标键 → 源模型 + 保管区凭据。
+ * 旧数据迁移编排（plan16 T14，幂等可重复跑）：历史 wrappedDekD → v2 应用熵绑定重包（F3，
+ * 需 DEK 在手）→ vault.backupSecret → 保管区（store op）→ localStorage 备份偏好 + AppData
+ * backupDir → 默认本地源 → 旧云多目标键 → 源模型 + 保管区凭据。
  * locked 短路（保管区写入需 DEK）；未启用加密时 saveCred 守护抛错 → 云旧键保留（先写新后删旧），
  * 待启用加密后任一次重跑自愈。汇合点两处：onMounted initStore 后（含 DPAPI/会话恢复态）与
  * LockScreen @unlocked（口令/PRF 解锁成功回调）。
@@ -499,6 +518,8 @@ async function runLegacyMigrations(): Promise<void> {
   const s = store.value
   if (!s || s.locked.value) return
   try {
+    // F3：DPAPI 静默解锁成功（或会话恢复）后第一时间把旧格式 wrappedDekD 重包为应用熵绑定格式
+    await migrateDekWrapToEntropyBound()
     await s.migrateLegacySecrets()
     // localStorage backupMode/backupKeepN + AppData backupDir → 默认本地源（backupSources 键已存在则跳过）
     let legacyDir: string | null = null

@@ -25,6 +25,7 @@ export async function readImportFileBytesOs(path: string): Promise<Uint8Array> {
 // WinAuth DPAPI 层解密：输入 base64(密文) → 输出 UTF-8 明文（WinAuth 明文恒为 hex ASCII）。
 // 仅桌面端可用（CryptUnprotectData）；插件端不提供此能力，core importWinauth 自动逐条 failure。
 // Task 5 接线：platform.decryptDpapi = (b64) => decryptDpapiOs(b64)
+// F3：Rust 端要求显式用途声明（仅接受 winauth-import）并校验明文 hex-ASCII 形状（见 lib.rs decrypt_dpapi）
 export async function decryptDpapiOs(b64: string): Promise<string> {
-  return invoke<string>('decrypt_dpapi', { b64 })
+  return invoke<string>('decrypt_dpapi', { b64, purpose: 'winauth-import' })
 }

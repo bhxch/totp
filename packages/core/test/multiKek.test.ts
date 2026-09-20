@@ -69,6 +69,12 @@ describe('withPrfSource / withDpapiSource 添加来源', () => {
     const s2 = withDpapiSource(bareSettings(), 'ZHdhcmE=')
     expect(s2.kekSources).toEqual([{ kind: 'password' }, { kind: 'dpapi', wrappedDekD: 'ZHdhcmE=' }])
   })
+  it('重复添加 dpapi：替换既有条目而非追加（dpapi 来源恒单份，旧格式重包升级语义）', () => {
+    const s = withDpapiSource(bareSettings(), 'TEVHQUNZ')
+    const s2 = withDpapiSource(s, 'VjI=')
+    expect(s2.kekSources).toEqual([{ kind: 'password' }, { kind: 'dpapi', wrappedDekD: 'VjI=' }])
+    expect(s2.kekSources?.filter((x) => x.kind === 'dpapi')).toHaveLength(1)
+  })
 })
 
 describe('removeKekSource 移除守护', () => {

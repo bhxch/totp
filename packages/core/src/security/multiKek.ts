@@ -41,7 +41,10 @@ export function withPrfSource(
 }
 
 export function withDpapiSource(s: SecuritySettings, wrappedDekD: string): SecuritySettings {
-  return { ...s, kekSources: [...kekSourcesOf(s), { kind: 'dpapi', wrappedDekD }] }
+  // dpapi 来源恒单份（dpapiSource 视图即单数语义）：重复绑定/旧格式重包升级时替换而非追加，
+  // 防止历史无熵 wrappedDekD 残留 kekSources 导致锁定态静默解锁永远走旧格式兜底
+  const others = kekSourcesOf(s).filter((src) => src.kind !== 'dpapi')
+  return { ...s, kekSources: [...others, { kind: 'dpapi', wrappedDekD }] }
 }
 
 // 移除指定来源；移除后一个来源不剩 → 抛 Error('至少保留一种解锁方式')
