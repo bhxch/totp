@@ -224,6 +224,20 @@ function parseTotpAuthenticatorArray(parsed: unknown): ImportResult {
 }
 
 /**
+ * TOTP Authenticator 明文条目数组（JSON 数组）同步导入。
+ * 独立导出供粘贴分发（import/paste.ts 的同步契约）使用；importTotpAuthenticator 明文分支委托此处。
+ */
+export function importTotpAuthenticatorPlaintext(text: string): ImportResult {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text.trim())
+  } catch {
+    throw new Error('TOTP Authenticator 文件结构非法：不是合法 JSON')
+  }
+  return parseTotpAuthenticatorArray(parsed)
+}
+
+/**
  * TOTP Authenticator 导入：
  * - 明文 JSON 数组（内部 STATIC_TOTP_CODES_LIST 偏好值 / 手工解密后的条目数组）直接解析
  * - 外部分享文件（Base64 密文）：SHA-256(口令) + AES-CBC（IV=0）解密后解析；
@@ -234,13 +248,7 @@ export async function importTotpAuthenticator(text: string, password?: string): 
 
   // 明文条目数组
   if (trimmed.startsWith('[')) {
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(trimmed)
-    } catch {
-      throw new Error('TOTP Authenticator 文件结构非法：不是合法 JSON')
-    }
-    return parseTotpAuthenticatorArray(parsed)
+    return importTotpAuthenticatorPlaintext(trimmed)
   }
 
   // 外部分享：Base64 → AES-CBC 解密
