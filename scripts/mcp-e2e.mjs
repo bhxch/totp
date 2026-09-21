@@ -7,16 +7,21 @@
 const [token, port = '47215'] = process.argv.slice(2)
 if (!token) { console.error('usage: node scripts/mcp-e2e.mjs <token> [port]'); process.exit(1) }
 const base = `http://127.0.0.1:${port}/mcp`
+// rmcp 3.4.0 默认 legacy session 模式：initialize 后服务端下发 mcp-session-id，
+// 后续请求必须回传该 id，否则被拒（unexpected_message_response）
+let sessionId = null
 const post = async (body, withAuth = true) => {
   const res = await fetch(base, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Accept': 'application/json, text/event-stream',
+      ...(sessionId ? { 'mcp-session-id': sessionId } : {}),
       ...(withAuth ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(body),
   })
+  sessionId = res.headers.get('mcp-session-id') ?? sessionId
   const text = await res.text()
   // with_json_response(true) 下为纯 JSON；若服务端回 SSE（text/event-stream），解析 data: 行
   let json = null
@@ -37,8 +42,13 @@ check('missing token → 401', noAuth.status === 401)
 const init = await post({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'mcp-e2e', version: '0.0.1' } } })
 check('initialize → serverInfo.name=totp-desktop', init.json?.result?.serverInfo?.name === 'totp-desktop')
 
-// 3) tools/list 恰含两工具。无状态 JSON 模式可直接 POST；若被拒（缺 session，404/400），
-//    补发 notifications/initialized 通知（无 id）后重试——兼容严格 Streamable HTTP 形态
+// 2.5) 标准 Streamable HTTP 流程：initialize 成功后补发 notifications/initialized（通知无 id）
+if (init.json?.result) {
+  await post({ jsonrpc: '2.0', method: 'notifications/initialized' })
+}
+
+// 3) tools/list 恰含两工具（带 initialize 下发的 mcp-session-id）。若仍被拒（404/400），
+//    重发 notifications/initialized 后再试一次——兜底兼容严格 Streamable HTTP 形态
 let tools = await post({ jsonrpc: '2.0', id: 2, method: 'tools/list' })
 if (!(tools.status === 200 && tools.json?.result)) {
   await post({ jsonrpc: '2.0', method: 'notifications/initialized' })
