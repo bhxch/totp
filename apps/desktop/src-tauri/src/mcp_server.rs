@@ -67,6 +67,69 @@ pub fn add_whitelist_inner(settings_file: &std::path::Path, cfg: &mut McpConfig,
     save_mcp_config_inner(settings_file, cfg)
 }
 
+/// 大小写不敏感通配符匹配：仅支持 `*`（任意长度），无 `?`——白名单语义保持可预期。
+/// 迭代式双指针单回溯点贪心匹配（星号只记最后一个，失配回退重试）：
+/// O(p*s) 时间 O(1) 空间，无递归栈，规避病态模式的深递归/指数回溯。
+pub fn wildcard_match(pattern: &str, name: &str) -> bool {
+    // 防御性长度守卫：pattern 来自本机用户白名单而非攻击者输入，>256B 视为配置错误直接不匹配
+    if pattern.len() > 256 {
+        return false;
+    }
+    let (p, s) = (pattern.as_bytes(), name.as_bytes());
+    let (mut pi, mut si) = (0usize, 0usize);
+    // star=最后遇到的 `*` 下标（usize::MAX=尚无），ss=回退时该 `*` 已吞入的名字起点
+    let (mut star, mut ss) = (usize::MAX, 0usize);
+    while si < s.len() {
+        if pi < p.len() && (p[pi] == b'*' || p[pi].eq_ignore_ascii_case(&s[si])) {
+            if p[pi] == b'*' {
+                star = pi;
+                ss = si;
+                pi += 1;
+            } else {
+                pi += 1;
+                si += 1;
+            }
+        } else if star != usize::MAX {
+            // 失配：回到最近的 `*`，让它多吞一个字符再试
+            pi = star + 1;
+            ss += 1;
+            si = ss;
+        } else {
+            return false;
+        }
+    }
+    while pi < p.len() && p[pi] == b'*' {
+        pi += 1;
+    }
+    pi == p.len()
+}
+
+/// 门控判定结果：Allow=放行；NeedsApproval=触发审批事件 + 本次调用回 pending 错误
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GateDecision {
+    Allow,
+    /// 触发审批事件 + 本次调用回 pending 错误
+    NeedsApproval,
+}
+
+/// 一次性门控判定（纯函数）。once-TTL 记账不在此处（见 GateSessions，Task 6）。
+pub fn decide_gate(cfg: &McpConfig, client_name: Option<&str>) -> GateDecision {
+    use GateMode::*;
+    match cfg.mode {
+        Token => GateDecision::Allow,
+        Wildcard | Exact => {
+            // 身份缺失 fail-closed：clientInfo 与 UA 全无时除 token 档外一律待批准
+            let Some(name) = client_name else { return GateDecision::NeedsApproval };
+            let hit = match cfg.mode {
+                Exact => cfg.whitelist.iter().any(|w| w.eq_ignore_ascii_case(name)),
+                _ => cfg.whitelist.iter().any(|w| wildcard_match(w, name)),
+            };
+            if hit { GateDecision::Allow } else { GateDecision::NeedsApproval }
+        }
+        AlwaysAsk => GateDecision::NeedsApproval,
+    }
+}
+
 /// getrandom 已在依赖树（tauri 传递）；base64url 手写避免引 base64 crate
 pub fn generate_token() -> String {
     let mut buf = [0u8; 32];
@@ -181,5 +244,37 @@ mod tests {
         assert_eq!(base64url_nopad(&[]), "");
         assert_eq!(base64url_nopad(&[0xfb, 0xff]), "-_8", "62='-',63='_'，URL-safe 表非标准表");
         assert_eq!(base64url_nopad(&[1, 2, 3]), "AQID", "整 3B 无余位");
+    }
+
+    #[test]
+    fn wildcard_match_is_case_insensitive() {
+        assert!(wildcard_match("Claude*", "claude-desktop"));
+        assert!(wildcard_match("*zcode*", "ZCode CLI"));
+        assert!(wildcard_match("exact-name", "exact-name"));
+        assert!(!wildcard_match("claude*", "cursor"));
+        assert!(wildcard_match("*", "anything"));
+    }
+
+    #[test]
+    fn gate_decision_matrix() {
+        use GateMode::*;
+        let base = |mode: GateMode, whitelist: &[&str]| McpConfig {
+            enabled: true, mode, port: 0,
+            token: "t".into(),
+            whitelist: whitelist.iter().map(|s| s.to_string()).collect(),
+        };
+        // token 档：不看名字
+        assert!(matches!(decide_gate(&base(Token, &[]), Some("anything")), GateDecision::Allow));
+        // wildcard 档：命中放行
+        assert!(matches!(decide_gate(&base(Wildcard, &["Claude*"]), Some("claude-desktop")), GateDecision::Allow));
+        // wildcard 档：未命中 → 待批准（首次触发审批弹窗）
+        assert!(matches!(decide_gate(&base(Wildcard, &["Claude*"]), Some("cursor")), GateDecision::NeedsApproval));
+        // exact 档：精确相等（版本无关，decide 不接收 version）
+        assert!(matches!(decide_gate(&base(Exact, &["ZCode"]), Some("ZCode")), GateDecision::Allow));
+        assert!(matches!(decide_gate(&base(Exact, &["ZCode"]), Some("ZCode 2.0")), GateDecision::NeedsApproval));
+        // 身份缺失（clientInfo 与 UA 全无）除 token 档外一律待批准
+        assert!(matches!(decide_gate(&base(Wildcard, &["*"]), None), GateDecision::NeedsApproval));
+        // alwaysAsk 恒待批准（once-TTL 由调用方 GateSessions 管）
+        assert!(matches!(decide_gate(&base(AlwaysAsk, &[]), Some("claude")), GateDecision::NeedsApproval));
     }
 }
