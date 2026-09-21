@@ -10,8 +10,7 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 mod lock_events;
-// plan17 Task 6 接线前，mcp_server 的配置函数仅测试引用，暂时抑制 dead_code（接线后可移除）
-#[allow(dead_code)]
+// plan17：内嵌 MCP 服务器（配置/门控/事件桥/Streamable HTTP，接线见 setup 与 invoke_handler）
 mod mcp_server;
 
 // mini 最近一次因失焦而隐藏的时刻，用于缓解「托盘点击收起」与「失焦自动隐藏」的竞态
@@ -825,6 +824,8 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            // plan17：MCP 服务器装配（manage McpState）+ 按配置自动拉起
+            mcp_server::init_state_and_autostart(app)?;
             // F4：装载跨会话对话框授权（备份源目录）进会话登记
             load_grants(app.handle());
             // 系统锁屏事件监听（plan16 T15）：Windows 下订阅 WTS_SESSION_LOCK → 前端广播
@@ -920,7 +921,12 @@ pub fn run() {
             os_auto_forget,
             set_global_shortcut,
             stage_clipboard_write,
-            clipboard_clear_if_staged
+            clipboard_clear_if_staged,
+            mcp_server::mcp_get_config,
+            mcp_server::mcp_set_config,
+            mcp_server::mcp_regenerate_token,
+            mcp_server::mcp_approval_response,
+            mcp_server::mcp_respond
         ])
         // build+run（回调形态）：RunEvent::Exit 时注销系统锁屏监听（plan16 T15）；
         // 正常运行路径行为与直接 .run(context) 完全一致

@@ -318,7 +318,7 @@ use rmcp::service::{RequestContext, RoleServer};
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{ErrorData as McpError, ServerHandler, tool, tool_handler, tool_router};
-use tauri::AppHandle;
+use tauri::{AppHandle, State};
 
 /// MCP 服务端对象。工厂每请求构造一次，字段均为轻量 Clone 句柄
 #[derive(Debug, Clone)]
@@ -509,6 +509,135 @@ pub async fn serve_forever(
         .map_err(|e| e.to_string())
 }
 
+// ==== Task 6c：Tauri 命令 + 生命周期接线 ====
+// manage 进 App 的 McpState 保证 bridge/sessions 跨请求同一实例；配置写入（*_inner）与
+// 运行中服务的启停在此汇合：enabled/档位/白名单每请求重读即时生效，token/端口变更重启生效。
+
+/// 仅 enabled/port/token 变化需要重启（bearer/绑定在启动时定型）；档位/白名单每请求重读已即时生效
+fn needs_restart(old: &McpConfig, new: &McpConfig) -> bool {
+    old.enabled != new.enabled || old.port != new.port || old.token != new.token
+}
+
+/// manage 进 App 的全局句柄（bridge/sessions 必须跨请求同一实例）
+pub struct McpState {
+    pub bridge: std::sync::Arc<BridgeShared>,
+    pub sessions: std::sync::Arc<GateSessions>,
+    /// 运行中服务的停机通道（None=未运行）
+    pub shutdown: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
+    /// settings.json 文件路径（load/save *_inner 直接可用）
+    pub settings_file: std::path::PathBuf,
+}
+
+#[tauri::command]
+pub fn mcp_get_config(state: State<'_, McpState>) -> McpConfig {
+    load_mcp_config_inner(&state.settings_file)
+}
+
+#[tauri::command]
+pub fn mcp_set_config(app: AppHandle, state: State<'_, McpState>, cfg: McpConfig) -> Result<(), String> {
+    let old = load_mcp_config_inner(&state.settings_file);
+    save_mcp_config_inner(&state.settings_file, &cfg)?;
+    if needs_restart(&old, &cfg) {
+        restart_if_needed(&app, &state, &cfg)?;
+    }
+    Ok(())
+}
+
+/// 生成新 token 并持久化。运行中服务的 bearer 是启动时快照：新 token 经下一次
+/// mcp_set_config（enabled/端口变更均触发重启）或应用重启后生效
+#[tauri::command]
+pub fn mcp_regenerate_token(state: State<'_, McpState>) -> Result<String, String> {
+    let mut cfg = load_mcp_config_inner(&state.settings_file);
+    cfg.token = generate_token();
+    save_mcp_config_inner(&state.settings_file, &cfg)?;
+    Ok(cfg.token)
+}
+
+/// 前端审批对话框回执：deny=冷却 60s；once=15 分钟内放行；trust=写白名单并持久化
+#[tauri::command]
+pub fn mcp_approval_response(state: State<'_, McpState>, ident: String, action: String) -> Result<(), String> {
+    match action.as_str() {
+        "deny" => {
+            state.sessions.mark_denied(&ident);
+            Ok(())
+        }
+        "once" => {
+            state.sessions.grant_once(ident);
+            Ok(())
+        }
+        "trust" => {
+            let mut cfg = load_mcp_config_inner(&state.settings_file);
+            add_whitelist_inner(&state.settings_file, &mut cfg, &ident)
+        }
+        _ => Err(format!("unknown action: {action}")),
+    }
+}
+
+/// 前端事件桥回传；迟到（超时后）静默忽略
+#[tauri::command]
+pub fn mcp_respond(state: State<'_, McpState>, id: u64, ok: bool, result: Option<serde_json::Value>, error: Option<String>) {
+    let payload = if ok {
+        result.ok_or_else(|| "empty result".to_string())
+    } else {
+        Err(error.unwrap_or_else(|| "unknown error".into()))
+    };
+    let _ = state.bridge.respond(id, payload);
+}
+
+/// 生命周期：enabled=false 或停不下来时只停；enabled=true 先停后起（端口/token 变更重绑）
+pub fn restart_if_needed(app: &AppHandle, state: &State<'_, McpState>, cfg: &McpConfig) -> Result<(), String> {
+    stop_server(state);
+    if cfg.enabled { start_server(app, state, cfg) } else { Ok(()) }
+}
+
+pub fn stop_server(state: &State<'_, McpState>) {
+    if let Ok(mut g) = state.shutdown.lock() {
+        if let Some(tx) = g.take() {
+            let _ = tx.send(true);
+        }
+    }
+}
+
+pub fn start_server(app: &AppHandle, state: &State<'_, McpState>, cfg: &McpConfig) -> Result<(), String> {
+    let mut cfg = cfg.clone();
+    if cfg.token.is_empty() {
+        cfg.token = generate_token();
+        save_mcp_config_inner(&state.settings_file, &cfg)?;
+    }
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    *state.shutdown.lock().map_err(|_| "lock poisoned")? = Some(tx);
+    let app = app.clone();
+    let bridge = state.bridge.clone();
+    let sessions = state.sessions.clone();
+    let settings_file = state.settings_file.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = serve_forever(app, bridge, sessions, cfg, settings_file, rx).await;
+    });
+    Ok(())
+}
+
+/// setup 阶段装配：manage 全局状态 + 按配置自动拉起。app 为 &mut App（setup 闭包入参）
+pub fn init_state_and_autostart(app: &mut tauri::App) -> Result<(), String> {
+    use tauri::Manager;
+    let settings_file =
+        app.path().app_data_dir().map_err(|e| e.to_string())?.join("settings.json");
+    let state = McpState {
+        bridge: Default::default(),
+        sessions: Default::default(),
+        shutdown: Default::default(),
+        settings_file,
+    };
+    // manage 前读配置：避免 manage 后再借 state 的 borrow 纠缠
+    let cfg = load_mcp_config_inner(&state.settings_file);
+    app.manage(state);
+    if cfg.enabled {
+        let handle = app.handle().clone();
+        let st = handle.state::<McpState>();
+        start_server(&handle, &st, &cfg)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -673,5 +802,22 @@ mod tests {
         bridge.respond(7, Ok(serde_json::json!({"code": "123456"}))).expect("首次回传应成功");
         assert_eq!(rx.try_recv().unwrap().unwrap()["code"], "123456");
         assert!(bridge.respond(7, Ok(serde_json::json!({}))).is_err(), "重复回传同一 id 应报 unknown id");
+    }
+
+    #[test]
+    fn restart_only_when_lifecycle_fields_change() {
+        let a = McpConfig { enabled: true, mode: GateMode::Wildcard, port: 47215, token: "t1".into(), whitelist: vec!["A".into()] };
+        // 白名单/档位变化：每请求重读已覆盖，无需重启
+        let b = McpConfig { mode: GateMode::Exact, whitelist: vec!["B".into()], ..a.clone() };
+        assert!(!needs_restart(&a, &b));
+        // enabled 变化：要重启
+        let c = McpConfig { enabled: false, ..a.clone() };
+        assert!(needs_restart(&a, &c));
+        // 端口变化：要重启
+        let d = McpConfig { port: 50000, ..a.clone() };
+        assert!(needs_restart(&a, &d));
+        // token 变化：要重启（bearer 为启动时快照，6b 审查 Important）
+        let e = McpConfig { token: "t2".into(), ..a.clone() };
+        assert!(needs_restart(&a, &e));
     }
 }
