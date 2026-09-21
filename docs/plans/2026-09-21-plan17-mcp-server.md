@@ -1437,3 +1437,10 @@ what: 设计文档标记已实施；README 增补 MCP 功能与安全边界说�
 8. 输出契约：工具结果无 secret/pin（e2e list 全量字段人工核对一次）。
 9. 重生成 token 后旧 token 立即失效（旧 token e2e 得 401/新 token PASS）。
 10. ZCode 真连一次（连接片段粘进配置）→ agent 成功取到真实验证码（终验收）。
+
+## 终审遗留（backlog，不阻塞合入）
+
+1. **I-2 部分-成功回滚背离**：mcp_set_config/regenerate 先落盘后重启，重启失败（如端口占用）时卡片按 prev 回滚 UI 而磁盘已是新值——重开设置页或重启应用后可见真值；失败方向恒为服务 down（fail-closed）。候选修复：失败时重拉 getConfig 作为 UI 事实源，或 Rust 重启失败回写 old。
+2. trust `<unknown>`（无 clientInfo 且无 UA 的客户端）等于放行所有匿名客户端，对话框可加特判警告文案。
+3. 审批 trust（读-改-写）与卡片 setConfig（整写）的并发写竞态窗口：最后写者胜，概率极低。
+4. 真机验证缺口见上方手动验收清单（托盘隐藏态取码、防火墙提示）。
