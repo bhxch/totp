@@ -74,6 +74,28 @@ fn read_shortcut_from_settings<R: Runtime>(app: &AppHandle<R>) -> String {
         .unwrap_or_else(|| DEFAULT.into())
 }
 
+/// 原子写文本（审查 I-5）：先写同目录临时文件再 rename 覆盖目标——崩溃中途不再留下半截
+/// settings.json（旧实现 fs::write 直覆，损坏即丢全部外来键）。临时文件与目标同目录保证
+/// 同盘 rename 原子性；Windows 上 std::fs::rename 以 MOVEFILE_REPLACE_EXISTING 语义可覆盖
+/// 已存在文件。临时名带进程号+进程内自增序号，防并发写互撞；失败时兜底清理临时文件。
+pub(crate) fn write_text_atomic(path: &std::path::Path, contents: &str) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+    let tmp = path.with_file_name(format!(
+        "{name}.tmp-{}-{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    match std::fs::write(&tmp, contents).and_then(|()| std::fs::rename(&tmp, path)) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(e.to_string())
+        }
+    }
+}
+
 fn write_shortcut_to_settings<R: Runtime>(app: &AppHandle<R>, shortcut: &str) -> Result<(), String> {
     let p = settings_path(app).ok_or_else(|| "settings path unavailable".to_string())?;
     if let Some(parent) = p.parent() {
@@ -86,8 +108,7 @@ fn write_shortcut_to_settings<R: Runtime>(app: &AppHandle<R>, shortcut: &str) ->
         .and_then(|v| v.as_object().cloned())
         .unwrap_or_default();
     obj.insert("shortcutToggleMini".into(), serde_json::Value::String(shortcut.into()));
-    std::fs::write(&p, serde_json::to_string_pretty(&obj).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())
+    write_text_atomic(&p, &serde_json::to_string_pretty(&obj).map_err(|e| e.to_string())?)
 }
 
 /** 取消注册当前所有快捷键，按新 spec 重新注册并持久化到 settings.json */
@@ -926,7 +947,8 @@ pub fn run() {
             mcp_server::mcp_set_config,
             mcp_server::mcp_regenerate_token,
             mcp_server::mcp_approval_response,
-            mcp_server::mcp_respond
+            mcp_server::mcp_respond,
+            mcp_server::mcp_revoke_approvals
         ])
         // build+run（回调形态）：RunEvent::Exit 时注销系统锁屏监听（plan16 T15）；
         // 正常运行路径行为与直接 .run(context) 完全一致
@@ -949,6 +971,26 @@ mod tests {
     #[test]
     fn valid_backup_name_accepts_vault_prefixed() {
         assert!(valid_backup_name("vault-20260916-120000.totpbackup"));
+    }
+
+    // 审查 I-5：原子写覆盖既有文件且无临时文件残留（rename 成功后 tmp 不存在）
+    #[test]
+    fn write_text_atomic_replaces_target_without_tmp_leftover() {
+        let base = std::env::temp_dir().join("totp_write_text_atomic");
+        std::fs::create_dir_all(&base).unwrap();
+        let p = base.join("settings.json");
+        std::fs::write(&p, "{\"old\":1}").unwrap();
+        write_text_atomic(&p, "{\"new\":2}").unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "{\"new\":2}");
+        // 不存在目标已更新而临时文件残留的中间态（并发写用不同 tmp 名，均被 rename 吸走）
+        let leftovers: Vec<_> = std::fs::read_dir(&base)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.contains(".tmp-"))
+            .collect();
+        assert!(leftovers.is_empty(), "临时文件必须被 rename 吸走，残留: {leftovers:?}");
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]

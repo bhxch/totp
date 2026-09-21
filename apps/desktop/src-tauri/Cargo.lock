@@ -4163,6 +4163,8 @@ dependencies = [
  "tauri-plugin-fs",
  "tauri-plugin-global-shortcut",
  "tokio",
+ "tokio-util",
+ "tower",
  "windows",
 ]
 

@@ -35,6 +35,20 @@ http = "1"
 # Task 6b 的 serve_forever 用 TcpListener（net）
 tokio = { version = "1", features = ["sync", "macros", "time", "net"] }
 
+# plan17 停机修复（审查 I-3）：rmcp StreamableHttpServerConfig.cancellation_token 的类型为
+# tokio_util::sync::CancellationToken，stop_server 需 cancel 它终止 GET SSE 长连接；
+# rmcp 传递依赖已在树（Cargo.lock 0.7），显式声明不新增编译产物（sync 模块无 feature 门控）
+tokio-util = "0.7"
+
+# plan17：mcp_router 装配辅助的泛型 bound 引用 tower::Service（审查 I-6）；
+# tower 随 axum/rmcp 已在树（Cargo.lock 0.5），显式声明不新增编译产物
+tower = "0.5"
+
+[dev-dependencies]
+# plan17：mcp_auth_middleware 的 oneshot 直测（审查 I-6）需要 tower::ServiceExt（util feature，
+# 仅测试构建生效，与上方主依赖特性叠加）
+tower = { version = "0.5", features = ["util"] }
+
 # DPAPI 解密（WinAuth 导入）+ 系统锁屏事件（plan16 T15，WTS 会话通知与隐藏窗口）：
 # 仅 Windows 目标编译
 [target.'cfg(windows)'.dependencies]

@@ -57,8 +57,9 @@ pub fn save_mcp_config_inner(settings_file: &std::path::Path, cfg: &McpConfig) -
         .and_then(|v| v.as_object().cloned())
         .unwrap_or_default();
     obj.insert("mcp".into(), serde_json::to_value(cfg).map_err(|e| e.to_string())?);
-    std::fs::write(settings_file, serde_json::to_string_pretty(&obj).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())
+    // 原子写（审查 I-5）：与 lib.rs 的 write_shortcut_to_settings 共用同一临时文件+rename 通道，
+    // 崩溃中途不损坏 settings.json
+    crate::write_text_atomic(settings_file, &serde_json::to_string_pretty(&obj).map_err(|e| e.to_string())?)
 }
 
 pub fn add_whitelist_inner(settings_file: &std::path::Path, cfg: &mut McpConfig, pattern: &str) -> Result<(), String> {
@@ -298,6 +299,22 @@ impl GateSessions {
             None => false,
         }
     }
+    /// 清空全部审批记账（once 批准 + deny 冷却）：「重置审批状态」入口。返回清空条目总数。
+    /// 用户主动吊销语义：once 有效批准立即失效（客户端须重新走审批弹窗），
+    /// deny 冷却一并清（主动操作无需再等 60s）；锁中毒按 0 条计（与其他方法口径一致）
+    pub fn clear_all(&self) -> usize {
+        let once = self.once.lock().map(|mut m| {
+            let n = m.len();
+            m.clear();
+            n
+        });
+        let cooldown = self.cooldown.lock().map(|mut m| {
+            let n = m.len();
+            m.clear();
+            n
+        });
+        once.unwrap_or(0) + cooldown.unwrap_or(0)
+    }
     #[cfg(test)]
     pub fn expire_all_for_test(&mut self) {
         if let Ok(mut m) = self.once.lock() {
@@ -444,10 +461,24 @@ impl ServerHandler for TotpMcp {
     }
 }
 
+/// 剥 Authorization 的 auth-scheme 前缀（审查 I-9）：RFC 7235/6750 规定 scheme 大小写
+/// 不敏感，前 7 字节 ASCII 不敏感比对 `bearer `；恒时比较只作用于其后的 token 值
+/// （scheme 恒定，不参与恒时比较对象）
+fn strip_bearer_scheme(value: &str) -> Option<&str> {
+    const SCHEME: &[u8; 7] = b"bearer ";
+    let bytes = value.as_bytes();
+    if bytes.len() >= SCHEME.len() && bytes[..SCHEME.len()].eq_ignore_ascii_case(SCHEME) {
+        // 命中即前 7 字节均为 ASCII（5 字母+空格），索引 7 必是字符边界
+        value.get(SCHEME.len()..)
+    } else {
+        None
+    }
+}
+
 /// Bearer + Host/Origin 校验中间件（每请求）：validate_host_origin 防 DNS rebinding，
 /// token_eq 恒时比较防时序侧信道。403=非 loopback 语境；401=凭据缺失/不匹配
 async fn mcp_auth_middleware(
-    bearer: std::sync::Arc<String>,
+    token: std::sync::Arc<String>,
     req: http::Request<axum::body::Body>,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
@@ -461,17 +492,43 @@ async fn mcp_auth_middleware(
         .headers()
         .get(http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|a| token_eq(a, bearer.as_str()));
+        .and_then(strip_bearer_scheme)
+        .is_some_and(|t| token_eq(t, token.as_str()));
     if !auth_ok {
         return axum::http::StatusCode::UNAUTHORIZED.into_response();
     }
     next.run(req).await
 }
 
+/// router 装配（审查 I-6）：鉴权中间件 → nest_service("/mcp")。内层 service 抽象为泛型
+/// 入参，测试以 200 桩 service 经 tower::ServiceExt::oneshot 直测中间件（此前装配零覆盖，
+/// 删掉 .layer(middleware) 测试依旧全绿）；生产路径传 StreamableHttpService。
+/// 现有 nest_service 调用点即 axum 0.8 对内层 service 的既有约束，不新增语义
+pub(crate) fn mcp_router<S>(token: std::sync::Arc<String>, inner: S) -> axum::Router
+where
+    S: tower::Service<http::Request<axum::body::Body>, Error = std::convert::Infallible>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+    S::Response: axum::response::IntoResponse,
+    S::Future: Send + 'static,
+{
+    let middleware = axum::middleware::from_fn(move |req, next| {
+        let token = token.clone();
+        async move { mcp_auth_middleware(token, req, next).await }
+    });
+    axum::Router::new().nest_service("/mcp", inner).layer(middleware)
+}
+
 /// MCP 服务主循环：Bearer/Host/Origin 中间件 → nest_service("/mcp") → graceful shutdown
 /// （shutdown 通道变化即优雅停机）。listener 由调用方同步 bind 后传入（bind 失败直接回传
 /// UI，审查 I-1），本函数只做 tokio 化转换，不再 bind。
+/// cancellation_token 由调用方（start_server）创建并持有引用：stop_server cancel 它终止
+/// GET SSE 长连接，graceful shutdown 才能完成（审查 I-3）。
 /// 配置每请求重读（cfg_file），设置页改动即时生效；port 变更由调用方（6c）重启服务
+// 第 8 参即审查 I-3 的取消令牌：比重构成参数结构体更直接，参数列表全部具名自解释
+#[allow(clippy::too_many_arguments)]
 pub async fn serve_forever(
     app: AppHandle,
     bridge: std::sync::Arc<BridgeShared>,
@@ -480,26 +537,29 @@ pub async fn serve_forever(
     cfg_file: std::path::PathBuf,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
     listener: std::net::TcpListener,
+    cancellation_token: tokio_util::sync::CancellationToken,
 ) -> Result<(), String> {
     // fail-closed：空 token=未生成，绝不允许 "Bearer " 成为有效凭据（生成与持久化归 start_server，6c）
     if cfg.token.is_empty() {
         return Err("mcp token not generated".into());
     }
-    let bearer = std::sync::Arc::new(format!("Bearer {}", cfg.token));
+    let token = std::sync::Arc::new(cfg.token.clone());
 
-    // 工厂闭包：每请求构造一次 TotpMcp，句柄均先克隆再 move 进闭包
+    // 工厂闭包：每请求构造一次 TotpMcp，句柄均先克隆再 move 进闭包。
+    // cancellation_token 接线（审查 I-3，查证 rmcp 3.4.0 源码）：StreamableHttpService 对每个
+    // SSE 响应体用 config.cancellation_token 的 child token 做 take_until（sse_stream_response），
+    // cancel 即终止 GET SSE 这类永不自然完成的 in-flight 响应——仅靠 watch+graceful shutdown
+    // 会被 hyper 无限等待（真实客户端在线时重启/禁用/重生成 token 全部卡死）
+    let cancellation = cancellation_token.clone();
     let service: StreamableHttpService<TotpMcp, LocalSessionManager> = StreamableHttpService::new(
         move || Ok(TotpMcp::new(app.clone(), bridge.clone(), sessions.clone(), cfg_file.clone())),
         LocalSessionManager::default().into(),
-        StreamableHttpServerConfig::default().with_json_response(true),
+        StreamableHttpServerConfig::default()
+            .with_json_response(true)
+            .with_cancellation_token(cancellation),
     );
 
-    let middleware = axum::middleware::from_fn(move |req, next| {
-        let bearer = bearer.clone();
-        async move { mcp_auth_middleware(bearer, req, next).await }
-    });
-
-    let router = axum::Router::new().nest_service("/mcp", service).layer(middleware);
+    let router = mcp_router(token, service);
     // std listener → tokio：须已设 nonblocking（start_server 在 spawn 前 set_nonblocking(true)）；
     // from_std 需在 tokio runtime 上下文调用，本 async fn 即在其上
     let listener = tokio::net::TcpListener::from_std(listener)
@@ -521,44 +581,124 @@ fn needs_restart(old: &McpConfig, new: &McpConfig) -> bool {
     old.enabled != new.enabled || old.port != new.port || old.token != new.token
 }
 
+/// 停机槽载荷（type alias 仅为可读性）：watch 信号发送端 + rmcp 取消令牌 + serve 任务句柄
+pub type ShutdownSlot = (
+    tokio::sync::watch::Sender<bool>,
+    tokio_util::sync::CancellationToken,
+    tauri::async_runtime::JoinHandle<()>,
+);
+
 /// manage 进 App 的全局句柄（bridge/sessions 必须跨请求同一实例）
 pub struct McpState {
     pub bridge: std::sync::Arc<BridgeShared>,
     pub sessions: std::sync::Arc<GateSessions>,
-    /// 运行中服务的停机通道与 serve 任务句柄（None=未运行）。
-    /// 句柄供 stop_server 有界轮询旧任务退出（端口释放）后再重启（审查 I-2）
-    pub shutdown: Mutex<Option<(tokio::sync::watch::Sender<bool>, tauri::async_runtime::JoinHandle<()>)>>,
+    /// 运行中服务的停机槽（None=未运行）。
+    /// 令牌供 stop_server cancel 终止 GET SSE 长连接（审查 I-3）；句柄供 stop_server
+    /// 有界等待旧任务退出（端口释放）后再重启（审查 I-2）
+    pub shutdown: Mutex<Option<ShutdownSlot>>,
     /// settings.json 文件路径（load/save *_inner 直接可用）
     pub settings_file: std::path::PathBuf,
+    /// 服务运行态（UI 可见，mcp_get_config 上报）：true=当前监听在位
+    pub running: std::sync::atomic::AtomicBool,
+    /// 最近一次启动失败/异常退出原因（中文，None=无）。autostart 失败原仅 eprintln
+    /// （GUI 不可见），落在此处后设置页 enabled=true 但没起来时可对账
+    pub last_error: Mutex<Option<String>>,
+}
+
+impl McpState {
+    /// 吊销全部一次性审批（once 批准 + deny 冷却），返回清空条目数（UI 提示用）
+    pub fn revoke_approvals(&self) -> u32 {
+        self.sessions.clear_all() as u32
+    }
+    /// 启动成功：运行态置位、上次错误清空
+    pub fn mark_started(&self) {
+        self.running.store(true, std::sync::atomic::Ordering::Release);
+        if let Ok(mut e) = self.last_error.lock() {
+            *e = None;
+        }
+    }
+    /// 启动失败/异常退出：运行态清零并记录原因（GUI 可见的唯一失败通道）
+    pub fn mark_start_failed(&self, err: String) {
+        self.running.store(false, std::sync::atomic::Ordering::Release);
+        if let Ok(mut e) = self.last_error.lock() {
+            *e = Some(err);
+        }
+    }
+    /// 停机完成：仅清运行态。last_error 保留——「失败后关闭开关」时失败原因仍应可见
+    pub fn mark_stopped(&self) {
+        self.running.store(false, std::sync::atomic::Ordering::Release);
+    }
+    pub fn is_running(&self) -> bool {
+        self.running.load(std::sync::atomic::Ordering::Acquire)
+    }
+    pub fn last_error(&self) -> Option<String> {
+        self.last_error.lock().ok().and_then(|e| e.clone())
+    }
+}
+
+/// mcp_get_config 返回：配置平铺（flatten，前端 McpConfigDto 形状不变）+ 运行态两字段。
+/// running/lastError 使设置页能对账「enabled=true 但服务实际没起」（端口占用、双开实例等）
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpConfigWithStatus {
+    #[serde(flatten)]
+    pub cfg: McpConfig,
+    pub running: bool,
+    pub last_error: Option<String>,
 }
 
 #[tauri::command]
-pub fn mcp_get_config(state: State<'_, McpState>) -> McpConfig {
-    load_mcp_config_inner(&state.settings_file)
+pub fn mcp_get_config(state: State<'_, McpState>) -> McpConfigWithStatus {
+    McpConfigWithStatus {
+        cfg: load_mcp_config_inner(&state.settings_file),
+        running: state.is_running(),
+        last_error: state.last_error(),
+    }
 }
 
+/// 命令层端口断言（审查 I-10）：前端已限 1024-65535，Rust 侧同口径兜底；
+/// 上限由 u16 类型天然保证，0-1023 特权端口一律拒绝
+fn validate_port(port: u16) -> Result<(), String> {
+    if port < 1024 {
+        return Err(format!("端口 {port} 不在允许范围 1024-65535"));
+    }
+    Ok(())
+}
+
+/// async fn（审查 I-4）：needs_restart 时 stop_server 须异步等待旧任务退出（最长 3s），
+/// 同步 fn + 阻塞 recv 会冻结 UI
 #[tauri::command]
-pub fn mcp_set_config(app: AppHandle, state: State<'_, McpState>, cfg: McpConfig) -> Result<(), String> {
+pub async fn mcp_set_config(app: AppHandle, state: State<'_, McpState>, cfg: McpConfig) -> Result<(), String> {
+    validate_port(cfg.port)?;
     let old = load_mcp_config_inner(&state.settings_file);
     save_mcp_config_inner(&state.settings_file, &cfg)?;
     if needs_restart(&old, &cfg) {
-        restart_if_needed(&app, &state, &cfg)?;
+        restart_if_needed(&app, &state, &cfg).await?;
     }
     Ok(())
 }
 
 /// 生成新 token 并持久化。重生成意味着旧 bearer 快照立即失效（用户重生成正因怀疑
 /// 旧 token 泄露），故与 mcp_set_config 同构：token 变更即按需重启使新 token 即刻生效
+/// async fn（审查 I-4）：同 mcp_set_config，重启路径须异步等待
 #[tauri::command]
-pub fn mcp_regenerate_token(app: AppHandle, state: State<'_, McpState>) -> Result<String, String> {
+pub async fn mcp_regenerate_token(app: AppHandle, state: State<'_, McpState>) -> Result<String, String> {
     let old = load_mcp_config_inner(&state.settings_file);
     let mut cfg = old.clone();
     cfg.token = generate_token();
     save_mcp_config_inner(&state.settings_file, &cfg)?;
     if needs_restart(&old, &cfg) {
-        restart_if_needed(&app, &state, &cfg)?;
+        restart_if_needed(&app, &state, &cfg).await?;
     }
     Ok(cfg.token)
+}
+
+/// 吊销全部一次性授权（once 批准 + deny 冷却，语义=「重置审批状态」），返回清空条目数。
+/// 白名单吊销走 mcp_set_config；本命令补上「仅本次」批准只能等 15 分钟 TTL 的缺口。
+/// 纯内存操作（同 mcp_approval_response 的同步口径），无 await 点
+#[tauri::command]
+pub fn mcp_revoke_approvals(state: State<'_, McpState>) -> u32 {
+    state.revoke_approvals()
 }
 
 /// 前端审批对话框回执：deny=冷却 60s；once=15 分钟内放行；trust=写白名单并持久化
@@ -592,42 +732,57 @@ pub fn mcp_respond(state: State<'_, McpState>, id: u64, ok: bool, result: Option
     let _ = state.bridge.respond(id, payload);
 }
 
-/// 生命周期：enabled=false 或停不下来时只停；enabled=true 先停后起（端口/token 变更重绑）
-pub fn restart_if_needed(app: &AppHandle, state: &State<'_, McpState>, cfg: &McpConfig) -> Result<(), String> {
-    stop_server(state);
+/// 生命周期：enabled=false 或停不下来时只停；enabled=true 先停后起（端口/token 变更重绑）。
+/// async fn（审查 I-4）：stop_server 的有界等待为异步，命令层可安全 await
+pub async fn restart_if_needed(app: &AppHandle, state: &State<'_, McpState>, cfg: &McpConfig) -> Result<(), String> {
+    stop_server(state).await;
     if cfg.enabled { start_server(app, state, cfg) } else { Ok(()) }
 }
 
-pub fn stop_server(state: &State<'_, McpState>) {
+pub async fn stop_server(state: &State<'_, McpState>) {
     let handle = if let Ok(mut g) = state.shutdown.lock() {
-        g.take().map(|(tx, handle)| {
+        g.take().map(|(tx, token, handle)| {
+            // 先 cancel rmcp 取消令牌（终止 GET SSE 长连接，审查 I-3），再发 watch 信号触发
+            // graceful shutdown：仅后者会被 hyper 无限等待永不完成的 in-flight SSE
+            token.cancel();
             let _ = tx.send(true);
             handle
         })
     } else {
         None
     };
-    // 有界等待旧任务真正退出（≤3s，20ms 轮询）：graceful shutdown 需要时间收尾既有连接，
+    // 有界异步等待旧任务真正退出（≤3s，审查 I-4）：graceful shutdown 需要时间收尾既有连接，
     // 不等就重启会在 Windows（无 SO_REUSEADDR）上撞 AddrInUse（审查 I-2）。
-    // 有界是防 UI 挂死：drain 只等存量连接，正常远小于 3s；极端超时后放行，
-    // 后续新 bind 失败会如实报错给设置页
+    // tokio timeout + await 而非阻塞轮询（原实现 thread::sleep 最坏冻结 UI 3s）；
+    // 超时后放行，后续新 bind 失败会如实报错给设置页。超时放弃等待不 abort 任务：
+    // JoinHandle drop 仅 detach，任务仍会自行收尾退出
     if let Some(handle) = handle {
-        for _ in 0..150 {
-            if handle.inner().is_finished() {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        let _ = tokio::time::timeout(Duration::from_secs(3), handle).await;
     }
+    // 运行态清零（UI 对账）；last_error 保留，失败原因在重启成功前仍应可见
+    state.mark_stopped();
 }
 
+/// start_server 薄包装：成功/失败统一写运行态（覆盖 set_config、autostart 全部调用路径），
+/// inner 的每个 Err 出口无需各自记一笔
 pub fn start_server(app: &AppHandle, state: &State<'_, McpState>, cfg: &McpConfig) -> Result<(), String> {
+    let result = start_server_inner(app, state, cfg);
+    match &result {
+        Ok(()) => state.mark_started(),
+        Err(e) => state.mark_start_failed(e.clone()),
+    }
+    result
+}
+
+fn start_server_inner(app: &AppHandle, state: &State<'_, McpState>, cfg: &McpConfig) -> Result<(), String> {
     let mut cfg = cfg.clone();
     if cfg.token.is_empty() {
         cfg.token = generate_token();
         save_mcp_config_inner(&state.settings_file, &cfg)?;
     }
     let (tx, rx) = tokio::sync::watch::channel(false);
+    // 应用侧持有 rmcp 取消令牌：stop_server cancel 它以终止 SSE 长连接（审查 I-3）
+    let cancellation_token = tokio_util::sync::CancellationToken::new();
     // bind 前置到本函数同步执行（审查 I-1/I-2）：端口占用立即以 Err 回传设置页；
     // 本轮尝试的 tx 尚未入槽，失败即 drop（槽保持 None），不留僵尸停机通道
     let listener = match std::net::TcpListener::bind(("127.0.0.1", cfg.port)) {
@@ -646,13 +801,17 @@ pub fn start_server(app: &AppHandle, state: &State<'_, McpState>, cfg: &McpConfi
     let bridge = state.bridge.clone();
     let sessions = state.sessions.clone();
     let settings_file = state.settings_file.clone();
-    // 终态错误不再吞掉：进程外可见的最小日志（本 crate 无 tracing）
+    // 终态错误不再吞掉：进程外可见的最小日志（本 crate 无 tracing）；
+    // 同步写运行态+last_error——服务中途异常退出（罕见：runtime 崩溃）设置页也能对账
+    let serve_token = cancellation_token.clone();
     let handle = tauri::async_runtime::spawn(async move {
-        if let Err(e) = serve_forever(app, bridge, sessions, cfg, settings_file, rx, listener).await {
+        if let Err(e) = serve_forever(app.clone(), bridge, sessions, cfg, settings_file, rx, listener, serve_token).await {
             eprintln!("[mcp] server terminated: {e}");
+            use tauri::Manager;
+            app.state::<McpState>().mark_start_failed(format!("服务异常退出: {e}"));
         }
     });
-    *state.shutdown.lock().map_err(|_| "lock poisoned")? = Some((tx, handle));
+    *state.shutdown.lock().map_err(|_| "lock poisoned")? = Some((tx, cancellation_token, handle));
     Ok(())
 }
 
@@ -666,6 +825,8 @@ pub fn init_state_and_autostart(app: &mut tauri::App) -> Result<(), String> {
         sessions: Default::default(),
         shutdown: Default::default(),
         settings_file,
+        running: std::sync::atomic::AtomicBool::new(false),
+        last_error: Default::default(),
     };
     // manage 前读配置：避免 manage 后再借 state 的 borrow 纠缠
     let cfg = load_mcp_config_inner(&state.settings_file);
@@ -713,9 +874,8 @@ mod tests {
         save_mcp_config_inner(&p, &cfg).unwrap();
         let back = load_mcp_config_inner(&p);
         assert!(back.enabled);
-        assert_eq!(
+        assert!(
             std::fs::read_to_string(&p).unwrap().contains("shortcutToggleMini"),
-            true,
             "外来键必须保留"
         );
         let _ = std::fs::remove_file(&p);
@@ -838,6 +998,78 @@ mod tests {
         assert!(!s.denied_recently("other"), "冷却不跨 ident 泄漏");
     }
 
+    // ==== 一次性授权主动吊销（clear_all / mcp_revoke_approvals 底座）====
+
+    #[test]
+    fn clear_all_wipes_once_and_cooldown() {
+        let s = GateSessions::default();
+        s.grant_once("claude".into());
+        s.grant_once("cursor".into());
+        s.mark_denied("zed");
+        assert_eq!(s.clear_all(), 3, "返回清空条目总数（once+deny）");
+        assert!(!s.once_valid("claude"), "once 批准吊销后必须重新弹窗");
+        assert!(!s.once_valid("cursor"));
+        assert!(!s.denied_recently("zed"), "deny 冷却一并清除（主动吊销无需再等 60s）");
+        assert_eq!(s.clear_all(), 0, "重复吊销幂等");
+    }
+
+    /// McpState 字段全 pub，测试内直接构造（同 tmp_path 模式：不依赖 Tauri runtime）
+    fn test_state() -> McpState {
+        McpState {
+            bridge: Default::default(),
+            sessions: Default::default(),
+            shutdown: Mutex::new(None),
+            settings_file: PathBuf::new(),
+            running: std::sync::atomic::AtomicBool::new(false),
+            last_error: Mutex::new(None),
+        }
+    }
+
+    #[test]
+    fn revoke_approvals_clears_sessions_and_returns_count() {
+        let st = test_state();
+        st.sessions.grant_once("a".into());
+        st.sessions.mark_denied("b");
+        assert_eq!(st.revoke_approvals(), 2);
+        assert_eq!(st.revoke_approvals(), 0, "重复吊销幂等");
+    }
+
+    // ==== 服务运行态可见（mcp_get_config 的 running/lastError 底座）====
+
+    #[test]
+    fn runtime_state_flips_and_last_error_roundtrip() {
+        let st = test_state();
+        assert!(!st.is_running(), "初始未运行");
+        assert_eq!(st.last_error(), None);
+        // 启动失败（如端口占用）：running=false + last_error 有值
+        st.mark_start_failed("bind 127.0.0.1:47215 failed: AddrInUse".into());
+        assert!(!st.is_running());
+        assert_eq!(st.last_error().as_deref(), Some("bind 127.0.0.1:47215 failed: AddrInUse"));
+        // 重启成功：running=true + 错误清空
+        st.mark_started();
+        assert!(st.is_running());
+        assert_eq!(st.last_error(), None, "启动成功须清空上次错误");
+        // 停机：running=false，last_error 保留（失败后关闭开关仍可对账）
+        st.mark_start_failed("port busy".into());
+        st.mark_stopped();
+        assert!(!st.is_running());
+        assert_eq!(st.last_error().as_deref(), Some("port busy"), "stop 不清 last_error");
+    }
+
+    #[test]
+    fn get_config_dto_serializes_running_and_last_error_flattened() {
+        // 契约：cfg 字段平铺（前端 McpConfigDto 形状不变）+ running/lastError camelCase
+        let dto = McpConfigWithStatus { cfg: McpConfig::default(), running: true, last_error: None };
+        let v: serde_json::Value = serde_json::to_value(&dto).unwrap();
+        assert_eq!(v["running"], true);
+        assert!(v.get("lastError").is_some_and(|x| x.is_null()), "lastError=None 序列化为 null");
+        assert_eq!(v["port"], 47215, "配置字段经 flatten 平铺在同一层");
+        assert_eq!(v["enabled"], false);
+        let dto = McpConfigWithStatus { cfg: McpConfig::default(), running: false, last_error: Some("端口被占用".into()) };
+        let v: serde_json::Value = serde_json::to_value(&dto).unwrap();
+        assert_eq!(v["lastError"], "端口被占用");
+    }
+
     #[test]
     fn bridge_respond_resolves_pending() {
         let bridge = BridgeShared::default();
@@ -863,5 +1095,196 @@ mod tests {
         // token 变化：要重启（bearer 为启动时快照，6b 审查 Important）
         let e = McpConfig { token: "t2".into(), ..a.clone() };
         assert!(needs_restart(&a, &e));
+    }
+
+    // ==== 审查 I-6：鉴权中间件装配 oneshot 直测（此前删掉 .layer(middleware) 测试依旧全绿）====
+
+    /// 200 桩内层的 router：中间件放行即 200，拒绝即 401/403
+    fn test_router() -> axum::Router {
+        let inner = axum::Router::new().fallback(|| async { axum::http::StatusCode::OK });
+        mcp_router(std::sync::Arc::new("secret-token".to_string()), inner)
+    }
+
+    fn oneshot_request(host: &str, auth: Option<&str>) -> http::Request<axum::body::Body> {
+        let mut builder = http::Request::builder().uri("/mcp").header(http::header::HOST, host);
+        if let Some(a) = auth {
+            builder = builder.header(http::header::AUTHORIZATION, a);
+        }
+        builder.body(axum::body::Body::empty()).unwrap()
+    }
+
+    async fn oneshot_status(host: &str, auth: Option<&str>) -> axum::http::StatusCode {
+        use tower::ServiceExt;
+        test_router().oneshot(oneshot_request(host, auth)).await.unwrap().status()
+    }
+
+    #[tokio::test]
+    async fn auth_middleware_rejects_missing_and_wrong_credentials() {
+        // 无 Authorization 头 → 401
+        assert_eq!(
+            oneshot_status("127.0.0.1:47215", None).await,
+            axum::http::StatusCode::UNAUTHORIZED
+        );
+        // Bearer 错 token → 401
+        assert_eq!(
+            oneshot_status("127.0.0.1:47215", Some("Bearer wrong-token")).await,
+            axum::http::StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_middleware_rejects_non_loopback_host() {
+        // Bearer 对 token + 恶意 Host → 403（DNS rebinding 防护先于凭据判定）
+        assert_eq!(
+            oneshot_status("evil.com", Some("Bearer secret-token")).await,
+            axum::http::StatusCode::FORBIDDEN
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_middleware_allows_good_token_and_loopback_host() {
+        // Bearer 对 token + loopback Host → 放行（桩内层 200）
+        assert_eq!(
+            oneshot_status("127.0.0.1:47215", Some("Bearer secret-token")).await,
+            axum::http::StatusCode::OK
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_middleware_accepts_case_insensitive_bearer_scheme() {
+        // RFC 7235/6750：auth-scheme 大小写不敏感（审查 I-9）
+        assert_eq!(
+            oneshot_status("127.0.0.1:47215", Some("bearer secret-token")).await,
+            axum::http::StatusCode::OK
+        );
+        assert_eq!(
+            oneshot_status("127.0.0.1:47215", Some("BeArEr secret-token")).await,
+            axum::http::StatusCode::OK
+        );
+        // 非 bearer scheme（Basic）与 token 值本身的大小写差异仍拒绝
+        assert_eq!(
+            oneshot_status("127.0.0.1:47215", Some("Basic secret-token")).await,
+            axum::http::StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            oneshot_status("127.0.0.1:47215", Some("Bearer SECRET-TOKEN")).await,
+            axum::http::StatusCode::UNAUTHORIZED
+        );
+    }
+
+    // ==== 审查 I-10：命令层端口断言 ====
+
+    #[test]
+    fn port_validation_matches_frontend_bounds() {
+        assert!(validate_port(1024).is_ok());
+        assert!(validate_port(47215).is_ok());
+        assert!(validate_port(65535).is_ok(), "上限由 u16 类型天然保证");
+        assert!(validate_port(0).is_err());
+        assert!(validate_port(80).is_err());
+        assert!(validate_port(1023).is_err(), "0-1023 特权端口一律拒绝（与前端 1024-65535 同口径）");
+    }
+
+    // ==== 审查 I-3：GET SSE 长连接下的停机集成测试 ====
+    // serve_forever 依赖 AppHandle（单测无法构造），故按同一装配路径复刻 serve 循环：
+    // mcp_router + 真实 StreamableHttpService（应用侧 cancellation_token + watch graceful
+    // shutdown）。客户端先 POST initialize 取 Mcp-Session-Id（legacy_session_mode 默认开，
+    // GET SSE 必须带会话 id），再开 GET SSE 挂住连接；随后 cancel 令牌 + watch 信号，
+    // 断言 serve 在 5s 内返回且端口可重 bind（旧监听已释放）。
+    #[tokio::test]
+    async fn stop_completes_within_bound_with_live_sse_connection() {
+        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+        use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
+        use tokio::io::AsyncWriteExt;
+
+        // 无工具的最小 ServerHandler：只做传输层长连接载体
+        #[derive(Clone, Default)]
+        struct StubHandler;
+        impl rmcp::ServerHandler for StubHandler {}
+
+        let token = tokio_util::sync::CancellationToken::new();
+        let service: StreamableHttpService<StubHandler, LocalSessionManager> = StreamableHttpService::new(
+            || Ok(StubHandler),
+            LocalSessionManager::default().into(),
+            StreamableHttpServerConfig::default()
+                .with_json_response(true)
+                .with_cancellation_token(token.clone()),
+        );
+        let router = mcp_router(std::sync::Arc::new("secret".to_string()), service);
+
+        let std_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = std_listener.local_addr().unwrap();
+        std_listener.set_nonblocking(true).unwrap();
+        let listener = tokio::net::TcpListener::from_std(std_listener).unwrap();
+        let (tx, mut rx) = tokio::sync::watch::channel(false);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .with_graceful_shutdown(async move { let _ = rx.changed().await; })
+                .await
+        });
+
+        // 累积读至响应头结束（\r\n\r\n 前），返回头文本
+        async fn read_http_head(conn: &mut tokio::net::TcpStream) -> String {
+            use tokio::io::AsyncReadExt;
+            let mut raw = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = conn.read(&mut chunk).await.unwrap();
+                assert!(n > 0, "连接被提前关闭");
+                raw.extend_from_slice(&chunk[..n]);
+                if let Some(p) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                    return String::from_utf8_lossy(&raw[..p]).to_string();
+                }
+            }
+        }
+
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+
+        // ① POST initialize：取得 Mcp-Session-Id
+        let init_body = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": { "name": "sse-stop-test", "version": "0.0.0" }
+            }
+        })
+        .to_string();
+        let req = format!(
+            "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer secret\r\n\
+             Accept: application/json, text/event-stream\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\nConnection: keep-alive\r\n\r\n{init_body}",
+            init_body.len()
+        );
+        conn.write_all(req.as_bytes()).await.unwrap();
+        let head = read_http_head(&mut conn).await;
+        assert!(head.starts_with("HTTP/1.1 200"), "initialize 应 200：{head}");
+        let session_id = head
+            .lines()
+            .find_map(|l| {
+                let (k, v) = l.split_once(':')?;
+                k.trim().eq_ignore_ascii_case("mcp-session-id").then(|| v.trim().to_string())
+            })
+            .expect("initialize 响应必须带 Mcp-Session-Id");
+
+        // ② GET SSE 长连接（同一 keep-alive 连接）：读到 200 开流即挂住，不读完
+        let get = format!(
+            "GET /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer secret\r\n\
+             Accept: text/event-stream\r\nMcp-Session-Id: {session_id}\r\n\r\n"
+        );
+        conn.write_all(get.as_bytes()).await.unwrap();
+        let sse_head = read_http_head(&mut conn).await;
+        assert!(sse_head.starts_with("HTTP/1.1 200"), "GET SSE 应 200 开流：{sse_head}");
+
+        // ③ 停机：cancel 令牌 + watch 信号 → graceful shutdown 必须有限时间完成
+        token.cancel();
+        let _ = tx.send(true);
+        tokio::time::timeout(Duration::from_secs(5), server)
+            .await
+            .expect("持 GET SSE 长连接时停机必须在 5s 内完成（审查 I-3）")
+            .unwrap()
+            .unwrap();
+
+        // ④ 端口已释放：重 bind 成功（Windows 无 SO_REUSEADDR，旧监听未释放会 AddrInUse）
+        assert!(std::net::TcpListener::bind(addr).is_ok(), "停机后端口必须已释放以便重启");
     }
 }
