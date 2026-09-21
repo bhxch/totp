@@ -1,6 +1,9 @@
 //! plan17：内嵌 MCP 服务器（只读验证码）。协议/鉴权在 rmcp 侧，金库数据经事件桥留在前端。
 //! 设计：docs/plans/2026-09-21-mcp-server-design.md
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Mutex;
+use tokio::sync::oneshot;
 
 /// 客户端授权档位：粗到细。匹配对象恒为 clientInfo.name（不看 version，升级不失效）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,6 +163,60 @@ fn base64url_nopad(bytes: &[u8]) -> String {
     out
 }
 
+/// 前端回传通道共享表：id → oneshot。事件桥的核心数据结构
+#[derive(Default)]
+pub struct BridgeShared {
+    pending: Mutex<HashMap<u64, oneshot::Sender<Result<serde_json::Value, String>>>>,
+    next_id: std::sync::atomic::AtomicU64,
+}
+
+impl BridgeShared {
+    pub fn alloc_id(&self) -> u64 {
+        self.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+    pub fn insert(&self, id: u64, tx: oneshot::Sender<Result<serde_json::Value, String>>) {
+        if let Ok(mut p) = self.pending.lock() {
+            p.insert(id, tx);
+        }
+    }
+    pub fn take(&self, id: u64) -> Option<oneshot::Sender<Result<serde_json::Value, String>>> {
+        self.pending.lock().ok()?.remove(&id)
+    }
+    /// 前端迟到回传（超时后）静默丢弃，返回 Err 供命令层忽略
+    pub fn respond(&self, id: u64, result: Result<serde_json::Value, String>) -> Result<(), String> {
+        self.take(id)
+            .ok_or_else(|| "unknown id".to_string())?
+            .send(result)
+            .map_err(|_| "receiver dropped".to_string())
+    }
+}
+
+/// 工具调用 → webview 事件 → 前端回传，全程 5 秒超时。
+/// （window 参数：目标 webview 窗口 label，主窗口恒 "main"。Task 6 由 rmcp tool handler 调用。）
+pub async fn bridge_call(
+    app: &tauri::AppHandle,
+    bridge: &BridgeShared,
+    window: &str,
+    tool: &str,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    use tauri::Emitter;
+    let id = bridge.alloc_id();
+    let (tx, rx) = oneshot::channel();
+    bridge.insert(id, tx);
+    app.emit_to(window, "mcp://req", serde_json::json!({ "id": id, "tool": tool, "args": args }))
+        .map_err(|e| format!("emit failed: {e}"))?;
+    // 5 秒超时（设计 §4 app busy）；超时后手动 take 防表泄漏
+    match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(_)) => Err("frontend dropped the request".into()),
+        Err(_) => {
+            bridge.take(id);
+            Err("app busy".into())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,5 +336,15 @@ mod tests {
         assert!(matches!(decide_gate(&base(Wildcard, &["*"]), None), GateDecision::NeedsApproval));
         // alwaysAsk 恒待批准（once-TTL 由调用方 GateSessions 管）
         assert!(matches!(decide_gate(&base(AlwaysAsk, &[]), Some("claude")), GateDecision::NeedsApproval));
+    }
+
+    #[test]
+    fn bridge_respond_resolves_pending() {
+        let bridge = BridgeShared::default();
+        let (tx, mut rx) = tokio::sync::oneshot::channel::<Result<serde_json::Value, String>>();
+        bridge.insert(7, tx);
+        bridge.respond(7, Ok(serde_json::json!({"code": "123456"}))).expect("首次回传应成功");
+        assert_eq!(rx.try_recv().unwrap().unwrap()["code"], "123456");
+        assert!(bridge.respond(7, Ok(serde_json::json!({}))).is_err(), "重复回传同一 id 应报 unknown id");
     }
 }

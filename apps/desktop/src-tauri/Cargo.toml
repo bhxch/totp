@@ -25,6 +25,10 @@ getrandom = "0.3"
 # StreamableHttpService 为 Tower service，HTTP 挂载层（axum）由 plan17 Task 6 自备
 rmcp = { version = "3", features = ["server", "macros", "transport-streamable-http-server"] }
 
+# plan17 Task 5：事件桥 oneshot 回传（sync）+ bridge_call 超时（time）。
+# tauri/rmcp 已传递引入 tokio 1，同版本显式声明不新增编译产物
+tokio = { version = "1", features = ["sync", "macros", "time"] }
+
 # DPAPI 解密（WinAuth 导入）+ 系统锁屏事件（plan16 T15，WTS 会话通知与隐藏窗口）：
 # 仅 Windows 目标编译
 [target.'cfg(windows)'.dependencies]
