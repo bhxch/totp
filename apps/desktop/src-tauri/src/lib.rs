@@ -827,7 +827,17 @@ fn os_auto_unprotect(_window: tauri::WebviewWindow, _wrapped_b64: String) -> Res
 }
 
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    // 真机 E2E 基建：debug 构建装配 mcp-bridge（仅绑 127.0.0.1）供 tauri-mcp 驱动 UI；release 不编译
+    #[cfg(debug_assertions)]
+    {
+        builder = builder.plugin(
+            tauri_plugin_mcp_bridge::Builder::new()
+                .bind_address("127.0.0.1")
+                .build(),
+        );
+    }
+    builder
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
