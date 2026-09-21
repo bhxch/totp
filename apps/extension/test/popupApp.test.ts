@@ -66,7 +66,7 @@ vi.mock('../src/store', async () => {
 
 import App from '../entrypoints/popup/App.vue'
 import { createTestI18n } from './helpers/i18n'
-import { addEntryOp, locked, settings, storageAdapter, store, vault } from '../src/store'
+import { addEntryOp, initStore, locked, settings, storageAdapter, store, vault } from '../src/store'
 import { SOURCES_KEY } from '@totp/core'
 
 /** BatchPastePanel 桩：保留 added 事件发射能力（点内嵌按钮触发），data-test 判定渲染 */
@@ -296,7 +296,7 @@ describe('popup 跟随拉取行为（跨端同步 T2/T3，审查修复）', () =
     await flushPromises()
   })
 
-  it('解锁且开关开：mount 即跟随拉取——runner 读源键并记录状态（ok=null 空表跳过，真实编排终点）', async () => {
+  it('解锁且开关开：打开后跟随拉取一次——runner 读源键并记录状态（ok=null 空表跳过，真实编排终点）', async () => {
     lockedRef.value = false // 解锁到目标态（边沿触发的残留 watcher 经 gate 后行为与被测一致）
     backupSecretRef.value = 'pw' // 会话口令在位（解锁语义），拉取链走通到网络边界
     active = await mountApp()
@@ -322,5 +322,39 @@ describe('popup 跟随拉取行为（跨端同步 T2/T3，审查修复）', () =
     await flushPromises()
     expect(storageAdapter.get).not.toHaveBeenCalledWith(SOURCES_KEY)
     expect(storageAdapter.set).not.toHaveBeenCalledWith('cloudAutoStatus', expect.anything())
+  })
+
+  it('真实时序（终审 Critical-1/Important-2）：mount 时刻口令未装载，initStore 完成后首拉才触达 runner', async () => {
+    // session DEK 恢复路径的真实形态：locked 恒 false（无 true→false 边沿，watch 钩子不可依赖），
+    // backupSecret 仅在 initStore → applyDekAndUnlock 装载后才非 null——旧实现 mount 即 syncNow
+    // 必在 secret=null 下走 runner noSecret 早退 recordStatus(null) 写伪状态且永不重拉。
+    // 本文件有历史挂载组件的解锁边沿噪音，精确时序断言在独立文件 popupSyncTiming.test.ts 承载；
+    // 此处仅验证核心信号：initStore 后 runner 越过 noSecret 早退走到 loadSources（读源键）
+    lockedRef.value = false
+    backupSecretRef.value = null
+    vi.mocked(initStore).mockImplementation(async () => {
+      backupSecretRef.value = 'pw' // initStore 完成时点口令就位（保管区装载语义）
+    })
+    try {
+      active = await mountApp()
+      await vi.waitFor(() => expect(storageAdapter.get).toHaveBeenCalledWith(SOURCES_KEY))
+      await vi.waitFor(() => expect(storageAdapter.set).toHaveBeenCalledWith('cloudAutoStatus', expect.anything()))
+    } finally {
+      // 恢复默认空实现：clearAllMocks 不清 implementation，防 side-effect 泄漏到后续用例
+      vi.mocked(initStore).mockImplementation(async () => {})
+    }
+  })
+
+  it('锁定态打开：initStore 后首拉被 gate 拦（零写盘），解锁边沿钩子承接拉取', async () => {
+    backupSecretRef.value = 'pw' // 保持 beforeEach 锁定态；口令在位（解锁语义）
+    active = await mountApp()
+    await flushPromises()
+    // initStore 后首拉在锁定态被 gate 拦截：gate 先于 runner，零网络零写盘（Important-2 锁定分支）
+    expect(storageAdapter.get).not.toHaveBeenCalledWith(SOURCES_KEY)
+    expect(storageAdapter.set).not.toHaveBeenCalledWith('cloudAutoStatus', expect.anything())
+    // 用户输口令解锁 → true→false 边沿 → start 注册的钩子承接拉取（锁定用户路径可达）
+    lockedRef.value = false
+    await vi.waitFor(() => expect(storageAdapter.get).toHaveBeenCalledWith(SOURCES_KEY))
+    await vi.waitFor(() => expect(storageAdapter.set).toHaveBeenCalledWith('cloudAutoStatus', expect.anything()))
   })
 })

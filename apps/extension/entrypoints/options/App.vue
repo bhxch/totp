@@ -97,6 +97,9 @@ onMounted(async () => {
     followScheduler.start()
     // T4：start() 复位 scheduler 内部 authFailed 标志，宿主 ref 同步镜像（重启 options 页即清警示）
     cloudAuthFailed.value = followScheduler.authFailed()
+    // 打开即首拉一次（终审修复，与 popup 对称）：session DEK 恢复路径 locked 恒 false、无解锁边沿，
+    // 已解锁态打开否则要等 3min tick 才见云端更新；锁定态由 gate 拦截（零网络零写盘）
+    void followScheduler.syncNow()
     // idle/锁屏自动锁定（plan16 T12）：initStore 后启动（settings/加密态已就绪，watcher 内部自判 prefs）
     lockWatcher.start()
   } catch (e) {

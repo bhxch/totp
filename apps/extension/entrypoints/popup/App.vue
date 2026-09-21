@@ -30,12 +30,13 @@ const syncFollow = createSyncScheduler({
   // T4：popup 无常驻 UI 通道，仅留痕（scheduler 内部已置位停动作资格）；options 经 SyncCard 渲染警示
   onAuthFailed: () => console.warn('[syncFollow] 云凭据失效（401/403），自动跟随已暂停'),
 })
-// 打开即跟随一次（已解锁才有动作——gate 拦锁定态）；解锁边沿由 start 内钩子承接。
-// 本块 onMounted 先于下方 async onMounted 注册（注册序=执行序）：watch 先于 initStore 的
-// 解锁翻转注册，initStore 经 session DEK 自动解锁时边沿必被捕获
+// 启动跟随（解锁边沿由 start 内钩子承接，仅覆盖「锁定态打开→用户输口令」的 true→false 翻转）。
+// 首拉不放此处（终审修复）：mount 时刻 store 未 init，backupSecret 恒 null（仅 applyDekAndUnlock
+// 装载）——立即 syncNow 必走 runner noSecret 早退写伪 cloudAutoStatus；且 session DEK 恢复路径
+// locked 全程 false（initStore 直进解锁，无 true→false 边沿），watch(locked) 钩子捕获不到，
+// 首拉在下方 async onMounted 的 initStore 完成后显式执行
 onMounted(() => {
   syncFollow.start()
-  void syncFollow.syncNow()
 })
 onScopeDispose(() => syncFollow.stop())
 
@@ -53,6 +54,10 @@ const tabUrl = ref<string | null>(null)
 onMounted(async () => {
   try {
     await initStore()
+    // 打开即跟随一次（终审修复：首拉在 initStore 完成后——DEK/会话口令已就位，加密库解锁态
+    // 可真实拉取；锁定/关开关被 syncScheduler gate 拦截（gate 先于 runner，零写盘），前者
+    // 等解锁边沿钩子承接。initStore 失败走 catch 不拉取（store 未就绪无意义））
+    void syncFollow.syncNow()
     // 主题接线:initStore 成功后挂 useTheme(设置已加载为真实值;首帧属性由 html 内联脚本负责)
     useTheme(store)
     registerStorageSync()
