@@ -1,4 +1,4 @@
-import { base32Decode, hotp, steamCode, totp, yandexCode, type OtpEntry } from '@totp/core'
+import { computeEntryCode, type OtpEntry } from '@totp/core'
 import { onScopeDispose, ref, type Ref } from 'vue'
 
 export interface CodeState {
@@ -18,30 +18,17 @@ const PLACEHOLDER = '------'
 export function useOtpCodes(entries: Ref<OtpEntry[]>) {
   const nowMs = ref(Date.now())
   const codes = ref(new Map<string, CodeState>())
-  const secretCache = new Map<string, Uint8Array>()
-
-  function secretOf(e: OtpEntry): Uint8Array {
-    let s = secretCache.get(e.uuid)
-    if (!s) {
-      s = base32Decode(e.secret)
-      secretCache.set(e.uuid, s)
-    }
-    return s
-  }
 
   async function recompute() {
     nowMs.value = Date.now()
     const next = new Map<string, CodeState>()
     for (const e of entries.value) {
+      // period/remaining 仅供 catch 分支兜底展示；成功分支以 computeEntryCode 返回值为准
       const period = e.period || 30
       const remaining = period - (Math.floor(nowMs.value / 1000) % period)
       try {
-        let code: string
-        if (e.type === 'steam') code = await steamCode(secretOf(e), nowMs.value)
-        else if (e.type === 'yandex') code = await yandexCode(e.secret, e.pin ?? '', nowMs.value, period, e.digits)
-        else if (e.type === 'hotp') code = await hotp(secretOf(e), e.counter ?? 0, { algorithm: e.algorithm, digits: e.digits })
-        else code = await totp(secretOf(e), nowMs.value, { algorithm: e.algorithm, digits: e.digits, period })
-        next.set(e.uuid, { code, remaining, progress: remaining / period })
+        const r = await computeEntryCode(e, nowMs.value)
+        next.set(e.uuid, { code: r.code, remaining: r.remaining, progress: r.remaining / r.period })
       } catch (err) {
         // secret 非法 / counter 类型错误 / 算法不支持等：渲染层据此显红 + 鼠标悬停查看原始错误，
         // 不让单条错误炸整个列表
