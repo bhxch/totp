@@ -24,3 +24,22 @@ describe('iconRegistry', () => {
     expect(s.every((i) => normalizeIssuer(i.id).includes('git') || normalizeIssuer(i.title).includes('git'))).toBe(true)
   })
 })
+
+describe('builtin icons 扩充回归', () => {
+  it('扩充后不少于 200 项且结构合法', () => {
+    const entries = Object.entries(getBuiltinIcons())
+    // 阈值为写死的保守下界：当前实际 218 项（候选过滤上游已下架 slug 后），上游继续移除品牌时不应轻易击穿
+    expect(entries.length).toBeGreaterThanOrEqual(200)
+    for (const [, v] of entries) {
+      expect(typeof v.path).toBe('string')
+      // simple-icons path 可能以小写 m（相对 moveto）开头，均为合法 SVG path
+      expect(v.path).toMatch(/^m/i)
+    }
+  })
+
+  it('高频 issuer 推荐命中不下降', () => {
+    for (const issuer of ['GitHub', 'Google', 'Cloudflare', 'Discord', 'Bilibili', 'Steam', 'Bitwarden']) {
+      expect(recommendBuiltinIcon(issuer)).not.toBeNull()
+    }
+  })
+})
