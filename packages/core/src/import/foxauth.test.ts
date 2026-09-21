@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest'
-import { importFoxauth } from './jsonApps'
+import { importFoxauth, importFoxauthPlaintext } from './jsonApps'
 
 const plaintext = JSON.stringify({
   accountInfos: [
@@ -29,6 +29,19 @@ describe('importFoxauth 明文', () => {
   it('加密备份未给口令：明确报错', async () => {
     await expect(importFoxauth(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: {} })))
       .rejects.toThrow(/加密/)
+  })
+})
+
+describe('importFoxauthPlaintext（粘贴通道同步入口）', () => {
+  it('同步解析明文备份，口径与 importFoxauth 明文分支一致', () => {
+    const r = importFoxauthPlaintext(plaintext)
+    expect(r.entries).toHaveLength(2)
+    expect(r.failures).toHaveLength(1)
+  })
+  it('结构级错误：非对象 / 加密整串密文形态报缺 accountInfos 数组', () => {
+    expect(() => importFoxauthPlaintext('[]')).toThrow(/顶层不是 JSON 对象/)
+    expect(() => importFoxauthPlaintext(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: false })))
+      .toThrow(/accountInfos 数组/)
   })
 })
 

@@ -404,8 +404,22 @@ export async function importFoxauth(text: string, password?: string): Promise<Im
     }
     return collectFoxauthRows(await decryptFoxauth(obj.accountInfos, pwd, iv))
   }
+  return parseFoxauthPlaintextObject(obj)
+}
+
+/** FoxAuth 明文分支共用：accountInfos 必为条目数组（加密的整串密文形态已在 importFoxauth 分流） */
+function parseFoxauthPlaintextObject(obj: Record<string, unknown>): ImportResult {
   if (!Array.isArray(obj.accountInfos)) throw new Error('FoxAuth 文件结构非法：缺少 accountInfos 数组')
   return collectFoxauthRows(obj.accountInfos)
+}
+
+/**
+ * FoxAuth 明文备份同步导入。独立导出供粘贴分发（import/paste.ts 的同步契约）使用，先例
+ * importTotpAuthenticatorPlaintext；加密备份由 paste 通道以 sniffFoxauthEncrypted 拦截引导至
+ * 导入页口令通道，不经此处。
+ */
+export function importFoxauthPlaintext(text: string): ImportResult {
+  return parseFoxauthPlaintextObject(parseJson(text, 'FoxAuth'))
 }
 
 function collectFoxauthRows(rows: unknown): ImportResult {

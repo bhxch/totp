@@ -196,6 +196,7 @@ vault 加密支持多种解锁来源（KEK 来源）并存，在「安全」页�
 - **FreeOTP+**（JSON 导出）与**旧版 FreeOTP**（shared_prefs tokens.xml）：均支持；secret 按字节数组还原，HOTP counter 沿用存储值（对齐 Aegis 口径）
 - **TOTP Authenticator**：明文 JSON 数组与外部分享文件（Base64 密文）均支持；分享文件默认口令 `TotpAuthenticator`，改过口令的在口令页输入
 - **andOTP**（JSON 导出）：明文支持；加密备份（二进制）暂不支持，请用明文导出
+- **FoxAuth**（JSON 备份）：明文与口令加密均支持；加密备份需输入导出口令（口令以 Base64 存于 `passwordInfo.encryptPassword`，HKDF-SHA-256 + AES-GCM，算法对齐 FoxAuth 官方实现）
 - **Authy**（shared_prefs XML）：明文与口令加密条目均支持；含加密条目时需输入 Authy 备份口令（PBKDF2 + AES-CBC）
 - **Battle.net**（shared_prefs XML）：XOR 掩码还原，单文件单条目（8 位 TOTP）
 - **Duo**（files/duokit/accounts.json）：JSON 数组，含 counter 的条目按 HOTP 导入

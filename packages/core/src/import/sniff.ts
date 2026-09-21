@@ -44,6 +44,28 @@ function sniffAegisObject(obj: Record<string, unknown>): boolean {
   return 'db' in obj || 'header' in obj
 }
 
+/** 对象级 FoxAuth 加密判定（仅 JSON.parse 之后的对象）：顶层 isEncrypted === true 即加密备份 */
+function sniffFoxauthEncryptedObject(obj: Record<string, unknown>): boolean {
+  return obj.isEncrypted === true
+}
+
+/**
+ * FoxAuth 加密判定（顶层 isEncrypted 布尔，FoxAuth overwriteKeys 特有键）：供粘贴通道
+ * （import/paste.ts）与导入页（ImportCard）拦截加密备份、引导至口令通道，口径同 sniffAegis 的
+ * encrypted 标志；非对象 JSON / 解析失败一律 false（交由后续格式判定）。
+ */
+export function sniffFoxauthEncrypted(text: string): boolean {
+  const trimmed = text.trim()
+  if (!trimmed.startsWith('{')) return false
+  try {
+    const parsed: unknown = JSON.parse(trimmed)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false
+    return sniffFoxauthEncryptedObject(parsed as Record<string, unknown>)
+  } catch {
+    return false
+  }
+}
+
 /** 顶层入口：JSON.parse 失败返回 null；返回 {kind, encrypted}，其中 encrypted=true 需走口令页 */
 export function sniffAegis(text: string): AegisSniff | null {
   const trimmed = text.trim()

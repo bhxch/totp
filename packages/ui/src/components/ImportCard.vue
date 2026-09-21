@@ -4,7 +4,7 @@ import {
   importAegisPlaintext, importAndOtp, importAuthenticatorPlus, importAuthy, importBattleNet,
   importBitwarden, importDuo, importFoxauth, importFreeOtp, importFreeOtpLegacy, importGeneric, importProton,
   importStratum, importTotpAuthenticator, importTwoFas, importUriBatch, importWinauth, matchSchemes,
-  planImport, normalizeSchemes, removeScheme, sniffAegis, sniffFormat, upsertScheme,
+  planImport, normalizeSchemes, removeScheme, sniffAegis, sniffFoxauthEncrypted, sniffFormat, upsertScheme,
   type ConflictPolicy, type ImportFormat, type ImportPlan, type ImportResult, type ImportScheme,
   type ImportStats, type ParsedEntry, type RowMapping, type SuspectChoice,
 } from '@totp/core'
@@ -27,13 +27,13 @@ const props = defineProps<{
   schemesApi?: ImportSchemesApi | null
 }>()
 
-// 流程状态机：idle → picked →（generic→mapping / aegis 加密与 winauth/authy→password、totpAuthenticator 分享文件→password）→ confirm → report
+// 流程状态机：idle → picked →（generic→mapping / aegis/foxauth 加密与 winauth/authy→password、totpAuthenticator 分享文件→password）→ confirm → report
 type Step = 'idle' | 'picked' | 'mapping' | 'password' | 'confirm' | 'report'
 
 // 可分派格式 = sniff 全集 + 非 sniff 判定的补充入口（authy/battleNet/duo 文本、authenticatorPlus zip 字节、msAuth/sqlite 字节）
 type ManualFormat = ImportFormat | 'authy' | 'battleNet' | 'duo' | 'authenticatorPlus' | 'msAuth' | 'sqlite'
-// 直接解析族（其余格式分别走：generic→映射页、aegis/winauth/authy→口令页、totpAuthenticator 分享文件→条件口令页、
-// authenticatorPlus→口令页+字节通道、msAuth/sqlite→字节入口）
+// 直接解析族（其余格式分别走：generic→映射页、aegis/winauth/authy→口令页、foxauth 加密与
+// totpAuthenticator 分享文件→条件口令页、authenticatorPlus→口令页+字节通道、msAuth/sqlite→字节入口）
 type DirectFormat = Exclude<ManualFormat, 'generic' | 'aegis' | 'winauth' | 'authy' | 'authenticatorPlus' | 'msAuth' | 'sqlite'>
 
 const step = ref<Step>('idle')
@@ -92,6 +92,7 @@ const MANUAL_OPTIONS: Array<{ value: ManualFormat; label: string }> = [
   { value: 'freeOtpLegacy', label: t('importCard.manualFreeOtpLegacy') },
   { value: 'totpAuthenticator', label: t('importCard.manualTotpAuthenticator') },
   { value: 'andOtp', label: t('importCard.manualAndOtp') },
+  { value: 'foxauth', label: t('importCard.manualFoxauth') },
   { value: 'authenticatorPlus', label: t('importCard.manualAuthenticatorPlus') },
   { value: 'authy', label: t('importCard.manualAuthy') },
   { value: 'battleNet', label: t('importCard.manualBattleNet') },
@@ -476,7 +477,8 @@ async function importFromSqlite(auto: boolean): Promise<boolean> {
 /**
  * 第 2 步分派：generic→映射页；aegis 加密→口令页（明文直接解析）；winauth/authy→口令页；
  * totpAuthenticator 分享文件（非 '[' 开头的 Base64 密文）→口令页（明文数组走分派表直接解析）；
- * msAuth/sqlite→字节入口；其余按分派表直接解析；未识别→报错留 picked 页
+ * foxauth 加密（isEncrypted）→口令页（明文走分派表直接解析）；msAuth/sqlite→字节入口；
+ * 其余按分派表直接解析；未识别→报错留 picked 页
  */
 async function nextFromPicked(): Promise<void> {
   if (busy.value) return
@@ -533,6 +535,13 @@ async function nextFromPicked(): Promise<void> {
     step.value = 'password'
     return
   }
+  // foxauth 条件口令页入口：加密备份（isEncrypted）→ 口令页（与 aegis 加密同款交互）；
+  // 明文保持下方分派表直接解析
+  if (f === 'foxauth' && sniffFoxauthEncrypted(fileText.value)) {
+    passwordHint.value = t('importCard.foxauthPwHint')
+    step.value = 'password'
+    return
+  }
   await parseAndConfirm(TEXT_PARSERS[f])
 }
 
@@ -564,7 +573,7 @@ function nextFromMapping(): void {
 
 /**
  * 口令页下一步（按生效格式分派——手动指定覆盖嗅探，勿用 format.value）：
- * aegis 加密必填口令；authy/winauth 口令可选（缺失且需要时结构级报错回到本页提示）；
+ * aegis/foxauth 加密必填口令；authy/winauth 口令可选（缺失且需要时结构级报错回到本页提示）；
  * totpAuthenticator 口令可选（空口令走默认口令 TotpAuthenticator）；其余格式不经口令页，显式报错
  */
 async function nextFromPassword(): Promise<void> {
@@ -573,6 +582,11 @@ async function nextFromPassword(): Promise<void> {
   if (f === 'aegis') {
     if (!password.value) return fail(new Error(t('importCard.passphraseRequired')))
     await parseAndConfirm(() => importAegisEncrypted(fileText.value, password.value))
+    return
+  }
+  if (f === 'foxauth') {
+    if (!password.value) return fail(new Error(t('importCard.passphraseRequired')))
+    await parseAndConfirm(() => importFoxauth(fileText.value, password.value))
     return
   }
   if (f === 'authy') {
