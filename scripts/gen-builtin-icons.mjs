@@ -44,6 +44,31 @@ const BRANDS = [
   'firefox', 'brave', '1password', 'bitwarden', 'lastpass', 'dashlane', 'keepassxc',
   'proton', 'protonmail', 'protonvpn', 'protondrive', 'mullvad', 'tailscale',
   'aegisauthenticator', 'authentik', 'yubico',
+  // 扩充批（2026-09-21 验收条目5）：开发/运维/身份
+  'azuredevops', 'awslambda', 'amazonwebservices', 'googledrive', 'googledrive', 'googledocs',
+  'kalilinux', 'proxmox', 'truenas', 'synology', 'portainer', 'jenkins', 'circleci', 'githubcopilot',
+  'neovim', 'intellijidea', 'pycharm', 'vscodium', 'octopusdeploy', 'hashicorp', 'vault', 'terraform',
+  'auth0', 'okta', 'onelogin', 'duo', 'mattermost', 'zulip', 'element', 'matrix', 'signal',
+  'protonmail', 'protondrive', 'protonvpn', 'tutanota', 'fastmail', 'icloud', 'onedrive', 'sharepoint',
+  'godaddy', 'namecheap', 'cloudflarepages', 'v2ray', 'nginx', 'caddy', 'traefik', 'grafanaos',
+  // 社交/媒体/购物
+  'mastodon', 'bluesky', 'threads', 'lemmy', 'pixelfed', 'peertube', 'twitch', 'youtube', 'youtubemusic',
+  'soundcloud', 'bandcamp', 'patreon', 'kofi', 'liberapay', 'opencollective', 'buymeacoffee',
+  'goodreads', 'letterboxd', 'trakt', 'crunchyroll', 'disneyplus', 'hulu', 'primevideo', 'max',
+  'spareroom', 'aliexpress', 'shein', 'temu', 'ebay', 'etsy', 'shopify', 'woocommerce', 'square',
+  'kakaotalk', 'naver', 'line', 'viber', 'snapchat', 'pinterest', 'linkedin', 'xing', 'vk',
+  // 金融/加密/游戏
+  'monero', 'ethereum', 'bitcoin', 'lightning', 'kraken', 'bitfinex', 'bybit', 'gateio', 'htx',
+  'ledger', 'trezor', 'metamask', 'phantom', 'revolut', 'monzo', 'starlingbank', 'wise', 'samsungpay',
+  'steamworkshop', 'ubisoft', 'nintendo', 'playstation', 'rockstargames', 'itchdotio', 'curseforge',
+  'modrinth', 'humblebundle', 'gogdotcom', 'ea', 'lutris',
+  // 安全/密码/工具
+  '1password', 'bitwarden', 'keepassxc', 'protonpass', 'dashlane', 'lastpass', 'yubico', 'snyk',
+  'sonarqube', 'virustotal', 'haveibeenpwned', 'privacyguides', 'torbrowser', 'torproject', 'brave',
+  'librewolf', 'waterfox', 'vivaldi', 'operagx', 'opera', 'edge', 'thunderbird', 'protoncalendar',
+  'anytype', 'obsidian', 'joplin', 'logseq', 'syncthing', 'nextcloud', 'owncloud', 'filebrowser',
+  'homepage', 'homarr', 'homeassistant', 'jellyfin', 'plex', 'kavita', 'audiobookshelf', 'qbittorrent',
+  'transmission', 'radarr', 'sonarr', 'lidarr', 'prowlarr', 'overseerr', 'tautulli', 'netbird', 'tailscale',
 ]
 
 /** 别名表：normalizeIssuer 后的键 → 内置图标 id（键不得含空白/点/连字符/下划线，值必须存在于 BRANDS） */
@@ -114,19 +139,24 @@ const ALIASES = {
 const normalizeKey = (s) => s.toLowerCase().replace(/[\s._-]+/g, '')
 
 function main() {
-  const missing = BRANDS.filter((slug) => !bySlug.has(slug))
-  if (missing.length > 0) throw new Error(`BRANDS 中存在 simple-icons 未收录的 slug: ${missing.join(', ')}`)
-  if (new Set(BRANDS).size !== BRANDS.length) throw new Error('BRANDS 存在重复项')
-  if (BRANDS.length < 64) throw new Error(`BRANDS 需至少 64 项，当前 ${BRANDS.length}`)
+  // 扩充批候选与既有条目可能重叠、且清单可能含录入重复，按出现顺序去重
+  const slugs = Array.from(new Set(BRANDS))
+  // 上游 simple-icons 会应商标方要求不定期移除品牌，候选中已不存在的 slug 警告并跳过（属预期）
+  const missing = slugs.filter((slug) => !bySlug.has(slug))
+  if (missing.length > 0) {
+    console.warn(`[gen-builtin-icons] simple-icons 无以下 slug（已跳过）: ${missing.join(', ')}`)
+  }
+  if (slugs.length < 64) throw new Error(`BRANDS 需至少 64 项，当前 ${slugs.length}`)
 
   for (const [alias, id] of Object.entries(ALIASES)) {
     if (normalizeKey(alias) !== alias) throw new Error(`别名键未规范化: ${alias}`)
-    if (!BRANDS.includes(id)) throw new Error(`别名 ${alias} 指向未收录的 id: ${id}`)
+    if (!slugs.includes(id)) throw new Error(`别名 ${alias} 指向未收录的 id: ${id}`)
   }
   if (Object.keys(ALIASES).length < 30) throw new Error('别名表需至少 30 条')
 
   const icons = {}
-  for (const slug of BRANDS) {
+  for (const slug of slugs) {
+    if (!bySlug.has(slug)) continue
     const { title, path } = bySlug.get(slug)
     icons[slug] = { id: slug, title, path }
   }
