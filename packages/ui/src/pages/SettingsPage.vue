@@ -2,7 +2,9 @@
 import { computed } from 'vue'
 import type { AppSettings } from '@totp/core'
 import { useI18n } from 'vue-i18n'
+import type { McpPlatform } from '../components/mcpCard'
 import type { SecurityPlatform } from '../components/securityPlatform'
+import McpServerCard from '../components/McpServerCard.vue'
 import MdCard from '../components/md/MdCard.vue'
 import MdSegmentedButton from '../components/md/MdSegmentedButton.vue'
 import MdSelect from '../components/md/MdSelect.vue'
@@ -20,7 +22,9 @@ const props = withDefaults(defineProps<{
   showDesktop?: boolean
   /** 扩展端宿主 → 渲染 URL 过滤开关与 popup 关闭延迟 */
   showExtension?: boolean
-}>(), { securityPlatform: null, showDesktop: false, showExtension: false })
+  /** MCP 平台实现；null（扩展宿主缺省）时整卡不渲染（桌面专属） */
+  mcpPlatform?: McpPlatform | null
+}>(), { securityPlatform: null, showDesktop: false, showExtension: false, mcpPlatform: null })
 
 // 解构出顶层 writable computed：模板自动解包，v-model/赋值直达 useTheme 的 set
 // （set 内部已写 settings + localStorage 镜像 + commitSettings，无需页面重复处理）
@@ -157,6 +161,11 @@ const hasGeneralItems = computed(() => true)
           @update:model-value="setBool('rememberTagFilter', $event)"
         />
       </div>
+    </MdCard>
+
+    <!-- MCP 服务器（桌面专属）：卡自带 h2 标题（同 SecurityPage F2 去重惯例），边界由 MdCard outlined 统一 -->
+    <MdCard v-if="showDesktop && mcpPlatform" class="block">
+      <McpServerCard :platform="mcpPlatform" />
     </MdCard>
   </section>
 </template>

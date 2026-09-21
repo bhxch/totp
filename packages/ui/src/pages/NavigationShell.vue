@@ -7,6 +7,7 @@ import MdTabs from '../components/md/MdTabs.vue'
 import type { BackupPlatform } from '../components/backupPlatform'
 import type { CloudPlatform } from '../components/cloudPlatform'
 import type { ImportSchemesApi } from '../components/importPlatform'
+import type { McpPlatform } from '../components/mcpCard'
 import type { SecurityPlatform } from '../components/securityPlatform'
 import type { SyncPlatform } from '../components/syncPlatform'
 import type { IconStore } from '../iconStore'
@@ -35,7 +36,9 @@ const props = withDefaults(defineProps<{
   schemesApi?: ImportSchemesApi | null
   /** Rail 底部附加动作(桌面端如「打开托盘」);非空时 settings 页 showDesktop=true */
   railActions?: { label: string; onClick: () => void }[]
-}>(), { store: null, platform: null, securityPlatform: null, syncPlatform: null, cloudPlatform: null, icons: null, schemesApi: null })
+  /** MCP 平台实现(桌面端);null/缺省 settings 页 MCP 卡不渲染 */
+  mcpPlatform?: McpPlatform | null
+}>(), { store: null, platform: null, securityPlatform: null, syncPlatform: null, cloudPlatform: null, icons: null, schemesApi: null, mcpPlatform: null })
 
 const route = useRoute()
 const router = useRouter()
@@ -87,7 +90,7 @@ const pageProps = computed<Record<string, unknown>>(() => {
     case 'import': return { store: p.store, platform: p.platform, schemesApi: p.schemesApi }
     case 'sync': return { store: p.store, platform: p.platform, cloudPlatform: p.cloudPlatform, syncPlatform: p.syncPlatform }
     case 'security': return { securityPlatform: p.securityPlatform }
-    case 'settings': return { store: p.store, securityPlatform: p.securityPlatform, showDesktop: (p.railActions?.length ?? 0) > 0, showExtension: p.syncPlatform != null }
+    case 'settings': return { store: p.store, securityPlatform: p.securityPlatform, showDesktop: (p.railActions?.length ?? 0) > 0, showExtension: p.syncPlatform != null, mcpPlatform: p.mcpPlatform ?? null }
     default: return {}
   }
 })
