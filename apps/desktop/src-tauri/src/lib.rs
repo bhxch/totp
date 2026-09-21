@@ -1,9 +1,9 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{
-    AppHandle, Manager, Runtime, WindowEvent,
     menu::{Menu, MenuItem},
     tray::{TrayIconBuilder, TrayIconEvent},
+    AppHandle, Manager, Runtime, WindowEvent,
 };
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
@@ -62,14 +62,23 @@ fn clipboard_clear_if_staged(app: AppHandle) -> bool {
 // 当前唯一可配项为 shortcutToggleMini（toggle mini 的全局快捷键），默认 alt+shift+t；
 // 解析失败/字段缺失一律回落到默认值，保证老版本 settings.json 不破坏启动。
 fn settings_path<R: Runtime>(app: &AppHandle<R>) -> Option<std::path::PathBuf> {
-    app.path().app_data_dir().ok().map(|d| d.join("settings.json"))
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("settings.json"))
 }
 
 fn read_shortcut_from_settings<R: Runtime>(app: &AppHandle<R>) -> String {
     const DEFAULT: &str = "alt+shift+t";
-    let Some(p) = settings_path(app) else { return DEFAULT.into() };
-    let Ok(text) = std::fs::read_to_string(&p) else { return DEFAULT.into() };
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { return DEFAULT.into() };
+    let Some(p) = settings_path(app) else {
+        return DEFAULT.into();
+    };
+    let Ok(text) = std::fs::read_to_string(&p) else {
+        return DEFAULT.into();
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return DEFAULT.into();
+    };
     v.get("shortcutToggleMini")
         .and_then(|x| x.as_str())
         .map(|s| s.to_string())
@@ -98,7 +107,10 @@ pub(crate) fn write_text_atomic(path: &std::path::Path, contents: &str) -> Resul
     }
 }
 
-fn write_shortcut_to_settings<R: Runtime>(app: &AppHandle<R>, shortcut: &str) -> Result<(), String> {
+fn write_shortcut_to_settings<R: Runtime>(
+    app: &AppHandle<R>,
+    shortcut: &str,
+) -> Result<(), String> {
     let p = settings_path(app).ok_or_else(|| "settings path unavailable".to_string())?;
     if let Some(parent) = p.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -109,17 +121,31 @@ fn write_shortcut_to_settings<R: Runtime>(app: &AppHandle<R>, shortcut: &str) ->
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
         .and_then(|v| v.as_object().cloned())
         .unwrap_or_default();
-    obj.insert("shortcutToggleMini".into(), serde_json::Value::String(shortcut.into()));
-    write_text_atomic(&p, &serde_json::to_string_pretty(&obj).map_err(|e| e.to_string())?)
+    obj.insert(
+        "shortcutToggleMini".into(),
+        serde_json::Value::String(shortcut.into()),
+    );
+    write_text_atomic(
+        &p,
+        &serde_json::to_string_pretty(&obj).map_err(|e| e.to_string())?,
+    )
 }
 
 /// 验收条目4：WebView 远程调试配置（settings.json `devtools` 键；明文区——须在无解锁态可读）。
 /// 返回 (enabled, port)；缺省 (false, 9222)，enabled=true 而 port<1024 时端口回落 9222
 fn read_devtools_from_settings_text(text: &str) -> (bool, u16) {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else { return (false, 9222) };
-    let Some(d) = v.get("devtools") else { return (false, 9222) };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
+        return (false, 9222);
+    };
+    let Some(d) = v.get("devtools") else {
+        return (false, 9222);
+    };
     let enabled = d.get("enabled").and_then(|x| x.as_bool()).unwrap_or(false);
-    let port = d.get("port").and_then(|x| x.as_u64()).filter(|p| (1024..=65535).contains(p)).unwrap_or(9222) as u16;
+    let port = d
+        .get("port")
+        .and_then(|x| x.as_u64())
+        .filter(|p| (1024..=65535).contains(p))
+        .unwrap_or(9222) as u16;
     (enabled, port)
 }
 
@@ -144,15 +170,30 @@ fn attach_parent_console() {}
 fn apply_devtools_env() {
     #[cfg(windows)]
     {
-        let Ok(appdata) = std::env::var("APPDATA") else { return };
-        let Ok(conf) = include_str!("../tauri.conf.json").parse::<serde_json::Value>() else { return };
-        let Some(id) = conf["identifier"].as_str() else { return };
-        let Ok(text) = std::fs::read_to_string(std::path::Path::new(&appdata).join(id).join("settings.json")) else { return };
+        let Ok(appdata) = std::env::var("APPDATA") else {
+            return;
+        };
+        let Ok(conf) = include_str!("../tauri.conf.json").parse::<serde_json::Value>() else {
+            return;
+        };
+        let Some(id) = conf["identifier"].as_str() else {
+            return;
+        };
+        let Ok(text) = std::fs::read_to_string(
+            std::path::Path::new(&appdata)
+                .join(id)
+                .join("settings.json"),
+        ) else {
+            return;
+        };
         let (enabled, port) = read_devtools_from_settings_text(&text);
         // 终审修复：仅在环境变量未设置时写入——外部（调试器/CI/用户 shell）预设的
         // WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS 可能携带其他浏览器参数，无条件覆写会挤掉它们
         if enabled && std::env::var_os("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").is_none() {
-            std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", format!("--remote-debugging-port={port}"));
+            std::env::set_var(
+                "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+                format!("--remote-debugging-port={port}"),
+            );
         }
     }
 }
@@ -170,8 +211,14 @@ fn devtools_get_config<R: Runtime>(app: AppHandle<R>) -> Result<serde_json::Valu
 }
 
 #[tauri::command]
-fn devtools_set_config<R: Runtime>(app: AppHandle<R>, enabled: bool, port: u16) -> Result<(), String> {
-    if port < 1024 { return Err(format!("端口 {port} 不在允许范围 1024-65535")); }
+fn devtools_set_config<R: Runtime>(
+    app: AppHandle<R>,
+    enabled: bool,
+    port: u16,
+) -> Result<(), String> {
+    if port < 1024 {
+        return Err(format!("端口 {port} 不在允许范围 1024-65535"));
+    }
     let path = settings_path(&app).ok_or("无法定位 settings.json".to_string())?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -182,7 +229,10 @@ fn devtools_set_config<R: Runtime>(app: AppHandle<R>, enabled: bool, port: u16) 
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_else(|| serde_json::json!({}));
     root["devtools"] = serde_json::json!({ "enabled": enabled, "port": port });
-    write_text_atomic(&path, &serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?)
+    write_text_atomic(
+        &path,
+        &serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?,
+    )
 }
 
 /** 取消注册当前所有快捷键，按新 spec 重新注册并持久化到 settings.json */
@@ -300,7 +350,12 @@ impl DialogGrants {
     }
 
     fn canonical_dirs(&self) -> Vec<std::path::PathBuf> {
-        self.entries.lock().unwrap().iter().map(|(_, d)| d.clone()).collect()
+        self.entries
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, d)| d.clone())
+            .collect()
     }
 }
 
@@ -310,9 +365,15 @@ fn grants_store_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
 
 /// 启动装载：持久化授权 → 会话登记（目录已不存在则丢弃）
 fn load_grants(app: &tauri::AppHandle) {
-    let Some(p) = grants_store_path(app) else { return };
-    let Ok(text) = std::fs::read_to_string(p) else { return };
-    let Ok(dirs) = serde_json::from_str::<Vec<String>>(&text) else { return };
+    let Some(p) = grants_store_path(app) else {
+        return;
+    };
+    let Ok(text) = std::fs::read_to_string(p) else {
+        return;
+    };
+    let Ok(dirs) = serde_json::from_str::<Vec<String>>(&text) else {
+        return;
+    };
     let state = app.state::<DialogGrants>();
     for d in dirs {
         if let Ok(c) = std::fs::canonicalize(&d) {
@@ -323,7 +384,9 @@ fn load_grants(app: &tauri::AppHandle) {
 
 /// 目录登记后的持久化（best-effort：写失败不影响本会话授权，仅影响重启后的自动备份）
 fn persist_grants(app: &tauri::AppHandle) {
-    let Some(p) = grants_store_path(app) else { return };
+    let Some(p) = grants_store_path(app) else {
+        return;
+    };
     if let Ok(json) = serde_json::to_string_pretty(&app.state::<DialogGrants>().canonical_dirs()) {
         let _ = std::fs::write(p, json);
     }
@@ -340,7 +403,9 @@ fn valid_backup_name(name: &str) -> bool {
 
 /** C9/F4：校验 path.parent() 必须落在后端登记目录内，canonicalize 双侧防 symlink/相对路径逃逸 */
 fn ensure_within(path: &std::path::Path, allowed_dir: &std::path::Path) -> Result<(), String> {
-    let parent = path.parent().ok_or_else(|| "invalid path: no parent".to_string())?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| "invalid path: no parent".to_string())?;
     let abs_parent = std::fs::canonicalize(parent).map_err(|e| e.to_string())?;
     let abs_allowed = std::fs::canonicalize(allowed_dir).map_err(|e| e.to_string())?;
     if !abs_parent.starts_with(&abs_allowed) {
@@ -371,46 +436,71 @@ fn grant_dir(app: &tauri::AppHandle, dir: std::path::PathBuf) -> Result<PickedPa
     let canonical = std::fs::canonicalize(&dir).map_err(|e| e.to_string())?;
     let token = app.state::<DialogGrants>().register(canonical);
     persist_grants(app);
-    Ok(PickedPath { dir_token: token, path: dir.to_string_lossy().to_string() })
+    Ok(PickedPath {
+        dir_token: token,
+        path: dir.to_string_lossy().to_string(),
+    })
 }
 
 /// 登记选中「文件所在父目录」（导出保存/打开读取为单次会话流，不落盘）。
 /// save 选中的新文件尚不存在，须对父目录 canonicalize（对话框保证父目录已存在）
-fn grant_file_parent(app: &tauri::AppHandle, file: std::path::PathBuf) -> Result<PickedPath, String> {
-    let dir = file.parent().ok_or_else(|| "invalid path: no parent".to_string())?.to_path_buf();
+fn grant_file_parent(
+    app: &tauri::AppHandle,
+    file: std::path::PathBuf,
+) -> Result<PickedPath, String> {
+    let dir = file
+        .parent()
+        .ok_or_else(|| "invalid path: no parent".to_string())?
+        .to_path_buf();
     let canonical = std::fs::canonicalize(&dir).map_err(|e| e.to_string())?;
     let token = app.state::<DialogGrants>().register(canonical);
-    Ok(PickedPath { dir_token: token, path: file.to_string_lossy().to_string() })
+    Ok(PickedPath {
+        dir_token: token,
+        path: file.to_string_lossy().to_string(),
+    })
 }
 
 /// 目录选择（备份源目录）：Rust 打开系统对话框 → canonical 登记 + 持久化 → {token, path}
 #[tauri::command]
 async fn pick_dir_os(app: tauri::AppHandle) -> Result<Option<PickedPath>, String> {
-    let Some(fp) = app.dialog().file().blocking_pick_folder() else { return Ok(None) };
+    let Some(fp) = app.dialog().file().blocking_pick_folder() else {
+        return Ok(None);
+    };
     grant_dir(&app, fp.into_path().map_err(|e| e.to_string())?).map(Some)
 }
 
 /// 文件打开（备份恢复/导入）：同上，登记父目录，过滤器与旧前端对话框一致
 #[tauri::command]
-async fn pick_open_file_os(app: tauri::AppHandle, filters: Vec<DialogFilter>) -> Result<Option<PickedPath>, String> {
+async fn pick_open_file_os(
+    app: tauri::AppHandle,
+    filters: Vec<DialogFilter>,
+) -> Result<Option<PickedPath>, String> {
     let mut b = app.dialog().file();
     for f in &filters {
         let exts: Vec<&str> = f.extensions.iter().map(|s| s.as_str()).collect();
         b = b.add_filter(f.name.clone(), &exts);
     }
-    let Some(fp) = b.blocking_pick_file() else { return Ok(None) };
+    let Some(fp) = b.blocking_pick_file() else {
+        return Ok(None);
+    };
     grant_file_parent(&app, fp.into_path().map_err(|e| e.to_string())?).map(Some)
 }
 
 /// 文件保存（备份导出）：default_name 为缺省文件名，登记保存位置父目录
 #[tauri::command]
-async fn pick_save_file_os(app: tauri::AppHandle, default_name: String, filters: Vec<DialogFilter>) -> Result<Option<PickedPath>, String> {
+async fn pick_save_file_os(
+    app: tauri::AppHandle,
+    default_name: String,
+    filters: Vec<DialogFilter>,
+) -> Result<Option<PickedPath>, String> {
     let mut b = app.dialog().file().set_file_name(default_name);
     for f in &filters {
         let exts: Vec<&str> = f.extensions.iter().map(|s| s.as_str()).collect();
         b = b.add_filter(f.name.clone(), &exts);
     }
-    let Some(fp) = b.blocking_save_file() else { return Ok(None) };
+    let Some(fp) = b.blocking_save_file() else {
+        return Ok(None);
+    };
     grant_file_parent(&app, fp.into_path().map_err(|e| e.to_string())?).map(Some)
 }
 
@@ -418,7 +508,9 @@ async fn pick_save_file_os(app: tauri::AppHandle, default_name: String, filters:
 #[tauri::command]
 fn dir_token_os(app: tauri::AppHandle, dir: String) -> Result<String, String> {
     let canonical = std::fs::canonicalize(&dir).map_err(|e| e.to_string())?;
-    app.state::<DialogGrants>().token_for(&canonical).ok_or_else(|| "dir not granted via dialog".into())
+    app.state::<DialogGrants>()
+        .token_for(&canonical)
+        .ok_or_else(|| "dir not granted via dialog".into())
 }
 
 #[tauri::command]
@@ -435,7 +527,11 @@ fn remove_backup_file(app: tauri::AppHandle, name: String) -> Result<(), String>
 }
 
 /// 命令本体抽为 *_granted inner（tauri::State 单测无法构造，测试直打 inner，单一代码路径）
-fn remove_backup_file_granted(grants: &DialogGrants, path: &str, dir_token: &str) -> Result<(), String> {
+fn remove_backup_file_granted(
+    grants: &DialogGrants,
+    path: &str,
+    dir_token: &str,
+) -> Result<(), String> {
     let p = std::path::Path::new(path);
     let name = p
         .file_name()
@@ -451,17 +547,26 @@ fn remove_backup_file_granted(grants: &DialogGrants, path: &str, dir_token: &str
 /// 用户自选备份目录的删除命令（D4/F4）：与 remove_backup_file 同守护（白名单名 + ensure_within），
 /// 只是授权目录从「AppData/backups 固定值」改为「dirToken 反查的后端登记目录（对话框授权）」
 #[tauri::command]
-fn remove_backup_file_os(grants: tauri::State<DialogGrants>, path: String, dir_token: String) -> Result<(), String> {
+fn remove_backup_file_os(
+    grants: tauri::State<DialogGrants>,
+    path: String,
+    dir_token: String,
+) -> Result<(), String> {
     remove_backup_file_granted(&grants, &path, &dir_token)
 }
 
-fn list_backup_files_granted(grants: &DialogGrants, dir_token: &str) -> Result<Vec<String>, String> {
+fn list_backup_files_granted(
+    grants: &DialogGrants,
+    dir_token: &str,
+) -> Result<Vec<String>, String> {
     let dir = grants.resolve(dir_token)?;
     let rd = std::fs::read_dir(&dir).map_err(|e| e.to_string())?;
     let mut names: Vec<String> = rd
         .flatten()
         .map(|e| e.file_name().to_string_lossy().to_string())
-        .filter(|n| valid_backup_name(n) || (n.starts_with("conflict-") && n.ends_with(".totpbackup")))
+        .filter(|n| {
+            valid_backup_name(n) || (n.starts_with("conflict-") && n.ends_with(".totpbackup"))
+        })
         .collect();
     names.sort();
     Ok(names)
@@ -471,12 +576,19 @@ fn list_backup_files_granted(grants: &DialogGrants, dir_token: &str) -> Result<V
 /// （dirToken 反查登记目录），列举仅返回白名单名
 /// （vault-*.totpbackup 与 conflict-*.totpbackup），不泄露目录内其他文件
 #[tauri::command]
-fn list_backup_files_os(grants: tauri::State<DialogGrants>, dir_token: String) -> Result<Vec<String>, String> {
+fn list_backup_files_os(
+    grants: tauri::State<DialogGrants>,
+    dir_token: String,
+) -> Result<Vec<String>, String> {
     list_backup_files_granted(&grants, &dir_token)
 }
 
 #[tauri::command]
-fn read_text_file_os(grants: tauri::State<DialogGrants>, path: String, dir_token: String) -> Result<String, String> {
+fn read_text_file_os(
+    grants: tauri::State<DialogGrants>,
+    path: String,
+    dir_token: String,
+) -> Result<String, String> {
     // 扩展名白名单：与写侧对齐；本命令唯一用途是读取备份文件，
     // 限定 .totpbackup 防止被前端 XSS 当作任意文件读取原语
     if !path.ends_with(".totpbackup") {
@@ -490,7 +602,12 @@ fn read_text_file_os(grants: tauri::State<DialogGrants>, path: String, dir_token
     std::fs::read_to_string(p).map_err(|e| e.to_string())
 }
 
-fn write_text_file_granted(grants: &DialogGrants, path: String, contents: String, dir_token: &str) -> Result<(), String> {
+fn write_text_file_granted(
+    grants: &DialogGrants,
+    path: String,
+    contents: String,
+    dir_token: &str,
+) -> Result<(), String> {
     if path.is_empty() {
         return Err("empty path".into());
     }
@@ -525,7 +642,12 @@ fn write_text_file_os(
 /// invoke JSON 数组通道），PNG 等二进制不经 UTF-8 文本管道防编码损坏。
 /// 扩展名集合按本命令用途固定为 .png（不复用文本侧 .totpbackup/.json/.txt，也不把 .png
 /// 加进文本命令——文本写 PNG 必然损坏，各命令用途与白名单一一对应）
-fn write_bytes_file_granted(grants: &DialogGrants, path: String, contents: Vec<u8>, dir_token: &str) -> Result<(), String> {
+fn write_bytes_file_granted(
+    grants: &DialogGrants,
+    path: String,
+    contents: Vec<u8>,
+    dir_token: &str,
+) -> Result<(), String> {
     if path.is_empty() {
         return Err("empty path".into());
     }
@@ -557,7 +679,11 @@ fn write_bytes_file_os(
 // 扩展名白名单限定导入用途，防止被前端 XSS 当作任意文件读取原语。
 
 #[tauri::command]
-fn read_import_file_os(grants: tauri::State<DialogGrants>, path: String, dir_token: String) -> Result<String, String> {
+fn read_import_file_os(
+    grants: tauri::State<DialogGrants>,
+    path: String,
+    dir_token: String,
+) -> Result<String, String> {
     // WinAuth(.wauth/.xml)、Aegis(.json/.aegis)、纯文本 URI 批量(.txt)
     const IMPORT_EXTENSIONS: [&str; 5] = [".json", ".wauth", ".xml", ".txt", ".aegis"];
     let lower = path.to_lowercase();
@@ -575,11 +701,27 @@ fn read_import_file_os(grants: tauri::State<DialogGrants>, path: String, dir_tok
 // 导入文件字节读取（SQLite 等二进制格式，ImportCard 字节入口）：与 read_import_file_os 同构，
 // 白名单在其基础上加 .db/.sqlitedb/.sqlite 与 AP 加密 zip 的 .zip；返回原始字节（invoke JSON 数组），不经 UTF-8 文本管道
 #[tauri::command]
-fn read_import_file_bytes_os(grants: tauri::State<DialogGrants>, path: String, dir_token: String) -> Result<Vec<u8>, String> {
-    const IMPORT_BYTE_EXTENSIONS: [&str; 9] =
-        [".json", ".wauth", ".xml", ".txt", ".aegis", ".db", ".sqlitedb", ".sqlite", ".zip"];
+fn read_import_file_bytes_os(
+    grants: tauri::State<DialogGrants>,
+    path: String,
+    dir_token: String,
+) -> Result<Vec<u8>, String> {
+    const IMPORT_BYTE_EXTENSIONS: [&str; 9] = [
+        ".json",
+        ".wauth",
+        ".xml",
+        ".txt",
+        ".aegis",
+        ".db",
+        ".sqlitedb",
+        ".sqlite",
+        ".zip",
+    ];
     let lower = path.to_lowercase();
-    if !IMPORT_BYTE_EXTENSIONS.iter().any(|ext| lower.ends_with(ext)) {
+    if !IMPORT_BYTE_EXTENSIONS
+        .iter()
+        .any(|ext| lower.ends_with(ext))
+    {
         return Err("invalid import file extension".into());
     }
     let p = std::path::Path::new(&path);
@@ -595,7 +737,11 @@ fn read_import_file_bytes_os(grants: tauri::State<DialogGrants>, path: String, d
 // 故在命令体内按窗口 label 收窄：mini 恒不执行导入/解锁/安全卡操作（锁定态迷你窗不可用），
 // 暴露面从两个 webview 收窄到主窗口。主窗口 webview 内的脚本仍可调用（该残余边界见各命令注释）。
 fn ensure_main_window_label(label: &str) -> Result<(), String> {
-    if label == "main" { Ok(()) } else { Err("仅主窗口可调用此命令".into()) }
+    if label == "main" {
+        Ok(())
+    } else {
+        Err("仅主窗口可调用此命令".into())
+    }
 }
 
 // WinAuth DPAPI 层解密（ CryptUnprotectData，无附加熵，CRYPTPROTECT_UI_FORBIDDEN）。
@@ -610,7 +756,11 @@ fn ensure_main_window_label(label: &str) -> Result<(), String> {
 const WINAUTH_IMPORT_PURPOSE: &str = "winauth-import";
 
 fn ensure_winauth_purpose(purpose: &str) -> Result<(), String> {
-    if purpose == WINAUTH_IMPORT_PURPOSE { Ok(()) } else { Err("不支持的解密用途".into()) }
+    if purpose == WINAUTH_IMPORT_PURPOSE {
+        Ok(())
+    } else {
+        Err("不支持的解密用途".into())
+    }
 }
 
 fn is_hex_ascii(text: &str) -> bool {
@@ -669,13 +819,21 @@ fn decrypt_dpapi_inner(window_label: &str, purpose: &str, b64: &str) -> Result<S
 
 #[cfg(windows)]
 #[tauri::command]
-fn decrypt_dpapi(window: tauri::WebviewWindow, b64: String, purpose: String) -> Result<String, String> {
+fn decrypt_dpapi(
+    window: tauri::WebviewWindow,
+    b64: String,
+    purpose: String,
+) -> Result<String, String> {
     decrypt_dpapi_inner(window.label(), &purpose, &b64)
 }
 
 #[cfg(not(windows))]
 #[tauri::command]
-fn decrypt_dpapi(_window: tauri::WebviewWindow, _b64: String, _purpose: String) -> Result<String, String> {
+fn decrypt_dpapi(
+    _window: tauri::WebviewWindow,
+    _b64: String,
+    _purpose: String,
+) -> Result<String, String> {
     Err("仅 Windows 支持 DPAPI 解密".into())
 }
 
@@ -685,7 +843,7 @@ fn decrypt_dpapi(_window: tauri::WebviewWindow, _b64: String, _purpose: String) 
 // 最小 base64 编码：与上方 base64_decode 同理念，标准字母表 + padding，不引第三方依赖。
 fn base64_encode(data: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as u32;
         let b1 = *chunk.get(1).unwrap_or(&0) as u32;
@@ -693,8 +851,16 @@ fn base64_encode(data: &[u8]) -> String {
         let n = (b0 << 16) | (b1 << 8) | b2;
         out.push(TABLE[(n >> 18) as usize & 63] as char);
         out.push(TABLE[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 { TABLE[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if chunk.len() > 2 { TABLE[n as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            TABLE[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TABLE[n as usize & 63] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -704,9 +870,9 @@ fn base64_encode(data: &[u8]) -> String {
 // （第三方 blob 恒无熵，不得引入）。CRYPTPROTECT_UI_FORBIDDEN 禁 UI。
 #[cfg(windows)]
 fn dpapi_protect_bytes(plain: &[u8], entropy: Option<&[u8]>) -> Result<Vec<u8>, String> {
-    use windows::Win32::Foundation::{HLOCAL, LocalFree};
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
     use windows::Win32::Security::Cryptography::{
-        CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB, CryptProtectData,
+        CryptProtectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
     };
 
     if plain.is_empty() {
@@ -717,12 +883,24 @@ fn dpapi_protect_bytes(plain: &[u8], entropy: Option<&[u8]>) -> Result<Vec<u8>, 
             cbData: plain.len() as u32,
             pbData: plain.as_ptr() as *mut u8,
         };
-        let entropy_param =
-            entropy.map(|e| CRYPT_INTEGER_BLOB { cbData: e.len() as u32, pbData: e.as_ptr() as *mut u8 });
-        let entropy_ptr = entropy_param.as_ref().map(|b| b as *const CRYPT_INTEGER_BLOB);
+        let entropy_param = entropy.map(|e| CRYPT_INTEGER_BLOB {
+            cbData: e.len() as u32,
+            pbData: e.as_ptr() as *mut u8,
+        });
+        let entropy_ptr = entropy_param
+            .as_ref()
+            .map(|b| b as *const CRYPT_INTEGER_BLOB);
         let mut out_blob = CRYPT_INTEGER_BLOB::default();
-        CryptProtectData(&in_blob, None, entropy_ptr, None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut out_blob)
-            .map_err(|e| format!("DPAPI 加密失败: {e}"))?;
+        CryptProtectData(
+            &in_blob,
+            None,
+            entropy_ptr,
+            None,
+            None,
+            CRYPTPROTECT_UI_FORBIDDEN,
+            &mut out_blob,
+        )
+        .map_err(|e| format!("DPAPI 加密失败: {e}"))?;
         let cipher = std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize).to_vec();
         let _ = LocalFree(Some(HLOCAL(out_blob.pbData.cast())));
         Ok(cipher)
@@ -731,9 +909,9 @@ fn dpapi_protect_bytes(plain: &[u8], entropy: Option<&[u8]>) -> Result<Vec<u8>, 
 
 #[cfg(windows)]
 fn dpapi_unprotect_bytes(cipher: &[u8], entropy: Option<&[u8]>) -> Result<Vec<u8>, String> {
-    use windows::Win32::Foundation::{HLOCAL, LocalFree};
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
     use windows::Win32::Security::Cryptography::{
-        CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB, CryptUnprotectData,
+        CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
     };
 
     if cipher.is_empty() {
@@ -744,12 +922,24 @@ fn dpapi_unprotect_bytes(cipher: &[u8], entropy: Option<&[u8]>) -> Result<Vec<u8
             cbData: cipher.len() as u32,
             pbData: cipher.as_ptr() as *mut u8,
         };
-        let entropy_param =
-            entropy.map(|e| CRYPT_INTEGER_BLOB { cbData: e.len() as u32, pbData: e.as_ptr() as *mut u8 });
-        let entropy_ptr = entropy_param.as_ref().map(|b| b as *const CRYPT_INTEGER_BLOB);
+        let entropy_param = entropy.map(|e| CRYPT_INTEGER_BLOB {
+            cbData: e.len() as u32,
+            pbData: e.as_ptr() as *mut u8,
+        });
+        let entropy_ptr = entropy_param
+            .as_ref()
+            .map(|b| b as *const CRYPT_INTEGER_BLOB);
         let mut out_blob = CRYPT_INTEGER_BLOB::default();
-        CryptUnprotectData(&in_blob, None, entropy_ptr, None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut out_blob)
-            .map_err(|e| format!("DPAPI 解密失败: {e}"))?;
+        CryptUnprotectData(
+            &in_blob,
+            None,
+            entropy_ptr,
+            None,
+            None,
+            CRYPTPROTECT_UI_FORBIDDEN,
+            &mut out_blob,
+        )
+        .map_err(|e| format!("DPAPI 解密失败: {e}"))?;
         let plain = std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize).to_vec();
         let _ = LocalFree(Some(HLOCAL(out_blob.pbData.cast())));
         Ok(plain)
@@ -896,7 +1086,10 @@ fn os_auto_protect(_window: tauri::WebviewWindow, _data_b64: String) -> Result<S
 
 #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 #[tauri::command]
-fn os_auto_unprotect(_window: tauri::WebviewWindow, _wrapped_b64: String) -> Result<String, String> {
+fn os_auto_unprotect(
+    _window: tauri::WebviewWindow,
+    _wrapped_b64: String,
+) -> Result<String, String> {
     Err("当前平台不支持 OS 自动解锁".into())
 }
 
@@ -917,8 +1110,11 @@ pub fn run() {
     apply_devtools_env();
     // CLI 覆盖仅本次运行生效：内存传递给 setup，绝不落盘 settings.json；
     // headless 无人值守下无条件强制启用 MCP（唯一交互入口，终审修复）
-    let mcp_override =
-        mcp_server::McpOverride { port: cli.mcp_port, token: cli.mcp_token, force_enabled: cli.headless_mcp };
+    let mcp_override = mcp_server::McpOverride {
+        port: cli.mcp_port,
+        token: cli.mcp_token,
+        force_enabled: cli.headless_mcp,
+    };
     let headless = cli.headless_mcp;
     let mut builder = tauri::Builder::default();
     // 真机 E2E 基建：debug 构建装配 mcp-bridge（仅绑 127.0.0.1）供 tauri-mcp 驱动 UI；release 不编译
@@ -981,7 +1177,7 @@ pub fn run() {
             lock_events::start(app.handle().clone());
             // C7：按 settings 覆写默认快捷键——unregister_all + on_shortcut 重新注册一次。
             // Builder.with_shortcuts 在 setup 之前执行已注册默认 alt+shift+t，故仅在配置差异时重注册
-            let configured = read_shortcut_from_settings(&app.handle());
+            let configured = read_shortcut_from_settings(app.handle());
             if configured != "alt+shift+t" {
                 let gs = app.global_shortcut();
                 if gs.unregister_all().is_ok() {
@@ -998,14 +1194,21 @@ pub fn run() {
             // 验收条目13：无头模式无窗口可看，托盘补「复制 MCP 连接信息」兜底
             // （文本含 token，写入登记 F16 暂存——托盘退出兜底清除）
             let mcp_info = if headless {
-                Some(format!("MCP: http://127.0.0.1:{}  token: {}", mcp_cfg.port, mcp_cfg.token))
+                Some(format!(
+                    "MCP: http://127.0.0.1:{}  token: {}",
+                    mcp_cfg.port, mcp_cfg.token
+                ))
             } else {
                 None
             };
             let mcp_info_item = match &mcp_info {
-                Some(_) => {
-                    Some(MenuItem::with_id(app, "copy-mcp-info", "复制 MCP 连接信息", true, None::<&str>)?)
-                }
+                Some(_) => Some(MenuItem::with_id(
+                    app,
+                    "copy-mcp-info",
+                    "复制 MCP 连接信息",
+                    true,
+                    None::<&str>,
+                )?),
                 None => None,
             };
             let mut items: Vec<&dyn tauri::menu::IsMenuItem<_>> = vec![&show_main_item];
@@ -1021,7 +1224,12 @@ pub fn run() {
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_tray_icon_event(|_tray, event| {
-                    if let TrayIconEvent::Click { button, button_state: tauri::tray::MouseButtonState::Up, .. } = event {
+                    if let TrayIconEvent::Click {
+                        button,
+                        button_state: tauri::tray::MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
                         match button {
                             tauri::tray::MouseButton::Left => toggle_mini(_tray.app_handle()),
                             // 中键直达主窗口，省去右键菜单一步（等价「显示主窗口」）
@@ -1146,7 +1354,10 @@ mod tests {
             .map(|e| e.file_name().to_string_lossy().to_string())
             .filter(|n| n.contains(".tmp-"))
             .collect();
-        assert!(leftovers.is_empty(), "临时文件必须被 rename 吸走，残留: {leftovers:?}");
+        assert!(
+            leftovers.is_empty(),
+            "临时文件必须被 rename 吸走，残留: {leftovers:?}"
+        );
         std::fs::remove_dir_all(&base).ok();
     }
 
@@ -1185,7 +1396,10 @@ mod tests {
         assert_eq!(g.resolve(&token).unwrap(), canonical);
         assert_eq!(g.token_for(&canonical).as_deref(), Some(token.as_str()));
         // 未登记目录无 token 可反查
-        assert_eq!(g.token_for(&canonical.parent().unwrap().to_path_buf()), None);
+        assert_eq!(
+            g.token_for(&canonical.parent().unwrap().to_path_buf()),
+            None
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1226,7 +1440,10 @@ mod tests {
             tokens.push(g.register(std::fs::canonicalize(&d).unwrap()));
         }
         assert!(g.resolve(&tokens[0]).is_err(), "最旧授权必须被 LRU 逐出");
-        assert!(g.resolve(&tokens[GRANT_CAP]).is_ok(), "最新授权必须仍在登记");
+        assert!(
+            g.resolve(&tokens[GRANT_CAP]).is_ok(),
+            "最新授权必须仍在登记"
+        );
         assert_eq!(g.canonical_dirs().len(), GRANT_CAP);
         std::fs::remove_dir_all(&base).ok();
     }
@@ -1250,7 +1467,9 @@ mod tests {
         assert!(outside.exists());
         // 未知 token（未授权句柄）拒绝删除
         std::fs::write(&target, "x").unwrap();
-        assert!(remove_backup_file_granted(&grants, target.to_str().unwrap(), "forged-token").is_err());
+        assert!(
+            remove_backup_file_granted(&grants, target.to_str().unwrap(), "forged-token").is_err()
+        );
         assert!(target.exists());
         std::fs::remove_dir_all(&base).ok();
     }
@@ -1264,22 +1483,47 @@ mod tests {
         let token = grants.register(std::fs::canonicalize(&allowed).unwrap());
         // 登记目录内合法备份名：写入成功
         let target = allowed.join("vault-20260916-120000.totpbackup");
-        write_text_file_granted(&grants, target.to_str().unwrap().into(), "{}".into(), &token).unwrap();
+        write_text_file_granted(
+            &grants,
+            target.to_str().unwrap().into(),
+            "{}".into(),
+            &token,
+        )
+        .unwrap();
         assert!(target.exists());
         // 文本导出（批① §2.3）：白名单内 .txt/.json（大小写不敏感）写入成功
         let txt = allowed.join("totp-export.txt");
-        write_text_file_granted(&grants, txt.to_str().unwrap().into(), "otpauth://".into(), &token).unwrap();
+        write_text_file_granted(
+            &grants,
+            txt.to_str().unwrap().into(),
+            "otpauth://".into(),
+            &token,
+        )
+        .unwrap();
         assert!(txt.exists());
         let json = allowed.join("aegis-export.JSON");
-        write_text_file_granted(&grants, json.to_str().unwrap().into(), "{}".into(), &token).unwrap();
+        write_text_file_granted(&grants, json.to_str().unwrap().into(), "{}".into(), &token)
+            .unwrap();
         assert!(json.exists());
         // 非白名单扩展名拒绝
         let exe = allowed.join("evil.exe");
-        assert!(write_text_file_granted(&grants, exe.to_str().unwrap().into(), "{}".into(), &token).is_err());
+        assert!(write_text_file_granted(
+            &grants,
+            exe.to_str().unwrap().into(),
+            "{}".into(),
+            &token
+        )
+        .is_err());
         assert!(!exe.exists());
         // 登记目录之外（.totpbackup 合法名）遏制拒绝且不落盘
         let outside = base.join("vault-20260916-120000.totpbackup");
-        assert!(write_text_file_granted(&grants, outside.to_str().unwrap().into(), "{}".into(), &token).is_err());
+        assert!(write_text_file_granted(
+            &grants,
+            outside.to_str().unwrap().into(),
+            "{}".into(),
+            &token
+        )
+        .is_err());
         assert!(!outside.exists());
         std::fs::remove_dir_all(&base).ok();
     }
@@ -1294,17 +1538,27 @@ mod tests {
         // 登记目录内 .png（大小写不敏感）：字节写入成功且内容保真
         let png = allowed.join("totp-qr-sheet.PNG");
         let bytes: Vec<u8> = vec![0x89, 0x50, 0x4E, 0x47, 0x00, 0xFF];
-        write_bytes_file_granted(&grants, png.to_str().unwrap().into(), bytes.clone(), &token).unwrap();
+        write_bytes_file_granted(&grants, png.to_str().unwrap().into(), bytes.clone(), &token)
+            .unwrap();
         assert_eq!(std::fs::read(&png).unwrap(), bytes);
         // 非白名单扩展名拒绝（含文本侧合法的 .txt/.totpbackup——各命令白名单独立，不互通）
         for name in ["evil.exe", "note.txt", "vault-20260916-120000.totpbackup"] {
             let p = allowed.join(name);
-            assert!(write_bytes_file_granted(&grants, p.to_str().unwrap().into(), bytes.clone(), &token).is_err());
+            assert!(write_bytes_file_granted(
+                &grants,
+                p.to_str().unwrap().into(),
+                bytes.clone(),
+                &token
+            )
+            .is_err());
             assert!(!p.exists());
         }
         // 登记目录之外（.png 合法扩展名）遏制拒绝且不落盘
         let outside = base.join("totp-qr-sheet.png");
-        assert!(write_bytes_file_granted(&grants, outside.to_str().unwrap().into(), bytes, &token).is_err());
+        assert!(
+            write_bytes_file_granted(&grants, outside.to_str().unwrap().into(), bytes, &token)
+                .is_err()
+        );
         assert!(!outside.exists());
         std::fs::remove_dir_all(&base).ok();
     }
@@ -1341,7 +1595,13 @@ mod tests {
     fn list_backup_files_os_returns_sorted_vault_and_conflict_only() {
         let base = std::env::temp_dir().join("totp_list_os_test");
         std::fs::create_dir_all(&base).unwrap();
-        for n in ["vault-20260916-120001.totpbackup", "vault-20260916-120000.totpbackup", "conflict-20260916-120000.totpbackup", "conflict-foo.txt", "secret.txt"] {
+        for n in [
+            "vault-20260916-120001.totpbackup",
+            "vault-20260916-120000.totpbackup",
+            "conflict-20260916-120000.totpbackup",
+            "conflict-foo.txt",
+            "secret.txt",
+        ] {
             std::fs::write(base.join(n), "x").unwrap();
         }
         let grants = DialogGrants::default();
@@ -1378,7 +1638,10 @@ mod tests {
     fn dek_wrap_v2_has_marker_prefix() {
         let wrapped = dek_protect_inner("main", &base64_encode(&[1u8; 32])).expect("protect");
         let raw = base64_decode(&wrapped).expect("base64");
-        assert!(raw.starts_with(DEK_WRAP_MARKER), "v2 包裹必须带 TOTPDEK1 前缀");
+        assert!(
+            raw.starts_with(DEK_WRAP_MARKER),
+            "v2 包裹必须带 TOTPDEK1 前缀"
+        );
     }
 
     // F3：包裹侧强校验 32B——非 DEK 载荷不得进入本通道（窄接口）
@@ -1393,7 +1656,11 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn dek_unprotect_rejects_foreign_no_entropy_blob() {
-        let foreign = dpapi_protect_bytes(b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", None).expect("protect");
+        let foreign = dpapi_protect_bytes(
+            b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            None,
+        )
+        .expect("protect");
         assert!(dek_unprotect_inner("main", &base64_encode(&foreign)).is_err());
     }
 
@@ -1401,7 +1668,8 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn dek_unprotect_rejects_wrong_entropy_blob() {
-        let foreign = dpapi_protect_bytes(&[7u8; 32], Some(b"some-other-app-entropy")).expect("protect");
+        let foreign =
+            dpapi_protect_bytes(&[7u8; 32], Some(b"some-other-app-entropy")).expect("protect");
         assert!(dek_unprotect_inner("main", &base64_encode(&foreign)).is_err());
     }
 
@@ -1411,7 +1679,8 @@ mod tests {
     fn dek_unprotect_legacy_blob_fallback() {
         let dek = [9u8; 32];
         let legacy = dpapi_protect_bytes(&dek, None).expect("protect legacy");
-        let unwrapped = dek_unprotect_inner("main", &base64_encode(&legacy)).expect("legacy unwrap");
+        let unwrapped =
+            dek_unprotect_inner("main", &base64_encode(&legacy)).expect("legacy unwrap");
         assert_eq!(base64_encode(&dek), unwrapped);
     }
 
@@ -1419,7 +1688,11 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn dek_unprotect_legacy_rejects_non_32b_plaintext() {
-        let winauth_shape = dpapi_protect_bytes(b"0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF", None).expect("protect");
+        let winauth_shape = dpapi_protect_bytes(
+            b"0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
+            None,
+        )
+        .expect("protect");
         assert!(dek_unprotect_inner("main", &base64_encode(&winauth_shape)).is_err());
     }
 
@@ -1436,8 +1709,13 @@ mod tests {
         // 解锁后前端以当前 DEK 重包并替换落盘
         let migrated = dek_protect_inner("main", &unwrapped).expect("rewrap");
         assert_ne!(migrated, legacy_b64, "v2 重包密文必须不同于旧格式");
-        assert!(base64_decode(&migrated).expect("base64").starts_with(DEK_WRAP_MARKER));
-        assert_eq!(unwrapped, dek_unprotect_inner("main", &migrated).expect("v2 unwrap"));
+        assert!(base64_decode(&migrated)
+            .expect("base64")
+            .starts_with(DEK_WRAP_MARKER));
+        assert_eq!(
+            unwrapped,
+            dek_unprotect_inner("main", &migrated).expect("v2 unwrap")
+        );
     }
 
     // F3：DEK 通道仅主窗口可调用（mini 恒不执行解锁）
@@ -1467,7 +1745,8 @@ mod tests {
         );
         // 用途不符 / 非 hex 明文 / 非主窗口 → 拒绝
         assert!(decrypt_dpapi_inner("main", "wrong-purpose", &base64_encode(&blob)).is_err());
-        let non_hex = dpapi_protect_bytes("普通文本明文不是 hex".as_bytes(), None).expect("protect");
+        let non_hex =
+            dpapi_protect_bytes("普通文本明文不是 hex".as_bytes(), None).expect("protect");
         assert!(decrypt_dpapi_inner("main", "winauth-import", &base64_encode(&non_hex)).is_err());
         assert!(decrypt_dpapi_inner("mini", "winauth-import", &base64_encode(&blob)).is_err());
     }
@@ -1493,6 +1772,9 @@ mod tests {
             (true, 9222),
         );
         // 终审修复补测：devtools 非对象形态（字符串等）整体回落默认（关）
-        assert_eq!(read_devtools_from_settings_text(r#"{"devtools":"on"}"#), (false, 9222));
+        assert_eq!(
+            read_devtools_from_settings_text(r#"{"devtools":"on"}"#),
+            (false, 9222)
+        );
     }
 }

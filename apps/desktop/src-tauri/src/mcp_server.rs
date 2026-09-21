@@ -34,38 +34,68 @@ pub struct McpConfig {
 
 impl Default for McpConfig {
     fn default() -> Self {
-        Self { enabled: false, mode: GateMode::Wildcard, port: 47215, token: String::new(), whitelist: Vec::new() }
+        Self {
+            enabled: false,
+            mode: GateMode::Wildcard,
+            port: 47215,
+            token: String::new(),
+            whitelist: Vec::new(),
+        }
     }
 }
 
 pub fn load_mcp_config_inner(settings_file: &std::path::Path) -> McpConfig {
     // 与 read_shortcut_from_settings 同口径：读不到/解析失败一律默认（默认=关闭，安全侧）
-    let Ok(text) = std::fs::read_to_string(settings_file) else { return McpConfig::default() };
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { return McpConfig::default() };
-    v.get("mcp").map(|m| serde_json::from_value::<McpConfig>(m.clone()).unwrap_or_default()).unwrap_or_default()
+    let Ok(text) = std::fs::read_to_string(settings_file) else {
+        return McpConfig::default();
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return McpConfig::default();
+    };
+    v.get("mcp")
+        .map(|m| serde_json::from_value::<McpConfig>(m.clone()).unwrap_or_default())
+        .unwrap_or_default()
 }
 
 /// 合并写：只动 `mcp` 键，外来键（shortcutToggleMini 等）原样保留。
 /// 参数为 settings.json 文件路径本身（测试注入临时文件即可全链路验证）
-pub fn save_mcp_config_inner(settings_file: &std::path::Path, cfg: &McpConfig) -> Result<(), String> {
+pub fn save_mcp_config_inner(
+    settings_file: &std::path::Path,
+    cfg: &McpConfig,
+) -> Result<(), String> {
     if let Some(parent) = settings_file.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let mut obj: serde_json::Map<String, serde_json::Value> = std::fs::read_to_string(settings_file)
-        .ok()
-        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-        .and_then(|v| v.as_object().cloned())
-        .unwrap_or_default();
-    obj.insert("mcp".into(), serde_json::to_value(cfg).map_err(|e| e.to_string())?);
+    let mut obj: serde_json::Map<String, serde_json::Value> =
+        std::fs::read_to_string(settings_file)
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default();
+    obj.insert(
+        "mcp".into(),
+        serde_json::to_value(cfg).map_err(|e| e.to_string())?,
+    );
     // 原子写（审查 I-5）：与 lib.rs 的 write_shortcut_to_settings 共用同一临时文件+rename 通道，
     // 崩溃中途不损坏 settings.json
-    crate::write_text_atomic(settings_file, &serde_json::to_string_pretty(&obj).map_err(|e| e.to_string())?)
+    crate::write_text_atomic(
+        settings_file,
+        &serde_json::to_string_pretty(&obj).map_err(|e| e.to_string())?,
+    )
 }
 
-pub fn add_whitelist_inner(settings_file: &std::path::Path, cfg: &mut McpConfig, pattern: &str) -> Result<(), String> {
+pub fn add_whitelist_inner(
+    settings_file: &std::path::Path,
+    cfg: &mut McpConfig,
+    pattern: &str,
+) -> Result<(), String> {
     // 去重比较大小写不敏感：与 wildcard 匹配口径一致，避免 claude*/Claude* 积累两条等价条目；
     // 命中去重直接返回，不重写文件
-    if cfg.whitelist.iter().any(|w| w.eq_ignore_ascii_case(pattern)) {
+    if cfg
+        .whitelist
+        .iter()
+        .any(|w| w.eq_ignore_ascii_case(pattern))
+    {
         return Ok(());
     }
     cfg.whitelist.push(pattern.to_string());
@@ -124,12 +154,18 @@ pub fn decide_gate(cfg: &McpConfig, client_name: Option<&str>) -> GateDecision {
         Token => GateDecision::Allow,
         Wildcard | Exact => {
             // 身份缺失 fail-closed：clientInfo 与 UA 全无时除 token 档外一律待批准
-            let Some(name) = client_name else { return GateDecision::NeedsApproval };
+            let Some(name) = client_name else {
+                return GateDecision::NeedsApproval;
+            };
             let hit = match cfg.mode {
                 Exact => cfg.whitelist.iter().any(|w| w.eq_ignore_ascii_case(name)),
                 _ => cfg.whitelist.iter().any(|w| wildcard_match(w, name)),
             };
-            if hit { GateDecision::Allow } else { GateDecision::NeedsApproval }
+            if hit {
+                GateDecision::Allow
+            } else {
+                GateDecision::NeedsApproval
+            }
         }
         AlwaysAsk => GateDecision::NeedsApproval,
     }
@@ -174,7 +210,8 @@ pub struct BridgeShared {
 
 impl BridgeShared {
     pub fn alloc_id(&self) -> u64 {
-        self.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        self.next_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     }
     pub fn insert(&self, id: u64, tx: oneshot::Sender<Result<serde_json::Value, String>>) {
         if let Ok(mut p) = self.pending.lock() {
@@ -185,7 +222,11 @@ impl BridgeShared {
         self.pending.lock().ok()?.remove(&id)
     }
     /// 前端迟到回传（超时后）静默丢弃，返回 Err 供命令层忽略
-    pub fn respond(&self, id: u64, result: Result<serde_json::Value, String>) -> Result<(), String> {
+    pub fn respond(
+        &self,
+        id: u64,
+        result: Result<serde_json::Value, String>,
+    ) -> Result<(), String> {
         self.take(id)
             .ok_or_else(|| "unknown id".to_string())?
             .send(result)
@@ -206,8 +247,15 @@ pub async fn bridge_call(
     let id = bridge.alloc_id();
     let (tx, rx) = oneshot::channel();
     bridge.insert(id, tx);
-    app.emit_to(window, "mcp://req", serde_json::json!({ "id": id, "tool": tool, "args": args }))
-        .map_err(|e| { bridge.take(id); format!("emit failed: {e}") })?;
+    app.emit_to(
+        window,
+        "mcp://req",
+        serde_json::json!({ "id": id, "tool": tool, "args": args }),
+    )
+    .map_err(|e| {
+        bridge.take(id);
+        format!("emit failed: {e}")
+    })?;
     // 5 秒超时（设计 §4 app busy）；超时后手动 take 防表泄漏
     match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
         Ok(Ok(result)) => result,
@@ -228,7 +276,9 @@ pub fn validate_host_origin(host: Option<&str>, origin: Option<&str>) -> Result<
         let host = h.split(':').next().unwrap_or(h);
         host == "127.0.0.1" || host.eq_ignore_ascii_case("localhost")
     }
-    let Some(h) = host else { return Err("missing host") };
+    let Some(h) = host else {
+        return Err("missing host");
+    };
     if !is_loopback_host(h) {
         return Err("host not loopback");
     }
@@ -247,7 +297,10 @@ pub fn token_eq(a: &str, b: &str) -> bool {
     if a.is_empty() || a.len() != b.len() {
         return false;
     }
-    a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    a.bytes()
+        .zip(b.bytes())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
 }
 
 /// 审批态记账：once = 「仅本次」（15 分钟 TTL）；deny 后短窗冷却防弹窗轰炸。
@@ -286,7 +339,11 @@ impl GateSessions {
         }
     }
     pub fn denied_recently(&self, ident: &str) -> bool {
-        let entry = self.cooldown.lock().ok().and_then(|m| m.get(ident).copied());
+        let entry = self
+            .cooldown
+            .lock()
+            .ok()
+            .and_then(|m| m.get(ident).copied());
         match entry {
             Some(t) if t.elapsed() < DENY_COOLDOWN => true,
             // 同 once：过期冷却条目即回收，内存有界
@@ -334,7 +391,7 @@ use rmcp::schemars;
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
-use rmcp::{ErrorData as McpError, ServerHandler, tool, tool_handler, tool_router};
+use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler};
 use tauri::{AppHandle, State};
 
 /// MCP 服务端对象。工厂每请求构造一次，字段均为轻量 Clone 句柄
@@ -354,7 +411,11 @@ fn identity_of(context: &RequestContext<RoleServer>) -> String {
         return ci.name;
     }
     if let Some(parts) = context.extensions.get::<http::request::Parts>() {
-        if let Some(ua) = parts.headers.get(http::header::USER_AGENT).and_then(|v| v.to_str().ok()) {
+        if let Some(ua) = parts
+            .headers
+            .get(http::header::USER_AGENT)
+            .and_then(|v| v.to_str().ok())
+        {
             return ua.to_string();
         }
     }
@@ -368,7 +429,12 @@ impl TotpMcp {
         sessions: std::sync::Arc<GateSessions>,
         cfg_file: std::path::PathBuf,
     ) -> Self {
-        Self { app, bridge, sessions, cfg_file }
+        Self {
+            app,
+            bridge,
+            sessions,
+            cfg_file,
+        }
     }
 
     /// 门控 + 事件桥转发（两个工具共用）：
@@ -399,8 +465,14 @@ impl TotpMcp {
             GateDecision::NeedsApproval => {
                 use tauri::Emitter;
                 self.app
-                    .emit_to("main", "mcp://approval", serde_json::json!({ "ident": ident, "tool": tool }))
-                    .map_err(|e| McpError::invalid_params(format!("approval dialog unavailable: {e}"), None))?;
+                    .emit_to(
+                        "main",
+                        "mcp://approval",
+                        serde_json::json!({ "ident": ident, "tool": tool }),
+                    )
+                    .map_err(|e| {
+                        McpError::invalid_params(format!("approval dialog unavailable: {e}"), None)
+                    })?;
                 // fail-closed：本次调用不执行，等用户批准后客户端重试
                 return Err(McpError::invalid_params(
                     "approval pending: the user must approve this client in the TOTP app",
@@ -430,34 +502,45 @@ pub struct GetCodeParams {
 
 #[tool_router]
 impl TotpMcp {
-    #[tool(description = "List TOTP accounts (id, issuer, label, type, tags). Never returns secrets.")]
+    #[tool(
+        description = "List TOTP accounts (id, issuer, label, type, tags). Never returns secrets."
+    )]
     async fn list_accounts(
         &self,
         Parameters(p): Parameters<ListAccountsParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        let args = serde_json::to_value(&p).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let args =
+            serde_json::to_value(&p).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
         let result = self.gated_call(&context, "list_accounts", args).await?;
-        Ok(CallToolResult::success(vec![ContentBlock::text(result.to_string())]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            result.to_string(),
+        )]))
     }
 
-    #[tool(description = "Get the current one-time code for an account. HOTP counter is peeked, not advanced.")]
+    #[tool(
+        description = "Get the current one-time code for an account. HOTP counter is peeked, not advanced."
+    )]
     async fn get_code(
         &self,
         Parameters(p): Parameters<GetCodeParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        let args = serde_json::to_value(&p).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let args =
+            serde_json::to_value(&p).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
         let result = self.gated_call(&context, "get_code", args).await?;
-        Ok(CallToolResult::success(vec![ContentBlock::text(result.to_string())]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            result.to_string(),
+        )]))
     }
 }
 
 #[tool_handler]
 impl ServerHandler for TotpMcp {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new("totp-desktop", env!("CARGO_PKG_VERSION")))
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build()).with_server_info(
+            Implementation::new("totp-desktop", env!("CARGO_PKG_VERSION")),
+        )
     }
 }
 
@@ -483,8 +566,14 @@ async fn mcp_auth_middleware(
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let host = req.headers().get(http::header::HOST).and_then(|v| v.to_str().ok());
-    let origin = req.headers().get(http::header::ORIGIN).and_then(|v| v.to_str().ok());
+    let host = req
+        .headers()
+        .get(http::header::HOST)
+        .and_then(|v| v.to_str().ok());
+    let origin = req
+        .headers()
+        .get(http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok());
     if validate_host_origin(host, origin).is_err() {
         return axum::http::StatusCode::FORBIDDEN.into_response();
     }
@@ -518,7 +607,9 @@ where
         let token = token.clone();
         async move { mcp_auth_middleware(token, req, next).await }
     });
-    axum::Router::new().nest_service("/mcp", inner).layer(middleware)
+    axum::Router::new()
+        .nest_service("/mcp", inner)
+        .layer(middleware)
 }
 
 /// MCP 服务主循环：Bearer/Host/Origin 中间件 → nest_service("/mcp") → graceful shutdown
@@ -553,7 +644,14 @@ pub async fn serve_forever(
     // 会被 hyper 无限等待（真实客户端在线时重启/禁用/重生成 token 全部卡死）
     let cancellation = cancellation_token.clone();
     let service: StreamableHttpService<TotpMcp, LocalSessionManager> = StreamableHttpService::new(
-        move || Ok(TotpMcp::new(app.clone(), bridge.clone(), sessions.clone(), cfg_file.clone())),
+        move || {
+            Ok(TotpMcp::new(
+                app.clone(),
+                bridge.clone(),
+                sessions.clone(),
+                cfg_file.clone(),
+            ))
+        },
         LocalSessionManager::default().into(),
         StreamableHttpServerConfig::default()
             .with_json_response(true)
@@ -613,21 +711,24 @@ impl McpState {
     }
     /// 启动成功：运行态置位、上次错误清空
     pub fn mark_started(&self) {
-        self.running.store(true, std::sync::atomic::Ordering::Release);
+        self.running
+            .store(true, std::sync::atomic::Ordering::Release);
         if let Ok(mut e) = self.last_error.lock() {
             *e = None;
         }
     }
     /// 启动失败/异常退出：运行态清零并记录原因（GUI 可见的唯一失败通道）
     pub fn mark_start_failed(&self, err: String) {
-        self.running.store(false, std::sync::atomic::Ordering::Release);
+        self.running
+            .store(false, std::sync::atomic::Ordering::Release);
         if let Ok(mut e) = self.last_error.lock() {
             *e = Some(err);
         }
     }
     /// 停机完成：仅清运行态。last_error 保留——「失败后关闭开关」时失败原因仍应可见
     pub fn mark_stopped(&self) {
-        self.running.store(false, std::sync::atomic::Ordering::Release);
+        self.running
+            .store(false, std::sync::atomic::Ordering::Release);
     }
     pub fn is_running(&self) -> bool {
         self.running.load(std::sync::atomic::Ordering::Acquire)
@@ -678,7 +779,11 @@ pub fn fill_blank_token_if_enabled(mut cfg: McpConfig) -> McpConfig {
 /// async fn（审查 I-4）：needs_restart 时 stop_server 须异步等待旧任务退出（最长 3s），
 /// 同步 fn + 阻塞 recv 会冻结 UI
 #[tauri::command]
-pub async fn mcp_set_config(app: AppHandle, state: State<'_, McpState>, cfg: McpConfig) -> Result<(), String> {
+pub async fn mcp_set_config(
+    app: AppHandle,
+    state: State<'_, McpState>,
+    cfg: McpConfig,
+) -> Result<(), String> {
     validate_port(cfg.port)?;
     // 终审修复（回归）：首启用主流程（全新安装 token 未生成 → 设置页开开关）在落盘前
     // 补生成 token。7f7a72c 把生成收敛到启动期 init_state_and_autostart 后，这里以
@@ -697,7 +802,10 @@ pub async fn mcp_set_config(app: AppHandle, state: State<'_, McpState>, cfg: Mcp
 /// 旧 token 泄露），故与 mcp_set_config 同构：token 变更即按需重启使新 token 即刻生效
 /// async fn（审查 I-4）：同 mcp_set_config，重启路径须异步等待
 #[tauri::command]
-pub async fn mcp_regenerate_token(app: AppHandle, state: State<'_, McpState>) -> Result<String, String> {
+pub async fn mcp_regenerate_token(
+    app: AppHandle,
+    state: State<'_, McpState>,
+) -> Result<String, String> {
     let old = load_mcp_config_inner(&state.settings_file);
     let mut cfg = old.clone();
     cfg.token = generate_token();
@@ -718,7 +826,11 @@ pub fn mcp_revoke_approvals(state: State<'_, McpState>) -> u32 {
 
 /// 前端审批对话框回执：deny=冷却 60s；once=15 分钟内放行；trust=写白名单并持久化
 #[tauri::command]
-pub fn mcp_approval_response(state: State<'_, McpState>, ident: String, action: String) -> Result<(), String> {
+pub fn mcp_approval_response(
+    state: State<'_, McpState>,
+    ident: String,
+    action: String,
+) -> Result<(), String> {
     match action.as_str() {
         "deny" => {
             state.sessions.mark_denied(&ident);
@@ -738,7 +850,13 @@ pub fn mcp_approval_response(state: State<'_, McpState>, ident: String, action: 
 
 /// 前端事件桥回传；迟到（超时后）静默忽略
 #[tauri::command]
-pub fn mcp_respond(state: State<'_, McpState>, id: u64, ok: bool, result: Option<serde_json::Value>, error: Option<String>) {
+pub fn mcp_respond(
+    state: State<'_, McpState>,
+    id: u64,
+    ok: bool,
+    result: Option<serde_json::Value>,
+    error: Option<String>,
+) {
     let payload = if ok {
         result.ok_or_else(|| "empty result".to_string())
     } else {
@@ -749,9 +867,17 @@ pub fn mcp_respond(state: State<'_, McpState>, id: u64, ok: bool, result: Option
 
 /// 生命周期：enabled=false 或停不下来时只停；enabled=true 先停后起（端口/token 变更重绑）。
 /// async fn（审查 I-4）：stop_server 的有界等待为异步，命令层可安全 await
-pub async fn restart_if_needed(app: &AppHandle, state: &State<'_, McpState>, cfg: &McpConfig) -> Result<(), String> {
+pub async fn restart_if_needed(
+    app: &AppHandle,
+    state: &State<'_, McpState>,
+    cfg: &McpConfig,
+) -> Result<(), String> {
     stop_server(state).await;
-    if cfg.enabled { start_server(app, state, cfg) } else { Ok(()) }
+    if cfg.enabled {
+        start_server(app, state, cfg)
+    } else {
+        Ok(())
+    }
 }
 
 pub async fn stop_server(state: &State<'_, McpState>) {
@@ -780,7 +906,11 @@ pub async fn stop_server(state: &State<'_, McpState>) {
 
 /// start_server 薄包装：成功/失败统一写运行态（覆盖 set_config、autostart 全部调用路径），
 /// inner 的每个 Err 出口无需各自记一笔
-pub fn start_server(app: &AppHandle, state: &State<'_, McpState>, cfg: &McpConfig) -> Result<(), String> {
+pub fn start_server(
+    app: &AppHandle,
+    state: &State<'_, McpState>,
+    cfg: &McpConfig,
+) -> Result<(), String> {
     let result = start_server_inner(app, state, cfg);
     match &result {
         Ok(()) => state.mark_started(),
@@ -789,7 +919,11 @@ pub fn start_server(app: &AppHandle, state: &State<'_, McpState>, cfg: &McpConfi
     result
 }
 
-fn start_server_inner(app: &AppHandle, state: &State<'_, McpState>, cfg: &McpConfig) -> Result<(), String> {
+fn start_server_inner(
+    app: &AppHandle,
+    state: &State<'_, McpState>,
+    cfg: &McpConfig,
+) -> Result<(), String> {
     // 审查修复（Finding 2 收敛）：空 token 的生成+落盘入口在 init_state_and_autostart
     // （启动期）与 mcp_set_config（设置页保存，终审修复补回），此处不再生成。空 token
     // fail-closed 拒启（纵深防线：bearer 中间件虽也拦空 token 请求，但服务不该带空凭据
@@ -823,10 +957,22 @@ fn start_server_inner(app: &AppHandle, state: &State<'_, McpState>, cfg: &McpCon
     // 同步写运行态+last_error——服务中途异常退出（罕见：runtime 崩溃）设置页也能对账
     let serve_token = cancellation_token.clone();
     let handle = tauri::async_runtime::spawn(async move {
-        if let Err(e) = serve_forever(app.clone(), bridge, sessions, cfg, settings_file, rx, listener, serve_token).await {
+        if let Err(e) = serve_forever(
+            app.clone(),
+            bridge,
+            sessions,
+            cfg,
+            settings_file,
+            rx,
+            listener,
+            serve_token,
+        )
+        .await
+        {
             eprintln!("[mcp] server terminated: {e}");
             use tauri::Manager;
-            app.state::<McpState>().mark_start_failed(format!("服务异常退出: {e}"));
+            app.state::<McpState>()
+                .mark_start_failed(format!("服务异常退出: {e}"));
         }
     });
     *state.shutdown.lock().map_err(|_| "lock poisoned")? = Some((tx, cancellation_token, handle));
@@ -886,8 +1032,11 @@ pub fn init_state_and_autostart(
     ov: &McpOverride,
 ) -> Result<(McpConfig, Result<(), String>), String> {
     use tauri::Manager;
-    let settings_file =
-        app.path().app_data_dir().map_err(|e| e.to_string())?.join("settings.json");
+    let settings_file = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("settings.json");
     let state = McpState {
         bridge: Default::default(),
         sessions: Default::default(),
@@ -964,7 +1113,11 @@ mod tests {
     fn override_forces_enabled_and_applies_fields() {
         let cfg = apply_mcp_override(
             McpConfig::default(),
-            &McpOverride { port: Some(47216), token: Some("0123456789abcdef".into()), force_enabled: false },
+            &McpOverride {
+                port: Some(47216),
+                token: Some("0123456789abcdef".into()),
+                force_enabled: false,
+            },
         );
         assert!(cfg.enabled, "任一覆盖项存在即强制启用");
         assert_eq!(cfg.port, 47216);
@@ -984,7 +1137,11 @@ mod tests {
         let raw = load_mcp_config_inner(&p);
         let (cfg, to_persist) = prepare_mcp_config(
             raw,
-            &McpOverride { port: Some(47216), token: None, force_enabled: false },
+            &McpOverride {
+                port: Some(47216),
+                token: None,
+                force_enabled: false,
+            },
         );
         // 生效配置：覆盖全部生效
         assert!(cfg.enabled);
@@ -1005,7 +1162,11 @@ mod tests {
     fn override_with_token_skips_generation_and_persistence() {
         let (cfg, to_persist) = prepare_mcp_config(
             McpConfig::default(),
-            &McpOverride { port: None, token: Some("0123456789abcdef".into()), force_enabled: false },
+            &McpOverride {
+                port: None,
+                token: Some("0123456789abcdef".into()),
+                force_enabled: false,
+            },
         );
         assert!(cfg.enabled);
         assert_eq!(cfg.token, "0123456789abcdef");
@@ -1031,7 +1192,10 @@ mod tests {
         assert!(!cfg.token.is_empty(), "enabled+空 token 必须在落盘前补生成");
         save_mcp_config_inner(&p, &cfg).unwrap();
         let back = load_mcp_config_inner(&p);
-        assert_eq!(back.token, cfg.token, "落盘 token 与生效 token 一致，下次启动可起服");
+        assert_eq!(
+            back.token, cfg.token,
+            "落盘 token 与生效 token 一致，下次启动可起服"
+        );
         // token 空→非空必然触发重启：restart_if_needed→start_server_inner 的空 token
         // 拒启不再可达（服务可启）
         assert!(needs_restart(&old, &cfg));
@@ -1050,12 +1214,23 @@ mod tests {
     // 无条件强制启用且空 token 存量在启动期生成——此前不强制，打印空 token 连接行误导消费方
     #[test]
     fn headless_override_forces_enabled_and_generates_token() {
-        let (cfg, to_persist) =
-            prepare_mcp_config(McpConfig::default(), &McpOverride { force_enabled: true, ..McpOverride::default() });
+        let (cfg, to_persist) = prepare_mcp_config(
+            McpConfig::default(),
+            &McpOverride {
+                force_enabled: true,
+                ..McpOverride::default()
+            },
+        );
         assert!(cfg.enabled);
-        assert!(!cfg.token.is_empty(), "headless 空 token 存量必须生成，连接行才有效");
+        assert!(
+            !cfg.token.is_empty(),
+            "headless 空 token 存量必须生成，连接行才有效"
+        );
         let persisted = to_persist.expect("空 token 须产生待落盘配置");
-        assert!(!persisted.enabled, "headless 强制的 enabled 不得落盘（同 CLI 覆盖口径）");
+        assert!(
+            !persisted.enabled,
+            "headless 强制的 enabled 不得落盘（同 CLI 覆盖口径）"
+        );
         assert_eq!(persisted.token, cfg.token);
     }
 
@@ -1074,12 +1249,17 @@ mod tests {
         let p = tmp_path("roundtrip");
         // 预置一个外来键（shortcutToggleMini），验证合并写不覆盖
         std::fs::write(&p, r#"{"shortcutToggleMini":"alt+shift+t"}"#).unwrap();
-        let cfg = McpConfig { enabled: true, ..McpConfig::default() };
+        let cfg = McpConfig {
+            enabled: true,
+            ..McpConfig::default()
+        };
         save_mcp_config_inner(&p, &cfg).unwrap();
         let back = load_mcp_config_inner(&p);
         assert!(back.enabled);
         assert!(
-            std::fs::read_to_string(&p).unwrap().contains("shortcutToggleMini"),
+            std::fs::read_to_string(&p)
+                .unwrap()
+                .contains("shortcutToggleMini"),
             "外来键必须保留"
         );
         let _ = std::fs::remove_file(&p);
@@ -1099,7 +1279,9 @@ mod tests {
         let p = tmp_path("whitelist");
         let mut cfg = load_mcp_config_inner(&p);
         add_whitelist_inner(&p, &mut cfg, "Claude*").unwrap();
-        assert!(load_mcp_config_inner(&p).whitelist.contains(&"Claude*".to_string()));
+        assert!(load_mcp_config_inner(&p)
+            .whitelist
+            .contains(&"Claude*".to_string()));
         let _ = std::fs::remove_file(&p);
     }
 
@@ -1108,7 +1290,9 @@ mod tests {
         let t1 = generate_token();
         let t2 = generate_token();
         assert_eq!(t1.len(), 43, "32B base64url 无填充 = 43 字符");
-        assert!(t1.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+        assert!(t1
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
         assert_ne!(t1, t2);
     }
 
@@ -1120,7 +1304,11 @@ mod tests {
         add_whitelist_inner(&p, &mut cfg, "Claude*").unwrap();
         assert_eq!(cfg.whitelist.len(), 1, "重复 add 不产生重复条目");
         add_whitelist_inner(&p, &mut cfg, "CLAUDE*").unwrap();
-        assert_eq!(cfg.whitelist.len(), 1, "大小写变体视为同一条目（与 wildcard 匹配口径一致）");
+        assert_eq!(
+            cfg.whitelist.len(),
+            1,
+            "大小写变体视为同一条目（与 wildcard 匹配口径一致）"
+        );
         let _ = std::fs::remove_file(&p);
     }
 
@@ -1128,7 +1316,11 @@ mod tests {
     fn base64url_nopad_known_answers() {
         // 期望值经 node Buffer.toString('base64url') 独立验证，防位序/查表错误
         assert_eq!(base64url_nopad(&[]), "");
-        assert_eq!(base64url_nopad(&[0xfb, 0xff]), "-_8", "62='-',63='_'，URL-safe 表非标准表");
+        assert_eq!(
+            base64url_nopad(&[0xfb, 0xff]),
+            "-_8",
+            "62='-',63='_'，URL-safe 表非标准表"
+        );
         assert_eq!(base64url_nopad(&[1, 2, 3]), "AQID", "整 3B 无余位");
     }
 
@@ -1139,46 +1331,93 @@ mod tests {
         assert!(wildcard_match("exact-name", "exact-name"));
         assert!(!wildcard_match("claude*", "cursor"));
         assert!(wildcard_match("*", "anything"));
-        assert!(!wildcard_match(&"*".repeat(257), "anything"), "超长 pattern 视为配置错误，不匹配（fail-closed）");
+        assert!(
+            !wildcard_match(&"*".repeat(257), "anything"),
+            "超长 pattern 视为配置错误，不匹配（fail-closed）"
+        );
     }
 
     #[test]
     fn gate_decision_matrix() {
         use GateMode::*;
         let base = |mode: GateMode, whitelist: &[&str]| McpConfig {
-            enabled: true, mode, port: 0,
+            enabled: true,
+            mode,
+            port: 0,
             token: "t".into(),
             whitelist: whitelist.iter().map(|s| s.to_string()).collect(),
         };
         // token 档：不看名字
-        assert!(matches!(decide_gate(&base(Token, &[]), Some("anything")), GateDecision::Allow));
+        assert!(matches!(
+            decide_gate(&base(Token, &[]), Some("anything")),
+            GateDecision::Allow
+        ));
         // wildcard 档：命中放行
-        assert!(matches!(decide_gate(&base(Wildcard, &["Claude*"]), Some("claude-desktop")), GateDecision::Allow));
+        assert!(matches!(
+            decide_gate(&base(Wildcard, &["Claude*"]), Some("claude-desktop")),
+            GateDecision::Allow
+        ));
         // wildcard 档：未命中 → 待批准（首次触发审批弹窗）
-        assert!(matches!(decide_gate(&base(Wildcard, &["Claude*"]), Some("cursor")), GateDecision::NeedsApproval));
+        assert!(matches!(
+            decide_gate(&base(Wildcard, &["Claude*"]), Some("cursor")),
+            GateDecision::NeedsApproval
+        ));
         // exact 档：精确相等（版本无关，decide 不接收 version）
-        assert!(matches!(decide_gate(&base(Exact, &["ZCode"]), Some("ZCode")), GateDecision::Allow));
-        assert!(matches!(decide_gate(&base(Exact, &["ZCode"]), Some("zcode")), GateDecision::Allow), "Exact 档大小写不敏感语义");
-        assert!(matches!(decide_gate(&base(Exact, &["ZCode"]), Some("ZCode 2.0")), GateDecision::NeedsApproval));
+        assert!(matches!(
+            decide_gate(&base(Exact, &["ZCode"]), Some("ZCode")),
+            GateDecision::Allow
+        ));
+        assert!(
+            matches!(
+                decide_gate(&base(Exact, &["ZCode"]), Some("zcode")),
+                GateDecision::Allow
+            ),
+            "Exact 档大小写不敏感语义"
+        );
+        assert!(matches!(
+            decide_gate(&base(Exact, &["ZCode"]), Some("ZCode 2.0")),
+            GateDecision::NeedsApproval
+        ));
         // 身份缺失（clientInfo 与 UA 全无）除 token 档外一律待批准
-        assert!(matches!(decide_gate(&base(Wildcard, &["*"]), None), GateDecision::NeedsApproval));
+        assert!(matches!(
+            decide_gate(&base(Wildcard, &["*"]), None),
+            GateDecision::NeedsApproval
+        ));
         // alwaysAsk 恒待批准（once-TTL 由调用方 GateSessions 管）
-        assert!(matches!(decide_gate(&base(AlwaysAsk, &[]), Some("claude")), GateDecision::NeedsApproval));
+        assert!(matches!(
+            decide_gate(&base(AlwaysAsk, &[]), Some("claude")),
+            GateDecision::NeedsApproval
+        ));
     }
 
     #[test]
     fn host_and_origin_validation() {
         assert!(validate_host_origin(Some("127.0.0.1:47215"), None).is_ok());
-        assert!(validate_host_origin(Some("127.0.0.1:1"), None).is_ok(), "去端口解析：非标端口仍是 loopback");
+        assert!(
+            validate_host_origin(Some("127.0.0.1:1"), None).is_ok(),
+            "去端口解析：非标端口仍是 loopback"
+        );
         assert!(validate_host_origin(Some("localhost:47215"), None).is_ok());
-        assert!(validate_host_origin(Some("evil.com"), None).is_err(), "DNS rebinding：Host 必须是 loopback");
+        assert!(
+            validate_host_origin(Some("evil.com"), None).is_err(),
+            "DNS rebinding：Host 必须是 loopback"
+        );
         assert!(validate_host_origin(None, None).is_err());
-        assert!(validate_host_origin(Some("127.0.0.1:47215"), Some("http://127.0.0.1:47215")).is_ok());
+        assert!(
+            validate_host_origin(Some("127.0.0.1:47215"), Some("http://127.0.0.1:47215")).is_ok()
+        );
         assert!(validate_host_origin(Some("127.0.0.1:47215"), Some("http://evil.com")).is_err());
         // 跨端口 loopback Origin 属同机，放行（Bearer 才是主闸门）；https 语境被拒
-        assert!(validate_host_origin(Some("127.0.0.1:47215"), Some("http://127.0.0.1:9999")).is_ok());
-        assert!(validate_host_origin(Some("127.0.0.1:47215"), Some("https://127.0.0.1:47215")).is_err());
-        assert!(validate_host_origin(Some("LOCALHOST:47215"), None).is_ok(), "localhost 比较大小写不敏感");
+        assert!(
+            validate_host_origin(Some("127.0.0.1:47215"), Some("http://127.0.0.1:9999")).is_ok()
+        );
+        assert!(
+            validate_host_origin(Some("127.0.0.1:47215"), Some("https://127.0.0.1:47215")).is_err()
+        );
+        assert!(
+            validate_host_origin(Some("LOCALHOST:47215"), None).is_ok(),
+            "localhost 比较大小写不敏感"
+        );
     }
 
     #[test]
@@ -1213,7 +1452,10 @@ mod tests {
         assert_eq!(s.clear_all(), 3, "返回清空条目总数（once+deny）");
         assert!(!s.once_valid("claude"), "once 批准吊销后必须重新弹窗");
         assert!(!s.once_valid("cursor"));
-        assert!(!s.denied_recently("zed"), "deny 冷却一并清除（主动吊销无需再等 60s）");
+        assert!(
+            !s.denied_recently("zed"),
+            "deny 冷却一并清除（主动吊销无需再等 60s）"
+        );
         assert_eq!(s.clear_all(), 0, "重复吊销幂等");
     }
 
@@ -1248,7 +1490,10 @@ mod tests {
         // 启动失败（如端口占用）：running=false + last_error 有值
         st.mark_start_failed("bind 127.0.0.1:47215 failed: AddrInUse".into());
         assert!(!st.is_running());
-        assert_eq!(st.last_error().as_deref(), Some("bind 127.0.0.1:47215 failed: AddrInUse"));
+        assert_eq!(
+            st.last_error().as_deref(),
+            Some("bind 127.0.0.1:47215 failed: AddrInUse")
+        );
         // 重启成功：running=true + 错误清空
         st.mark_started();
         assert!(st.is_running());
@@ -1257,19 +1502,34 @@ mod tests {
         st.mark_start_failed("port busy".into());
         st.mark_stopped();
         assert!(!st.is_running());
-        assert_eq!(st.last_error().as_deref(), Some("port busy"), "stop 不清 last_error");
+        assert_eq!(
+            st.last_error().as_deref(),
+            Some("port busy"),
+            "stop 不清 last_error"
+        );
     }
 
     #[test]
     fn get_config_dto_serializes_running_and_last_error_flattened() {
         // 契约：cfg 字段平铺（前端 McpConfigDto 形状不变）+ running/lastError camelCase
-        let dto = McpConfigWithStatus { cfg: McpConfig::default(), running: true, last_error: None };
+        let dto = McpConfigWithStatus {
+            cfg: McpConfig::default(),
+            running: true,
+            last_error: None,
+        };
         let v: serde_json::Value = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["running"], true);
-        assert!(v.get("lastError").is_some_and(|x| x.is_null()), "lastError=None 序列化为 null");
+        assert!(
+            v.get("lastError").is_some_and(|x| x.is_null()),
+            "lastError=None 序列化为 null"
+        );
         assert_eq!(v["port"], 47215, "配置字段经 flatten 平铺在同一层");
         assert_eq!(v["enabled"], false);
-        let dto = McpConfigWithStatus { cfg: McpConfig::default(), running: false, last_error: Some("端口被占用".into()) };
+        let dto = McpConfigWithStatus {
+            cfg: McpConfig::default(),
+            running: false,
+            last_error: Some("端口被占用".into()),
+        };
         let v: serde_json::Value = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["lastError"], "端口被占用");
     }
@@ -1279,25 +1539,49 @@ mod tests {
         let bridge = BridgeShared::default();
         let (tx, mut rx) = tokio::sync::oneshot::channel::<Result<serde_json::Value, String>>();
         bridge.insert(7, tx);
-        bridge.respond(7, Ok(serde_json::json!({"code": "123456"}))).expect("首次回传应成功");
+        bridge
+            .respond(7, Ok(serde_json::json!({"code": "123456"})))
+            .expect("首次回传应成功");
         assert_eq!(rx.try_recv().unwrap().unwrap()["code"], "123456");
-        assert!(bridge.respond(7, Ok(serde_json::json!({}))).is_err(), "重复回传同一 id 应报 unknown id");
+        assert!(
+            bridge.respond(7, Ok(serde_json::json!({}))).is_err(),
+            "重复回传同一 id 应报 unknown id"
+        );
     }
 
     #[test]
     fn restart_only_when_lifecycle_fields_change() {
-        let a = McpConfig { enabled: true, mode: GateMode::Wildcard, port: 47215, token: "t1".into(), whitelist: vec!["A".into()] };
+        let a = McpConfig {
+            enabled: true,
+            mode: GateMode::Wildcard,
+            port: 47215,
+            token: "t1".into(),
+            whitelist: vec!["A".into()],
+        };
         // 白名单/档位变化：每请求重读已覆盖，无需重启
-        let b = McpConfig { mode: GateMode::Exact, whitelist: vec!["B".into()], ..a.clone() };
+        let b = McpConfig {
+            mode: GateMode::Exact,
+            whitelist: vec!["B".into()],
+            ..a.clone()
+        };
         assert!(!needs_restart(&a, &b));
         // enabled 变化：要重启
-        let c = McpConfig { enabled: false, ..a.clone() };
+        let c = McpConfig {
+            enabled: false,
+            ..a.clone()
+        };
         assert!(needs_restart(&a, &c));
         // 端口变化：要重启
-        let d = McpConfig { port: 50000, ..a.clone() };
+        let d = McpConfig {
+            port: 50000,
+            ..a.clone()
+        };
         assert!(needs_restart(&a, &d));
         // token 变化：要重启（bearer 为启动时快照，6b 审查 Important）
-        let e = McpConfig { token: "t2".into(), ..a.clone() };
+        let e = McpConfig {
+            token: "t2".into(),
+            ..a.clone()
+        };
         assert!(needs_restart(&a, &e));
     }
 
@@ -1310,7 +1594,9 @@ mod tests {
     }
 
     fn oneshot_request(host: &str, auth: Option<&str>) -> http::Request<axum::body::Body> {
-        let mut builder = http::Request::builder().uri("/mcp").header(http::header::HOST, host);
+        let mut builder = http::Request::builder()
+            .uri("/mcp")
+            .header(http::header::HOST, host);
         if let Some(a) = auth {
             builder = builder.header(http::header::AUTHORIZATION, a);
         }
@@ -1319,7 +1605,11 @@ mod tests {
 
     async fn oneshot_status(host: &str, auth: Option<&str>) -> axum::http::StatusCode {
         use tower::ServiceExt;
-        test_router().oneshot(oneshot_request(host, auth)).await.unwrap().status()
+        test_router()
+            .oneshot(oneshot_request(host, auth))
+            .await
+            .unwrap()
+            .status()
     }
 
     #[tokio::test]
@@ -1385,7 +1675,10 @@ mod tests {
         assert!(validate_port(65535).is_ok(), "上限由 u16 类型天然保证");
         assert!(validate_port(0).is_err());
         assert!(validate_port(80).is_err());
-        assert!(validate_port(1023).is_err(), "0-1023 特权端口一律拒绝（与前端 1024-65535 同口径）");
+        assert!(
+            validate_port(1023).is_err(),
+            "0-1023 特权端口一律拒绝（与前端 1024-65535 同口径）"
+        );
     }
 
     // ==== 审查 I-3：GET SSE 长连接下的停机集成测试 ====
@@ -1397,7 +1690,9 @@ mod tests {
     #[tokio::test]
     async fn stop_completes_within_bound_with_live_sse_connection() {
         use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
-        use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
+        use rmcp::transport::streamable_http_server::{
+            StreamableHttpServerConfig, StreamableHttpService,
+        };
         use tokio::io::AsyncWriteExt;
 
         // 无工具的最小 ServerHandler：只做传输层长连接载体
@@ -1406,13 +1701,14 @@ mod tests {
         impl rmcp::ServerHandler for StubHandler {}
 
         let token = tokio_util::sync::CancellationToken::new();
-        let service: StreamableHttpService<StubHandler, LocalSessionManager> = StreamableHttpService::new(
-            || Ok(StubHandler),
-            LocalSessionManager::default().into(),
-            StreamableHttpServerConfig::default()
-                .with_json_response(true)
-                .with_cancellation_token(token.clone()),
-        );
+        let service: StreamableHttpService<StubHandler, LocalSessionManager> =
+            StreamableHttpService::new(
+                || Ok(StubHandler),
+                LocalSessionManager::default().into(),
+                StreamableHttpServerConfig::default()
+                    .with_json_response(true)
+                    .with_cancellation_token(token.clone()),
+            );
         let router = mcp_router(std::sync::Arc::new("secret".to_string()), service);
 
         let std_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1422,7 +1718,9 @@ mod tests {
         let (tx, mut rx) = tokio::sync::watch::channel(false);
         let server = tokio::spawn(async move {
             axum::serve(listener, router)
-                .with_graceful_shutdown(async move { let _ = rx.changed().await; })
+                .with_graceful_shutdown(async move {
+                    let _ = rx.changed().await;
+                })
                 .await
         });
 
@@ -1461,12 +1759,17 @@ mod tests {
         );
         conn.write_all(req.as_bytes()).await.unwrap();
         let head = read_http_head(&mut conn).await;
-        assert!(head.starts_with("HTTP/1.1 200"), "initialize 应 200：{head}");
+        assert!(
+            head.starts_with("HTTP/1.1 200"),
+            "initialize 应 200：{head}"
+        );
         let session_id = head
             .lines()
             .find_map(|l| {
                 let (k, v) = l.split_once(':')?;
-                k.trim().eq_ignore_ascii_case("mcp-session-id").then(|| v.trim().to_string())
+                k.trim()
+                    .eq_ignore_ascii_case("mcp-session-id")
+                    .then(|| v.trim().to_string())
             })
             .expect("initialize 响应必须带 Mcp-Session-Id");
 
@@ -1477,7 +1780,10 @@ mod tests {
         );
         conn.write_all(get.as_bytes()).await.unwrap();
         let sse_head = read_http_head(&mut conn).await;
-        assert!(sse_head.starts_with("HTTP/1.1 200"), "GET SSE 应 200 开流：{sse_head}");
+        assert!(
+            sse_head.starts_with("HTTP/1.1 200"),
+            "GET SSE 应 200 开流：{sse_head}"
+        );
 
         // ③ 停机：cancel 令牌 + watch 信号 → graceful shutdown 必须有限时间完成
         token.cancel();
@@ -1489,6 +1795,9 @@ mod tests {
             .unwrap();
 
         // ④ 端口已释放：重 bind 成功（Windows 无 SO_REUSEADDR，旧监听未释放会 AddrInUse）
-        assert!(std::net::TcpListener::bind(addr).is_ok(), "停机后端口必须已释放以便重启");
+        assert!(
+            std::net::TcpListener::bind(addr).is_ok(),
+            "停机后端口必须已释放以便重启"
+        );
     }
 }

@@ -44,10 +44,14 @@ pub fn parse_args(args: &[String]) -> Result<CliOpts, String> {
 mod tests {
     use super::*;
 
-    fn s(v: &[&str]) -> Vec<String> { v.iter().map(|x| x.to_string()).collect() }
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| x.to_string()).collect()
+    }
 
     #[test]
-    fn default_empty() { assert_eq!(parse_args(&[]).unwrap(), CliOpts::default()); }
+    fn default_empty() {
+        assert_eq!(parse_args(&[]).unwrap(), CliOpts::default());
+    }
 
     #[test]
     fn headless_only() {
@@ -56,7 +60,14 @@ mod tests {
 
     #[test]
     fn port_and_token() {
-        let o = parse_args(&s(&["--headless-mcp", "--mcp-port", "47216", "--mcp-token", "0123456789abcdef"])).unwrap();
+        let o = parse_args(&s(&[
+            "--headless-mcp",
+            "--mcp-port",
+            "47216",
+            "--mcp-token",
+            "0123456789abcdef",
+        ]))
+        .unwrap();
         assert_eq!(o.mcp_port, Some(47216));
         assert_eq!(o.mcp_token.as_deref(), Some("0123456789abcdef"));
     }

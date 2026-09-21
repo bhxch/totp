@@ -42,8 +42,8 @@ mod imp {
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, PostMessageW,
-        PostQuitMessage, RegisterClassW, TranslateMessage, WTS_SESSION_LOCK, WM_CLOSE, WM_DESTROY,
-        WM_WTSSESSION_CHANGE, WNDCLASSW, WS_OVERLAPPED,
+        PostQuitMessage, RegisterClassW, TranslateMessage, WM_CLOSE, WM_DESTROY,
+        WM_WTSSESSION_CHANGE, WNDCLASSW, WS_OVERLAPPED, WTS_SESSION_LOCK,
     };
 
     /// 事件回调持有的 AppHandle：窗口过程是 extern "system" fn 无法捕获环境，经静态
@@ -63,11 +63,13 @@ mod imp {
             *g = Some(app);
         }
         // 隐藏窗口 + 消息泵必须独占线程：Tauri 主线程跑自身事件循环，不可被 GetMessage 阻塞
-        let spawned = std::thread::Builder::new().name("lock-events".into()).spawn(|| {
-            if let Err(e) = unsafe { run_message_window() } {
-                eprintln!("[lock_events] 锁屏监听线程退出：{e}");
-            }
-        });
+        let spawned = std::thread::Builder::new()
+            .name("lock-events".into())
+            .spawn(|| {
+                if let Err(e) = unsafe { run_message_window() } {
+                    eprintln!("[lock_events] 锁屏监听线程退出：{e}");
+                }
+            });
         if let Err(e) = spawned {
             eprintln!("[lock_events] 监听线程创建失败（系统锁屏触发器不可用）：{e}");
         }
