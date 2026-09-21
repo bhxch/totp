@@ -157,12 +157,6 @@
     "titleAny": "Currently: match any selected tag; click to require matching all",
     "titleAll": "Currently: require matching all selected tags; click to match any"
   },
-  "revealDialog": {
-    "headline": "{issuer} — Secret",
-    "secret": "Secret",
-    "hint": "For security, only the first and last 4 characters of the secret are shown; use the edit function to view the full secret.",
-    "close": "Close"
-  },
   "backupCard": {
     "title": "Backup",
     "sourcesTitle": "Local backup directories",
@@ -658,9 +652,6 @@
     "empty": "No entries yet. Tap \"+ Add\" at the top right to create one.",
     "noMatch": "No matching results",
     "confirmDelete": "Confirm delete?",
-    "revealTitle": "{issuer} — Secret",
-    "revealHint": "For security, only the first and last 4 characters of the secret are shown; use Edit to view the full secret.",
-    "close": "Close",
     "edit": "Edit",
     "showQr": "Show QR code",
     "copyUri": "Copy URI",
@@ -690,10 +681,7 @@
   },
   "mini": {
     "lockedNote": "Mini window is unavailable while encryption is enabled; unlock in the main window",
-    "empty": "No entries",
-    "revealTitle": "{issuer} — Secret",
-    "revealHint": "Only the first and last 4 characters of the secret are shown; view or edit the full secret in the main window.",
-    "close": "Close"
+    "empty": "No entries"
   },
   "cloudRunner": {
     "lockedVault": "Vault locked",

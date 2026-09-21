@@ -112,25 +112,12 @@ const creating = ref(false)
 const confirmingDelete = ref<string | null>(null)
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
 
-// ---------- F1：secret 揭示 + 右键菜单（spec §10「右键菜单（编辑/复制 URI/置顶）」，与 旧单页 同语义） ----------
-/** reveal：点「🔑」后弹模态显前 4 + 后 4（不在列表 DOM 常驻明文） */
-const revealing = ref<OtpEntry | null>(null)
+// ---------- 右键菜单（spec §10：编辑 / 复制 URI / 置顶） ----------
 /** qr：单条目 otpauth 二维码（行内按钮 / 右键菜单「显示二维码」共用） */
 const qrEntry = ref<OtpEntry | null>(null)
 /** 右键菜单：菜单位置与目标条目 */
 const contextMenu = ref<{ x: number; y: number; entry: OtpEntry } | null>(null)
 
-function maskSecret(secret: string): string {
-  const s = secret.replace(/\s+/g, '')
-  if (s.length <= 8) return s
-  return `${s.slice(0, 4)}…${s.slice(-4)}`
-}
-function onReveal(entry: OtpEntry) {
-  revealing.value = entry
-}
-function closeReveal() {
-  revealing.value = null
-}
 function onContextMenu(entry: OtpEntry, e: MouseEvent) {
   contextMenu.value = { x: e.clientX, y: e.clientY, entry }
 }
@@ -369,7 +356,7 @@ async function copy(entry: OtpEntry) {
     <div v-if="loaded && sorted.length === 0" class="empty">{{ t('popup.empty') }}</div>
     <div v-else-if="loaded && visible.length === 0" class="empty">{{ t('popup.noMatch') }}</div>
     <div v-for="e in visible" :key="e.uuid" class="item-wrap" @click="closeContextMenu">
-      <OtpListItem :entry="e" :icon="iconView(e.icon, icons)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" @reveal="onReveal(e)" @qr="qrEntry = e" @context="(ev) => onContextMenu(e, ev)" />
+      <OtpListItem :entry="e" :icon="iconView(e.icon, icons)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" @qr="qrEntry = e" @context="(ev) => onContextMenu(e, ev)" />
       <div class="ops">
         <template v-if="confirmingDelete === e.uuid">
           <button class="danger" @click.stop="askRemove(e.uuid)">{{ t('popup.confirmDelete') }}</button>
@@ -378,16 +365,6 @@ async function copy(entry: OtpEntry) {
           <button class="icon" @click.stop="editing = e">✎</button>
           <button class="icon" @click.stop="askRemove(e.uuid)">🗑</button>
         </template>
-      </div>
-    </div>
-
-    <!-- F1：reveal 模态（与 旧单页 同语义：仅显前 4 + 后 4） -->
-    <div v-if="revealing" class="reveal-mask" @click="closeReveal">
-      <div class="reveal-card" @click.stop>
-        <h3>{{ t('popup.revealTitle', { issuer: revealing.issuer }) }}</h3>
-        <code class="reveal-secret">{{ maskSecret(revealing.secret) }}</code>
-        <p class="reveal-hint">{{ t('popup.revealHint') }}</p>
-        <button class="reveal-close" @click="closeReveal">{{ t('popup.close') }}</button>
       </div>
     </div>
 
@@ -433,13 +410,7 @@ h1 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .item-wrap:hover .ops, .ops:focus-within { opacity: 1; }
 .ops .icon { border: none; background: none; cursor: pointer; font-size: var(--md-sys-typescale-body-medium); padding: 2px 4px; }
 .ops .danger { border: none; background: none; cursor: pointer; color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); font-weight: 600; }
-/* F1：reveal 模态 + 右键菜单（类名与样式同 旧单页，保证跨宿主一致观感） */
-.reveal-mask { position: fixed; inset: 0; background: color-mix(in srgb, var(--md-sys-color-scrim) 55%, transparent); display: grid; place-items: center; z-index: 1000; }
-.reveal-card { background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); padding: 20px 24px; border-radius: 10px; max-width: 320px; width: 88%; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 4px 24px color-mix(in srgb, var(--md-sys-color-shadow) 25%, transparent); }
-.reveal-card h3 { font-size: var(--md-sys-typescale-body-medium); margin: 0; }
-.reveal-secret { font-family: ui-monospace, monospace; font-size: var(--md-sys-typescale-code-large); letter-spacing: 1px; background: var(--md-sys-color-surface-container-highest); padding: 10px; border-radius: 6px; text-align: center; word-break: break-all; }
-.reveal-hint { font-size: var(--md-sys-typescale-body-small); opacity: .65; margin: 0; }
-.reveal-close { align-self: flex-end; }
+/* 右键菜单（类名与样式同 旧单页，保证跨宿主一致观感） */
 .ctx-menu { position: fixed; z-index: 1001; list-style: none; margin: 0; padding: 4px 0; background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); border: 1px solid var(--md-sys-color-outline-variant); border-radius: 6px; box-shadow: 0 2px 12px color-mix(in srgb, var(--md-sys-color-shadow) 18%, transparent); min-width: 120px; }
 .ctx-menu li button { display: block; width: 100%; padding: 6px 14px; border: none; background: none; text-align: left; cursor: pointer; font-size: var(--md-sys-typescale-body-medium); }
 .ctx-menu li button:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }

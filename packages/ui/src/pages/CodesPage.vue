@@ -18,7 +18,6 @@ import MdMenu from '../components/md/MdMenu.vue'
 import OtpListItem from '../components/OtpListItem.vue'
 import OtpQrDialog from '../components/OtpQrDialog.vue'
 import QrSheetDialog from '../components/QrSheetDialog.vue'
-import RevealDialog from '../components/RevealDialog.vue'
 import SearchBar from '../components/SearchBar.vue'
 import type { EntryFormData } from '../components/entryForm'
 
@@ -71,8 +70,6 @@ watch(
     if (ids.length > 0) selectedTagIds.value = ids.filter((id) => props.store.vault.tags.some((t) => t.id === id))
   },
 )
-/** reveal：列表点击「🔑」后弹 RevealDialog 显前 4 + 后 4（避免列表常驻明文） */
-const revealing = ref<OtpEntry | null>(null)
 /** qr：单条目 otpauth 二维码（行内按钮 / 右键菜单「显示二维码」共用） */
 const qrEntry = ref<OtpEntry | null>(null)
 /** 标签管理弹层：chips「管理标签」触发（同时向宿主 emit open-tags 保留契约） */
@@ -158,14 +155,6 @@ async function onCopy(entry: OtpEntry) {
   emit('copy', c)
   // HOTP：复制的是旧 counter 的码（RFC 语义），复制完成后再递增
   if (entry.type === 'hotp') await props.store.updateEntryOp(entry.uuid, { counter: (entry.counter ?? 0) + 1 })
-}
-
-/** 点击「🔑」：仅在 RevealDialog 中显示密钥（不写入剪贴板、不在列表 DOM 留明文） */
-function onReveal(entry: OtpEntry) {
-  revealing.value = entry
-}
-function closeReveal() {
-  revealing.value = null
 }
 
 /** 右键菜单：编辑 / 复制 URI / 置顶切换 */
@@ -263,7 +252,6 @@ function openSheet() {
           :icon="iconView(e.icon, icons ?? undefined)"
           v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }"
           @copy="onCopy(e)"
-          @reveal="onReveal(e)"
           @qr="qrEntry = e"
           @context="(ev) => onContextMenu(e, ev)"
         />
@@ -302,9 +290,6 @@ function openSheet() {
       @close="creating = false; editing = null"
       @batch-added="creating = false; editing = null"
     />
-
-    <!-- reveal 对话框：仅在被请求时显前 4 + 后 4 形态的密钥；Esc/遮罩/「关闭」按钮关闭 -->
-    <RevealDialog :open="revealing !== null" :entry="revealing" @close="closeReveal" />
 
     <!-- 标签管理对话框：chips「管理标签」触发 -->
     <TagManagerDialog :open="tagsOpen" :store="store" @close="tagsOpen = false" />

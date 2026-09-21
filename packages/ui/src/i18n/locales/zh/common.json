@@ -157,12 +157,6 @@
     "titleAny": "当前：命中任一选中标签；点击切换为需命中全部",
     "titleAll": "当前：需命中全部选中标签；点击切换为任一命中"
   },
-  "revealDialog": {
-    "headline": "{issuer} — 密钥",
-    "secret": "密钥",
-    "hint": "出于安全考虑，仅显示密钥前后各 4 位；如需完整密钥请使用编辑功能。",
-    "close": "关闭"
-  },
   "backupCard": {
     "title": "备份",
     "sourcesTitle": "本地备份目录",
@@ -658,9 +652,6 @@
     "empty": "暂无条目，点击右上角「＋ 添加」录入。",
     "noMatch": "无匹配结果",
     "confirmDelete": "确认删除？",
-    "revealTitle": "{issuer} — 密钥",
-    "revealHint": "出于安全考虑，仅显示密钥前后各 4 位；如需完整密钥请使用编辑功能。",
-    "close": "关闭",
     "edit": "编辑",
     "showQr": "显示二维码",
     "copyUri": "复制 URI",
@@ -690,10 +681,7 @@
   },
   "mini": {
     "lockedNote": "加密启用后迷你窗不可用，请在主窗口解锁使用",
-    "empty": "暂无条目",
-    "revealTitle": "{issuer} — 密钥",
-    "revealHint": "仅显示密钥前后各 4 位；完整密钥请在主窗口编辑查看。",
-    "close": "关闭"
+    "empty": "暂无条目"
   },
   "cloudRunner": {
     "lockedVault": "库已锁定",

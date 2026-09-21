@@ -256,7 +256,7 @@ describe('CodesPage 右键菜单 / pinned（自 旧单页 C16 迁移）', () => 
     return s
   }
 
-  // 旧 reveal 按钮测试已随 OtpListItem 移除 reveal 入口而删除（验收条目3）；RevealDialog 容器清理归下个任务
+  // 旧 reveal 按钮测试已随 OtpListItem 移除 reveal 入口而删除；RevealDialog 容器已一并清理（验收条目3）
 
   it('右键条目：MdMenu 渲染四项菜单，点「置顶」调用 updateEntryOp 并排序前置', async () => {
     const s = await storeWithTwo()

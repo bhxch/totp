@@ -48,6 +48,7 @@ describe('OtpListItem 打码与复制', () => {
   })
 
   it('不再提供 🔑 reveal 按钮与 reveal 事件', async () => {
+    vi.useFakeTimers()
     const w = mountItem()
     expect(w.find('.reveal').exists()).toBe(false)
     await w.find('.otp-item').trigger('dblclick')
