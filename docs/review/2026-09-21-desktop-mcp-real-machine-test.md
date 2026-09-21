@@ -58,3 +58,58 @@
 - 本文档记录逐项结果（✅/❌+证据）。
 - 证据截图入库 `docs/review/assets/2026-09-21-desktop-mcp/`。
 - 提交拆分：①测试方案 ②dev-only bridge 基建 ③报告（含证据图）。
+
+---
+
+## 六、执行结果（2026-09-21 真机完成，main @ 48b5e2d + 测试基建）
+
+**总结论：plan17 手动验收 10 项全部通过（第 10 项以官方 MCP SDK 真实客户端 mcporter 真连取码为主体验证，ZCode 会话内终验留连接片段），2 条真机缺口（托盘隐藏态取码、防火墙提示）亦过。发布 gate 解除。**
+
+### 关键发现（对产品的真实价值）
+
+1. **【真 Bug，已修】`capabilities/default.json` 未授权 `mcp-bridge:default`**：Tauri 2 权限系统会拒绝 webview 侧 `plugin:mcp-bridge|script_result` 回传，症状为 tauri-mcp 一切 webview 操作（eval/截图/读日志）2 秒超时，而后端命令（backend_state/list_windows）正常。Rust 侧无任何告警，属静默失败。修复已随测试基建提交（48b5e2d）。
+2. **Hyper-V/WSL 隐藏端口保留段**：本机 TCP 47210-47220（含默认端口 47215）被动态保留，bind 报 10048（os error）但 `netstat`/`Get-NetTCPConnection`/`netsh excludedportrange` 均不可见。真机验证了产品的两道防线：设置卡片正确显示「Start failed: bind ... 10048」错误横幅（fail-closed）；改端口为 48215 后 change 即重启生效、服务 Running。用户机器若命中保留段，按卡片错误改端口即可恢复。
+3. **Esc deny 自动化经验**：合成 `KeyboardEvent`（isTrusted=false 的 window/element 派发）无法关闭 MdDialog，`webview-keyboard press Escape`（真实键注入）有效。deny 回执链路（Esc → onApprovalAction('deny') → 60s 冷却 → 重调得 denied 文案）已实证。
+4. **审批时序对自动化友好**：NeedsApproval 是「立即回 -32602 pending 错误 + 弹窗，批准后重调才成功」，不阻塞等待——无需异步竞态脚本。
+
+### 逐项结果
+
+| 用例 | 结果 | 证据/说明 |
+|---|---|---|
+| TC0 环境 | ✅ | dev 构建 + bridge 插件 + driver session `connected:true`（identifier com.totp.desktop） |
+| TC1 卡片默认关 | ✅ | switch `checked:false`、状态「Stopped」；截图 tc1 |
+| TC2 启用+e2e | ✅ | token 自动生成（掩码/显示切换正常）；`scripts/mcp-e2e.mjs` 8 断言全 PASS（EXIT=0）；运行态「Running」；截图 tc2 |
+| TC3 录入 entry | ✅ | 智能粘贴 3 条（GitLab TOTP / Example SHA256-8-60 / HOTPTest counter=0）解析预览全部「New」入库；手动表单 2 条（GitHub + baseDomain github.com 规则、Steam 类型 5 字符）；列表 5 条全部滚码；截图 tc3 |
+| TC4 url 过滤 | ✅ | `url=https://github.com/x/y` → 仅 GitHub（带规则）；GitLab（无规则）与 nomatch → 空数组（「无规则不命中」设计行为）；无 url → 全 5 条 |
+| TC5 契约+正确性 | ✅ | GitHub 码与 RFC 6238 独立计算精确一致（099156）；Example（SHA256/40B key/period 60）一致（75065527）；MCP 与 UI 同窗一致（582734）；HOTP 双取同码且 `counter:0` + note「peeked, not advanced」；list 字段 ⊆ {id,issuer,label,tags,type}、get_code ⊆ {code,expires_in_seconds,period}（hotp 附 counter/note 属设计），无 secret/pin |
+| TC6 审批流 | ✅ | pending 错误形态 = JSON-RPC `-32602 "approval pending..."`；弹窗含 ident/tool/三按钮（截图 tc6）；Allow once → 15min 内免弹重调成功；吊销（卡片「清除一次性授权」）→ 再调弹窗 → Esc=deny → 重调得 denied 文案且冷却内不弹；Add to whitelist → settings.json `mcp.whitelist:["mcp-e2e"]` → 免确认 |
+| TC7 token 轮换 | ✅ | 「重新生成」确认后旧 token 立即 401；新 token e2e 全 PASS（含 get_code 成功链路） |
+| TC8 加密+锁定 | ✅ | 启用加密（口令自造）；两次重启均出 LockScreen（lockOnRestart）；MCP 调用得 `-32602 "vault locked"`；UI 解锁后 MCP 恢复；截图 tc8 |
+| TC9 alwaysAsk | ✅ | 档位切换生效；调用即弹窗 → Allow once → 成功；重启（once 存内存即清）后重调弹窗重现（截图 tc9）。注：完整 15min TTL 未实际等待，以「重启清空 once」等价验证过期路径 |
+| TC10 托盘隐藏态 | ✅ | 「隐藏到托盘」后窗口 vis=False，webview 存活（JS 可执行），`list_accounts`+`get_code` 均成功返回真码 |
+| TC11 真连 | ✅ | mcporter（官方 `@modelcontextprotocol/client` SDK + StreamableHTTP）真连：新客户端正确收到 approval pending → 应用内批准 → `list_accounts` 返回 5 条、`get_code` 取到真码 021449。ZCode 终验连接片段见下 |
+| TC12 防火墙 | ✅ | 全程 127.0.0.1 loopback 绑定，未触发 Windows 防火墙提示（符合预期） |
+
+### ZCode 真连配置片段（终验用）
+
+在本项目 `.mcp.json`（或 ZCode MCP 配置）加入后重启会话，即可让 agent 直接调用 `list_accounts` / `get_code`：
+
+```json
+{
+  "mcpServers": {
+    "totp-desktop": {
+      "type": "http",
+      "url": "http://127.0.0.1:48215/mcp",
+      "headers": { "Authorization": "Bearer <在应用设置页 MCP 卡片复制 Token>" }
+    }
+  }
+}
+```
+
+> 端口注意：默认 47215；本机该段被 Hyper-V 动态保留，测试实例改用 48215。若 ZCode 连接报 10048 相关失败，在应用卡片换端口后同步改此 URL。首次连接若为 wildcard/exact/alwaysAsk 档，应用内会弹审批（一次「加入白名单」后免确认）。
+
+### 环境与遗留状态
+
+- 测试金库保留于 `%APPDATA%\com.totp.desktop`（5 条 mock 条目、加密口令 `Test-Pw!234`、MCP enabled@48215、token 为测试轮换值）；原始 settings.json 备份在 `E:/tmp/cc/totp-realtest-backup-settings.json`。不需要时删除整个目录即回到初始态。
+- 测试辅助脚本（.temp/mcp-test/，不入库）：mcp-call.mjs / tc5-verify.mjs / tc6-call.mjs / compute-otp.mjs。
+- dev 依赖的 `tauri-plugin-mcp-bridge` 已入库为测试基建（注册 cfg(debug_assertions) 门控，release 不激活；`withGlobalTauri` + `mcp-bridge:default` 对 release 生效但应用不加载远程内容，暴露面可接受——如不接受可在发布前 revert tauri.conf.json/capabilities 两行并保留 Cargo/lib.rs 结构）。
