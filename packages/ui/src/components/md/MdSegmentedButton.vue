@@ -32,6 +32,10 @@ function onKeydown(e: KeyboardEvent) {
   height: 40px; padding: 0 16px; font: inherit; font-size: var(--md-sys-typescale-body-medium); font-weight: 500;
   display: inline-flex; align-items: center; gap: 6px; position: relative;
   transition: background-color .15s; }
+/* 选中段填充延伸到胶囊圆端（验收条目7）：首/末段与唯一段贴合外层 100px 圆角 */
+.md-seg__item:first-child { border-radius: 100px 0 0 100px; }
+.md-seg__item:last-child { border-radius: 0 100px 100px 0; }
+.md-seg__item:only-child { border-radius: 100px; }
 .md-seg__item + .md-seg__item { box-shadow: inset 1px 0 0 var(--md-sys-color-outline); }
 .md-seg__item::after { content: ''; position: absolute; inset: 0; pointer-events: none;
   background: transparent; transition: background-color .15s; }
