@@ -111,6 +111,32 @@ fn write_shortcut_to_settings<R: Runtime>(app: &AppHandle<R>, shortcut: &str) ->
     write_text_atomic(&p, &serde_json::to_string_pretty(&obj).map_err(|e| e.to_string())?)
 }
 
+/// 验收条目4：WebView 远程调试配置（settings.json `devtools` 键；明文区——须在无解锁态可读）。
+/// 返回 (enabled, port)；缺省 (false, 9222)，enabled=true 而 port<1024 时端口回落 9222
+fn read_devtools_from_settings_text(text: &str) -> (bool, u16) {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else { return (false, 9222) };
+    let Some(d) = v.get("devtools") else { return (false, 9222) };
+    let enabled = d.get("enabled").and_then(|x| x.as_bool()).unwrap_or(false);
+    let port = d.get("port").and_then(|x| x.as_u64()).filter(|p| (1024..=65535).contains(p)).unwrap_or(9222) as u16;
+    (enabled, port)
+}
+
+/// 须在任何 WebView 创建前调用（run() 最早期）；settings.json 路径按
+/// Windows app_data_dir 规则 %APPDATA%/{identifier} 解析（mac/linux 无 CDP 端口通道，恒 no-op）
+fn apply_devtools_env() {
+    #[cfg(windows)]
+    {
+        let Ok(appdata) = std::env::var("APPDATA") else { return };
+        let Ok(conf) = include_str!("../tauri.conf.json").parse::<serde_json::Value>() else { return };
+        let Some(id) = conf["identifier"].as_str() else { return };
+        let Ok(text) = std::fs::read_to_string(std::path::Path::new(&appdata).join(id).join("settings.json")) else { return };
+        let (enabled, port) = read_devtools_from_settings_text(&text);
+        if enabled {
+            std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", format!("--remote-debugging-port={port}"));
+        }
+    }
+}
+
 /** 取消注册当前所有快捷键，按新 spec 重新注册并持久化到 settings.json */
 #[tauri::command]
 fn set_global_shortcut(app: AppHandle, shortcut: String) -> Result<(), String> {
@@ -827,6 +853,8 @@ fn os_auto_unprotect(_window: tauri::WebviewWindow, _wrapped_b64: String) -> Res
 }
 
 pub fn run() {
+    // 验收条目4：devtools 远程调试端口环境注入必须先于任何 WebView 创建（run 最早期）
+    apply_devtools_env();
     let mut builder = tauri::Builder::default();
     // 真机 E2E 基建：debug 构建装配 mcp-bridge（仅绑 127.0.0.1）供 tauri-mcp 驱动 UI；release 不编译
     #[cfg(debug_assertions)]
@@ -1323,5 +1351,22 @@ mod tests {
         let non_hex = dpapi_protect_bytes("普通文本明文不是 hex".as_bytes(), None).expect("protect");
         assert!(decrypt_dpapi_inner("main", "winauth-import", &base64_encode(&non_hex)).is_err());
         assert!(decrypt_dpapi_inner("mini", "winauth-import", &base64_encode(&blob)).is_err());
+    }
+
+    // 验收条目4：devtools 配置解析——缺省关、开启+自定义端口、非法端口回落默认
+    #[test]
+    fn devtools_config_parse() {
+        // 缺省：关
+        assert_eq!(read_devtools_from_settings_text("{}"), (false, 9222));
+        // 开启 + 自定义端口
+        assert_eq!(
+            read_devtools_from_settings_text(r#"{"devtools":{"enabled":true,"port":9333}}"#),
+            (true, 9333),
+        );
+        // 非法端口回落默认
+        assert_eq!(
+            read_devtools_from_settings_text(r#"{"devtools":{"enabled":true,"port":80}}"#),
+            (true, 9222),
+        );
     }
 }
