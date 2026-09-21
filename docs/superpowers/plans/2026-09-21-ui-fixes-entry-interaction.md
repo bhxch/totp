@@ -384,3 +384,25 @@ git commit -m "fix(ui): 弹窗max-height 85vh内滚+全仓弹层审计补齐（�
 ## 附录：弹层审计结论
 
 （Task 7 执行时填写：组件名 — 继承 MdDialog / 已补约束 / 豁免原因）
+
+审计方法：`rg -n "position: fixed" packages/ui/src apps --glob '*.vue'` + `rg -l "MdDialog" packages/ui/src apps --glob '*.vue'`，
+另以 `role="dialog"` / `<dialog>` / `z-index` 交叉核对，确认无遗漏弹层实现。
+标准：内容超高时可在弹层内滚动、底部操作按钮在小视口可达。
+
+| 组件 / 浮层 | 位置 | 结论 |
+| --- | --- | --- |
+| MdDialog `.md-dialog` | packages/ui/src/components/md/MdDialog.vue | 已补：`max-height: 85vh; overflow-y: auto`（内容超高容器内滚动，底部按钮可滚达） |
+| MdDialog `.md-dialog__scrim` | 同上 | 豁免：全屏遮罩背景层，不承载内容 |
+| EntryFormDialog | packages/ui/src/components/EntryFormDialog.vue | 继承 MdDialog，自动达标 |
+| OtpQrDialog | packages/ui/src/components/OtpQrDialog.vue | 继承 MdDialog，自动达标 |
+| QrSheetDialog | packages/ui/src/components/QrSheetDialog.vue | 继承 MdDialog，自动达标 |
+| TagManagerDialog | packages/ui/src/components/TagManagerDialog.vue | 继承 MdDialog，自动达标 |
+| McpConsentDialog（MCP 审批弹窗） | apps/desktop/src/McpConsentDialog.vue | 继承 MdDialog，自动达标（宿主即 MdDialog，无需单独补约束） |
+| MdMenu `.md-menu` | packages/ui/src/components/md/MdMenu.vue | 豁免：下拉菜单浮层，锚点坐标定位，仅少量操作项，不承载长内容表单 |
+| MdSelect `.md-select__menu` | packages/ui/src/components/md/MdSelect.vue | 已达标：自带 `max-height: 280px; overflow: auto` |
+| CodesPage `.page-fab` | packages/ui/src/pages/CodesPage.vue | 豁免：悬浮新建按钮，非弹层 |
+| CodesPage `.select-bar` | packages/ui/src/pages/CodesPage.vue | 豁免：批量选择底部操作条，单行按钮组，无长内容 |
+| extension popup `.ctx-menu` | apps/extension/entrypoints/popup/App.vue | 豁免：popup 内右键菜单，条目少，不承载长内容表单 |
+
+补充说明：apps/desktop（mini 窗）与 apps/extension 除上述项外无其他自定义弹层；
+RevealDialog 已在前序任务删除，不在清单内。手动矮视口验收（brief Step 4）移交用户执行。
