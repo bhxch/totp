@@ -72,6 +72,14 @@ const clearer = createClipboardClearer(
   () => invoke('clipboard_clear_if_staged').then(() => {}),
 )
 
+/** 复制后 500ms 自动隐藏的 timer 引用：双击揭示时须可取消（终审 Important-1） */
+let hideTimer: ReturnType<typeof setTimeout> | null = null
+/** 双击揭示（OtpListItem 内部 8s）期间取消复制后自动隐藏——否则揭示存活仅 0.5s，spec「双击显示 8 秒」不可达 */
+function cancelAutoHide(): void {
+  if (hideTimer) clearTimeout(hideTimer)
+  hideTimer = null
+}
+
 async function copy(entry: { uuid: string; type?: string; counter?: number }) {
   const code = codes.value.get(entry.uuid)?.code
   if (!code) return
@@ -84,7 +92,10 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
     try { await store.value?.updateEntryOp(entry.uuid, { counter: (entry.counter ?? 0) + 1 }) } catch { /* mini 降级不打扰 */ }
   }
   clearer.notifyCopied()
-  setTimeout(() => void getCurrentWindow().hide(), 500)
+  hideTimer = setTimeout(() => {
+    hideTimer = null
+    void getCurrentWindow().hide()
+  }, 500)
 }
 </script>
 
@@ -92,7 +103,9 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
   <main class="mini">
     <div v-if="store && locked" class="empty">{{ tr('mini.lockedNote') }}</div>
     <div v-else-if="!store || sorted.length === 0" class="empty">{{ tr('mini.empty') }}</div>
-    <OtpListItem v-for="e in sorted" :key="e.uuid" :entry="e" :icon="iconView(e.icon, icons ?? undefined)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" />
+    <!-- 终审 Important-1：@dblclick 未在 OtpListItem emits 声明，经 attrs fallthrough 合并到组件根元素，
+         与组件内部揭示 onDblclick 合并共存（Vue 3 mergeProps 依次调用）——双击即揭示并取消 500ms 自动隐藏 -->
+    <OtpListItem v-for="e in sorted" :key="e.uuid" :entry="e" :icon="iconView(e.icon, icons ?? undefined)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" @dblclick="cancelAutoHide" />
   </main>
 </template>
 

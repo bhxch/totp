@@ -65,7 +65,14 @@ const BatchPastePanelStub = {
   template: `<div data-test="batch-paste-stub"><button data-test="batch-added-btn" @click="$emit('added', 1)">x</button></div>`,
 }
 
-async function mountApp() {
+/** OtpListItem 桩：渲染 code prop 供 waitFor 判定 codes 已就绪；未声明 emits，$emit 落父级 attrs 监听器（与真实组件 attrs fallthrough 同径） */
+const OtpListItemStub = {
+  name: 'OtpListItemStub',
+  props: { code: { type: String, default: '' } },
+  template: `<div class="otp-item-stub">{{ code }}</div>`,
+}
+
+async function mountApp(opts?: { otpListItem?: typeof OtpListItemStub }) {
   const wrapper = mount(App, {
     global: {
       plugins: [createTestI18n()],
@@ -74,7 +81,7 @@ async function mountApp() {
         EntryForm: true,
         BatchPastePanel: BatchPastePanelStub,
         // 编辑态用例需要 item-wrap 渲染出 ✎ 按钮；行内容与本测试无关，桩掉
-        OtpListItem: true,
+        OtpListItem: opts?.otpListItem ?? true,
       },
     },
   })
@@ -205,5 +212,48 @@ describe('popup 新建条目 digits 经 toOtpDigits 收口（评审 R1 回归）
     const entry = vi.mocked(addEntryOp).mock.calls[0]![0]
     expect(entry.type).toBe('totp')
     expect(entry.digits).toBe(7)
+  })
+})
+
+describe('popup 双击揭示取消复制后自动关闭（终审 Important-1）', () => {
+  it('copy 后双击条目：自动关闭取消，到期不关窗；之后的普通 copy 仍按 popupCloseDelayMs 关窗', async () => {
+    const closeSpy = vi.spyOn(window, 'close').mockImplementation(() => {})
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn(async () => {}) },
+      configurable: true,
+    })
+    vault.entries.push({
+      uuid: 'e1', type: 'totp', issuer: 'GitHub', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
+      algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 0,
+    } as never)
+    try {
+      // codes 首算走真实异步 crypto.subtle，须在 fake timers 接管前完成
+      const wrapper = await mountApp({ otpListItem: OtpListItemStub })
+      await vi.waitFor(() => {
+        expect(wrapper.find('.otp-item-stub').text()).not.toBe('------')
+      })
+      vi.useFakeTimers()
+
+      const item = wrapper.findComponent({ name: 'OtpListItemStub' })
+      item.vm.$emit('copy')
+      await flushPromises()
+      expect(closeSpy).not.toHaveBeenCalled()
+
+      // 双击：取消本次复制后的 3s 自动关闭
+      item.vm.$emit('dblclick')
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(closeSpy).not.toHaveBeenCalled()
+
+      // 对照：未双击的 copy 到期照常关窗
+      item.vm.$emit('copy')
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(closeSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+      closeSpy.mockRestore()
+      vault.entries.length = 0
+    }
   })
 })

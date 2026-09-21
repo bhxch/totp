@@ -300,6 +300,12 @@ async function copy(entry: OtpEntry) {
   // M23：loadSettings 走 DEFAULT_SETTINGS 合并兜底（见 vaultStore.loadSettings M4），popupCloseDelayMs 必为 number
   closeTimer = setTimeout(() => window.close(), settings.popupCloseDelayMs)
 }
+
+/** 双击揭示（OtpListItem 内部 8s）时取消本次复制后自动关闭（终审 Important-1）：刚看过码的会话不再自动关，符合「刚交互过」直觉 */
+function cancelAutoClose(): void {
+  if (closeTimer) clearTimeout(closeTimer)
+  closeTimer = null
+}
 </script>
 
 <template>
@@ -356,7 +362,8 @@ async function copy(entry: OtpEntry) {
     <div v-if="loaded && sorted.length === 0" class="empty">{{ t('popup.empty') }}</div>
     <div v-else-if="loaded && visible.length === 0" class="empty">{{ t('popup.noMatch') }}</div>
     <div v-for="e in visible" :key="e.uuid" class="item-wrap" @click="closeContextMenu">
-      <OtpListItem :entry="e" :icon="iconView(e.icon, icons)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" @qr="qrEntry = e" @context="(ev) => onContextMenu(e, ev)" />
+      <!-- 终审 Important-1：@dblclick 经 attrs fallthrough 与组件内部揭示 onDblclick 合并共存——双击即揭示并取消自动关闭 -->
+      <OtpListItem :entry="e" :icon="iconView(e.icon, icons)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" @qr="qrEntry = e" @context="(ev) => onContextMenu(e, ev)" @dblclick="cancelAutoClose" />
       <div class="ops">
         <template v-if="confirmingDelete === e.uuid">
           <button class="danger" @click.stop="askRemove(e.uuid)">{{ t('popup.confirmDelete') }}</button>
