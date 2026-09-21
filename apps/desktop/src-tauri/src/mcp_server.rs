@@ -58,10 +58,38 @@ pub fn save_mcp_config_inner(settings_file: &std::path::Path, cfg: &McpConfig) -
 }
 
 pub fn add_whitelist_inner(settings_file: &std::path::Path, cfg: &mut McpConfig, pattern: &str) -> Result<(), String> {
-    if !cfg.whitelist.iter().any(|w| w == pattern) {
-        cfg.whitelist.push(pattern.to_string());
+    // 去重比较大小写不敏感：与 wildcard 匹配口径一致，避免 claude*/Claude* 积累两条等价条目；
+    // 命中去重直接返回，不重写文件
+    if cfg.whitelist.iter().any(|w| w.eq_ignore_ascii_case(pattern)) {
+        return Ok(());
     }
+    cfg.whitelist.push(pattern.to_string());
     save_mcp_config_inner(settings_file, cfg)
+}
+
+/// getrandom 已在依赖树（tauri 传递）；base64url 手写避免引 base64 crate
+pub fn generate_token() -> String {
+    let mut buf = [0u8; 32];
+    getrandom::fill(&mut buf).expect("CSPRNG 不可用属致命环境错误");
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    // bit 迭代法：32B=256bit 流，每 6bit 查表输出 1 字符；256=42*6+4，末 4bit 左移补零出第 43 字符
+    let mut out = String::with_capacity(43);
+    let mut acc: u32 = 0;
+    let mut bits: u32 = 0;
+    for &b in &buf {
+        acc = (acc << 8) | b as u32;
+        bits += 8;
+        while bits >= 6 {
+            bits -= 6;
+            let idx = ((acc >> bits) & 0x3f) as usize;
+            out.push(TABLE[idx] as char);
+        }
+    }
+    if bits > 0 {
+        let idx = ((acc << (6 - bits)) & 0x3f) as usize;
+        out.push(TABLE[idx] as char);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -118,6 +146,25 @@ mod tests {
         let mut cfg = load_mcp_config_inner(&p);
         add_whitelist_inner(&p, &mut cfg, "Claude*").unwrap();
         assert!(load_mcp_config_inner(&p).whitelist.contains(&"Claude*".to_string()));
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn token_shape_and_uniqueness() {
+        let t1 = generate_token();
+        let t2 = generate_token();
+        assert_eq!(t1.len(), 43, "32B base64url 无填充 = 43 字符");
+        assert!(t1.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+        assert_ne!(t1, t2);
+    }
+
+    #[test]
+    fn whitelist_add_dedupes() {
+        let p = tmp_path("dedupe");
+        let mut cfg = load_mcp_config_inner(&p);
+        add_whitelist_inner(&p, &mut cfg, "Claude*").unwrap();
+        add_whitelist_inner(&p, &mut cfg, "Claude*").unwrap();
+        assert_eq!(cfg.whitelist.len(), 1, "重复 add 不产生重复条目");
         let _ = std::fs::remove_file(&p);
     }
 }
