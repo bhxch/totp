@@ -539,7 +539,8 @@ pub async fn serve_forever(
     listener: std::net::TcpListener,
     cancellation_token: tokio_util::sync::CancellationToken,
 ) -> Result<(), String> {
-    // fail-closed：空 token=未生成，绝不允许 "Bearer " 成为有效凭据（生成与持久化唯一入口在 init_state_and_autostart）
+    // fail-closed：空 token=未生成，绝不允许 "Bearer " 成为有效凭据（生成入口仅两处：
+    // 启动期 init_state_and_autostart、设置页保存 mcp_set_config，均先落盘再起服）
     if cfg.token.is_empty() {
         return Err("mcp token not generated".into());
     }
@@ -665,11 +666,25 @@ fn validate_port(port: u16) -> Result<(), String> {
     Ok(())
 }
 
+/// enabled 且空 token ⇒ 就地生成填充（与 prepare_mcp_config 的启动期生成同语义）。
+/// 纯函数便于单测；生成唯一触发条件是 enabled（未启用时空 token 恒保留）
+pub fn fill_blank_token_if_enabled(mut cfg: McpConfig) -> McpConfig {
+    if cfg.enabled && cfg.token.is_empty() {
+        cfg.token = generate_token();
+    }
+    cfg
+}
+
 /// async fn（审查 I-4）：needs_restart 时 stop_server 须异步等待旧任务退出（最长 3s），
 /// 同步 fn + 阻塞 recv 会冻结 UI
 #[tauri::command]
 pub async fn mcp_set_config(app: AppHandle, state: State<'_, McpState>, cfg: McpConfig) -> Result<(), String> {
     validate_port(cfg.port)?;
+    // 终审修复（回归）：首启用主流程（全新安装 token 未生成 → 设置页开开关）在落盘前
+    // 补生成 token。7f7a72c 把生成收敛到启动期 init_state_and_autostart 后，这里以
+    // enabled:true+空 token 落盘，下次启动 start_server_inner 空 token fail-closed 拒启，
+    // 服务永远起不来。拒启本身保留作纵深防线（此处保证空 token 不再落盘）
+    let cfg = fill_blank_token_if_enabled(cfg);
     let old = load_mcp_config_inner(&state.settings_file);
     save_mcp_config_inner(&state.settings_file, &cfg)?;
     if needs_restart(&old, &cfg) {
@@ -775,9 +790,10 @@ pub fn start_server(app: &AppHandle, state: &State<'_, McpState>, cfg: &McpConfi
 }
 
 fn start_server_inner(app: &AppHandle, state: &State<'_, McpState>, cfg: &McpConfig) -> Result<(), String> {
-    // 审查修复（Finding 2 收敛）：空 token 的生成+落盘唯一入口在 init_state_and_autostart，
-    // 此处不再生成。空 token fail-closed 拒启（纵深防线：bearer 中间件虽也拦空 token 请求，
-    // 但服务不该带空凭据起来——restart_if_needed 路径（设置页保存）可能传入空 token）
+    // 审查修复（Finding 2 收敛）：空 token 的生成+落盘入口在 init_state_and_autostart
+    // （启动期）与 mcp_set_config（设置页保存，终审修复补回），此处不再生成。空 token
+    // fail-closed 拒启（纵深防线：bearer 中间件虽也拦空 token 请求，但服务不该带空凭据
+    // 起来——两条生成路径之外的未知传入一概拒绝）
     if cfg.token.is_empty() {
         return Err("token 为空，拒绝启动（请先在设置页生成/重置 token）".into());
     }
@@ -818,17 +834,20 @@ fn start_server_inner(app: &AppHandle, state: &State<'_, McpState>, cfg: &McpCon
 }
 
 /// 无头模式 CLI 内存覆盖（验收条目13）：仅本次运行生效，不回写 settings.json。
+/// force_enabled（--headless-mcp，终审修复：不再要求必须伴随 port/token 覆盖）或
 /// port/token 任一给出即强制 enabled——无头模式下 MCP 是唯一交互入口
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct McpOverride {
     pub port: Option<u16>,
     pub token: Option<String>,
+    /// headless（无人值守）下无条件强制启用，无论有无 port/token 覆盖
+    pub force_enabled: bool,
 }
 
 /// 覆盖合并（纯函数，单测友好）：基于读盘 cfg 的内存副本合并 CLI 覆盖，
 /// 全程不触碰 settings.json（save 路径只在 mcp_set_config / regenerate / 空 token 落盘走）
 pub fn apply_mcp_override(mut cfg: McpConfig, ov: &McpOverride) -> McpConfig {
-    if ov.port.is_some() || ov.token.is_some() {
+    if ov.force_enabled || ov.port.is_some() || ov.token.is_some() {
         cfg.enabled = true;
     }
     if let Some(p) = ov.port {
@@ -858,9 +877,14 @@ pub fn prepare_mcp_config(raw: McpConfig, ov: &McpOverride) -> (McpConfig, Optio
     (cfg, to_persist)
 }
 
-/// setup 阶段装配：manage 全局状态 + 按配置自动拉起，返回生效 cfg（含 CLI 覆盖），
-/// 供 run() 无头时输出连接信息（stdout/托盘复制与实际监听同源）。app 为 &mut App（setup 闭包入参）
-pub fn init_state_and_autostart(app: &mut tauri::App, ov: &McpOverride) -> Result<McpConfig, String> {
+/// setup 阶段装配：manage 全局状态 + 按配置自动拉起。返回 (生效 cfg（含 CLI 覆盖）, 启动结果)：
+/// 启动结果 Ok=服务已监听（或按配置本就不启动）；Err=启动失败原因（落盘失败/autostart 失败）。
+/// headless 由 run() 据此 stderr+exit(2) 让脚本消费方感知失败；非 headless 失败仅 eprintln
+/// + 运行态记录，不拦应用启动（设置页可对账）。app 为 &mut App（setup 闭包入参）
+pub fn init_state_and_autostart(
+    app: &mut tauri::App,
+    ov: &McpOverride,
+) -> Result<(McpConfig, Result<(), String>), String> {
     use tauri::Manager;
     let settings_file =
         app.path().app_data_dir().map_err(|e| e.to_string())?.join("settings.json");
@@ -875,7 +899,8 @@ pub fn init_state_and_autostart(app: &mut tauri::App, ov: &McpOverride) -> Resul
     // manage 前读配置：避免 manage 后再借 state 的 borrow 纠缠
     let raw_cfg = load_mcp_config_inner(&state.settings_file);
     let (cfg, to_persist) = prepare_mcp_config(raw_cfg, ov);
-    // token 生成落盘的唯一入口（审查修复 Finding 2 收敛：start_server_inner 不再生成）。
+    // token 生成落盘入口之一（启动期；另一处为设置页保存 mcp_set_config，终审修复补回）。
+    // start_server_inner 不生成。
     // 落盘对象是剥离覆盖的原始 cfg（Finding 1：覆盖端口/强制 enabled 不落盘）；
     // 落盘失败对齐原 inner 口径：服务不启、不拦应用启动，错误进运行态供设置页对账
     // （headless 下宁可不启服务，也不让内存 token 与盘上状态漂移）
@@ -888,20 +913,27 @@ pub fn init_state_and_autostart(app: &mut tauri::App, ov: &McpOverride) -> Resul
         }
     }
     app.manage(state);
-    match start_error {
-        Some(msg) => app.state::<McpState>().mark_start_failed(msg),
+    let start_result = match start_error {
+        Some(msg) => {
+            app.state::<McpState>().mark_start_failed(msg.clone());
+            Err(msg)
+        }
         None if cfg.enabled => {
             let handle = app.handle().clone();
             let st = handle.state::<McpState>();
-            // autostart 失败（bind 占用等）不拦启动：setup fatal 只留给状态构造/manage，
-            // 服务没起来仅记日志，设置页重开开关即可按新错误重试
-            if let Err(e) = start_server(&handle, &st, &cfg) {
-                eprintln!("[mcp] autostart failed: {e}");
+            // autostart 失败（bind 占用等）不拦 GUI 启动：setup fatal 只留给状态构造/manage，
+            // 失败原因经返回值外传（headless exit(2)），并仅记日志+运行态供设置页重开开关重试
+            match start_server(&handle, &st, &cfg) {
+                Ok(()) => Ok(()),
+                Err(e) => {
+                    eprintln!("[mcp] autostart failed: {e}");
+                    Err(e)
+                }
             }
         }
-        None => {}
-    }
-    Ok(cfg)
+        None => Ok(()),
+    };
+    Ok((cfg, start_result))
 }
 
 #[cfg(test)]
@@ -932,7 +964,7 @@ mod tests {
     fn override_forces_enabled_and_applies_fields() {
         let cfg = apply_mcp_override(
             McpConfig::default(),
-            &McpOverride { port: Some(47216), token: Some("0123456789abcdef".into()) },
+            &McpOverride { port: Some(47216), token: Some("0123456789abcdef".into()), force_enabled: false },
         );
         assert!(cfg.enabled, "任一覆盖项存在即强制启用");
         assert_eq!(cfg.port, 47216);
@@ -950,8 +982,10 @@ mod tests {
         )
         .unwrap();
         let raw = load_mcp_config_inner(&p);
-        let (cfg, to_persist) =
-            prepare_mcp_config(raw, &McpOverride { port: Some(47216), token: None });
+        let (cfg, to_persist) = prepare_mcp_config(
+            raw,
+            &McpOverride { port: Some(47216), token: None, force_enabled: false },
+        );
         // 生效配置：覆盖全部生效
         assert!(cfg.enabled);
         assert_eq!(cfg.port, 47216);
@@ -971,11 +1005,58 @@ mod tests {
     fn override_with_token_skips_generation_and_persistence() {
         let (cfg, to_persist) = prepare_mcp_config(
             McpConfig::default(),
-            &McpOverride { port: None, token: Some("0123456789abcdef".into()) },
+            &McpOverride { port: None, token: Some("0123456789abcdef".into()), force_enabled: false },
         );
         assert!(cfg.enabled);
         assert_eq!(cfg.token, "0123456789abcdef");
         assert!(to_persist.is_none(), "覆盖 token 路径不得有任何落盘");
+    }
+
+    // 终审修复回归（Finding 1）：设置页首启用主流程——全新安装 token 未生成，前端整体回写
+    // {enabled:true, token:""}。7f7a72c 回归：空 token 落盘后 start_server_inner fail-closed
+    // 拒启，服务永远起不来。沿 mcp_set_config 的真实链路（load→fill→save→load）验证补生成
+    #[test]
+    fn set_config_with_enabled_blank_token_generates_and_persists() {
+        let p = tmp_path("set-config-blank-token");
+        std::fs::write(
+            &p,
+            r#"{"mcp":{"enabled":false,"mode":"wildcard","port":47215,"token":"","whitelist":[]}}"#,
+        )
+        .unwrap();
+        let old = load_mcp_config_inner(&p);
+        // 模拟前端首启用：读盘 cfg 翻转 enabled、token 仍为空（整体回写通道）
+        let mut submitted = old.clone();
+        submitted.enabled = true;
+        let cfg = fill_blank_token_if_enabled(submitted);
+        assert!(!cfg.token.is_empty(), "enabled+空 token 必须在落盘前补生成");
+        save_mcp_config_inner(&p, &cfg).unwrap();
+        let back = load_mcp_config_inner(&p);
+        assert_eq!(back.token, cfg.token, "落盘 token 与生效 token 一致，下次启动可起服");
+        // token 空→非空必然触发重启：restart_if_needed→start_server_inner 的空 token
+        // 拒启不再可达（服务可启）
+        assert!(needs_restart(&old, &cfg));
+        let _ = std::fs::remove_file(&p);
+    }
+
+    // 未启用时空 token 恒不生成（生成唯一触发条件是 enabled，与 prepare_mcp_config 同口径）
+    #[test]
+    fn disabled_blank_token_stays_blank() {
+        let cfg = fill_blank_token_if_enabled(McpConfig::default());
+        assert!(!cfg.enabled);
+        assert!(cfg.token.is_empty(), "未启用不得偷偷生成 token");
+    }
+
+    // 终审修复回归（Finding 2）：裸 --headless-mcp（无 port/token 覆盖、settings 中 MCP 关闭）
+    // 无条件强制启用且空 token 存量在启动期生成——此前不强制，打印空 token 连接行误导消费方
+    #[test]
+    fn headless_override_forces_enabled_and_generates_token() {
+        let (cfg, to_persist) =
+            prepare_mcp_config(McpConfig::default(), &McpOverride { force_enabled: true, ..McpOverride::default() });
+        assert!(cfg.enabled);
+        assert!(!cfg.token.is_empty(), "headless 空 token 存量必须生成，连接行才有效");
+        let persisted = to_persist.expect("空 token 须产生待落盘配置");
+        assert!(!persisted.enabled, "headless 强制的 enabled 不得落盘（同 CLI 覆盖口径）");
+        assert_eq!(persisted.token, cfg.token);
     }
 
     #[test]

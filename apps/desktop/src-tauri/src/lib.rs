@@ -149,7 +149,9 @@ fn apply_devtools_env() {
         let Some(id) = conf["identifier"].as_str() else { return };
         let Ok(text) = std::fs::read_to_string(std::path::Path::new(&appdata).join(id).join("settings.json")) else { return };
         let (enabled, port) = read_devtools_from_settings_text(&text);
-        if enabled {
+        // 终审修复：仅在环境变量未设置时写入——外部（调试器/CI/用户 shell）预设的
+        // WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS 可能携带其他浏览器参数，无条件覆写会挤掉它们
+        if enabled && std::env::var_os("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").is_none() {
             std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", format!("--remote-debugging-port={port}"));
         }
     }
@@ -913,8 +915,10 @@ pub fn run() {
     }
     // 验收条目4：devtools 远程调试端口环境注入必须先于任何 WebView 创建（run 最早期）
     apply_devtools_env();
-    // CLI 覆盖仅本次运行生效：内存传递给 setup，绝不落盘 settings.json
-    let mcp_override = mcp_server::McpOverride { port: cli.mcp_port, token: cli.mcp_token };
+    // CLI 覆盖仅本次运行生效：内存传递给 setup，绝不落盘 settings.json；
+    // headless 无人值守下无条件强制启用 MCP（唯一交互入口，终审修复）
+    let mcp_override =
+        mcp_server::McpOverride { port: cli.mcp_port, token: cli.mcp_token, force_enabled: cli.headless_mcp };
     let headless = cli.headless_mcp;
     let mut builder = tauri::Builder::default();
     // 真机 E2E 基建：debug 构建装配 mcp-bridge（仅绑 127.0.0.1）供 tauri-mcp 驱动 UI；release 不编译
@@ -945,17 +949,30 @@ pub fn run() {
         )
         .setup(move |app| {
             // plan17：MCP 服务器装配（manage McpState）+ 按配置自动拉起；返回含 CLI 覆盖的
-            // 生效 cfg，供无头连接信息输出（stdout/托盘复制与实际监听同源）
-            let mcp_cfg = mcp_server::init_state_and_autostart(app, &mcp_override)?;
-            // 验收条目13：无头模式不显示任何窗口，stdout 打一行连接信息（gate 走 Debug 格式）
+            // 生效 cfg 与真实启动结果，供无头连接信息输出（stdout/托盘复制与实际监听同源）
+            let (mcp_cfg, mcp_start) = mcp_server::init_state_and_autostart(app, &mcp_override)?;
+            // 验收条目13：无头模式不显示任何窗口。连接信息仅在服务真实监听成功时输出
+            // （终审修复：不再与启动结果脱钩——此前 autostart 失败仍打印成功样连接行，
+            // 裸 --headless-mcp 且设置关闭时打印空 token 行）。headless 无人值守，失败
+            // stderr 明示 + exit(2) 让脚本消费方可感知；非 headless 失败已在装配层
+            // eprintln+运行态记录，不拦启动
             if headless {
-                println!(
-                    "MCP: http://127.0.0.1:{}  token: {}  gate: {:?}",
-                    mcp_cfg.port, mcp_cfg.token, mcp_cfg.mode
-                );
-            } else if let Some(w) = app.get_webview_window("main") {
+                match mcp_start {
+                    Ok(()) => println!(
+                        "MCP: http://127.0.0.1:{}  token: {}  gate: {:?}",
+                        mcp_cfg.port, mcp_cfg.token, mcp_cfg.mode
+                    ),
+                    Err(e) => {
+                        eprintln!("[mcp] headless 启动失败: {e}");
+                        std::process::exit(2);
+                    }
+                }
+            } else {
+                let _ = mcp_start;
                 // 窗口 visible:false 起步（防启动闪现），非 headless 在首帧前同步显示
-                let _ = w.show();
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                }
             }
             // F4：装载跨会话对话框授权（备份源目录）进会话登记
             load_grants(app.handle());
@@ -1470,5 +1487,12 @@ mod tests {
             read_devtools_from_settings_text(r#"{"devtools":{"enabled":true,"port":80}}"#),
             (true, 9222),
         );
+        // 终审修复补测：高端口越界（u16 上溢形态）回落默认
+        assert_eq!(
+            read_devtools_from_settings_text(r#"{"devtools":{"enabled":true,"port":70000}}"#),
+            (true, 9222),
+        );
+        // 终审修复补测：devtools 非对象形态（字符串等）整体回落默认（关）
+        assert_eq!(read_devtools_from_settings_text(r#"{"devtools":"on"}"#), (false, 9222));
     }
 }

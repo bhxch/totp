@@ -636,7 +636,7 @@
     "clipboardClear": "Auto-clear clipboard after copy",
     "rememberTagFilter": "Remember tag filter",
     "devtoolsTitle": "WebView remote debugging",
-    "devtoolsWarn": "While enabled, any process on this machine can read plaintext keys shown in the window via this port. For local diagnostics only — turn it off when done.",
+    "devtoolsWarn": "While enabled, any process on this machine can read plaintext keys shown in the window via this port. For local diagnostics only — turn it off when done. Note: the CDP remote port is Windows-only; this toggle has no effect on other platforms.",
     "devtoolsPort": "Debug port (default 9222)",
     "devtoolsRestart": "Takes effect after app restart"
   },
