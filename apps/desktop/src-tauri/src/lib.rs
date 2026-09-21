@@ -10,6 +10,9 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 mod lock_events;
+// plan17 Task 6 接线前，mcp_server 的配置函数仅测试引用，暂时抑制 dead_code（接线后可移除）
+#[allow(dead_code)]
+mod mcp_server;
 
 // mini 最近一次因失焦而隐藏的时刻，用于缓解「托盘点击收起」与「失焦自动隐藏」的竞态
 static LAST_FOCUS_HIDE: Mutex<Option<Instant>> = Mutex::new(None);

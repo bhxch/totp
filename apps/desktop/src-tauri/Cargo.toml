@@ -21,7 +21,8 @@ serde_json = "1"
 # F4 对话框授权 token 的 CSPRNG（tauri 传递依赖已在树中，不新增编译产物）
 getrandom = "0.3"
 
-# plan17：内嵌 MCP 服务器（Streamable HTTP）。rmcp 自带 axum/tokio 栈，与 tauri 2 同源
+# plan17：内嵌 MCP 服务器（Streamable HTTP）。rmcp 自带 tokio 栈与 tauri 2 同源；
+# StreamableHttpService 为 Tower service，HTTP 挂载层（axum）由 plan17 Task 6 自备
 rmcp = { version = "3", features = ["server", "macros", "transport-streamable-http-server"] }
 
 # DPAPI 解密（WinAuth 导入）+ 系统锁屏事件（plan16 T15，WTS 会话通知与隐藏窗口）：
