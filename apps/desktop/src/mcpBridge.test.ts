@@ -166,6 +166,23 @@ describe('startMcpBridge', () => {
     expect(calls[0]).toEqual({ cmd: 'mcp_respond', args: { id: 11, ok: false, result: null, error: 'vault locked' } })
   })
 
+  it('totp 条目 get_code 成功响应键集严格为 {code, expires_in_seconds, period}', async () => {
+    // mkEntry 默认 totp：digits 6 / period 30；经 startMcpBridge 事件链路驱动
+    const { listeners, calls } = await bridgeHarness({ locked: false })
+    listeners[0]!({ payload: { id: 12, tool: 'get_code', args: { account_id: '1' } } })
+    await flush()
+    expect(calls[0]!.cmd).toBe('mcp_respond')
+    expect(calls[0]!.args.ok).toBe(true)
+    const out = calls[0]!.args.result as Record<string, unknown>
+    expect(Object.keys(out).sort()).toEqual(['code', 'expires_in_seconds', 'period'])
+    expect(out.code).toMatch(/^\d{6}$/)
+    const sec = out.expires_in_seconds
+    expect(Number.isInteger(sec)).toBe(true)
+    expect(sec).toBeGreaterThanOrEqual(1)
+    expect(sec).toBeLessThanOrEqual(30)
+    expect(out.period).toBe(30)
+  })
+
   it('卸载函数即 listen 返回的 unlisten', async () => {
     const { stop, unlisten } = await bridgeHarness({ locked: false })
     expect(stop).toBe(unlisten)
