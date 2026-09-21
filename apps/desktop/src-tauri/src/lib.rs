@@ -123,6 +123,22 @@ fn read_devtools_from_settings_text(text: &str) -> (bool, u16) {
     (enabled, port)
 }
 
+/// 无头模式（windows_subsystem=windows，验收条目13）下尽力附加父进程控制台，使
+/// stdout 连接信息在终端启动可见；附加失败（双击启动无宿主控制台等）静默——
+/// 托盘「复制 MCP 连接信息」兜底
+#[cfg(windows)]
+fn attach_parent_console() {
+    use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+    unsafe {
+        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
+/// 非 Windows no-op 桩：终端启动天然有 stdout，保持跨平台编译（调用点仅 cfg(windows)，桩防 dead_code）
+#[cfg(not(windows))]
+#[allow(dead_code)]
+fn attach_parent_console() {}
+
 /// 须在任何 WebView 创建前调用（run() 最早期）；settings.json 路径按
 /// Windows app_data_dir 规则 %APPDATA%/{identifier} 解析（mac/linux 无 CDP 端口通道，恒 no-op）
 fn apply_devtools_env() {
@@ -883,8 +899,23 @@ fn os_auto_unprotect(_window: tauri::WebviewWindow, _wrapped_b64: String) -> Res
 }
 
 pub fn run() {
+    // 验收条目13：CLI 参数最先解析，失败 stderr + exit(2)（GUI 子系统下仅终端启动可见错误）
+    let cli = match cli::parse_args(&std::env::args().skip(1).collect::<Vec<_>>()) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("参数错误: {e}");
+            std::process::exit(2);
+        }
+    };
+    #[cfg(windows)]
+    if cli.headless_mcp {
+        attach_parent_console(); // windows_subsystem=windows 下尽力接管父控制台，使 println 可见
+    }
     // 验收条目4：devtools 远程调试端口环境注入必须先于任何 WebView 创建（run 最早期）
     apply_devtools_env();
+    // CLI 覆盖仅本次运行生效：内存传递给 setup，绝不落盘 settings.json
+    let mcp_override = mcp_server::McpOverride { port: cli.mcp_port, token: cli.mcp_token };
+    let headless = cli.headless_mcp;
     let mut builder = tauri::Builder::default();
     // 真机 E2E 基建：debug 构建装配 mcp-bridge（仅绑 127.0.0.1）供 tauri-mcp 驱动 UI；release 不编译
     #[cfg(debug_assertions)]
@@ -912,9 +943,20 @@ pub fn run() {
                 })
                 .build(),
         )
-        .setup(|app| {
-            // plan17：MCP 服务器装配（manage McpState）+ 按配置自动拉起
-            mcp_server::init_state_and_autostart(app)?;
+        .setup(move |app| {
+            // plan17：MCP 服务器装配（manage McpState）+ 按配置自动拉起；返回含 CLI 覆盖的
+            // 生效 cfg，供无头连接信息输出（stdout/托盘复制与实际监听同源）
+            let mcp_cfg = mcp_server::init_state_and_autostart(app, &mcp_override)?;
+            // 验收条目13：无头模式不显示任何窗口，stdout 打一行连接信息（gate 走 Debug 格式）
+            if headless {
+                println!(
+                    "MCP: http://127.0.0.1:{}  token: {}  gate: {:?}",
+                    mcp_cfg.port, mcp_cfg.token, mcp_cfg.mode
+                );
+            } else if let Some(w) = app.get_webview_window("main") {
+                // 窗口 visible:false 起步（防启动闪现），非 headless 在首帧前同步显示
+                let _ = w.show();
+            }
             // F4：装载跨会话对话框授权（备份源目录）进会话登记
             load_grants(app.handle());
             // 系统锁屏事件监听（plan16 T15）：Windows 下订阅 WTS_SESSION_LOCK → 前端广播
@@ -936,7 +978,25 @@ pub fn run() {
             let show_main_item =
                 MenuItem::with_id(app, "show-main", "显示主窗口", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_main_item, &quit_item])?;
+            // 验收条目13：无头模式无窗口可看，托盘补「复制 MCP 连接信息」兜底
+            // （文本含 token，写入登记 F16 暂存——托盘退出兜底清除）
+            let mcp_info = if headless {
+                Some(format!("MCP: http://127.0.0.1:{}  token: {}", mcp_cfg.port, mcp_cfg.token))
+            } else {
+                None
+            };
+            let mcp_info_item = match &mcp_info {
+                Some(_) => {
+                    Some(MenuItem::with_id(app, "copy-mcp-info", "复制 MCP 连接信息", true, None::<&str>)?)
+                }
+                None => None,
+            };
+            let mut items: Vec<&dyn tauri::menu::IsMenuItem<_>> = vec![&show_main_item];
+            if let Some(item) = &mcp_info_item {
+                items.push(item);
+            }
+            items.push(&quit_item);
+            let menu = Menu::with_items(app, &items)?;
 
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
@@ -955,9 +1015,19 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            app.on_menu_event(|app, event| {
+            app.on_menu_event(move |app, event| {
                 match event.id().as_ref() {
                     "show-main" => show_main(app),
+                    // 验收条目13：无头连接信息兜底复制（登记 F16 暂存，托盘退出兜底清除 token）
+                    "copy-mcp-info" => {
+                        if let Some(text) = &mcp_info {
+                            if app.clipboard().write_text(text.clone()).is_ok() {
+                                if let Ok(mut s) = CLIPBOARD_STAGE.lock() {
+                                    *s = Some(text.clone());
+                                }
+                            }
+                        }
+                    }
                     "quit" => {
                         // F16：托盘退出兜底——剪贴板仍持有本应用复制内容时清空（读回比对在 Rust 侧，
                         // 不会误清用户后续复制的外部内容；无暂存/内容已换则不动）

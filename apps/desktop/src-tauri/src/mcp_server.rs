@@ -815,8 +815,32 @@ fn start_server_inner(app: &AppHandle, state: &State<'_, McpState>, cfg: &McpCon
     Ok(())
 }
 
-/// setup 阶段装配：manage 全局状态 + 按配置自动拉起。app 为 &mut App（setup 闭包入参）
-pub fn init_state_and_autostart(app: &mut tauri::App) -> Result<(), String> {
+/// 无头模式 CLI 内存覆盖（验收条目13）：仅本次运行生效，不回写 settings.json。
+/// port/token 任一给出即强制 enabled——无头模式下 MCP 是唯一交互入口
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct McpOverride {
+    pub port: Option<u16>,
+    pub token: Option<String>,
+}
+
+/// 覆盖合并（纯函数，单测友好）：基于读盘 cfg 的内存副本合并 CLI 覆盖，
+/// 全程不触碰 settings.json（save 路径只在 mcp_set_config / regenerate / 空 token 落盘走）
+pub fn apply_mcp_override(mut cfg: McpConfig, ov: &McpOverride) -> McpConfig {
+    if ov.port.is_some() || ov.token.is_some() {
+        cfg.enabled = true;
+    }
+    if let Some(p) = ov.port {
+        cfg.port = p;
+    }
+    if let Some(t) = &ov.token {
+        cfg.token = t.clone();
+    }
+    cfg
+}
+
+/// setup 阶段装配：manage 全局状态 + 按配置自动拉起，返回生效 cfg（含 CLI 覆盖），
+/// 供 run() 无头时输出连接信息（stdout/托盘复制与实际监听同源）。app 为 &mut App（setup 闭包入参）
+pub fn init_state_and_autostart(app: &mut tauri::App, ov: &McpOverride) -> Result<McpConfig, String> {
     use tauri::Manager;
     let settings_file =
         app.path().app_data_dir().map_err(|e| e.to_string())?.join("settings.json");
@@ -829,7 +853,16 @@ pub fn init_state_and_autostart(app: &mut tauri::App) -> Result<(), String> {
         last_error: Default::default(),
     };
     // manage 前读配置：避免 manage 后再借 state 的 borrow 纠缠
-    let cfg = load_mcp_config_inner(&state.settings_file);
+    let mut cfg = apply_mcp_override(load_mcp_config_inner(&state.settings_file), ov);
+    // 空 token 首次生成前置到本层（原在 start_server_inner 内生成+落盘）：否则返回的 cfg
+    // 拿不到实际生效的 token，无头连接信息会打出空值。落盘失败不拦启动（同 autostart
+    // 失败口径）：服务以内存 token 运行，设置页下次保存时重写
+    if cfg.enabled && cfg.token.is_empty() {
+        cfg.token = generate_token();
+        if let Err(e) = save_mcp_config_inner(&state.settings_file, &cfg) {
+            eprintln!("[mcp] token persist failed: {e}");
+        }
+    }
     app.manage(state);
     if cfg.enabled {
         let handle = app.handle().clone();
@@ -840,7 +873,7 @@ pub fn init_state_and_autostart(app: &mut tauri::App) -> Result<(), String> {
             eprintln!("[mcp] autostart failed: {e}");
         }
     }
-    Ok(())
+    Ok(cfg)
 }
 
 #[cfg(test)]
@@ -863,6 +896,37 @@ mod tests {
         assert_eq!(c.port, 47215);
         assert!(c.token.is_empty(), "token 首次由 Rust 生成，缺省为空");
         assert!(c.whitelist.is_empty());
+    }
+
+    // CLI 覆盖合并（验收条目13）：强制 enabled + 字段生效，且逐字节不回写 settings.json
+    #[test]
+    fn override_forces_enabled_and_applies_fields_without_write() {
+        let p = tmp_path("override");
+        std::fs::write(
+            &p,
+            r#"{"mcp":{"enabled":false,"mode":"wildcard","port":47215,"token":"","whitelist":[]}}"#,
+        )
+        .unwrap();
+        let before = std::fs::read_to_string(&p).unwrap();
+        let cfg = apply_mcp_override(
+            load_mcp_config_inner(&p),
+            &McpOverride { port: Some(47216), token: Some("0123456789abcdef".into()) },
+        );
+        assert!(cfg.enabled, "任一覆盖项存在即强制启用");
+        assert_eq!(cfg.port, 47216);
+        assert_eq!(cfg.token, "0123456789abcdef");
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), before, "覆盖仅内存生效，不得回写 settings.json");
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn override_default_is_noop() {
+        let base = McpConfig::default();
+        let cfg = apply_mcp_override(base.clone(), &McpOverride::default());
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.port, base.port);
+        assert_eq!(cfg.token, base.token);
+        assert_eq!(cfg.mode, base.mode);
     }
 
     #[test]
