@@ -8,8 +8,8 @@ describe('settingsStore', () => {
   })
   it('save/load 往返', async () => {
     const s = createMemoryStorage()
-    await saveSettings(s, { urlFilterEnabled: false, blurHideEnabled: false, clipboardClearEnabled: false, popupCloseDelayMs: 5000, syncEnabled: true, themeMode: 'dark', themeColor: 'teal', lockOnRestart: false, lockIdleMinutes: 15, lockOnSystemLock: false, backupKdfProfile: 'fast', tagFilterMode: 'any', rememberTagFilter: false, lastTagFilterIds: [], locale: 'zh', themeContrast: 'standard' })
-    expect(await loadSettings(s)).toEqual({ urlFilterEnabled: false, blurHideEnabled: false, clipboardClearEnabled: false, popupCloseDelayMs: 5000, syncEnabled: true, themeMode: 'dark', themeColor: 'teal', lockOnRestart: false, lockIdleMinutes: 15, lockOnSystemLock: false, backupKdfProfile: 'fast', tagFilterMode: 'any', rememberTagFilter: false, lastTagFilterIds: [], locale: 'zh', themeContrast: 'standard' })
+    await saveSettings(s, { urlFilterEnabled: false, blurHideEnabled: false, clipboardClearEnabled: false, popupCloseDelayMs: 5000, syncEnabled: true, themeMode: 'dark', themeColor: 'teal', lockOnRestart: false, lockIdleMinutes: 15, lockOnSystemLock: false, backupKdfProfile: 'fast', tagFilterMode: 'any', rememberTagFilter: false, lastTagFilterIds: [], locale: 'zh', themeContrast: 'standard', syncPrefs: { autoFollow: false } })
+    expect(await loadSettings(s)).toEqual({ urlFilterEnabled: false, blurHideEnabled: false, clipboardClearEnabled: false, popupCloseDelayMs: 5000, syncEnabled: true, themeMode: 'dark', themeColor: 'teal', lockOnRestart: false, lockIdleMinutes: 15, lockOnSystemLock: false, backupKdfProfile: 'fast', tagFilterMode: 'any', rememberTagFilter: false, lastTagFilterIds: [], locale: 'zh', themeContrast: 'standard', syncPrefs: { autoFollow: false } })
   })
   it('损坏 JSON 回退默认值', async () => {
     const s = createMemoryStorage()
@@ -19,7 +19,7 @@ describe('settingsStore', () => {
   it('未知字段被丢弃（只保留已知键）', async () => {
     const s = createMemoryStorage()
     await s.set(SETTINGS_KEY, JSON.stringify({ urlFilterEnabled: true, hacked: 1 }))
-    expect(await loadSettings(s)).toEqual({ urlFilterEnabled: true, blurHideEnabled: false, clipboardClearEnabled: true, popupCloseDelayMs: 2000, syncEnabled: false, themeMode: 'auto', themeColor: 'blue', lockOnRestart: true, lockIdleMinutes: 0, lockOnSystemLock: true, backupKdfProfile: 'balanced', tagFilterMode: 'any', rememberTagFilter: false, lastTagFilterIds: [], locale: 'auto', themeContrast: 'standard' })
+    expect(await loadSettings(s)).toEqual({ urlFilterEnabled: true, blurHideEnabled: false, clipboardClearEnabled: true, popupCloseDelayMs: 2000, syncEnabled: false, themeMode: 'auto', themeColor: 'blue', lockOnRestart: true, lockIdleMinutes: 0, lockOnSystemLock: true, backupKdfProfile: 'balanced', tagFilterMode: 'any', rememberTagFilter: false, lastTagFilterIds: [], locale: 'auto', themeContrast: 'standard', syncPrefs: { autoFollow: true } })
   })
   it('类型非法的值回退默认', async () => {
     const s = createMemoryStorage()
@@ -28,7 +28,7 @@ describe('settingsStore', () => {
   })
   it('blurHideEnabled 缺省 false；非法类型回退 false', async () => {
     const s = createMemoryStorage()
-    expect(await loadSettings(s)).toEqual({ urlFilterEnabled: true, blurHideEnabled: false, clipboardClearEnabled: true, popupCloseDelayMs: 2000, syncEnabled: false, themeMode: 'auto', themeColor: 'blue', lockOnRestart: true, lockIdleMinutes: 0, lockOnSystemLock: true, backupKdfProfile: 'balanced', tagFilterMode: 'any', rememberTagFilter: false, lastTagFilterIds: [], locale: 'auto', themeContrast: 'standard' })
+    expect(await loadSettings(s)).toEqual({ urlFilterEnabled: true, blurHideEnabled: false, clipboardClearEnabled: true, popupCloseDelayMs: 2000, syncEnabled: false, themeMode: 'auto', themeColor: 'blue', lockOnRestart: true, lockIdleMinutes: 0, lockOnSystemLock: true, backupKdfProfile: 'balanced', tagFilterMode: 'any', rememberTagFilter: false, lastTagFilterIds: [], locale: 'auto', themeContrast: 'standard', syncPrefs: { autoFollow: true } })
     await s.set(SETTINGS_KEY, JSON.stringify({ blurHideEnabled: 'yes' }))
     expect((await loadSettings(s)).blurHideEnabled).toBe(false)
   })
@@ -49,6 +49,20 @@ describe('settingsStore', () => {
     expect((await loadSettings(s)).syncEnabled).toBe(false)
     await s.set(SETTINGS_KEY, JSON.stringify({ syncEnabled: 'yes' }))
     expect((await loadSettings(s)).syncEnabled).toBe(false)
+  })
+  it('syncPrefs.autoFollow 缺省 true 且可显式关闭（跨端同步 T3）', async () => {
+    expect((await loadSettings(createMemoryStorage())).syncPrefs.autoFollow).toBe(true)
+    expect(DEFAULT_SETTINGS.syncPrefs.autoFollow).toBe(true)
+    const s = createMemoryStorage()
+    await s.set(SETTINGS_KEY, JSON.stringify({ syncPrefs: { autoFollow: false } }))
+    expect((await loadSettings(s)).syncPrefs.autoFollow).toBe(false)
+  })
+  it('syncPrefs 整体非对象/autoFollow 非布尔 → 回退默认 true（跟随拉取缺省开）', async () => {
+    const s = createMemoryStorage()
+    await s.set(SETTINGS_KEY, JSON.stringify({ syncPrefs: 'oops' }))
+    expect((await loadSettings(s)).syncPrefs.autoFollow).toBe(true)
+    await s.set(SETTINGS_KEY, JSON.stringify({ syncPrefs: { autoFollow: 'no' } }))
+    expect((await loadSettings(s)).syncPrefs.autoFollow).toBe(true)
   })
   it('锁定偏好缺省（plan16 T6）：lockOnRestart=true / lockIdleMinutes=0 / lockOnSystemLock=true', async () => {
     const loaded = await loadSettings(createMemoryStorage())

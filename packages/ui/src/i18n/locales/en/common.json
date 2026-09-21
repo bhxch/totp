@@ -634,6 +634,8 @@
     "autoSuffix": " (follows system)",
     "general": "General",
     "blurHide": "Hide when unfocused",
+    "autoFollow": "Auto-follow cloud sync",
+    "autoFollowHint": "Pull cloud updates automatically when unlocked; off falls back to manual sync",
     "urlFilter": "URL filter",
     "popupDelay": "Popup close delay (ms)",
     "clipboardClear": "Auto-clear clipboard after copy",

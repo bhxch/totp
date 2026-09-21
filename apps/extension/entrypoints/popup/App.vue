@@ -24,7 +24,7 @@ const syncFollow = createSyncScheduler({
   isUnlocked: () => !locked.value,
   onUnlocked: (cb) => watch(locked, (v) => { if (!v) cb() }),
   runPull: () => cloudSync.run(),
-  autoFollowEnabled: () => true, // T3：改读 settings.syncPrefs.autoFollow
+  autoFollowEnabled: () => settings.syncPrefs.autoFollow !== false, // T3 开关（设置页通用卡）
   intervalMs: () => null, // popup 不轮询
   onError: (e) => console.warn('[syncFollow]', e),
 })

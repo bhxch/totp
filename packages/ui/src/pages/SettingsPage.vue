@@ -55,6 +55,12 @@ async function setBool(key: BoolKey, v: boolean): Promise<void> {
   await props.store.commitSettings()
 }
 
+/** 云同步跟随开关（跨端同步 T3）：syncPrefs 嵌套字段不在顶层 BoolKey 内，单独 setter */
+async function setAutoFollow(v: boolean): Promise<void> {
+  props.store.settings.syncPrefs.autoFollow = v
+  await props.store.commitSettings()
+}
+
 // ---------- 语言选择（D1）：MdSelect emit 值为泛化 string|number，赋值前收敛回 AppSettings['locale'] ----------
 const LOCALE_OPTIONS = computed<Array<{ value: AppSettings['locale']; label: string }>>(() => [
   { value: 'auto', label: t('settingsPage.localeAuto') },
@@ -174,6 +180,13 @@ async function commitDevtools(): Promise<void> {
         />
       </div>
       <template v-if="showExtension">
+        <div class="row">
+          <span class="row-label">{{ t('settingsPage.autoFollow') }}<span class="row-hint">{{ t('settingsPage.autoFollowHint') }}</span></span>
+          <MdSwitch
+            class="set-auto-follow" :model-value="store.settings.syncPrefs.autoFollow"
+            @update:model-value="setAutoFollow"
+          />
+        </div>
         <div class="row">
           <span class="row-label">{{ t('settingsPage.urlFilter') }}</span>
           <MdSwitch

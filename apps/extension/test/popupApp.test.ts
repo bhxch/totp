@@ -23,6 +23,7 @@ vi.mock('../src/store', async () => {
     themeMode: 'auto',
     themeColor: 'blue',
     syncEnabled: false,
+    syncPrefs: { autoFollow: true }, // 跨端同步 T3：跟随拉取 gate 读取（真实 loadSettings 归一化产物形状）
   })
   const vault = reactive({ entries: [] as unknown[], tags: [] })
   const locked = ref(false)

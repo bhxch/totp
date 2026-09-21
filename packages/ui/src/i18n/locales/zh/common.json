@@ -634,6 +634,8 @@
     "autoSuffix": "（跟随系统）",
     "general": "通用",
     "blurHide": "失焦自动隐藏",
+    "autoFollow": "自动跟随云同步",
+    "autoFollowHint": "解锁时自动拉取云端更新，关闭后退回手动同步",
     "urlFilter": "URL 过滤",
     "popupDelay": "弹窗关闭延迟（毫秒）",
     "clipboardClear": "复制后自动清除剪贴板",

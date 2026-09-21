@@ -104,6 +104,12 @@ export const SETTINGS_KEY = 'settings'
 
 export type ThemeMode = 'light' | 'dark' | 'auto'
 
+/** 云同步跟随偏好（跨端同步 T3）：autoFollow=解锁时自动拉取云端更新（与备份/云自动通道
+ *  的 cloudAutoPrefs 键相互独立）。缺省 true——跟随拉取是默认行为，显式关闭才退回手动 */
+export interface SyncPrefs {
+  autoFollow: boolean
+}
+
 export interface AppSettings {
   urlFilterEnabled: boolean
   blurHideEnabled: boolean
@@ -138,6 +144,8 @@ export interface AppSettings {
   locale: 'auto' | 'zh' | 'en'
   /** 纯黑对比度档（spec §5）：amoled=暗色表面覆盖为 #000 系（OLED 省电+对比），仅影响表面色 */
   themeContrast: 'standard' | 'amoled'
+  /** 云同步跟随偏好（跨端同步 T3） */
+  syncPrefs: SyncPrefs
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -155,6 +163,15 @@ export const DEFAULT_SETTINGS: AppSettings = {
   tagFilterMode: 'any', rememberTagFilter: false, lastTagFilterIds: [],
   locale: 'auto',
   themeContrast: 'standard',
+  syncPrefs: { autoFollow: true },
+}
+
+/** syncPrefs 归一化（跨端同步 T3）：整体非对象或缺字段逐位回默认；autoFollow 仅认显式
+ *  false（缺失/非法 → true），与 loadSettings 既有「boolean 校验回 DEFAULT」口径一致——
+ *  本字段的 DEFAULT 恰为 true，故语义为「仅显式 false 生效」 */
+function normalizeSyncPrefs(v: unknown): SyncPrefs {
+  const p = (v ?? {}) as Partial<SyncPrefs>
+  return { autoFollow: p.autoFollow === false ? false : true }
 }
 
 export async function loadSettings(adapter: StorageAdapter): Promise<AppSettings> {
@@ -182,6 +199,7 @@ export async function loadSettings(adapter: StorageAdapter): Promise<AppSettings
       lastTagFilterIds: Array.isArray(merged.lastTagFilterIds) && merged.lastTagFilterIds.every((x) => typeof x === 'string') ? (merged.lastTagFilterIds as string[]) : DEFAULT_SETTINGS.lastTagFilterIds,
       locale: merged.locale === 'zh' || merged.locale === 'en' || merged.locale === 'auto' ? merged.locale : DEFAULT_SETTINGS.locale,
       themeContrast: merged.themeContrast === 'amoled' ? merged.themeContrast : 'standard',
+      syncPrefs: normalizeSyncPrefs(merged.syncPrefs),
     }
   } catch {
     return { ...DEFAULT_SETTINGS }

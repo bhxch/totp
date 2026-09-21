@@ -389,13 +389,14 @@ const cloudSync = createExtensionCloudRunner({ store, t: tr })
 
 /** 跟随拉取调度（跨端同步 T2）：解锁边沿 + 3min 轮询，经 syncScheduler gate（锁定态零网络）。
  *  与既有 cloudAutoPrefs 的 change/interval 通道相互独立（autoFollow 是跟随拉取的开关，勿混）；
- *  autoFollowEnabled 待 T3 接 settings.syncPrefs.autoFollow，暂恒 true */
+ *  gate 每次触发现读 settings（响应式），开关关闭后即时静默；intervalMs 仅 start 读取一次，
+ *  关闭后的 interval tick 由 gate 拦截（零网络），重开在下次挂载恢复轮询 */
 const followScheduler = createSyncScheduler({
   isUnlocked: () => !locked.value,
   onUnlocked: (cb) => watch(locked, (v) => { if (!v) cb() }),
   runPull: () => cloudSync.run(),
-  autoFollowEnabled: () => true,
-  intervalMs: () => 180_000,
+  autoFollowEnabled: () => settings.syncPrefs.autoFollow !== false,
+  intervalMs: () => (settings.syncPrefs.autoFollow ? 180_000 : null),
   onError: (e) => console.warn('[syncFollow]', e),
 })
 
