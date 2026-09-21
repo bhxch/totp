@@ -2,7 +2,7 @@
 import {
   SQLITE_TABLE_PROBES, applyImportPlan, dedupeWithinFile, extractGenericRows, importAegisEncrypted,
   importAegisPlaintext, importAndOtp, importAuthenticatorPlus, importAuthy, importBattleNet,
-  importBitwarden, importDuo, importFreeOtp, importFreeOtpLegacy, importGeneric, importProton,
+  importBitwarden, importDuo, importFoxauth, importFreeOtp, importFreeOtpLegacy, importGeneric, importProton,
   importStratum, importTotpAuthenticator, importTwoFas, importUriBatch, importWinauth, matchSchemes,
   planImport, normalizeSchemes, removeScheme, sniffAegis, sniffFormat, upsertScheme,
   type ConflictPolicy, type ImportFormat, type ImportPlan, type ImportResult, type ImportScheme,
@@ -69,6 +69,7 @@ const FORMAT_LABEL: Record<ManualFormat, string> = {
   freeOtpLegacy: t('importCard.fmtFreeOtpLegacy'),
   totpAuthenticator: t('importCard.fmtTotpAuthenticator'),
   andOtp: t('importCard.fmtAndOtp'),
+  foxauth: t('importCard.fmtFoxauth'),
   authenticatorPlus: t('importCard.fmtAuthenticatorPlus'),
   authy: t('importCard.fmtAuthy'),
   battleNet: t('importCard.fmtBattleNet'),
@@ -416,6 +417,7 @@ const TEXT_PARSERS: Record<DirectFormat, () => ImportResult | Promise<ImportResu
   freeOtpLegacy: () => importFreeOtpLegacy(fileText.value),
   totpAuthenticator: () => importTotpAuthenticator(fileText.value),
   andOtp: () => importAndOtp(fileText.value),
+  foxauth: () => importFoxauth(fileText.value),
   battleNet: () => importBattleNet(fileText.value),
   duo: () => importDuo(fileText.value),
 }

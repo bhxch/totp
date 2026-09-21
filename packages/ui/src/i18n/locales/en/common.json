@@ -392,6 +392,7 @@
     "fmtFreeOtp": "FreeOTP+ export (JSON)",
     "fmtFreeOtpLegacy": "Legacy FreeOTP (tokens.xml)",
     "fmtTotpAuthenticator": "TOTP Authenticator export",
+    "fmtFoxauth": "FoxAuth backup (JSON)",
     "fmtAndOtp": "andOTP plain export (JSON)",
     "fmtAuthenticatorPlus": "Authenticator Plus export (encrypted zip)",
     "fmtAuthy": "Authy shared_prefs (XML)",

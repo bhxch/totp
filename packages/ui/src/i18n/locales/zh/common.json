@@ -392,6 +392,7 @@
     "fmtFreeOtp": "FreeOTP+ 导出（JSON）",
     "fmtFreeOtpLegacy": "旧版 FreeOTP（tokens.xml）",
     "fmtTotpAuthenticator": "TOTP Authenticator 导出",
+    "fmtFoxauth": "FoxAuth 备份（JSON）",
     "fmtAndOtp": "andOTP 明文导出（JSON）",
     "fmtAuthenticatorPlus": "Authenticator Plus 导出（加密 zip）",
     "fmtAuthy": "Authy shared_prefs（XML）",
