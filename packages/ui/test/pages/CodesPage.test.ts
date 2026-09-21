@@ -26,8 +26,9 @@ describe('CodesPage 列表与搜索（自 旧单页 迁移）', () => {
   it('点击条目恒 emit copy 且携带验证码（enableCopy 语义由宿主 @copy 决定）', async () => {
     const s = await readyStore()
     const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
-    // 等验证码就绪（recompute 异步，未就绪时显示占位 '------'）
-    await vi.waitFor(() => expect(w.find('.otp-item .code').text()).not.toBe('------'))
+    // 验证码就绪前恒打码（验收条目3，'------' 占位不再可见）：双击揭示真实码作为就绪探针
+    await w.find('.otp-item').trigger('dblclick')
+    await vi.waitFor(() => expect(w.find('.otp-item .code').text()).toMatch(/^\d{3} \d{3}$/))
     await w.find('.otp-item').trigger('click')
     expect(w.emitted('copy')).toHaveLength(1)
     expect(String(w.emitted('copy')![0]![0])).toMatch(/^\d{6}$/)
@@ -38,7 +39,9 @@ describe('CodesPage 列表与搜索（自 旧单页 迁移）', () => {
     await s.initStore()
     await s.addEntryOp(newEntryFromUri('otpauth://hotp/H:h?secret=JBSWY3DPEHPK3PXP&counter=7', 1))
     const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
-    await vi.waitFor(() => expect(w.find('.otp-item .code').text()).not.toBe('------'))
+    // 同上：打码后以双击揭示作为就绪探针
+    await w.find('.otp-item').trigger('dblclick')
+    await vi.waitFor(() => expect(w.find('.otp-item .code').text()).toMatch(/^\d{3} \d{3}$/))
     await w.find('.otp-item').trigger('click')
     expect(w.emitted('copy')).toHaveLength(1)
     await vi.waitFor(() => expect(s.vault.entries[0]!.counter).toBe(8))
@@ -243,7 +246,7 @@ describe('CodesPage FAB 新建入口', () => {
   })
 })
 
-describe('CodesPage reveal / 右键菜单 / pinned（自 旧单页 C16 迁移）', () => {
+describe('CodesPage 右键菜单 / pinned（自 旧单页 C16 迁移）', () => {
   /** 准备含 2 条条目的 store（a/b） */
   async function storeWithTwo(): Promise<ReturnType<typeof createVueStore>> {
     const s = createVueStore(createMemoryStorage())
@@ -253,20 +256,7 @@ describe('CodesPage reveal / 右键菜单 / pinned（自 旧单页 C16 迁移）
     return s
   }
 
-  it('点击 reveal 按钮弹 RevealDialog 显示前 4 + 后 4 形态密钥，不在页面 DOM 留明文', async () => {
-    const s = await storeWithTwo()
-    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
-    await w.find('button[title="显示密钥"]').trigger('click')
-    await vi.waitFor(() => expect(w.find('.md-dialog').exists()).toBe(true))
-    expect(w.find('.md-dialog__headline').text()).toBe('A — 密钥')
-    expect(w.find('.reveal-secret').text()).toMatch(/^[A-Z2-7]{4}…[A-Z2-7]{4}$/)
-    // 页面 DOM 内不应出现完整密钥明文（列表与对话框均遮蔽）
-    expect(w.find('.otp-item').text()).not.toContain('JBSWY3DPEHPK3PXP')
-    expect(w.text()).not.toContain('JBSWY3DPEHPK3PXP')
-    // 点「关闭」（data-md-close 委托）关闭
-    await w.find('[data-md-close]').trigger('click')
-    expect(w.find('.md-dialog').exists()).toBe(false)
-  })
+  // 旧 reveal 按钮测试已随 OtpListItem 移除 reveal 入口而删除（验收条目3）；RevealDialog 容器清理归下个任务
 
   it('右键条目：MdMenu 渲染四项菜单，点「置顶」调用 updateEntryOp 并排序前置', async () => {
     const s = await storeWithTwo()

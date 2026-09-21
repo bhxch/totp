@@ -574,7 +574,7 @@
     "pinnedTitle": "已置顶",
     "invalid": "密钥非法",
     "invalidTitle": "密钥非法：{message}",
-    "revealTitle": "显示密钥",
+    "copyTitle": "复制验证码",
     "qrTitle": "显示二维码"
   },
   "searchBar": {

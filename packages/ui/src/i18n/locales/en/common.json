@@ -574,7 +574,7 @@
     "pinnedTitle": "Pinned",
     "invalid": "Invalid secret",
     "invalidTitle": "Invalid secret: {message}",
-    "revealTitle": "Reveal secret",
+    "copyTitle": "Copy code",
     "qrTitle": "Show QR code"
   },
   "searchBar": {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { OtpEntry } from '@totp/core'
-import { computed } from 'vue'
+import { computed, onScopeDispose, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import MdIconButton from './md/MdIconButton.vue'
 import { avatarStyleOf } from './avatarColor'
@@ -17,7 +17,29 @@ const props = defineProps<{
   /** 图标视图：html=builtin path 包裹片段（svg innerHTML，fill currentColor）；src=dataUrl；均缺省回退首字母 avatar */
   icon?: { html?: string; src?: string }
 }>()
-const emit = defineEmits<{ copy: []; reveal: []; qr: []; context: [event: MouseEvent] }>()
+const emit = defineEmits<{ copy: []; qr: []; context: [event: MouseEvent] }>()
+
+/** 验收条目3：6 位码默认打码；双击显示 8 秒后自动打回（spec §6 固定时长，不可配置） */
+const MASK_CODE = '••• •••'
+const REVEAL_MS = 8000
+const revealed = ref(false)
+let revealTimer: ReturnType<typeof setTimeout> | null = null
+function onDblclick(): void {
+  revealed.value = true
+  if (revealTimer) clearTimeout(revealTimer)
+  revealTimer = setTimeout(() => {
+    revealed.value = false
+    revealTimer = null
+  }, REVEAL_MS)
+}
+onScopeDispose(() => { if (revealTimer) clearTimeout(revealTimer) })
+
+/** 显示口径：INVALID 优先（错误提示非秘密）；打码态恒 MASK；显示态走 grouped 分组 */
+const displayed = computed(() => {
+  if (props.code === 'INVALID') return t('otpListItem.invalid')
+  if (!revealed.value) return MASK_CODE
+  return grouped(props.code)
+})
 
 /** I52：圆周按 SVG 半径精确计算，避免硬编码 100.53 在改 viewBox/半径时产生视觉偏差 */
 const RING_R = 16
@@ -49,6 +71,7 @@ function onContextMenu(e: MouseEvent): void {
     tabindex="0"
     aria-haspopup="menu"
     @click="emit('copy')"
+    @dblclick="onDblclick"
     @keydown.enter="emit('copy')"
     @contextmenu="onContextMenu"
   >
@@ -68,8 +91,8 @@ function onContextMenu(e: MouseEvent): void {
       <span
         :class="['code', { invalid: code === 'INVALID' }]"
         :title="code === 'INVALID' ? t('otpListItem.invalidTitle', { message: error ?? '' }) : undefined"
-      >{{ code === 'INVALID' ? t('otpListItem.invalid') : grouped(code) }}</span>
-      <MdIconButton class="reveal" :title="t('otpListItem.revealTitle')" :aria-label="t('otpListItem.revealTitle')" @click.stop="emit('reveal')">🔑</MdIconButton>
+      >{{ displayed }}</span>
+      <MdIconButton class="copy" :title="t('otpListItem.copyTitle')" :aria-label="t('otpListItem.copyTitle')" @click.stop="emit('copy')">⧉</MdIconButton>
       <MdIconButton class="show-qr" :title="t('otpListItem.qrTitle')" :aria-label="t('otpListItem.qrTitle')" @click.stop="emit('qr')">▣</MdIconButton>
       <svg viewBox="0 0 36 36" class="ring" aria-hidden="true">
         <circle cx="18" cy="18" r="16" class="ring-bg" />
@@ -97,7 +120,6 @@ function onContextMenu(e: MouseEvent): void {
 .right { display: flex; align-items: center; gap: 8px; }
 .code { font-family: ui-monospace, monospace; font-size: var(--md-sys-typescale-code-large); letter-spacing: 1px; }
 .code.invalid { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-medium); cursor: help; }
-.reveal { font-size: var(--md-sys-typescale-body-medium); }
 .show-qr { font-size: var(--md-sys-typescale-body-medium); }
 .ring { width: 32px; height: 32px; transform: rotate(-90deg); }
 .ring-bg { fill: none; stroke: var(--md-sys-color-outline-variant); stroke-width: 3; }

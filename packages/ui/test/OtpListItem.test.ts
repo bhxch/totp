@@ -48,22 +48,13 @@ describe('OtpListItem avatar 多彩取色（批④ §5）', () => {
   })
 })
 
-describe('OtpListItem 揭示与右键菜单（C16）', () => {
-  it('reveal 按钮 emit reveal，且不冒泡触发 copy', async () => {
-    const w = mount(OtpListItem, { global: { plugins: [createTestI18n()] }, props: { entry, ...base } })
-    await w.find('.md-icon-btn').trigger('click')
-    expect(w.emitted('reveal')).toHaveLength(1)
-    // @click.stop 已阻止冒泡，copy 不应被触发
-    expect(w.emitted('copy')).toBeUndefined()
-  })
-
-  it('qr 按钮 emit qr，且不冒泡触发 copy/reveal', async () => {
+describe('OtpListItem 右键菜单 / qr / INVALID（C16）', () => {
+  it('qr 按钮 emit qr，且不冒泡触发 copy', async () => {
     const w = mount(OtpListItem, { global: { plugins: [createTestI18n()] }, props: { entry, ...base } })
     await w.find('.show-qr').trigger('click')
     expect(w.emitted('qr')).toHaveLength(1)
-    // @click.stop 已阻止冒泡，copy/reveal 不应被触发
+    // @click.stop 已阻止冒泡，copy 不应被触发
     expect(w.emitted('copy')).toBeUndefined()
-    expect(w.emitted('reveal')).toBeUndefined()
   })
 
   it('@contextmenu.prevent 默认 + emit context 携带 MouseEvent', async () => {
