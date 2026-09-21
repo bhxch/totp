@@ -40,6 +40,7 @@ pnpm --filter @totp/desktop tauri build  # 构建，产物为 exe + NSIS 安装�
   - 托盘图标左键点击
   - 全局快捷键 `Alt+Shift+T`
   - mini 窗失焦自动隐藏（mini 窗固定启用）
+- MCP 服务器：设置页开启后，本机 AI 客户端（MCP 协议）可列出账户并取当前验证码——仅 `list_accounts` / `get_code` 两个只读工具，绝不返回 secret/pin 原文；默认关闭，Bearer token + 四档客户端授权（token / 通配符白名单 / 精确匹配 / 每次询问），金库锁定时一律报错不可用
 
 ## 安全
 

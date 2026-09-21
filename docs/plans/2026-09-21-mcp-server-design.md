@@ -1,7 +1,7 @@
 # 设计：desktop 应用内嵌 MCP 服务器（只读验证码，rmcp + 事件桥）
 
 日期：2026-09-21
-状态：已评审定稿（brainstorming 分节确认，含两轮修订）
+状态：已实施（plan17，见 docs/plans/2026-09-21-plan17-mcp-server.md）
 
 ## 背景与目标
 
