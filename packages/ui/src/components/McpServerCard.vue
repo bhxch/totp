@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { McpConfigDto, McpPlatform } from './mcpCard'
-import { connectionSnippet, MCP_MODE_OPTIONS } from './mcpCard'
+import type { McpConfigWithStatusDto, McpPlatform } from './mcpCard'
+import { connectionSnippet, MCP_MODE_OPTIONS, serverStatus } from './mcpCard'
 import MdButton from './md/MdButton.vue'
 import MdSelect from './md/MdSelect.vue'
 import MdSwitch from './md/MdSwitch.vue'
@@ -11,11 +11,11 @@ import MdTextField from './md/MdTextField.vue'
 const { t } = useI18n()
 
 const props = defineProps<{
-  /** MCP 平台实现（桌面宿主桥接 mcp_* 命令）；挂载即拉取当前配置 */
+  /** MCP 平台实现（桌面宿主桥接 mcp_* 命令）；挂载即拉取当前配置与运行态 */
   platform: McpPlatform
 }>()
 
-const cfg = ref<McpConfigDto | null>(null)
+const cfg = ref<McpConfigWithStatusDto | null>(null)
 const busy = ref(false)
 const error = ref('')
 // ---------- 端口：update:model-value 逐键只改显示，change（失焦/回车）校验 1024–65535 后提交 ----------
@@ -29,17 +29,30 @@ function fail(e: unknown): void {
   error.value = `${t('mcpServer.error')}：${e instanceof Error ? e.message : String(e)}`
 }
 
+// ---------- 运行态：以服务端返回为准对账（enabled=true 但没起来=错误色启动失败文案） ----------
+const status = computed(() =>
+  cfg.value ? serverStatus(cfg.value, cfg.value.running, cfg.value.lastError) : null,
+)
+
+/** 重查配置+运行态（加载、开关切换/重生成 token 等写操作后调用，刷新状态行） */
+async function refresh(): Promise<void> {
+  cfg.value = await props.platform.getConfig()
+  portText.value = String(cfg.value.port)
+}
+
 onMounted(async () => {
   try {
-    cfg.value = await props.platform.getConfig()
-    portText.value = String(cfg.value.port)
+    await refresh()
   } catch (e) {
     fail(e)
   }
 })
 
-/** 统一写通道：busy 防重入；调用方先乐观前进，失败回滚到 prev 并置错误横幅（setConfig 失败信息如端口占用原样展示） */
-async function persist(next: McpConfigDto, prev: McpConfigDto): Promise<void> {
+/** 统一写通道：busy 防重入；先乐观前进，成败都重查——成功刷新运行态，
+ * 失败时 Rust 侧可能已保存配置/已停服（如重启撞端口占用），以服务端返回为准对账；
+ * 仅重查也失败才回滚到 prev 并置错误横幅。
+ * next/prev 均为含运行态的完整 DTO：调用方由 cur 整体展开，乐观赋值不留残缺对象 */
+async function persist(next: McpConfigWithStatusDto, prev: McpConfigWithStatusDto): Promise<void> {
   if (busy.value) return
   busy.value = true
   error.value = ''
@@ -47,12 +60,16 @@ async function persist(next: McpConfigDto, prev: McpConfigDto): Promise<void> {
   try {
     await props.platform.setConfig({ ...next })
   } catch (e) {
+    fail(e)
+  }
+  try {
+    await refresh()
+  } catch (e) {
     cfg.value = prev
     portText.value = String(prev.port)
-    fail(e)
-  } finally {
-    busy.value = false
+    if (!error.value) fail(e)
   }
+  busy.value = false
 }
 
 function onEnabled(v: boolean): void {
@@ -64,7 +81,7 @@ function onEnabled(v: boolean): void {
 function onModeChange(v: string | number): void {
   const cur = cfg.value
   if (!cur) return
-  void persist({ ...cur, mode: v as McpConfigDto['mode'] }, cur)
+  void persist({ ...cur, mode: v as McpConfigWithStatusDto['mode'] }, cur)
 }
 
 // ---------- 白名单：添加（trim 非空、卡内去重，大小写不敏感与 Rust eq_ignore_ascii_case 同口径）与逐条删除，均整体回写 ----------
@@ -102,9 +119,9 @@ function onPortCommit(): void {
 
 // ---------- Token：掩码显示 + 复制 + 重新生成（行内两步确认，沿 BackupCard removeConfirm 模式） ----------
 const tokenVisible = ref(false)
-const copied = ref<'none' | 'token' | 'snippet'>('none')
+const copied = ref<'none' | 'token' | 'snippet' | 'revoke'>('none')
 let copiedTimer: ReturnType<typeof setTimeout> | null = null
-function flashCopied(kind: 'token' | 'snippet'): void {
+function flashCopied(kind: 'token' | 'snippet' | 'revoke'): void {
   copied.value = kind
   if (copiedTimer !== null) clearTimeout(copiedTimer)
   copiedTimer = setTimeout(() => { copied.value = 'none' }, 2000)
@@ -137,8 +154,26 @@ async function onRegenerate(): Promise<void> {
   busy.value = true
   error.value = ''
   try {
-    const token = await props.platform.regenerateToken()
-    if (cfg.value) cfg.value = { ...cfg.value, token } // 更新本地 token，掩码随 tokenVisible 刷新
+    await props.platform.regenerateToken()
+    await refresh() // token 变更已触发服务重启：重查刷新 token 掩码与运行态
+  } catch (e) {
+    fail(e)
+  } finally {
+    busy.value = false
+  }
+}
+
+// ---------- 一次性授权吊销（once 批准 + deny 冷却一并清；行内两步确认沿 pendingRegen 模式） ----------
+const pendingRevoke = ref(false)
+const revokedN = ref(0)
+async function onRevoke(): Promise<void> {
+  if (busy.value) return
+  pendingRevoke.value = false
+  busy.value = true
+  error.value = ''
+  try {
+    revokedN.value = await props.platform.revokeApprovals()
+    flashCopied('revoke')
   } catch (e) {
     fail(e)
   } finally {
@@ -166,6 +201,9 @@ onBeforeUnmount(() => {
         <span class="opt-label">{{ t('mcpServer.enable') }}</span>
         <span class="opt-hint">{{ t('mcpServer.enableHint') }}</span>
       </div>
+      <p v-if="status" class="status" :class="`status-${status.tone}`" role="status">
+        {{ t(status.key, status.params ?? {}) }}
+      </p>
       <div class="cfg-row">
         <MdSelect
           class="mode-select" :model-value="cfg.mode" :options="MODE_OPTIONS" :disabled="busy"
@@ -190,6 +228,18 @@ onBeforeUnmount(() => {
             :disabled="busy" autocomplete="off" @update:model-value="newPattern = $event" @keydown.enter="onAddPattern"
           />
           <MdButton variant="tonal" :disabled="busy || newPattern.trim() === ''" @click="onAddPattern">{{ t('mcpServer.add') }}</MdButton>
+        </div>
+      </div>
+      <div class="revoke-block">
+        <div class="token-row">
+          <span class="opt-label">{{ t('mcpServer.revokeApprovals') }}</span>
+          <MdButton variant="text" danger :disabled="busy" @click="pendingRevoke = true">{{ t('mcpServer.revoke') }}</MdButton>
+          <span v-if="copied === 'revoke'" class="copied">{{ t('mcpServer.revoked', { n: revokedN }) }}</span>
+        </div>
+        <div v-if="pendingRevoke" class="confirm-row">
+          <span>{{ t('mcpServer.revokeConfirm') }}</span>
+          <MdButton danger :disabled="busy" @click="onRevoke">{{ t('mcpServer.confirmRevoke') }}</MdButton>
+          <MdButton variant="text" :disabled="busy" @click="pendingRevoke = false">{{ t('mcpServer.cancel') }}</MdButton>
         </div>
       </div>
       <div class="token-block">
@@ -229,6 +279,10 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .opt { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--md-sys-typescale-body-medium); }
 .opt-label { font-size: var(--md-sys-typescale-body-medium); }
 .opt-hint { opacity: .65; font-size: var(--md-sys-typescale-body-small); flex-basis: 100%; }
+/* 运行态状态行：muted/pending 用默认弱化，ok/error 提色（enabled 但没起来必须能注意到） */
+.status { margin: 0; font-size: var(--md-sys-typescale-body-small); opacity: .75; }
+.status-ok { color: var(--md-sys-color-primary); opacity: 1; }
+.status-error { color: var(--md-sys-color-error); opacity: 1; }
 .cfg-row { display: flex; gap: 12px; flex-wrap: wrap; }
 .mode-select { width: 280px; max-width: 100%; }
 .port-field { width: 140px; }
@@ -238,6 +292,7 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .pattern-add { display: flex; gap: 8px; align-items: center; }
 .pattern-input { width: 240px; }
 .token-block { display: flex; flex-direction: column; gap: 6px; }
+.revoke-block { display: flex; flex-direction: column; gap: 6px; }
 .token-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .token-value { font-size: var(--md-sys-typescale-body-small); opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
 .confirm-row { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); flex-wrap: wrap; }

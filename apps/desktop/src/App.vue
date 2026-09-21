@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { backupFileName, base64ToBytes, createBackupEnvelope, loadSourceRevs, loadSources, normalizeSchemes, openBackupEnvelope, randomBytes, saveSourceRev, saveSources, SCHEMES_KEY, sha256Hex, type BackupSource, type CloudCred, type ImportScheme, type KdfProfile, type Retention, type StorageAdapter, type Vault } from '@totp/core'
-import { createAppI18n, createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type LocalSourceView, type McpConfigDto, type McpPlatform, type SecurityPlatform, type VueStore } from '@totp/ui'
+import { createAppI18n, createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type LocalSourceView, type McpConfigWithStatusDto, type McpPlatform, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, getCurrentInstance, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createDesktopAutoRunner, formatAutoStatusText } from './autoBackup'
 import { createBackupToSources, listBackupsFromSources, pickBackupDirOs, pickBackupOpenOs, pickBackupSaveOs, readBackupByName, readBackupFileOs, saveConflictBackupToDir, saveCloudSourcesPreservingLocal, writeBackupFileOs, writeBytesFileOs, writeTextFileOs, type DialogFilterSpec, type PickedOsFile } from './backupService'
@@ -606,11 +606,12 @@ const idleLock = createIdleLockExecutor({
 const onUserActivity = (): void => idleLock.notifyActivity()
 
 // ---------- MCP 事件桥与首连审批（plan17 T10）----------
-// 平台适配器：三配置命令 + 复制复用 copyToClipboard（F16 暂存通道 + 自动清空与取码复制同一事实源）
+// 平台适配器：三配置命令 + 审批吊销 + 复制复用 copyToClipboard（F16 暂存通道 + 自动清空与取码复制同一事实源）
 const mcpPlatform: McpPlatform = {
-  getConfig: () => invoke('mcp_get_config') as Promise<McpConfigDto>,
+  getConfig: () => invoke('mcp_get_config') as Promise<McpConfigWithStatusDto>,
   setConfig: (cfg) => invoke('mcp_set_config', { cfg }) as Promise<void>,
   regenerateToken: () => invoke('mcp_regenerate_token') as Promise<string>,
+  revokeApprovals: () => invoke('mcp_revoke_approvals') as Promise<number>,
   copyText: (value) => copyToClipboard(value),
 }
 

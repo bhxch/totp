@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { connectionSnippet, MCP_MODE_OPTIONS, type McpConfigDto } from '../src/components/mcpCard'
+import { connectionSnippet, MCP_MODE_OPTIONS, serverStatus, type McpConfigDto } from '../src/components/mcpCard'
 
 describe('connectionSnippet', () => {
   it('输出含本机 127.0.0.1 地址与端口（客户端粘贴用）', () => {
@@ -26,5 +26,35 @@ describe('MCP_MODE_OPTIONS', () => {
   it('四档齐全且 key 全以 mcpServer. 开头（i18n 契约）', () => {
     expect(MCP_MODE_OPTIONS.map((o) => o.value)).toEqual(['token', 'wildcard', 'exact', 'alwaysAsk'])
     for (const o of MCP_MODE_OPTIONS) expect(o.key.startsWith('mcpServer.')).toBe(true)
+  })
+})
+
+describe('serverStatus', () => {
+  it('running 恒优先：enabled 与 lastError 均让位于实际监听态（重启瞬态不误报）', () => {
+    expect(serverStatus({ enabled: true }, true, null)).toEqual({ key: 'mcpServer.statusRunning', tone: 'ok' })
+    expect(serverStatus({ enabled: false }, true, 'boom')).toEqual({ key: 'mcpServer.statusRunning', tone: 'ok' })
+  })
+  it('enabled 且启动失败：错误文案携带原始错误参数（autostart 失败用户可见的关键路径）', () => {
+    const s = serverStatus({ enabled: true }, false, 'bind 127.0.0.1:47215 failed: AddrInUse')
+    expect(s).toEqual({
+      key: 'mcpServer.statusFailed',
+      params: { error: 'bind 127.0.0.1:47215 failed: AddrInUse' },
+      tone: 'error',
+    })
+  })
+  it('enabled 无错误未运行：启动中（stop→start 重启间隙的瞬态）', () => {
+    expect(serverStatus({ enabled: true }, false, null)).toEqual({ key: 'mcpServer.statusStarting', tone: 'pending' })
+  })
+  it('未启用：已停止且不展示历史错误（服务本就有意关闭，错误色会误导）', () => {
+    expect(serverStatus({ enabled: false }, false, 'stale error')).toEqual({ key: 'mcpServer.statusStopped', tone: 'muted' })
+  })
+  it('全部 key 以 mcpServer. 开头（i18n 契约）', () => {
+    const keys = [
+      serverStatus({ enabled: true }, true, null),
+      serverStatus({ enabled: true }, false, 'e'),
+      serverStatus({ enabled: true }, false, null),
+      serverStatus({ enabled: false }, false, null),
+    ].map((s) => s.key)
+    for (const k of keys) expect(k.startsWith('mcpServer.')).toBe(true)
   })
 })

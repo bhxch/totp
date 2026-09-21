@@ -535,7 +535,16 @@
     "copied": "Copied",
     "remove": "Remove",
     "cancel": "Cancel",
-    "error": "Operation failed"
+    "error": "Operation failed",
+    "statusRunning": "Running",
+    "statusStopped": "Stopped",
+    "statusStarting": "Starting…",
+    "statusFailed": "Start failed: {error}",
+    "revokeApprovals": "One-time approvals",
+    "revoke": "Clear one-time approvals",
+    "revokeConfirm": "This clears all one-time approvals and denial cooldowns; affected clients must be approved again. Continue?",
+    "confirmRevoke": "Confirm clear",
+    "revoked": "Cleared {n} entries"
   },
   "mcpConsent": {
     "title": "MCP client requesting access",

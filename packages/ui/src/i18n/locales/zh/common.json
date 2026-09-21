@@ -535,7 +535,16 @@
     "copied": "已复制",
     "remove": "移除",
     "cancel": "取消",
-    "error": "操作失败"
+    "error": "操作失败",
+    "statusRunning": "运行中",
+    "statusStopped": "已停止",
+    "statusStarting": "启动中…",
+    "statusFailed": "启动失败：{error}",
+    "revokeApprovals": "一次性授权",
+    "revoke": "清除一次性授权",
+    "revokeConfirm": "将清空全部「仅本次」批准与拒绝冷却，相关客户端需重新审批。确定？",
+    "confirmRevoke": "确认清除",
+    "revoked": "已清除 {n} 项"
   },
   "mcpConsent": {
     "title": "MCP 客户端请求访问",
