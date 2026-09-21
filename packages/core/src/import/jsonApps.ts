@@ -355,3 +355,62 @@ export function importStratum(text: string): ImportResult {
     return { error: `条目 ${index} 不支持的 Type: ${entry.Type}` }
   })
 }
+
+// ---------- FoxAuth（FoxAuth/FoxAuth src/scripts/import.js） ----------
+// 顶层 overwriteKeys 白名单 {accountInfos, isEncrypted, passwordInfo, settings, dropbox}。
+// 条目：localIssuer→issuer、localAccountName→label、localSecretToken→secret(base32)；
+// localOTPType 'Counter based'→hotp（counter 恒 0：FoxAuth 无 counter 字段），否则 totp；
+// 算法固定 SHA1（无字段）；digits/period 字符串数字，缺省 6/30。
+// 加密备份（isEncrypted:true）：accountInfos 为密文，口令 = base64Decode(passwordInfo.encryptPassword)，
+// 解密见 decryptFoxauth（参数依据 spec 加密参数附录）；未给口令结构级报错。
+export async function importFoxauth(text: string, password?: string): Promise<ImportResult> {
+  const obj = parseJson(text, 'FoxAuth')
+  // 加密判定先于 accountInfos 数组检查：密文形态 accountInfos 为字符串（非数组），
+  // 未给口令时应报「需要口令」而非「缺少 accountInfos 数组」
+  const encrypted = obj.isEncrypted === true
+  if (encrypted) {
+    if (password === undefined || password === '') {
+      throw new Error('FoxAuth 加密备份需要口令：请输入导出时设置的密码')
+    }
+    if (!Array.isArray(obj.accountInfos)) throw new Error('FoxAuth 文件结构非法：缺少 accountInfos')
+    const b64pwd = (obj.passwordInfo as Record<string, unknown> | undefined)?.encryptPassword
+    if (typeof b64pwd !== 'string' || b64pwd === '') {
+      throw new Error('FoxAuth 文件结构非法：加密备份缺少 passwordInfo.encryptPassword')
+    }
+    const pwd = atob(b64pwd) // 口令为 Base64 编码，解码后使用（FoxAuth import.js base64Decode 口径）
+    // isEncrypted:true 时 accountInfos 为密文字符串（Array.isArray 收窄后的断言；Task 4 实现解密时收口）
+    const plain = await decryptFoxauth(obj.accountInfos as unknown as string, pwd)
+    return collectFoxauthRows(plain)
+  }
+  if (!Array.isArray(obj.accountInfos)) throw new Error('FoxAuth 文件结构非法：缺少 accountInfos 数组')
+  return collectFoxauthRows(obj.accountInfos)
+}
+
+function collectFoxauthRows(rows: unknown): ImportResult {
+  // 解密结果（Task 4 加密分支）类型未知，先收口数组；空数组与 2FAS 同口径给「无条目」错误
+  if (!Array.isArray(rows)) throw new Error('FoxAuth 文件结构非法：accountInfos 不是条目数组')
+  if (rows.length === 0) throw new Error('FoxAuth 导出无条目：accountInfos 数组为空')
+  return collectEntries(rows, (raw, index) => {
+    const e = asObject(raw)
+    if (!e) return { error: `条目 ${index} 非对象` }
+    const secret = typeof e.localSecretToken === 'string' ? normalizeSecret(e.localSecretToken) : ''
+    if (!secret) return { error: `条目 ${index} 缺少 secret` }
+    if (!isBase32(secret)) return { error: `条目 ${index} secret 非法 base32` }
+    const type = e.localOTPType === 'Counter based' ? 'hotp' as const : 'totp' as const
+    return {
+      type,
+      issuer: typeof e.localIssuer === 'string' ? e.localIssuer : '',
+      label: typeof e.localAccountName === 'string' ? e.localAccountName : '',
+      secret,
+      algorithm: 'SHA1' as const,
+      digits: toPositiveNumber(Number(e.localOTPDigits), 6),
+      ...(type === 'hotp' ? { counter: 0 } : {}),
+      period: toPositiveNumber(Number(e.localOTPPeriod), 30),
+    }
+  })
+}
+
+// 降级桩：FoxAuth 加密备份解密（Task 4 按裁定实现——参数依据 spec 加密参数附录）
+async function decryptFoxauth(_cipher: string, _pwd: string): Promise<unknown> {
+  throw new Error('FoxAuth 加密备份暂不支持：请导出明文备份后重试')
+}
