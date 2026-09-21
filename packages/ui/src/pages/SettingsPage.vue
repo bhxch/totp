@@ -89,28 +89,30 @@ const hasGeneralItems = computed(() => true)
   <section class="page">
     <MdCard class="block">
       <template #header>{{ t('settingsPage.appearance') }}</template>
-      <div class="row">
-        <span class="row-label">{{ t('settingsPage.themeMode') }}</span>
-        <MdSegmentedButton v-model="mode" :options="MODE_OPTIONS" />
-      </div>
-      <div class="row">
-        <span class="row-label">{{ t('settingsPage.themeColor') }}</span>
-        <div class="dots" role="group" :aria-label="t('settingsPage.themeColor')">
-          <button v-for="p in THEME_PALETTES" :key="p.id" type="button" class="theme-dot md-swatch"
-            :class="{ 'theme-dot--selected': color === p.id }" :style="{ background: p.hex }"
-            :data-color-id="p.id" :title="paletteLabel(p.id)" :aria-label="paletteLabel(p.id)" :aria-pressed="color === p.id"
-            @click="color = p.id"
-          >
-            <span v-if="color === p.id" class="theme-dot__check" aria-hidden="true">✓</span>
-          </button>
+      <div class="appearance-rows">
+        <div class="row">
+          <span class="row-label">{{ t('settingsPage.themeMode') }}</span>
+          <MdSegmentedButton v-model="mode" :options="MODE_OPTIONS" />
         </div>
-      </div>
-      <div class="row">
-        <span class="row-label">{{ t('settingsPage.amoled') }}<span class="row-hint">{{ t('settingsPage.amoledHint') }}</span></span>
-        <MdSwitch
-          class="set-theme-contrast" :model-value="store.settings.themeContrast === 'amoled'"
-          @update:model-value="setThemeContrast"
-        />
+        <div class="row">
+          <span class="row-label">{{ t('settingsPage.themeColor') }}</span>
+          <div class="dots" role="group" :aria-label="t('settingsPage.themeColor')">
+            <button v-for="p in THEME_PALETTES" :key="p.id" type="button" class="theme-dot md-swatch"
+              :class="{ 'theme-dot--selected': color === p.id }" :style="{ background: p.hex }"
+              :data-color-id="p.id" :title="paletteLabel(p.id)" :aria-label="paletteLabel(p.id)" :aria-pressed="color === p.id"
+              @click="color = p.id"
+            >
+              <span v-if="color === p.id" class="theme-dot__check" aria-hidden="true">✓</span>
+            </button>
+          </div>
+        </div>
+        <div class="row">
+          <span class="row-label">{{ t('settingsPage.amoled') }}<span class="row-hint">{{ t('settingsPage.amoledHint') }}</span></span>
+          <MdSwitch
+            class="set-theme-contrast" :model-value="store.settings.themeContrast === 'amoled'"
+            @update:model-value="setThemeContrast"
+          />
+        </div>
       </div>
       <div class="row">
         <span class="row-label">{{ t('settingsPage.language') }}</span>
@@ -173,6 +175,9 @@ const hasGeneralItems = computed(() => true)
 <style scoped>
 .page { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+/* 外观卡片行距统一 16px 并对齐行高（验收条目8）：三行主题设置包在同一容器内 */
+.appearance-rows { display: flex; flex-direction: column; gap: 16px; }
+.appearance-rows .row { min-height: 32px; }
 .row-label { font-size: var(--md-sys-typescale-body-medium); }
 .row-hint { display: block; font-size: var(--md-sys-typescale-body-small); opacity: .65; }
 .dots { display: flex; gap: 10px; flex-wrap: wrap; }
