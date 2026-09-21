@@ -9,6 +9,7 @@
     "core:window:allow-set-focus",
     "fs:allow-appdata-read-recursive",
     "fs:allow-appdata-write-recursive",
-    "clipboard-manager:allow-write-text"
+    "clipboard-manager:allow-write-text",
+    "mcp-bridge:default"
   ]
 }

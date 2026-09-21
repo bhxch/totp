@@ -8,8 +8,8 @@
 | 项 | 决定 |
 |---|---|
 | 应用运行方式 | `pnpm tauri dev`（debug 构建），工作目录 `apps/desktop` |
-| UI 驱动 | `@hypothesi/tauri-mcp-server`（bin `mcp-server-tauri`，全局安装）+ 被测应用临时集成 `tauri-plugin-mcp-bridge` |
-| bridge 集成 | **dev-only，release 零影响**：`Cargo.toml` 以 `[target.'cfg(debug_assertions)'.dependencies]` 引入插件；`lib.rs` 内 `#[cfg(debug_assertions)]` 注册（绑 127.0.0.1）；`tauri.dev.conf.json` 覆盖文件开 `withGlobalTauri`，经 `tauri dev --config` 使用，主 `tauri.conf.json` 不动 |
+| UI 驱动 | `@hypothesi/tauri-mcp-cli`（bin `tauri-mcp`，全局安装）+ 被测应用集成 `tauri-plugin-mcp-bridge` |
+| bridge 集成 | **dev-only 激活，release 零影响**：`Cargo.toml` 普通依赖（cargo 不支持 `cfg(debug_assertions)` target 选择器）+ `lib.rs` 内 `#[cfg(debug_assertions)]` 门控注册（绑 127.0.0.1）；`tauri.conf.json` 开 `withGlobalTauri`（应用不加载远程内容，暴露面可控）；`capabilities/default.json` 授 `mcp-bridge:default`（**webview 侧 `plugin:mcp-bridge|script_result` 回传必须授权，否则 eval 全部 2s 超时——本次最大坑**）；`vite.config.ts` watch 排除 `src-tauri/target`（cargo 构建期 EBUSY 会打崩 dev server） |
 | 数据目录 | `%APPDATA%\com.totp.desktop`（dev 与 release 同目录；当前仅有 settings.json，已备份至 `E:/tmp/cc/totp-realtest-backup-settings.json`） |
 | MCP 协议验证 | 复用 `scripts/mcp-e2e.mjs`（裸 fetch）+ `mcporter`（真实 MCP 客户端）做真连替代验证 |
 

@@ -16,6 +16,8 @@ tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-global-shortcut = "2"
+# 真机 E2E 基建：tauri-mcp 驱动 UI 用；Rust 侧 cfg(debug_assertions) 门控注册，release 不激活
+tauri-plugin-mcp-bridge = "0.13"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # F4 对话框授权 token 的 CSPRNG（tauri 传递依赖已在树中，不新增编译产物）
@@ -66,5 +68,4 @@ keyring = "3"
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3", features = ["sync-secret-service"] }
 
-[target."cfg(debug_assertions)".dependencies]
-tauri-plugin-mcp-bridge = "0.13.0"
+
