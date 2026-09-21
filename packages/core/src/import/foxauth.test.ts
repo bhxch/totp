@@ -89,6 +89,17 @@ describe('importFoxauth 加密备份（整串密文形态）', () => {
     await expect(importFoxauth(encryptedFixture, 'wrong-password')).rejects.toThrow('FoxAuth 备份解密失败：口令错误或文件已损坏')
   })
 
+  it('正确口令但密文被篡改：GCM tag 校验失败结构级报错（触达解密 catch）', async () => {
+    // 错误口令用例被解密前的口令比对拦截；本例口令正确、仅篡改密文中位字符，
+    // 必然进入 decryptFoxauth 的 GCM decrypt → OperationError → catch
+    const parsed = JSON.parse(encryptedFixture) as { accountInfos: string }
+    const cipher = parsed.accountInfos
+    const mid = Math.floor(cipher.length / 2)
+    const replacement = cipher.charAt(mid) === 'A' ? 'B' : 'A'
+    const fixture = JSON.stringify({ ...parsed, accountInfos: cipher.slice(0, mid) + replacement + cipher.slice(mid + 1) })
+    await expect(importFoxauth(fixture, 'test-password')).rejects.toThrow('FoxAuth 备份解密失败：口令错误或文件已损坏')
+  })
+
   it('encryptIV 缺失：结构级报错（不进入解密）', async () => {
     const fixture = JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: { encryptPassword: btoa('test-password') } })
     await expect(importFoxauth(fixture, 'test-password')).rejects.toThrow(/encryptIV/)
@@ -135,5 +146,15 @@ describe('importFoxauth 加密备份（真实导出形态：数组 + 逐字段�
 
   it('错误口令：结构级报错（口令错误或文件已损坏）', async () => {
     await expect(importFoxauth(encryptedFixture, 'wrong-password')).rejects.toThrow('FoxAuth 备份解密失败：口令错误或文件已损坏')
+  })
+
+  it('正确口令但字段密文被篡改：GCM tag 校验失败结构级报错（触达解密 catch）', async () => {
+    const parsed = JSON.parse(encryptedFixture) as { accountInfos: Array<Record<string, unknown>> }
+    const entry = parsed.accountInfos[0]!
+    const cipher = entry.localSecretToken as string
+    const mid = Math.floor(cipher.length / 2)
+    const replacement = cipher.charAt(mid) === 'A' ? 'B' : 'A'
+    entry.localSecretToken = cipher.slice(0, mid) + replacement + cipher.slice(mid + 1)
+    await expect(importFoxauth(JSON.stringify(parsed), 'test-password')).rejects.toThrow('FoxAuth 备份解密失败：口令错误或文件已损坏')
   })
 })
