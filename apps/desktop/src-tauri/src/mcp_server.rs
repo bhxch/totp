@@ -205,7 +205,7 @@ pub async fn bridge_call(
     let (tx, rx) = oneshot::channel();
     bridge.insert(id, tx);
     app.emit_to(window, "mcp://req", serde_json::json!({ "id": id, "tool": tool, "args": args }))
-        .map_err(|e| format!("emit failed: {e}"))?;
+        .map_err(|e| { bridge.take(id); format!("emit failed: {e}") })?;
     // 5 秒超时（设计 §4 app busy）；超时后手动 take 防表泄漏
     match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
         Ok(Ok(result)) => result,
@@ -310,8 +310,7 @@ mod tests {
         assert!(wildcard_match("exact-name", "exact-name"));
         assert!(!wildcard_match("claude*", "cursor"));
         assert!(wildcard_match("*", "anything"));
-        let huge = "a".repeat(257);
-        assert!(!wildcard_match(&huge, "a"), "超长 pattern 视为配置错误，不匹配（fail-closed）");
+        assert!(!wildcard_match(&"*".repeat(257), "anything"), "超长 pattern 视为配置错误，不匹配（fail-closed）");
     }
 
     #[test]
