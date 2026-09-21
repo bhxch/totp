@@ -1,9 +1,11 @@
 {
   "name": "totp-workspace",
   "private": true,
+  "packageManager": "pnpm@10.28.1",
   "scripts": {
     "test": "pnpm -r --no-bail run test",
-    "typecheck": "pnpm -r run typecheck"
+    "typecheck": "pnpm -r run typecheck",
+    "bump": "node scripts/bump.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.20.2",
