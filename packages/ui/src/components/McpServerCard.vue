@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import type { McpConfigWithStatusDto, McpPlatform } from './mcpCard'
 import { connectionSnippet, MCP_MODE_OPTIONS, serverStatus } from './mcpCard'
 import MdButton from './md/MdButton.vue'
+import MdIconButton from './md/MdIconButton.vue'
 import MdSelect from './md/MdSelect.vue'
 import MdSwitch from './md/MdSwitch.vue'
 import MdTextField from './md/MdTextField.vue'
@@ -117,6 +118,12 @@ function onPortCommit(): void {
   void persist({ ...cur, port: n }, cur)
 }
 
+/** 验收条目1：随机到 IANA 动态端口段 49152-65535，走 onPortCommit 同路径校验+持久化 */
+function onRandomPort(): void {
+  portText.value = String(49152 + Math.floor(Math.random() * (65535 - 49152 + 1)))
+  void onPortCommit()
+}
+
 // ---------- Token：掩码显示 + 复制 + 重新生成（行内两步确认，沿 BackupCard removeConfirm 模式） ----------
 const tokenVisible = ref(false)
 const copied = ref<'none' | 'token' | 'snippet' | 'revoke'>('none')
@@ -214,6 +221,7 @@ onBeforeUnmount(() => {
           :model-value="portText" :error="portError" :disabled="busy" min="1024" max="65535"
           @update:model-value="onPortInput" @change="onPortCommit"
         />
+        <MdIconButton class="random-port" :title="t('mcpServer.randomPort')" :aria-label="t('mcpServer.randomPort')" @click="onRandomPort">⟳</MdIconButton>
       </div>
       <div class="whitelist">
         <span class="opt-label">{{ t('mcpServer.whitelist') }}</span>
@@ -286,6 +294,8 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .cfg-row { display: flex; gap: 12px; flex-wrap: wrap; }
 .mode-select { width: 280px; max-width: 100%; }
 .port-field { width: 140px; }
+/* 随机端口按钮：与端口输入框垂直居中对齐 */
+.random-port { align-self: center; flex: none; }
 .whitelist { display: flex; flex-direction: column; gap: 6px; }
 .pattern-row { display: flex; align-items: center; gap: 8px; }
 .pattern { font-size: var(--md-sys-typescale-body-small); opacity: .8; }

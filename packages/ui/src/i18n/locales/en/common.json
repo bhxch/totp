@@ -517,6 +517,7 @@
     "add": "Add",
     "port": "Port",
     "portInvalid": "Port must be an integer between 1024 and 65535",
+    "randomPort": "Random port",
     "token": "Connection token",
     "tokenShow": "Show",
     "tokenHide": "Hide",
