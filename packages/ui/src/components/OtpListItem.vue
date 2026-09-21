@@ -118,7 +118,7 @@ function onContextMenu(e: MouseEvent): void {
 .pin { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-medium); }
 .label { font-size: var(--md-sys-typescale-body-small); opacity: 0.7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .right { display: flex; align-items: center; gap: 8px; }
-.code { font-family: ui-monospace, monospace; font-size: var(--md-sys-typescale-code-large); letter-spacing: 1px; }
+.code { font-family: system-ui, sans-serif; font-weight: 700; font-variant-numeric: tabular-nums; font-size: var(--md-sys-typescale-code-large); letter-spacing: 1px; }
 .code.invalid { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-medium); cursor: help; }
 .show-qr { font-size: var(--md-sys-typescale-body-medium); }
 .ring { width: 32px; height: 32px; transform: rotate(-90deg); }
