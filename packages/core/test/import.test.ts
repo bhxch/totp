@@ -121,6 +121,15 @@ describe('sniffFormat foxauth', () => {
     expect(sniffFormat(JSON.stringify({ accountInfos: [{ localIssuer: 'GitHub' }], isEncrypted: true, passwordInfo: {} }))).toBe('foxauth')
   })
 
+  it('加密备份密文形态（accountInfos 为字符串）也判 foxauth，不落 generic', () => {
+    expect(sniffFormat(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: { encryptPassword: 'dGVzdA==' } }))).toBe('foxauth')
+    expect(sniffFormat(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: false }))).toBe('foxauth')
+  })
+
+  it('isEncrypted 非布尔不判 foxauth（仍落 generic）', () => {
+    expect(sniffFormat(JSON.stringify({ accountInfos: 'CIPHER' }))).toBe('generic')
+  })
+
   it('不误伤既有格式', () => {
     expect(sniffFormat(JSON.stringify({ db: {}, header: {} }))).toBe('aegis')
     expect(sniffFormat(JSON.stringify({ services: [{ secret: 'JBSW' }] }))).toBe('twoFas')

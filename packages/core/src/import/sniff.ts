@@ -191,9 +191,13 @@ function sniffFreeOtp(obj: Record<string, unknown>): boolean {
 }
 
 // FoxAuth 备份（FoxAuth/FoxAuth src/scripts/import.js overwriteKeys 白名单）：
-// 顶层 accountInfos 数组 + isEncrypted 布尔；accountInfos 加密时为密文形态亦可判定
+// 顶层 isEncrypted 布尔 + accountInfos：明文为数组，加密备份为密文二进制字符串。
+// 密文形态一并判 foxauth（对齐 aegis 明文/加密同判口径），未给口令时由 importFoxauth
+// 给出「需要口令」明确报错引导；两键组合为 FoxAuth overwriteKeys 特有，其余格式判定键
+// 均不同名（aegis db/header、bitwarden encrypted 键等），foxauth 判定先于 generic 兜底，无误伤。
 function sniffFoxauth(obj: Record<string, unknown>): boolean {
-  return Array.isArray(obj.accountInfos) && typeof obj.isEncrypted === 'boolean'
+  if (typeof obj.isEncrypted !== 'boolean') return false
+  return Array.isArray(obj.accountInfos) || typeof obj.accountInfos === 'string'
 }
 
 // JSON 数组（andOTP 明文导出）且存在条目 type/algorithm/label/secret 均字符串（AndOtpImporter.java）
