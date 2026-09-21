@@ -20,7 +20,7 @@ export interface ImportResult {
   failures: Array<{ index: number; message: string }>
 }
 
-// twoFas/bitwarden/proton/stratum/freeOtp：JSON 对象特征可可靠判定的 App 格式；
+// twoFas/bitwarden/proton/stratum/freeOtp/foxauth：JSON 对象特征可可靠判定的 App 格式；
 // andOtp/totpAuthenticator：JSON 数组特征可可靠判定的 App 格式；
 // freeOtpLegacy：tokens.xml（XML）特征可可靠判定；
 // ente 明文导出为 otpauth URI 行，由 uriBatch 覆盖，不设独立判定
@@ -37,6 +37,7 @@ export type ImportFormat =
   | 'freeOtpLegacy'
   | 'totpAuthenticator'
   | 'andOtp'
+  | 'foxauth'
 
 // 通用 JSON/JSONL 映射：点路径取值 + 可选 transform
 export interface FieldMap {

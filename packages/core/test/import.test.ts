@@ -115,6 +115,19 @@ describe('extractGenericRows', () => {
   })
 })
 
+describe('sniffFormat foxauth', () => {
+  it('accountInfos 数组 + isEncrypted 布尔判 foxauth', () => {
+    expect(sniffFormat(JSON.stringify({ accountInfos: [], isEncrypted: false }))).toBe('foxauth')
+    expect(sniffFormat(JSON.stringify({ accountInfos: [{ localIssuer: 'GitHub' }], isEncrypted: true, passwordInfo: {} }))).toBe('foxauth')
+  })
+
+  it('不误伤既有格式', () => {
+    expect(sniffFormat(JSON.stringify({ db: {}, header: {} }))).toBe('aegis')
+    expect(sniffFormat(JSON.stringify({ services: [{ secret: 'JBSW' }] }))).toBe('twoFas')
+    expect(sniffFormat('{}')).toBe('generic')
+  })
+})
+
 describe('mapRowToEntry/importGeneric', () => {
   const mapping: RowMapping = {
     issuer: { path: 'name' },

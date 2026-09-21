@@ -7,7 +7,7 @@ export * from './uriBatch'
 
 /**
  * 格式嗅探，判定顺序：
- *   aegis → twoFas → bitwarden → proton → stratum → freeOtp（JSON 对象特征键）
+ *   aegis → twoFas → bitwarden → proton → stratum → freeOtp → foxauth（JSON 对象特征键）
  *   → andOtp → totpAuthenticator（JSON 数组特征键）→ generic(JSON array/JSONL/单对象兜底)
  *   → winauth(XML 正则) → freeOtpLegacy(tokens.xml 正则) → uriBatch → null
  * - JSON 对象含 db / header 键 → 'aegis'
@@ -77,6 +77,7 @@ export function sniffFormat(text: string): ImportFormat | null {
         if (sniffProton(obj)) return 'proton'
         if (Array.isArray(obj.Authenticators)) return 'stratum'
         if (sniffFreeOtp(obj)) return 'freeOtp'
+        if (sniffFoxauth(obj)) return 'foxauth'
         // 单个 JSON 对象（非以上格式）→ 通用格式
         return 'generic'
       }
@@ -187,6 +188,12 @@ function sniffFreeOtp(obj: Record<string, unknown>): boolean {
       return typeof issuerName === 'string' && Array.isArray(entry.secret)
     })
   )
+}
+
+// FoxAuth 备份（FoxAuth/FoxAuth src/scripts/import.js overwriteKeys 白名单）：
+// 顶层 accountInfos 数组 + isEncrypted 布尔；accountInfos 加密时为密文形态亦可判定
+function sniffFoxauth(obj: Record<string, unknown>): boolean {
+  return Array.isArray(obj.accountInfos) && typeof obj.isEncrypted === 'boolean'
 }
 
 // JSON 数组（andOTP 明文导出）且存在条目 type/algorithm/label/secret 均字符串（AndOtpImporter.java）
