@@ -1,0 +1,39 @@
+# 正式发布流水线：push v* tag 触发。
+# gate 校验 tag 与根 package.json version 一致后，复用 build.yml 全量构建，
+# 最后汇总产物 + sha256 清单发布 GitHub Release。
+name: release
+on:
+  push: { tags: ["v*"] }
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: tag == 根 package.json version
+        run: |
+          ver="v$(node -p "require('./package.json').version")"
+          [ "$ver" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} != $ver"; exit 1; }
+  build:
+    needs: gate
+    uses: ./.github/workflows/build.yml
+    with: { ref: "${{ github.ref_name }}", suffix: release, nightly: false }
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts, merge-multiple: true }
+      - name: sha256
+        run: cd artifacts && sha256sum * > ../sha256sums.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*
+            sha256sums.txt
+          generate_release_notes: true

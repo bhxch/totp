@@ -1,0 +1,44 @@
+# 每日滚动构建：UTC 16:00（北京时间 0 点）定时 + 手动触发。
+# 复用 build.yml 构建 main，产物带日期标签后缀，发布到固定 nightly prerelease
+#（先删旧 release，tag 复用重建）。
+name: nightly
+on:
+  schedule: [{ cron: "0 16 * * *" }]   # UTC 16:00 = 北京 0 点
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    with: { ref: main, suffix: nightly, nightly: true }
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts, merge-multiple: true }
+      - name: sha256
+        run: cd artifacts && sha256sum * > ../sha256sums.txt
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            // 删除旧 nightly release（保留 tag 由下步重建）
+            const rel = await github.rest.repos.getReleaseByTag({ owner: context.repo.owner, repo: context.repo.repo, tag: 'nightly' }).catch(() => null)
+            if (rel) await github.rest.repos.deleteRelease({ owner: context.repo.owner, repo: context.repo.repo, release_id: rel.data.id })
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: Nightly Build
+          prerelease: true
+          body: ${{ github.event.head_commit.message || '自动构建' }}
+          files: |
+            artifacts/*
+            sha256sums.txt
