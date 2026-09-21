@@ -69,14 +69,17 @@ export async function startMcpBridge(
   },
 ): Promise<() => void> {
   const unlisten = await io.listen('mcp://req', (e) => {
-    void handleMcpRequest(deps, e.payload).then((r) =>
-      io.invoke('mcp_respond', {
-        id: e.payload.id,
-        ok: r.ok,
-        result: r.ok ? r.result : null,
-        error: r.ok ? null : r.error,
-      }),
-    )
+    // fire-and-forget 回传链补 catch（审查 Minor）：回传失败只告警不产生未处理 rejection
+    void handleMcpRequest(deps, e.payload)
+      .then((r) =>
+        io.invoke('mcp_respond', {
+          id: e.payload.id,
+          ok: r.ok,
+          result: r.ok ? r.result : null,
+          error: r.ok ? null : r.error,
+        }),
+      )
+      .catch((err) => console.warn('[mcp] mcp_respond failed', err))
   })
   return unlisten
 }

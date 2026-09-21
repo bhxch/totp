@@ -519,6 +519,7 @@
     "modeAlwaysAsk": "Confirm every connection",
     "whitelist": "Client whitelist",
     "whitelistHint": "Matches the client name (e.g. Claude*), without the version; only applies to the wildcard/exact modes.",
+    "patternPlaceholder": "Add pattern, * wildcard supported",
     "add": "Add",
     "port": "Port",
     "portInvalid": "Port must be an integer between 1024 and 65535",
@@ -535,6 +536,15 @@
     "remove": "Remove",
     "cancel": "Cancel",
     "error": "Operation failed"
+  },
+  "mcpConsent": {
+    "title": "MCP client requesting access",
+    "client": "Client",
+    "tool": "Requested tool",
+    "hint": "While the vault is unlocked, approved clients can read verification codes over MCP; secret material is never exposed.",
+    "deny": "Deny",
+    "once": "Allow once",
+    "trust": "Add to whitelist"
   },
   "syncCard": {
     "title": "Browser sync",

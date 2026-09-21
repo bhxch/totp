@@ -12,6 +12,8 @@ export interface McpPlatform {
   getConfig: () => Promise<McpConfigDto>
   setConfig: (cfg: McpConfigDto) => Promise<void>
   regenerateToken: () => Promise<string>
+  /** 复制走宿主通道（桌面=暂存剪贴板 + 自动清空；Task 9 审查：卡片不得自行 navigator.clipboard） */
+  copyText: (value: string) => Promise<void>
 }
 
 /** 客户端授权四档（label 为 i18n key，组件侧经 t() 出文案；locale 切换联动） */

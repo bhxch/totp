@@ -77,6 +77,21 @@ describe('handleMcpRequest', () => {
     const code = (r as { ok: true; result: { code: string } }).result.code
     expect(code).toMatch(/^[23456789BCDFGHJKMNPQRTVWXY]{5}$/)
   })
+  it('yandex 条目 get_code 输出键集 ⊆ {code, expires_in_seconds, period}（不泄漏 pin）', async () => {
+    const pin = '428913'
+    // yandex secret 校验要求恰 16 字节 = 26 个 base32 字符（GEZDGNBVGY3TQOJQ 仅 10B 会被拒）
+    const r = await handleMcpRequest(
+      { requireEntries: () => [mkEntry({ uuid: 'y1', type: 'yandex', secret: 'GEZDGNBVGY3TQOJQGEZDGNBVGY', pin })], tagsOf: () => [] },
+      { id: 6, tool: 'get_code', args: { account_id: 'y1' } },
+    )
+    expect(r.ok).toBe(true)
+    const out = (r as { ok: true; result: Record<string, unknown> }).result
+    expect(Object.keys(out).every((k) => ['code', 'expires_in_seconds', 'period'].includes(k))).toBe(true)
+    // pin 不得以任何输出值形态外泄（键集白名单已隔离，此断言防未来字段误加）
+    for (const v of Object.values(out)) {
+      expect(String(v)).not.toContain(pin)
+    }
+  })
   it('未知 account_id → 错误附提示', async () => {
     const r = await handleMcpRequest(deps(false), { id: 3, tool: 'get_code', args: { account_id: 'nope' } })
     expect(r.ok).toBe(false)

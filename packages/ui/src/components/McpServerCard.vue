@@ -67,12 +67,12 @@ function onModeChange(v: string | number): void {
   void persist({ ...cur, mode: v as McpConfigDto['mode'] }, cur)
 }
 
-// ---------- 白名单：添加（trim 非空、卡内去重）与逐条删除，均整体回写 ----------
+// ---------- 白名单：添加（trim 非空、卡内去重，大小写不敏感与 Rust eq_ignore_ascii_case 同口径）与逐条删除，均整体回写 ----------
 const newPattern = ref('')
 function onAddPattern(): void {
   const cur = cfg.value
   const p = newPattern.value.trim()
-  if (!cur || p === '' || cur.whitelist.includes(p)) return
+  if (!cur || p === '' || cur.whitelist.some((w) => w.toLowerCase() === p.toLowerCase())) return
   newPattern.value = ''
   void persist({ ...cur, whitelist: [...cur.whitelist, p] }, cur)
 }
@@ -113,7 +113,8 @@ async function copyToken(): Promise<void> {
   const cur = cfg.value
   if (!cur) return
   try {
-    await navigator.clipboard.writeText(cur.token)
+    // Task 9 审查：复制走宿主 copyText（桌面=暂存通道 + 自动清空），卡片不直接碰 navigator.clipboard
+    await props.platform.copyText(cur.token)
     flashCopied('token')
   } catch (e) {
     fail(e)
@@ -123,7 +124,7 @@ async function copySnippet(): Promise<void> {
   const cur = cfg.value
   if (!cur) return
   try {
-    await navigator.clipboard.writeText(connectionSnippet(cur))
+    await props.platform.copyText(connectionSnippet(cur))
     flashCopied('snippet')
   } catch (e) {
     fail(e)
@@ -185,7 +186,7 @@ onBeforeUnmount(() => {
         </div>
         <div class="pattern-add">
           <MdTextField
-            class="pattern-input" :model-value="newPattern" :label="t('mcpServer.whitelist')" :aria-label="t('mcpServer.whitelist')"
+            class="pattern-input" :model-value="newPattern" :label="t('mcpServer.patternPlaceholder')" :aria-label="t('mcpServer.whitelist')"
             :disabled="busy" autocomplete="off" @update:model-value="newPattern = $event" @keydown.enter="onAddPattern"
           />
           <MdButton variant="tonal" :disabled="busy || newPattern.trim() === ''" @click="onAddPattern">{{ t('mcpServer.add') }}</MdButton>
