@@ -5,10 +5,13 @@ import type { SyncPlatform, SyncStatus } from './syncPlatform'
 import MdButton from './md/MdButton.vue'
 import MdCheckbox from './md/MdCheckbox.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** 同步平台实现；null 时整卡不渲染（desktop/popup 不受影响） */
   platform: SyncPlatform | null
-}>()
+  /** [可选] 云凭据失效标志（跨端同步 T4）：宿主经 syncScheduler onAuthFailed 持有的 ref 传入，
+   *  true 时状态区渲染重授权警示；未传/false 不渲染（desktop/popup 零影响） */
+  authFailed?: boolean
+}>(), { authFailed: false })
 
 const { t } = useI18n()
 
@@ -104,6 +107,10 @@ onUnmounted(() => {
     <!-- 加密警示承载于状态条区域：label 不绑定「加密分片」承诺（未加密时以明文同步） -->
     <p v-if="plainSyncWarn" class="warn" role="alert">
       {{ t('syncCard.plainWarn') }}
+    </p>
+    <!-- T4 云凭据失效警示（自动跟随已暂停）：宿主持 ref 传入，重新授权并同步成功/start() 后消失 -->
+    <p v-if="props.authFailed" class="warn" role="alert">
+      {{ t('syncCard.authFailed') }}
     </p>
     <div class="status-row">
       <span v-if="statusText" :class="['status', stateClass]" role="status">{{ statusText }}</span>

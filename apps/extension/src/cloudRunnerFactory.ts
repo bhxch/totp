@@ -43,7 +43,11 @@ export function createExtensionCloudRunner(deps: ExtensionCloudRunnerDeps): { ru
    *  装配时刷新（summary/onRetentionDeleted 均在其后，缓存必已就绪）；取不到回退 id */
   const cloudSourceNames = new Map<string, string>()
 
-  return createCloudSyncRunner({
+  /** 本轮凭据失效消息（T4）：runner 经 onAuthFailure 上抛，包装 run 在 resolve 后转 reject——
+   *  core 编排对目标级失败不抛错，不转 reject 则 syncScheduler 的 401/403 分类（停轮询）永不触发 */
+  let authError: string | null = null
+
+  const runner = createCloudSyncRunner({
     isLocked: () => store.locked.value,
     getSecret: () => store.backupSecret.value,
     getVaultJson: () => JSON.stringify(store.vault),
@@ -81,5 +85,14 @@ export function createExtensionCloudRunner(deps: ExtensionCloudRunnerDeps): { ru
       void storageAdapter.set('cloudAutoStatus', JSON.stringify({ at: Date.now(), ok, summary: notes ? `${summary}${t('cloudAuto.noteSep')}${notes}` : summary })).catch(() => {})
     },
     onError: (err) => console.warn('[cloudAutoSync]', err),
+    onAuthFailure: (msg) => { authError = msg },
   })
+
+  return {
+    async run(mode?: 'auto' | 'manual'): Promise<void> {
+      authError = null
+      await runner.run(mode)
+      if (authError !== null) throw new Error(authError) // T4：凭据失效上抛 → syncScheduler 分类停轮询
+    },
+  }
 }

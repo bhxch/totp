@@ -56,6 +56,10 @@ export interface CloudRunnerDeps {
    *  摘要随 recordStatus 持久化，翻译发生在记录时（locale 切换不改已落盘摘要，与手动卡状态行同限制） */
   t(key: string, params?: Record<string, unknown>): string
   onError?(err: unknown): void
+  /** [可选] 云凭据失效通知（跨端同步 T4）：任一目标错误消息含 401/403 时回调（消息原文，
+   *  含 HTTP 状态码）。core 编排对目标级失败不抛错（outcome=null + error），宿主调度器无法
+   *  经 reject 感知，经此钩子感知后暂停自动跟随；缺省不回调（desktop 零影响） */
+  onAuthFailure?(err: string): void
 }
 
 /** 同步动作 → 状态文案 key（D2：原 CLOUD_ACTION_LABEL zh 常量上移至 common.json cloudRunner.action.*） */
@@ -163,6 +167,9 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
       // 吸收成静默僵死。全程意外走 catch 同样不刷新（catch 内不动基线，保持 null/旧值语义）
       const allSettled = r.results.every((x) => x.outcome !== null && !x.convergeError)
       lastAutoVaultHash = allSettled ? await sha256Hex(encoder.encode(r.finalVaultJson)) : null
+      // T4 凭据失效分类：目标级失败不抛错，宿主调度器无从感知——在此扫描错误消息，401/403 上抛钩子
+      const authErr = r.results.find((x) => x.outcome === null && x.error !== undefined && /401|403/.test(x.error))
+      if (authErr?.error !== undefined) deps.onAuthFailure?.(authErr.error)
       deps.recordStatus?.(true, r.results.map((x) => `${displayName(x.key)}: ${x.outcome ? deps.t(ACTION_LABEL_KEY[x.outcome.action]) : deps.t('cloudRunner.failed')}`).join('; '))
     } catch (err) {
       deps.onError?.(err)

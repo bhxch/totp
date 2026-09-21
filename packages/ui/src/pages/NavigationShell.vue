@@ -31,6 +31,8 @@ const props = withDefaults(defineProps<{
   syncPlatform?: SyncPlatform | null
   /** 云同步平台实现 */
   cloudPlatform?: CloudPlatform | null
+  /** 云凭据失效标志（跨端同步 T4）；true 时 sync 页 SyncCard 渲染重授权警示 */
+  cloudAuthFailed?: boolean
   /** 图标存储 */
   icons?: IconStore | null
   /** 导入映射方案存取 */
@@ -41,7 +43,7 @@ const props = withDefaults(defineProps<{
   mcpPlatform?: McpPlatform | null
   /** 开发者平台实现(桌面端 devtools_* 命令);null/缺省 settings 页开发者卡不渲染 */
   devtoolsPlatform?: DevtoolsPlatform | null
-}>(), { store: null, platform: null, securityPlatform: null, syncPlatform: null, cloudPlatform: null, icons: null, schemesApi: null, mcpPlatform: null, devtoolsPlatform: null })
+}>(), { store: null, platform: null, securityPlatform: null, syncPlatform: null, cloudPlatform: null, cloudAuthFailed: false, icons: null, schemesApi: null, mcpPlatform: null, devtoolsPlatform: null })
 
 const route = useRoute()
 const router = useRouter()
@@ -91,7 +93,7 @@ const pageProps = computed<Record<string, unknown>>(() => {
     // saveImageFile（批① §2.5 多选拼版保存）随备份平台分发到 codes 页；宿主未实现时 undefined → CodesPage 隐藏「保存图片」
     case 'codes': return { store: p.store, icons: p.icons, saveImage: p.platform?.saveImageFile?.bind(p.platform) }
     case 'import': return { store: p.store, platform: p.platform, schemesApi: p.schemesApi }
-    case 'sync': return { store: p.store, platform: p.platform, cloudPlatform: p.cloudPlatform, syncPlatform: p.syncPlatform }
+    case 'sync': return { store: p.store, platform: p.platform, cloudPlatform: p.cloudPlatform, syncPlatform: p.syncPlatform, cloudAuthFailed: p.cloudAuthFailed }
     case 'security': return { securityPlatform: p.securityPlatform }
     case 'settings': return { store: p.store, securityPlatform: p.securityPlatform, showDesktop: (p.railActions?.length ?? 0) > 0, showExtension: p.syncPlatform != null, mcpPlatform: p.mcpPlatform ?? null, devtoolsPlatform: p.devtoolsPlatform ?? null }
     default: return {}

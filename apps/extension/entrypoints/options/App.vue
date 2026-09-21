@@ -95,6 +95,8 @@ onMounted(async () => {
     scheduler.start()
     // 跟随拉取调度（跨端同步 T2）：解锁边沿 + 3min 轮询，gate 内查锁定态
     followScheduler.start()
+    // T4：start() 复位 scheduler 内部 authFailed 标志，宿主 ref 同步镜像（重启 options 页即清警示）
+    cloudAuthFailed.value = followScheduler.authFailed()
     // idle/锁屏自动锁定（plan16 T12）：initStore 后启动（settings/加密态已就绪，watcher 内部自判 prefs）
     lockWatcher.start()
   } catch (e) {
@@ -387,6 +389,10 @@ async function persistCloudAutoPrefs(p: CloudAutoPrefs): Promise<void> {
  *  GDrive 首推凭据回存由 CloudCard 手动通道持有 */
 const cloudSync = createExtensionCloudRunner({ store, t: tr })
 
+/** 云凭据失效标志（跨端同步 T4）：followScheduler 经 onAuthFailed 置位 → SyncCard 重授权警示；
+ *  start() 复位语义在宿主镜像（scheduler 内部标志随 start() 复位，ref 同步对齐） */
+const cloudAuthFailed = ref(false)
+
 /** 跟随拉取调度（跨端同步 T2）：解锁边沿 + 3min 轮询，经 syncScheduler gate（锁定态零网络）。
  *  与既有 cloudAutoPrefs 的 change/interval 通道相互独立（autoFollow 是跟随拉取的开关，勿混）；
  *  gate 每次触发现读 settings（响应式），开关关闭后即时静默；intervalMs 仅 start 读取一次，
@@ -398,6 +404,8 @@ const followScheduler = createSyncScheduler({
   autoFollowEnabled: () => settings.syncPrefs.autoFollow !== false,
   intervalMs: () => (settings.syncPrefs.autoFollow ? 180_000 : null),
   onError: (e) => console.warn('[syncFollow]', e),
+  // T4：凭据失效（401/403）→ 停轮询 + SyncCard 重授权警示（下轮恢复靠 start() 复位或成功同步复位）
+  onAuthFailed: () => { cloudAuthFailed.value = true },
 })
 
 /** core 调度器（勘误 §4.1：不用 chrome.alarms——SW 后台无解锁 DEK、读不到会话备份口令，
@@ -470,7 +478,7 @@ const cloudPlatform: CloudPlatform = {
       <div v-if="migrateNote" class="migrate-note">{{ migrateNote }}</div>
       <div v-if="legacyNote" class="migrate-note">{{ legacyNote }}</div>
       <!-- 同构五页:与桌面同一 Shell(无 railActions → 设置页不渲染桌面专属项;传 syncPlatform → 渲染扩展专属项) -->
-      <NavigationShell :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :sync-platform="syncPlatform" :cloud-platform="cloudPlatform" :icons="icons" :schemes-api="schemesApi" @copy="copyToClipboard" />
+      <NavigationShell :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :sync-platform="syncPlatform" :cloud-platform="cloudPlatform" :cloud-auth-failed="cloudAuthFailed" :icons="icons" :schemes-api="schemesApi" @copy="copyToClipboard" />
     </template>
   </template>
 </template>

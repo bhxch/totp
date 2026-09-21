@@ -19,7 +19,9 @@ const props = withDefaults(defineProps<{
   cloudPlatform?: CloudPlatform | null
   /** 浏览器同步平台实现；缺省不渲染浏览器同步区块（desktop/popup 零影响） */
   syncPlatform?: SyncPlatform | null
-}>(), { platform: null, cloudPlatform: null, syncPlatform: null })
+  /** 云凭据失效标志（跨端同步 T4）：转发 SyncCard 渲染重授权警示；缺省 false */
+  cloudAuthFailed?: boolean
+}>(), { platform: null, cloudPlatform: null, syncPlatform: null, cloudAuthFailed: false })
 
 /** 备份内容快照（saveVault 同款 JSON）：序列化 reactive 代理以保持 computed 依赖追踪（与 旧单页 一致） */
 const vaultJson = computed(() => JSON.stringify(props.store.vault))
@@ -46,7 +48,7 @@ function onRememberSecret(pw: string): void {
       <CloudCard :platform="cloudPlatform" :session-secret="sessionSecret" />
     </MdCard>
     <MdCard v-if="syncPlatform" class="block">
-      <SyncCard :platform="syncPlatform" />
+      <SyncCard :platform="syncPlatform" :auth-failed="cloudAuthFailed" />
     </MdCard>
   </section>
 </template>

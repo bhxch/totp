@@ -73,4 +73,91 @@ describe('syncScheduler', () => {
     fireUnlock()
     await vi.waitFor(() => expect(deps.onError).toHaveBeenCalled())
   })
+
+  // ---- 跨端同步 T4：凭据失效分类（401/403 → 暂停轮询 + onAuthFailed 上抛）----
+
+  it('T4 401 错误触发 onAuthFailed 且后续 interval 不再拉取（停轮询防风暴重试）', async () => {
+    vi.useFakeTimers()
+    const onAuthFailed = vi.fn()
+    const { deps } = makeDeps({
+      intervalMs: () => 1000,
+      runPull: vi.fn().mockRejectedValue(new Error('WebDAV 请求失败（HTTP 401）')),
+      onAuthFailed,
+    })
+    const s = createSyncScheduler(deps)
+    s.start()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(deps.runPull).toHaveBeenCalledOnce()
+    expect(onAuthFailed).toHaveBeenCalledOnce()
+    expect(s.authFailed()).toBe(true)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(deps.runPull).toHaveBeenCalledOnce() // interval 已停，不再增长
+    s.stop()
+    vi.useRealTimers()
+  })
+
+  it('T4 403 错误同样触发 onAuthFailed', async () => {
+    const onAuthFailed = vi.fn()
+    const { deps } = makeDeps({ runPull: vi.fn().mockRejectedValue(new Error('S3 请求失败（HTTP 403）')), onAuthFailed })
+    const s = createSyncScheduler(deps)
+    s.start()
+    await s.syncNow()
+    expect(onAuthFailed).toHaveBeenCalledOnce()
+    expect(s.authFailed()).toBe(true)
+  })
+
+  it('T4 手动同步成功复位 authFailed（凭据恢复后可继续跟随）', async () => {
+    let fail = true
+    const { deps } = makeDeps({ runPull: vi.fn(() => (fail ? Promise.reject(new Error('WebDAV 请求失败（HTTP 401）')) : Promise.resolve(undefined))) })
+    const s = createSyncScheduler(deps)
+    s.start()
+    await s.syncNow()
+    expect(s.authFailed()).toBe(true)
+    fail = false
+    await s.syncNow()
+    expect(s.authFailed()).toBe(false)
+  })
+
+  it('T4 start() 复位 authFailed（下次启动恢复轮询资格）', async () => {
+    const { deps } = makeDeps({ runPull: vi.fn().mockRejectedValue(new Error('WebDAV 请求失败（HTTP 401）')) })
+    const s = createSyncScheduler(deps)
+    s.start()
+    await s.syncNow()
+    expect(s.authFailed()).toBe(true)
+    s.stop()
+    s.start()
+    expect(s.authFailed()).toBe(false)
+    s.stop()
+  })
+
+  it('T4 非认证错误不触发 onAuthFailed 且轮询不中断', async () => {
+    vi.useFakeTimers()
+    const onAuthFailed = vi.fn()
+    const { deps } = makeDeps({ intervalMs: () => 1000, runPull: vi.fn().mockRejectedValue(new Error('网络超时')), onAuthFailed })
+    const s = createSyncScheduler(deps)
+    s.start()
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(deps.runPull).toHaveBeenCalledTimes(3) // 调度照常
+    expect(onAuthFailed).not.toHaveBeenCalled()
+    expect(s.authFailed()).toBe(false)
+    s.stop()
+    vi.useRealTimers()
+  })
+
+  it('T4 已置位期间重复 401 不重复通知 onAuthFailed（置位语义，复位后可再通知）', async () => {
+    const onAuthFailed = vi.fn()
+    const { deps } = makeDeps({ runPull: vi.fn().mockRejectedValue(new Error('WebDAV 请求失败（HTTP 401）')), onAuthFailed })
+    const s = createSyncScheduler(deps)
+    s.start()
+    await s.syncNow()
+    await s.syncNow()
+    expect(onAuthFailed).toHaveBeenCalledOnce()
+    s.stop()
+    s.start()
+    s.stop()
+    s.start()
+    await s.syncNow()
+    expect(onAuthFailed).toHaveBeenCalledTimes(2) // start() 复位后再次通知
+    s.stop()
+  })
 })

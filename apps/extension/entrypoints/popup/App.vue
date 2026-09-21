@@ -27,6 +27,8 @@ const syncFollow = createSyncScheduler({
   autoFollowEnabled: () => settings.syncPrefs.autoFollow !== false, // T3 开关（设置页通用卡）
   intervalMs: () => null, // popup 不轮询
   onError: (e) => console.warn('[syncFollow]', e),
+  // T4：popup 无常驻 UI 通道，仅留痕（scheduler 内部已置位停动作资格）；options 经 SyncCard 渲染警示
+  onAuthFailed: () => console.warn('[syncFollow] 云凭据失效（401/403），自动跟随已暂停'),
 })
 // 打开即跟随一次（已解锁才有动作——gate 拦锁定态）；解锁边沿由 start 内钩子承接。
 // 本块 onMounted 先于下方 async onMounted 注册（注册序=执行序）：watch 先于 initStore 的

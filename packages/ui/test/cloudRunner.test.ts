@@ -461,6 +461,52 @@ describe('createCloudSyncRunner', () => {
     expect(recordStatus).toHaveBeenCalledWith(true, 's1: 失败') // 目标级失败标注（既有部分失败 summary 语义）
     expect(onError).not.toHaveBeenCalled() // 单目标失败由 core 编排隔离，不上溢
   })
+
+  it('T4 任一目标错误消息含 401/403 → onAuthFailure 收到该消息（凭据失效分类供调度暂停）', async () => {
+    const bad = fakeBackend()
+    bad.get = async () => {
+      throw new Error('WebDAV 请求失败（HTTP 401）')
+    }
+    const good = fakeBackend()
+    const onAuthFailure = vi.fn()
+    const { deps, recordStatus } = makeDeps({
+      loadSources: vi.fn(async () => [
+        { source: source('s-bad', { kind: 'gist' }), cred: GIST_CRED },
+        { source: source('s-good'), cred: WEBDAV_CRED },
+      ]),
+      makeBackend: (cred) => (cred.backend === 'gist' ? bad : good),
+      onAuthFailure,
+    })
+    await createCloudSyncRunner(deps).run()
+    expect(onAuthFailure).toHaveBeenCalledOnce()
+    expect(onAuthFailure).toHaveBeenCalledWith('WebDAV 请求失败（HTTP 401）')
+    expect(recordStatus).toHaveBeenLastCalledWith(true, 's-bad: 失败; s-good: 已上传') // 既有 summary 语义不变
+  })
+
+  it('T4 非认证错误不触发 onAuthFailure；未提供 onAuthFailure 时 401 也静默（可选依赖）', async () => {
+    const bad = fakeBackend()
+    bad.get = async () => {
+      throw new Error('网络超时')
+    }
+    const { deps, recordStatus } = makeDeps({
+      loadSources: vi.fn(async () => [{ source: source('s-bad', { kind: 'gist' }), cred: GIST_CRED }]),
+      makeBackend: () => bad,
+      onAuthFailure: vi.fn(),
+    })
+    await createCloudSyncRunner(deps).run()
+    expect(deps.onAuthFailure).not.toHaveBeenCalled()
+    expect(recordStatus).toHaveBeenLastCalledWith(true, 's-bad: 失败')
+    // 未提供 onAuthFailure：401 不抛错，run 照常 resolve（desktop 宿主零影响）
+    const bad401 = fakeBackend()
+    bad401.get = async () => {
+      throw new Error('WebDAV 请求失败（HTTP 401）')
+    }
+    const { deps: deps2 } = makeDeps({
+      loadSources: vi.fn(async () => [{ source: source('s-bad', { kind: 'gist' }), cred: GIST_CRED }]),
+      makeBackend: () => bad401,
+    })
+    await expect(createCloudSyncRunner(deps2).run()).resolves.toBeUndefined()
+  })
 })
 
 describe('自动通道明文内容 hash 门（审查 I1 最小闭环）', () => {
