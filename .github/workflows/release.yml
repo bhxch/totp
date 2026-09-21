@@ -13,10 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: tag == 根 package.json version
-        run: |
-          ver="v$(node -p "require('./package.json').version")"
-          [ "$ver" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} != $ver"; exit 1; }
+      - name: tag == 全部版本落点一致（bump --check）
+        run: node scripts/bump.mjs "${GITHUB_REF_NAME#v}" --check
   build:
     needs: gate
     uses: ./.github/workflows/build.yml

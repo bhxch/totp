@@ -24,6 +24,8 @@
 - 新增 `scripts/bump.mjs`：`pnpm bump <version>` 同步写 4 处
   （含 Cargo.toml 的 `^version` 行），幂等，diff 可 review。
 - release tag `vX.Y.Z` 必须等于根版本——CI 校验 job，不匹配直接 fail。
+  注：workspace 根 package.json 无顶层 version 字段——真源语义实现为
+  `bump --check` 校验全部 4 处落点一致（CI gate 同此），而非单点读取。
 
 ### §2 工作流结构（.github/workflows/）
 
