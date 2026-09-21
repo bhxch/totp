@@ -543,13 +543,17 @@ pub fn mcp_set_config(app: AppHandle, state: State<'_, McpState>, cfg: McpConfig
     Ok(())
 }
 
-/// 生成新 token 并持久化。运行中服务的 bearer 是启动时快照：新 token 经下一次
-/// mcp_set_config（enabled/端口变更均触发重启）或应用重启后生效
+/// 生成新 token 并持久化。重生成意味着旧 bearer 快照立即失效（用户重生成正因怀疑
+/// 旧 token 泄露），故与 mcp_set_config 同构：token 变更即按需重启使新 token 即刻生效
 #[tauri::command]
-pub fn mcp_regenerate_token(state: State<'_, McpState>) -> Result<String, String> {
-    let mut cfg = load_mcp_config_inner(&state.settings_file);
+pub fn mcp_regenerate_token(app: AppHandle, state: State<'_, McpState>) -> Result<String, String> {
+    let old = load_mcp_config_inner(&state.settings_file);
+    let mut cfg = old.clone();
     cfg.token = generate_token();
     save_mcp_config_inner(&state.settings_file, &cfg)?;
+    if needs_restart(&old, &cfg) {
+        restart_if_needed(&app, &state, &cfg)?;
+    }
     Ok(cfg.token)
 }
 
