@@ -23,14 +23,30 @@ const post = async (body, withAuth = true) => {
   })
   sessionId = res.headers.get('mcp-session-id') ?? sessionId
   const text = await res.text()
-  // with_json_response(true) 下为纯 JSON；若服务端回 SSE（text/event-stream），解析 data: 行
+  // with_json_response(true) 下多为纯 JSON；rmcp 对 initialize 等仍可能回 SSE 事件流
+  // （data: 空行作 keepalive，事件以空行分隔）——按事件块解析取首个 jsonrpc 载荷
   let json = null
   try { json = JSON.parse(text) } catch {
-    const dataLine = text.split('\n').find((l) => l.startsWith('data:'))
-    if (dataLine) { try { json = JSON.parse(dataLine.slice(5).trim()) } catch { /* ignore */ } }
+    json = parseSseJson(text)
   }
   return { status: res.status, contentType: res.headers.get('content-type') ?? '', text, json }
 }
+/** SSE 文本 → 首个含 jsonrpc 载荷的事件 JSON（空 data: keepalive 块跳过；多行 data 拼接） */
+function parseSseJson(text) {
+  for (const block of text.split(/\r?\n\r?\n/)) {
+    const data = block.split(/\r?\n/)
+      .filter((l) => l.startsWith('data:'))
+      .map((l) => l.slice(5).trimStart())
+      .join('\n')
+    if (!data) continue
+    try {
+      const j = JSON.parse(data)
+      if (j && typeof j === 'object' && ('result' in j || 'error' in j || 'method' in j)) return j
+    } catch { /* 非载荷事件，试下一块 */ }
+  }
+  return null
+}
+
 let fail = 0
 const check = (name, cond) => { console.log(`${cond ? 'PASS' : 'FAIL'} ${name}`); if (!cond) fail++ }
 
@@ -61,4 +77,6 @@ check('tools == [get_code, list_accounts]', JSON.stringify(names) === JSON.strin
 const unknown = await post({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'get_code', arguments: { account_id: 'nonexistent' } } })
 check('unknown account_id 文案', unknown.text.includes('unknown account_id'))
 
-process.exit(fail ? 1 : 0)
+// 不用 process.exit：fetch keep-alive 在 Windows 上 exit 时会触发 libuv 断言（退出码失真），
+// 设 exitCode 让事件循环自然排空（undici keep-alive 数秒内释放）
+process.exitCode = fail ? 1 : 0
