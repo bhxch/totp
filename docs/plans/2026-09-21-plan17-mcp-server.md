@@ -1422,3 +1422,18 @@ what: 设计文档标记已实施；README 增补 MCP 功能与安全边界说�
 4. **token 明文位置**：token 存 settings.json 明文（与既有 shortcut/凭据同域，设备侧风险面一致）；设置卡片默认掩码显示。
 5. **alwaysAsk 语义**：实现为「once 批准 15 分钟 TTL」，等价于「会话级确认」，比逐调用弹窗可预期（防弹窗轰炸），已在设计文档 §3 记录。
 6. **真机验证缺口**（继承项目惯例）：Windows 真机的托盘隐藏态下 MCP 取码（webview 存活性）、防火墙首次监听提示（127.0.0.1 通常不触发）需人工过一遍。
+
+---
+
+## 手动验收清单（发布前 gate；真机验证由用户完成，沿项目惯例）
+
+1. `pnpm tauri build`（或 dev）启动 → 设置页出现「MCP 服务器」卡片，默认关闭。
+2. 启用 → token 自动生成；`node scripts/mcp-e2e.mjs <token>` 全 PASS。
+3. 金库锁定 → get_code 返回 vault locked；解锁后恢复。
+4. wildcard 档白名单空 → e2e 触发应用内审批弹窗（mcp-e2e ident）；「仅本次」后 15 分钟内不再弹；Esc 关闭 = deny（60s 冷却内重试不再弹）。
+5. 「加入白名单」→ settings.json 的 mcp.whitelist 出现 mcp-e2e，后续连接免确认。
+6. alwaysAsk 档 → once 过期（15min）后再调即弹窗。
+7. `list_accounts(url=https://gitlab.com/x)`（对带 matchRules 条目）只返回命中项。
+8. 输出契约：工具结果无 secret/pin（e2e list 全量字段人工核对一次）。
+9. 重生成 token 后旧 token 立即失效（旧 token e2e 得 401/新 token PASS）。
+10. ZCode 真连一次（连接片段粘进配置）→ agent 成功取到真实验证码（终验收）。
