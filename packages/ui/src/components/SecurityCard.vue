@@ -394,6 +394,7 @@ async function onDelayChange(value: string): Promise<void> {
 /* 卡片边界由外层 MdCard outlined 统一提供(M3 双描边裁定,2026-09-16 审查 X1);本组件只负责内容排版 */
 .card { display: flex; flex-direction: column; gap: 8px; }
 h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
+.unlock-methods { display: flex; flex-direction: column; gap: 12px; }
 .unlock-methods h3 { font-size: var(--md-sys-typescale-body-medium); margin: 0; opacity: .8; }
 .method-row { display: flex; align-items: baseline; gap: 8px; }
 .method-hint { font-size: var(--md-sys-typescale-body-small); opacity: .65; }
