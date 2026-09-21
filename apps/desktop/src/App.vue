@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { backupFileName, base64ToBytes, createBackupEnvelope, loadSourceRevs, loadSources, normalizeSchemes, openBackupEnvelope, randomBytes, saveSourceRev, saveSources, SCHEMES_KEY, sha256Hex, type BackupSource, type CloudCred, type ImportScheme, type KdfProfile, type Retention, type StorageAdapter, type Vault } from '@totp/core'
-import { createAppI18n, createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type LocalSourceView, type SecurityPlatform, type VueStore } from '@totp/ui'
+import { createAppI18n, createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type LocalSourceView, type McpConfigDto, type McpPlatform, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, getCurrentInstance, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createDesktopAutoRunner, formatAutoStatusText } from './autoBackup'
 import { createBackupToSources, listBackupsFromSources, pickBackupDirOs, pickBackupOpenOs, pickBackupSaveOs, readBackupByName, readBackupFileOs, saveConflictBackupToDir, saveCloudSourcesPreservingLocal, writeBackupFileOs, writeBytesFileOs, writeTextFileOs, type DialogFilterSpec, type PickedOsFile } from './backupService'
@@ -11,6 +11,8 @@ import { decryptDpapiOs, pickImportFileOs, readImportFileBytesOs, readImportFile
 import { createIdleLockExecutor } from './idleLock'
 import { lockPrefsUnsupportedKeys } from './lockPrefs'
 import { BACKUP_DIR_KEY, migrateLegacyCloudSources, migrateLegacyLocalSource } from './legacyMigrate'
+import { startMcpBridge, type McpBridgeDeps } from './mcpBridge'
+import McpConsentDialog from './McpConsentDialog.vue'
 import { createTauriFs } from './tauriFs'
 import { isEntropyBoundDekWrap, osAutoForgetOs, osAutoProtectOs, osAutoUnprotectOs } from './tauriSecurity'
 
@@ -603,6 +605,35 @@ const idleLock = createIdleLockExecutor({
 })
 const onUserActivity = (): void => idleLock.notifyActivity()
 
+// ---------- MCP 事件桥与首连审批（plan17 T10）----------
+// 平台适配器：三配置命令 + 复制复用 copyToClipboard（F16 暂存通道 + 自动清空与取码复制同一事实源）
+const mcpPlatform: McpPlatform = {
+  getConfig: () => invoke('mcp_get_config') as Promise<McpConfigDto>,
+  setConfig: (cfg) => invoke('mcp_set_config', { cfg }) as Promise<void>,
+  regenerateToken: () => invoke('mcp_regenerate_token') as Promise<string>,
+  copyText: (value) => copyToClipboard(value),
+}
+
+let mcpStop: (() => void) | null = null
+/** 首连审批请求（mcp://approval 载荷）；null=无待审批。审批窗独立于锁定态（锁定时取码在桥内报 vault locked，属预期） */
+const approval = ref<{ ident: string; tool: string } | null>(null)
+// 去重：同一 ident 10 秒内重复审批事件忽略——防 AI 客户端等待裁定期间高频重试轰炸 webview；
+// 过窗口期的重试可再弹，仍给用户裁定机会
+let lastApproval: { ident: string; time: number } | null = null
+let unlistenApproval: (() => void) | null = null
+
+/** 审批三键裁定：先清窗防连点重复回执；回执失败仅告警不中断（Rust 侧会话超时兜底失效） */
+async function onApprovalAction(action: 'deny' | 'once' | 'trust'): Promise<void> {
+  const req = approval.value
+  if (!req) return
+  approval.value = null
+  try {
+    await invoke('mcp_approval_response', { ident: req.ident, action })
+  } catch (e) {
+    console.warn('[mcp] mcp_approval_response failed', e)
+  }
+}
+
 onMounted(async () => {
   // 系统锁屏事件（plan16 T15）：WTS_SESSION_LOCK → system-lock 广播 → 按设置锁定
   unlistenSystemLock = await listen('system-lock', () => {
@@ -628,6 +659,27 @@ onMounted(async () => {
     store.value = s
     // D1 i18n 挂载：设置已从盘载入（含 locale），装入 i18n 供组件树 useI18n/$t
     mountI18n(s)
+    // MCP 事件桥（plan17 T10）：只主窗口装配（本文件即 main；mini 另案）；锁定门控在
+    // requireEntries 抛错（'vault locked' 文案直达 AI 客户端）
+    const mcpDeps: McpBridgeDeps = {
+      requireEntries: () => {
+        const st = store.value
+        if (!st || st.locked.value) throw new Error('vault locked')
+        return st.vault.entries
+      },
+      tagsOf: (e) => {
+        const tags = store.value?.vault.tags ?? []
+        return e.tagIds.map((id) => tags.find((t) => t.id === id)?.name).filter((n): n is string => !!n)
+      },
+    }
+    mcpStop = await startMcpBridge(mcpDeps, { listen, invoke: (c, a) => invoke(c, a as never).then(() => {}) })
+    // 首连审批事件（同一 10s 去重窗口，见 lastApproval 注释）
+    unlistenApproval = await listen<{ ident: string; tool: string }>('mcp://approval', (e) => {
+      const now = Date.now()
+      if (lastApproval && lastApproval.ident === e.payload.ident && now - lastApproval.time < 10_000) return
+      lastApproval = { ident: e.payload.ident, time: now }
+      approval.value = e.payload
+    })
     // 旧数据迁移（plan16 T14）：initStore 已完成解锁态判定，解锁态在此直接跑（幂等）；
     // 第二汇合点在模板 LockScreen @unlocked（口令/PRF 解锁成功后补跑）
     await runLegacyMigrations()
@@ -645,6 +697,8 @@ onMounted(async () => {
 
 onScopeDispose(() => {
   auto.stop()
+  mcpStop?.()
+  unlistenApproval?.()
   unlistenFocus?.()
   unlistenSystemLock?.()
   idleLock.stop()
@@ -676,7 +730,9 @@ const railActions = [{ get label() { return tr('desktop.hideToTray') }, onClick:
   <div v-if="loadError && !store" class="error">{{ tr('desktop.loadFailed', { message: loadError }) }}</div>
   <!-- 解锁成功回调补跑迁移（plan16 T14，幂等）：口令/PRF 解锁各路径在 LockScreen 内 emit unlocked -->
   <LockScreen v-else-if="store && locked" :store="store" :dpapi="dpapiOps" @unlocked="runLegacyMigrations" />
-  <NavigationShell v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :cloud-platform="cloudPlatform" :icons="icons" :schemes-api="schemesApi" :rail-actions="railActions" @copy="copyToClipboard" />
+  <NavigationShell v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :cloud-platform="cloudPlatform" :icons="icons" :schemes-api="schemesApi" :rail-actions="railActions" :mcp-platform="mcpPlatform" @copy="copyToClipboard" />
+  <!-- MCP 首连审批独立于上方 v-if 链：锁定态也要能弹（plan17 T10）；t 走壳层 tr（desktop 无 useI18n 注入） -->
+  <McpConsentDialog :open="approval !== null" :request="approval" :t="tr" @resolve="onApprovalAction" @close="approval = null" />
 </template>
 
 <style>
