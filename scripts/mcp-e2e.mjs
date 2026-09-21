@@ -1,12 +1,28 @@
 #!/usr/bin/env node
-/** plan17 MCP E2E：对运行中的 desktop 应用验证 401 门 → initialize → tools/list → tools/call 错误路径。
- *  用法：先在设置页启用 MCP（token 从设置页复制），然后
- *  node scripts/mcp-e2e.mjs <token> [port=47215]
- *  断言：未带 token 401；带 token initialize 得 serverInfo.name=totp-desktop；
- *  tools/list 恰含 get_code/list_accounts；get_code(不存在 id) 响应含 unknown account_id。 */
+/** plan17 MCP E2E：对运行中的 desktop 应用验证 401 门 → initialize → tools/list →
+ *  tools/call 成功链路（list_accounts → get_code）与错误路径。
+ *
+ *  前置条件（不满足时工具调用阶段会 FAIL，运行时输出里有对应指引）：
+ *  1. dev/build 应用在运行，设置页已启用 MCP 服务器，token 从设置页复制；
+ *  2. 金库已解锁（锁定时 get_code 返回 vault locked）；
+ *  3. 授权档位为 wildcard/exact/alwaysAsk 且白名单未含本客户端时，首个 tools/call 即得
+ *     "approval pending"——需先在应用内批准 mcp-e2e 客户端，或临时切换授权模式为 token 后重跑。
+ *
+ *  用法：node scripts/mcp-e2e.mjs <token> [port=47215]
+ *  断言：未带 token 401；initialize 得 serverInfo.name=totp-desktop；tools/list 恰含两工具；
+ *  list_accounts 是数组且每项字段严格 ⊆ {id,issuer,label,type,tags}（多余键=泄密嫌疑，FAIL）；
+ *  get_code(首条账户) code 非空字符串（hotp 另含 counter/note，totp/steam/yandex 另含
+ *  expires_in_seconds/period）；库为空时跳过成功链路并在汇总标注 skipped；
+ *  get_code(不存在 id) 错误文案对齐真实实现（unknown account_id: x; call list_accounts first）。 */
 const [token, port = '47215'] = process.argv.slice(2)
 if (!token) { console.error('usage: node scripts/mcp-e2e.mjs <token> [port]'); process.exit(1) }
 const base = `http://127.0.0.1:${port}/mcp`
+
+console.log('前置条件：应用运行中 + 设置页已启用 MCP（token 从设置页复制）+ 金库已解锁。')
+console.log('wildcard/exact/alwaysAsk 档且白名单未含本客户端时，首个工具调用会得 "approval pending"：')
+console.log('请在应用内批准 mcp-e2e 客户端，或临时切换授权模式为 token 后重跑。')
+console.log('')
+
 // rmcp 3.4.0 默认 legacy session 模式：initialize 后服务端下发 mcp-session-id，
 // 后续请求必须回传该 id，否则被拒（unexpected_message_response）
 let sessionId = null
@@ -48,7 +64,48 @@ function parseSseJson(text) {
 }
 
 let fail = 0
+let skipped = 0
 const check = (name, cond) => { console.log(`${cond ? 'PASS' : 'FAIL'} ${name}`); if (!cond) fail++ }
+
+// list_accounts 公开字段白名单（与 mcpBridge.ts toPublic 的安全契约对齐，勿增删）：
+// 发现 secret/pin/algorithm/counter 等多余键即泄密嫌疑，FAIL
+const ACCOUNT_KEYS = new Set(['id', 'issuer', 'label', 'type', 'tags'])
+
+/** tools/call 失败形态 → 错误文案。兼容 JSON-RPC error（rmcp McpError 实际形态）
+ *  与 isError:true + content 文案两种；两种皆无则视为成功（返回空串） */
+function errorTextOf(res) {
+  const j = res.json
+  if (j?.error?.message) return j.error.message
+  if (j?.result?.isError) {
+    const t = (j.result.content ?? []).map((c) => c.text ?? '').join(' ')
+    if (t) return t
+  }
+  return ''
+}
+
+/** tools/call 成功载荷：CallToolResult.content[0].text 为后端 result 的 JSON 字符串
+ *  （bridge_call → ContentBlock::text(result.to_string())），兜底 structuredContent */
+function payloadOf(res) {
+  const r = res.json?.result
+  if (!r || r.isError) return null
+  const text = (r.content ?? []).find((c) => c.type === 'text')?.text
+  if (typeof text === 'string') {
+    try { return JSON.parse(text) } catch { return text }
+  }
+  return r.structuredContent ?? null
+}
+
+let approvalHintShown = false
+/** 工具调用 + approval pending 诊断：命中即输出指引再 FAIL，不裸断言失败 */
+async function callTool(id, name, args) {
+  const res = await post({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } })
+  const errText = errorTextOf(res)
+  if (!approvalHintShown && errText.includes('approval pending')) {
+    approvalHintShown = true
+    console.warn('[提示] 工具调用被门控拦截（approval pending）：在应用内批准 mcp-e2e 客户端，或临时切换授权模式为 token 后重跑。')
+  }
+  return { res, errText }
+}
 
 // 1) 无 token → 401（Bearer 是第一道门）
 const noAuth = await post({ jsonrpc: '2.0', id: 0, method: 'tools/list' }, false)
@@ -73,10 +130,45 @@ if (!(tools.status === 200 && tools.json?.result)) {
 const names = (tools.json?.result?.tools ?? []).map((t) => t.name).sort()
 check('tools == [get_code, list_accounts]', JSON.stringify(names) === JSON.stringify(['get_code', 'list_accounts']))
 
-// 4) 未知账户 → 工具级错误文案含 unknown account_id（形态兼容 isError/JSON-RPC error 两种）
-const unknown = await post({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'get_code', arguments: { account_id: 'nonexistent' } } })
-check('unknown account_id 文案', unknown.text.includes('unknown account_id'))
+// 4) tools/call list_accounts（无参）→ 公开字段白名单断言（安全契约，多余键即 FAIL）
+const la = await callTool(3, 'list_accounts', {})
+check('list_accounts 无错误', !la.errText)
+const laPayload = la.errText ? null : payloadOf(la.res)
+const accounts = Array.isArray(laPayload?.accounts) ? laPayload.accounts : null
+check('list_accounts → accounts 数组', accounts !== null)
+if (accounts) {
+  check('每项字段严格 ⊆ {id,issuer,label,type,tags} 且含 id',
+    accounts.every((a) => a && typeof a === 'object'
+      && Object.keys(a).every((k) => ACCOUNT_KEYS.has(k))
+      && typeof a.id === 'string' && a.id.length > 0))
+}
 
+// 5) get_code 成功链路：对返回的第一条账户取码。库为空则明确 skipped（不静默通过）
+const first = accounts?.[0]
+if (!first) {
+  skipped++
+  console.warn('[skipped] 库中无账户，跳过 get_code 成功链路（在应用导入至少一条账户后重跑）')
+} else {
+  const gc = await callTool(4, 'get_code', { account_id: first.id })
+  check('get_code 无错误', !gc.errText)
+  const p = gc.errText ? null : payloadOf(gc.res)
+  check(`get_code(${first.type}) → code 非空字符串`, typeof p?.code === 'string' && p.code.length > 0)
+  if (first.type === 'hotp') {
+    // hotp：counter 被 peek 不推进，附 note 说明（mcpBridge.ts handleMcpRequest）
+    check('hotp 另含 counter/note', p != null && 'counter' in p && 'note' in p)
+  } else {
+    // totp/steam/yandex 同形状：{code, expires_in_seconds, period}
+    check(`${first.type} 另含 expires_in_seconds/period`, p != null && 'expires_in_seconds' in p && 'period' in p)
+  }
+}
+
+// 6) 未知账户 → 错误文案对齐真实实现（McpBridge: unknown account_id: x; call list_accounts first），
+//    文案须含 list_accounts 建议（形态兼容 JSON-RPC error / isError 两种）
+const unknown = await callTool(5, 'get_code', { account_id: 'nonexistent-e2e' })
+check('unknown account_id 文案', unknown.errText.includes('unknown account_id'))
+check('错误文案含 list_accounts 建议', unknown.errText.includes('list_accounts'))
+
+console.log(`\n汇总：FAIL=${fail}${skipped ? `，skipped=${skipped}（库中无账户，get_code 成功链路未验证）` : ''}`)
 // 不用 process.exit：fetch keep-alive 在 Windows 上 exit 时会触发 libuv 断言（退出码失真），
 // 设 exitCode 让事件循环自然排空（undici keep-alive 数秒内释放）
 process.exitCode = fail ? 1 : 0

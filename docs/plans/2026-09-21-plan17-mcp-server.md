@@ -1365,7 +1365,7 @@ process.exit(fail ? 1 : 0)
 **Step 2: 手动验收清单（写入本计划，验收时逐项勾）**
 
 1. `pnpm tauri build`（或 `tauri dev`）启动应用 → 设置页出现「MCP 服务器」卡片，默认关闭。
-2. 启用 → token 自动生成；`node scripts/mcp-e2e.mjs <token>` 全 PASS。
+2. 启用 → token 自动生成；`node scripts/mcp-e2e.mjs <token>` 全 PASS（前置条件：金库已解锁；wildcard/exact/alwaysAsk 档需先在应用内批准 mcp-e2e 客户端或临时切 token 档，否则首个工具调用得 approval pending）。
 3. 金库锁定（重启或手动锁）→ `get_code` 返回 vault locked；解锁后恢复。
 4. wildcard 档 + 白名单空 → e2e（clientInfo name=mcp-e2e）触发应用内审批弹窗；「仅本次」后 15 分钟内不再弹；「加入白名单」后 settings.json 的 `mcp.whitelist` 出现 `mcp-e2e`。
 5. `alwaysAsk` 档 → 每过 once-TTL 再调即弹窗。
@@ -1428,7 +1428,7 @@ what: 设计文档标记已实施；README 增补 MCP 功能与安全边界说�
 ## 手动验收清单（发布前 gate；真机验证由用户完成，沿项目惯例）
 
 1. `pnpm tauri build`（或 dev）启动 → 设置页出现「MCP 服务器」卡片，默认关闭。
-2. 启用 → token 自动生成；`node scripts/mcp-e2e.mjs <token>` 全 PASS。
+2. 启用 → token 自动生成；`node scripts/mcp-e2e.mjs <token>` 全 PASS（前置条件：金库已解锁；wildcard/exact/alwaysAsk 档需先在应用内批准 mcp-e2e 客户端或临时切 token 档，否则首个工具调用得 approval pending）。
 3. 金库锁定 → get_code 返回 vault locked；解锁后恢复。
 4. wildcard 档白名单空 → e2e 触发应用内审批弹窗（mcp-e2e ident）；「仅本次」后 15 分钟内不再弹；Esc 关闭 = deny（60s 冷却内重试不再弹）。
 5. 「加入白名单」→ settings.json 的 mcp.whitelist 出现 mcp-e2e，后续连接免确认。
