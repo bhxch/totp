@@ -11,6 +11,7 @@ import { decryptDpapiOs, pickImportFileOs, readImportFileBytesOs, readImportFile
 import { createIdleLockExecutor } from './idleLock'
 import { lockPrefsUnsupportedKeys } from './lockPrefs'
 import { BACKUP_DIR_KEY, migrateLegacyCloudSources, migrateLegacyLocalSource } from './legacyMigrate'
+import { createMcpApprovalQueue, type McpApprovalAction } from './mcpApprovalQueue'
 import { startMcpBridge, type McpBridgeDeps } from './mcpBridge'
 import McpConsentDialog from './McpConsentDialog.vue'
 import { createTauriFs } from './tauriFs'
@@ -616,25 +617,23 @@ const mcpPlatform: McpPlatform = {
 }
 
 let mcpStop: (() => void) | null = null
-/** 首连审批请求（mcp://approval 载荷）；null=无待审批。审批窗独立于锁定态（锁定时取码在桥内报 vault locked，属预期） */
-const approval = ref<{ ident: string; tool: string } | null>(null)
-// 去重：同一 ident 10 秒内重复审批事件忽略——防 AI 客户端等待裁定期间高频重试轰炸 webview；
-// 过窗口期的重试可再弹，仍给用户裁定机会
-let lastApproval: { ident: string; time: number } | null = null
+// 首连审批队列（原单槽位 approval 的并发根修：对话框打开期间不同 ident 事件互相覆盖、
+// 弹窗乒乓，见 mcpApprovalQueue.ts）。审批窗独立于锁定态（锁定时取码在桥内报 vault locked，属预期）
+const approvalQueue = createMcpApprovalQueue({
+  respond: async (ident, action) => {
+    await invoke('mcp_approval_response', { ident, action })
+  },
+})
+/** 模板消费的队首待审批；null=无待审批 */
+const approval = approvalQueue.current
 let unlistenApproval: (() => void) | null = null
 
-/** 审批裁定（三键与关闭同路径）：先清窗防连点重复回执；审批无会话无 TTL，
+/** 审批裁定（三键与关闭同路径）：队列先弹出队首再回执（清窗防连点重复回执）；审批无会话无 TTL，
  *  deny 后 Rust 侧 DENY_COOLDOWN 60s 冷却自然退避；回执失败仅告警不中断
  *  （客户端重试会再次弹审批窗，用户可再裁定） */
-async function onApprovalAction(action: 'deny' | 'once' | 'trust'): Promise<void> {
-  const req = approval.value
-  if (!req) return
-  approval.value = null
-  try {
-    await invoke('mcp_approval_response', { ident: req.ident, action })
-  } catch (e) {
-    console.warn('[mcp] mcp_approval_response failed', e)
-  }
+function onApprovalAction(action: McpApprovalAction): void {
+  const head = approvalQueue.current.value
+  if (head) approvalQueue.resolve(head.ident, action)
 }
 
 onMounted(async () => {
@@ -662,27 +661,6 @@ onMounted(async () => {
     store.value = s
     // D1 i18n 挂载：设置已从盘载入（含 locale），装入 i18n 供组件树 useI18n/$t
     mountI18n(s)
-    // MCP 事件桥（plan17 T10）：只主窗口装配（本文件即 main；mini 另案）；锁定门控在
-    // requireEntries 抛错（'vault locked' 文案直达 AI 客户端）
-    const mcpDeps: McpBridgeDeps = {
-      requireEntries: () => {
-        const st = store.value
-        if (!st || st.locked.value) throw new Error('vault locked')
-        return st.vault.entries
-      },
-      tagsOf: (e) => {
-        const tags = store.value?.vault.tags ?? []
-        return e.tagIds.map((id) => tags.find((t) => t.id === id)?.name).filter((n): n is string => !!n)
-      },
-    }
-    mcpStop = await startMcpBridge(mcpDeps, { listen, invoke: (c, a) => invoke(c, a as never).then(() => {}) })
-    // 首连审批事件（同一 10s 去重窗口，见 lastApproval 注释）
-    unlistenApproval = await listen<{ ident: string; tool: string }>('mcp://approval', (e) => {
-      const now = Date.now()
-      if (lastApproval && lastApproval.ident === e.payload.ident && now - lastApproval.time < 10_000) return
-      lastApproval = { ident: e.payload.ident, time: now }
-      approval.value = e.payload
-    })
     // 旧数据迁移（plan16 T14）：initStore 已完成解锁态判定，解锁态在此直接跑（幂等）；
     // 第二汇合点在模板 LockScreen @unlocked（口令/PRF 解锁成功后补跑）
     await runLegacyMigrations()
@@ -695,6 +673,34 @@ onMounted(async () => {
   } catch (e) {
     // D2 抽串：前缀文案移至模板 tr()（i18n 可能未装入——initStore 失败先于 mountI18n），此处只存原始消息
     loadError.value = e instanceof Error ? e.message : String(e)
+  }
+  // MCP 装配（plan17 T10，可选增强功能）：独立 try/catch——MCP 故障只降级告警，绝不放大为
+  // 整屏 loadError，也不阻断上方关键初始化与后续迁移/主题/图标；放在主 try 之外，
+  // 关键初始化失败时 MCP 仍可装配（requireEntries 闭包惰性读 store，未就绪报 vault locked）
+  try {
+    // 只主窗口装配（本文件即 main；mini 另案）；锁定门控在 requireEntries 抛错（'vault locked' 文案直达 AI 客户端）
+    const mcpDeps: McpBridgeDeps = {
+      requireEntries: () => {
+        const st = store.value
+        if (!st || st.locked.value) throw new Error('vault locked')
+        return st.vault.entries
+      },
+      tagsOf: (e) => {
+        const tags = store.value?.vault.tags ?? []
+        return e.tagIds.map((id) => tags.find((t) => t.id === id)?.name).filter((n): n is string => !!n)
+      },
+    }
+    mcpStop = await startMcpBridge(mcpDeps, { listen, invoke: (c, a) => invoke(c, a as never).then(() => {}) })
+  } catch (e) {
+    console.warn('[mcp] MCP 桥装配失败，已降级跳过（不影响应用主流程）', e)
+  }
+  // 首连审批事件监听注册同理单独容错：事件入审批队列（同 ident 10s 去重见 mcpApprovalQueue.ts）
+  try {
+    unlistenApproval = await listen<{ ident: string; tool: string }>('mcp://approval', (e) => {
+      approvalQueue.enqueue(e.payload)
+    })
+  } catch (e) {
+    console.warn('[mcp] MCP 审批监听注册失败，已降级跳过（不影响应用主流程）', e)
   }
 })
 
