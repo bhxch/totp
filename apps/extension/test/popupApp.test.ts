@@ -9,7 +9,8 @@
  */
 // @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Ref } from 'vue'
 
 vi.mock('../src/store', async () => {
   const { reactive, ref } = await import('vue')
@@ -24,15 +25,22 @@ vi.mock('../src/store', async () => {
     themeColor: 'blue',
     syncEnabled: false,
     syncPrefs: { autoFollow: true }, // 跨端同步 T3：跟随拉取 gate 读取（真实 loadSettings 归一化产物形状）
+    backupKdfProfile: 'balanced', // runner kdfProfile deps 读取位（真实 settings 形状）
   })
   const vault = reactive({ entries: [] as unknown[], tags: [] })
   const locked = ref(false)
+  // runner（cloudRunnerFactory）消费的解锁态字段：ComputedRef 形状（.value）；默认 null=无会话口令
+  const backupSecret = ref(null)
+  const credsCache = ref<Record<string, unknown>>({})
   const store = {
     settings,
     vault,
     locked,
+    backupSecret,
+    credsCache,
     commitSettings: vi.fn(async () => {}),
     commit: vi.fn(async () => {}),
+    replaceAllOp: vi.fn(async () => {}),
   }
   return {
     storageAdapter: { get: vi.fn(async () => null), set: vi.fn(async () => {}), delete: vi.fn(async () => {}) },
@@ -40,6 +48,8 @@ vi.mock('../src/store', async () => {
     settings,
     vault,
     locked,
+    backupSecret,
+    credsCache,
     initStore: vi.fn(async () => {}),
     registerStorageSync: vi.fn(),
     commitSettings: vi.fn(async () => {}),
@@ -56,7 +66,8 @@ vi.mock('../src/store', async () => {
 
 import App from '../entrypoints/popup/App.vue'
 import { createTestI18n } from './helpers/i18n'
-import { addEntryOp, vault } from '../src/store'
+import { addEntryOp, locked, settings, storageAdapter, store, vault } from '../src/store'
+import { SOURCES_KEY } from '@totp/core'
 
 /** BatchPastePanel 桩：保留 added 事件发射能力（点内嵌按钮触发），data-test 判定渲染 */
 const BatchPastePanelStub = {
@@ -256,5 +267,60 @@ describe('popup 双击揭示取消复制后自动关闭（终审 Important-1）'
       closeSpy.mockRestore()
       vault.entries.length = 0
     }
+  })
+})
+
+describe('popup 跟随拉取行为（跨端同步 T2/T3，审查修复）', () => {
+  // mock 边界：runner 链止于 storage mock——loadSources 读 'backupSources'（mock 返回 null → 空表），
+  // 无真网络；runner 触达的可观察信号 = 读源键 + recordStatus 写 'cloudAutoStatus'（工厂硬编码键）。
+  // 零网络断言 = gate 在 runPull 之前拦截，上述两信号均不发生（runner 完全未执行，非异常兜底）
+  let active: Awaited<ReturnType<typeof mountApp>> | null = null
+  // 真实 store 导出的 locked 是 ComputedRef（只读类型）；mock 模块内是可写 ref，测试经断言直写。
+  // backupSecret 未被真实模块顶层解构导出，经 store 成员取（mock 与真实同为 ComputedRef 形状）
+  const lockedRef = locked as unknown as Ref<boolean>
+  const backupSecretRef = store.backupSecret as unknown as Ref<string | null>
+  beforeEach(() => {
+    vi.clearAllMocks() // 清调用记录（mockClear 语义：get/set 实现保留）
+    // 先置锁定：本文档之前的用例组件未卸载，其解锁 watcher 会在下方 true→false 边沿触发——
+    // 锁定态下 gate 必拦，残留触发零副作用；各用例体再自行解锁到目标态（被测状态）
+    lockedRef.value = true
+    settings.syncPrefs.autoFollow = true
+    backupSecretRef.value = null
+  })
+  afterEach(async () => {
+    // 卸载即 stop：反注册本用例组件的解锁 watcher——否则前序组件残留的 watch(locked) 会在
+    // 下个用例 beforeEach 置回 locked=false 的边沿上触发跟随拉取（真实生命周期卫生的镜像：
+    // popup 卸载时 onScopeDispose → syncFollow.stop 正是防在途钩子）
+    active?.unmount()
+    active = null
+    await flushPromises()
+  })
+
+  it('解锁且开关开：mount 即跟随拉取——runner 读源键并记录状态（ok=null 空表跳过，真实编排终点）', async () => {
+    lockedRef.value = false // 解锁到目标态（边沿触发的残留 watcher 经 gate 后行为与被测一致）
+    backupSecretRef.value = 'pw' // 会话口令在位（解锁语义），拉取链走通到网络边界
+    active = await mountApp()
+    await vi.waitFor(() => expect(storageAdapter.get).toHaveBeenCalledWith(SOURCES_KEY))
+    await vi.waitFor(() => expect(storageAdapter.set).toHaveBeenCalledWith('cloudAutoStatus', expect.any(String)))
+    const record = vi.mocked(storageAdapter.set).mock.calls.find((c) => c[0] === 'cloudAutoStatus')
+    expect((JSON.parse(record![1] as string) as { ok: unknown }).ok).toBe(null)
+  })
+
+  it('锁定态：gate 拦截——零网络（不读源键、不写状态）', async () => {
+    backupSecretRef.value = 'pw' // 保持 beforeEach 的锁定态：gate 因锁定拦截，与口令无关
+    active = await mountApp()
+    await flushPromises() // 补一拍：确证是「未触发」而非「未及执行」
+    expect(storageAdapter.get).not.toHaveBeenCalledWith(SOURCES_KEY)
+    expect(storageAdapter.set).not.toHaveBeenCalledWith('cloudAutoStatus', expect.anything())
+  })
+
+  it('autoFollow=false：gate 拦截——零网络，同锁定态', async () => {
+    lockedRef.value = false // 解锁态下仅关开关：证明拦截来自 autoFollow 而非锁定
+    settings.syncPrefs.autoFollow = false
+    backupSecretRef.value = 'pw'
+    active = await mountApp()
+    await flushPromises()
+    expect(storageAdapter.get).not.toHaveBeenCalledWith(SOURCES_KEY)
+    expect(storageAdapter.set).not.toHaveBeenCalledWith('cloudAutoStatus', expect.anything())
   })
 })
