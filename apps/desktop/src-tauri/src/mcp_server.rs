@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
 
 /// 客户端授权档位：粗到细。匹配对象恒为 clientInfo.name（不看 version，升级不失效）
@@ -217,6 +218,81 @@ pub async fn bridge_call(
     }
 }
 
+/// Host 必须是 loopback（DNS rebinding 防护）；Origin 出现时必须是 http loopback 同源
+pub fn validate_host_origin(host: Option<&str>, origin: Option<&str>) -> Result<(), &'static str> {
+    fn is_loopback_host(h: &str) -> bool {
+        // 去端口：取 ':' 前的主机段；IPv6 字面量（"::1"）解析为空串直接不匹配——
+        // 本服务仅绑 127.0.0.1，IPv6 fail-closed
+        let host = h.split(':').next().unwrap_or(h);
+        host == "127.0.0.1" || host == "localhost"
+    }
+    let Some(h) = host else { return Err("missing host") };
+    if !is_loopback_host(h) {
+        return Err("host not loopback");
+    }
+    if let Some(o) = origin {
+        let after = o.strip_prefix("http://").ok_or("origin not http")?;
+        if !is_loopback_host(after) {
+            return Err("origin not loopback");
+        }
+    }
+    Ok(())
+}
+
+/// 恒时比较（长度差立即短路可接受：token 定长 43，长度本身不泄密）。
+/// 空串永不匹配：空 token =「未生成」，未生成的凭据不与任何输入相等（fail-closed）
+pub fn token_eq(a: &str, b: &str) -> bool {
+    if a.is_empty() || a.len() != b.len() {
+        return false;
+    }
+    a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// 审批态记账：once = 「仅本次」（15 分钟 TTL）；deny 后短窗冷却防弹窗轰炸。
+/// 内存态，不落盘——重启即清，与「批准不跨进程生命周期」的安全预期一致
+#[derive(Default)]
+pub struct GateSessions {
+    once: Mutex<HashMap<String, Instant>>,
+    cooldown: Mutex<HashMap<String, Instant>>,
+}
+pub const ONCE_TTL: Duration = Duration::from_secs(15 * 60);
+pub const DENY_COOLDOWN: Duration = Duration::from_secs(60);
+
+impl GateSessions {
+    pub fn grant_once(&self, ident: String) {
+        if let Ok(mut m) = self.once.lock() {
+            m.insert(ident, Instant::now());
+        }
+    }
+    pub fn once_valid(&self, ident: &str) -> bool {
+        self.once
+            .lock()
+            .ok()
+            .and_then(|m| m.get(ident).copied())
+            .map(|t| t.elapsed() < ONCE_TTL)
+            .unwrap_or(false)
+    }
+    pub fn mark_denied(&self, ident: &str) {
+        if let Ok(mut m) = self.cooldown.lock() {
+            m.insert(ident.to_string(), Instant::now());
+        }
+    }
+    pub fn denied_recently(&self, ident: &str) -> bool {
+        self.cooldown
+            .lock()
+            .ok()
+            .and_then(|m| m.get(ident).copied())
+            .map(|t| t.elapsed() < DENY_COOLDOWN)
+            .unwrap_or(false)
+    }
+    #[cfg(test)]
+    pub fn expire_all_for_test(&mut self) {
+        if let Ok(mut m) = self.once.lock() {
+            m.clear();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,6 +411,37 @@ mod tests {
         assert!(matches!(decide_gate(&base(Wildcard, &["*"]), None), GateDecision::NeedsApproval));
         // alwaysAsk 恒待批准（once-TTL 由调用方 GateSessions 管）
         assert!(matches!(decide_gate(&base(AlwaysAsk, &[]), Some("claude")), GateDecision::NeedsApproval));
+    }
+
+    #[test]
+    fn host_and_origin_validation() {
+        assert!(validate_host_origin(Some("127.0.0.1:47215"), None).is_ok());
+        assert!(validate_host_origin(Some("127.0.0.1:1"), None).is_ok(), "去端口解析：非标端口仍是 loopback");
+        assert!(validate_host_origin(Some("localhost:47215"), None).is_ok());
+        assert!(validate_host_origin(Some("evil.com"), None).is_err(), "DNS rebinding：Host 必须是 loopback");
+        assert!(validate_host_origin(None, None).is_err());
+        assert!(validate_host_origin(Some("127.0.0.1:47215"), Some("http://127.0.0.1:47215")).is_ok());
+        assert!(validate_host_origin(Some("127.0.0.1:47215"), Some("http://evil.com")).is_err());
+    }
+
+    #[test]
+    fn constant_time_token_compare() {
+        assert!(token_eq("abc", "abc"));
+        assert!(!token_eq("abc", "abd"));
+        assert!(!token_eq("abc", "ab"));
+        assert!(!token_eq("", ""));
+    }
+
+    #[test]
+    fn approval_session_ttl() {
+        let mut s = GateSessions::default();
+        s.grant_once("claude".into());
+        assert!(s.once_valid("claude"));
+        s.expire_all_for_test();
+        assert!(!s.once_valid("claude"), "once 授权过期后必须重新弹窗");
+        s.mark_denied("claude");
+        assert!(s.denied_recently("claude"), "deny 后短窗冷却为真");
+        assert!(!s.denied_recently("other"), "冷却不跨 ident 泄漏");
     }
 
     #[test]
