@@ -165,7 +165,7 @@ fn base64url_nopad(bytes: &[u8]) -> String {
 }
 
 /// 前端回传通道共享表：id → oneshot。事件桥的核心数据结构
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct BridgeShared {
     pending: Mutex<HashMap<u64, oneshot::Sender<Result<serde_json::Value, String>>>>,
     next_id: std::sync::atomic::AtomicU64,
@@ -251,7 +251,7 @@ pub fn token_eq(a: &str, b: &str) -> bool {
 
 /// 审批态记账：once = 「仅本次」（15 分钟 TTL）；deny 后短窗冷却防弹窗轰炸。
 /// 内存态，不落盘——重启即清，与「批准不跨进程生命周期」的安全预期一致
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct GateSessions {
     once: Mutex<HashMap<String, Instant>>,
     cooldown: Mutex<HashMap<String, Instant>>,
@@ -304,6 +304,209 @@ impl GateSessions {
             m.clear();
         }
     }
+}
+
+// ==== Task 6b：rmcp 服务本体 ====
+// 协议合规交给官方 SDK（StreamableHttpService 为 Tower service），传输防护（Bearer 恒时
+// 比较 + loopback Host/Origin 校验）在挂载层中间件落地；金库数据经事件桥留在前端。
+
+use rmcp::handler::server::wrapper::Parameters;
+// 引入顶层 `schemars` 名：JsonSchema derive 展开的代码引用裸 `schemars::` 路径
+use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
+use rmcp::schemars;
+use rmcp::service::{RequestContext, RoleServer};
+use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
+use rmcp::{ErrorData as McpError, ServerHandler, tool, tool_handler, tool_router};
+use tauri::AppHandle;
+
+/// MCP 服务端对象。工厂每请求构造一次，字段均为轻量 Clone 句柄
+#[derive(Debug, Clone)]
+pub struct TotpMcp {
+    app: AppHandle,
+    bridge: std::sync::Arc<BridgeShared>,
+    sessions: std::sync::Arc<GateSessions>,
+    /// settings.json 文件路径（Task 2 语义），每请求重读配置使设置页改动即时生效
+    cfg_file: std::path::PathBuf,
+}
+
+/// 恒定身份串：clientInfo.name 优先，回落 UA，再回落 <unknown>（fail-closed）。
+/// 门控匹配（wildcard/exact）与 once/deny 记账全部作用在此串上
+fn identity_of(context: &RequestContext<RoleServer>) -> String {
+    if let Some(ci) = context.client_info() {
+        return ci.name;
+    }
+    if let Some(parts) = context.extensions.get::<http::request::Parts>() {
+        if let Some(ua) = parts.headers.get(http::header::USER_AGENT).and_then(|v| v.to_str().ok()) {
+            return ua.to_string();
+        }
+    }
+    "<unknown>".into()
+}
+
+impl TotpMcp {
+    pub fn new(
+        app: AppHandle,
+        bridge: std::sync::Arc<BridgeShared>,
+        sessions: std::sync::Arc<GateSessions>,
+        cfg_file: std::path::PathBuf,
+    ) -> Self {
+        Self { app, bridge, sessions, cfg_file }
+    }
+
+    /// 门控 + 事件桥转发（两个工具共用）：
+    /// 配置每请求重读 → decide_gate → once/denied 分支 → 审批事件或 bridge_call
+    async fn gated_call(
+        &self,
+        context: &RequestContext<RoleServer>,
+        tool: &str,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value, McpError> {
+        // 配置每请求重读：设置页改动即时生效（免重启的 enabled/档位/白名单/token）
+        let cfg = load_mcp_config_inner(&self.cfg_file);
+        if !cfg.enabled {
+            return Err(McpError::invalid_params("mcp disabled", None));
+        }
+        let ident = identity_of(context);
+        match decide_gate(&cfg, Some(&ident)) {
+            GateDecision::Allow => {}
+            // NeedsApproval 分支序：once 批准期内放行 → deny 冷却期拒绝 → 首次弹审批事件
+            GateDecision::NeedsApproval if self.sessions.once_valid(&ident) => {}
+            GateDecision::NeedsApproval if self.sessions.denied_recently(&ident) => {
+                return Err(McpError::invalid_params(
+                    "approval denied; ask the user to reopen the approval dialog",
+                    None,
+                ));
+            }
+            GateDecision::NeedsApproval => {
+                use tauri::Emitter;
+                self.app
+                    .emit_to("main", "mcp://approval", serde_json::json!({ "ident": ident, "tool": tool }))
+                    .map_err(|e| McpError::invalid_params(format!("approval dialog unavailable: {e}"), None))?;
+                // fail-closed：本次调用不执行，等用户批准后客户端重试
+                return Err(McpError::invalid_params(
+                    "approval pending: the user must approve this client in the TOTP app",
+                    None,
+                ));
+            }
+        }
+        bridge_call(&self.app, &self.bridge, "main", tool, args)
+            .await
+            .map_err(|e| McpError::invalid_params(e, None))
+    }
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
+pub struct ListAccountsParams {
+    #[schemars(description = "Optional case-insensitive substring filter over issuer and label")]
+    pub filter: Option<String>,
+    #[schemars(description = "Optional page URL; returns entries whose match rules match it")]
+    pub url: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
+pub struct GetCodeParams {
+    #[schemars(description = "Account id as returned by list_accounts")]
+    pub account_id: String,
+}
+
+#[tool_router]
+impl TotpMcp {
+    #[tool(description = "List TOTP accounts (id, issuer, label, type, tags). Never returns secrets.")]
+    async fn list_accounts(
+        &self,
+        Parameters(p): Parameters<ListAccountsParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let args = serde_json::to_value(&p).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let result = self.gated_call(&context, "list_accounts", args).await?;
+        Ok(CallToolResult::success(vec![ContentBlock::text(result.to_string())]))
+    }
+
+    #[tool(description = "Get the current one-time code for an account. HOTP counter is peeked, not advanced.")]
+    async fn get_code(
+        &self,
+        Parameters(p): Parameters<GetCodeParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let args = serde_json::to_value(&p).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let result = self.gated_call(&context, "get_code", args).await?;
+        Ok(CallToolResult::success(vec![ContentBlock::text(result.to_string())]))
+    }
+}
+
+#[tool_handler]
+impl ServerHandler for TotpMcp {
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::new("totp-desktop", env!("CARGO_PKG_VERSION")))
+    }
+}
+
+/// Bearer + Host/Origin 校验中间件（每请求）：validate_host_origin 防 DNS rebinding，
+/// token_eq 恒时比较防时序侧信道。403=非 loopback 语境；401=凭据缺失/不匹配
+async fn mcp_auth_middleware(
+    bearer: std::sync::Arc<String>,
+    req: http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let host = req.headers().get(http::header::HOST).and_then(|v| v.to_str().ok());
+    let origin = req.headers().get(http::header::ORIGIN).and_then(|v| v.to_str().ok());
+    if validate_host_origin(host, origin).is_err() {
+        return axum::http::StatusCode::FORBIDDEN.into_response();
+    }
+    let auth_ok = req
+        .headers()
+        .get(http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|a| token_eq(a, bearer.as_str()));
+    if !auth_ok {
+        return axum::http::StatusCode::UNAUTHORIZED.into_response();
+    }
+    next.run(req).await
+}
+
+/// MCP 服务主循环：bind 127.0.0.1:port → Bearer/Host/Origin 中间件 → nest_service("/mcp")
+/// → graceful shutdown（shutdown 通道变化即优雅停机）。
+/// 配置每请求重读（cfg_file），设置页改动即时生效；port 变更由调用方（6c）重启服务
+pub async fn serve_forever(
+    app: AppHandle,
+    bridge: std::sync::Arc<BridgeShared>,
+    sessions: std::sync::Arc<GateSessions>,
+    cfg: McpConfig,
+    cfg_file: std::path::PathBuf,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) -> Result<(), String> {
+    // fail-closed：空 token=未生成，绝不允许 "Bearer " 成为有效凭据（生成与持久化归 start_server，6c）
+    if cfg.token.is_empty() {
+        return Err("mcp token not generated".into());
+    }
+    let bearer = std::sync::Arc::new(format!("Bearer {}", cfg.token));
+
+    // 工厂闭包：每请求构造一次 TotpMcp，句柄均先克隆再 move 进闭包
+    let (f_app, f_bridge, f_sessions, f_cfg_file) = (app, bridge, sessions, cfg_file);
+    let service: StreamableHttpService<TotpMcp, LocalSessionManager> = StreamableHttpService::new(
+        move || Ok(TotpMcp::new(f_app.clone(), f_bridge.clone(), f_sessions.clone(), f_cfg_file.clone())),
+        LocalSessionManager::default().into(),
+        StreamableHttpServerConfig::default().with_json_response(true),
+    );
+
+    let middleware = axum::middleware::from_fn(move |req, next| {
+        let bearer = bearer.clone();
+        async move { mcp_auth_middleware(bearer, req, next).await }
+    });
+
+    let router = axum::Router::new().nest_service("/mcp", service).layer(middleware);
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", cfg.port))
+        .await
+        .map_err(|e| format!("bind 127.0.0.1:{} failed: {e}", cfg.port))?;
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async move {
+            let _ = shutdown.changed().await;
+        })
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

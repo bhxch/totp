@@ -25,9 +25,15 @@ getrandom = "0.3"
 # StreamableHttpService 为 Tower service，HTTP 挂载层（axum）由 plan17 Task 6 自备
 rmcp = { version = "3", features = ["server", "macros", "transport-streamable-http-server"] }
 
+# plan17：MCP Streamable HTTP 挂载层（rmcp 的 StreamableHttpService 为 Tower service，需自备 HTTP 栈）
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+# plan17：mcp_auth 中间件直接命名 http::request::Parts / http::header::*（rmcp/tauri 传递依赖已在树）
+http = "1"
+
 # plan17 Task 5：事件桥 oneshot 回传（sync）+ bridge_call 超时（time）。
-# tauri/rmcp 已传递引入 tokio 1，同版本显式声明不新增编译产物
-tokio = { version = "1", features = ["sync", "macros", "time"] }
+# tauri/rmcp 已传递引入 tokio 1，同版本显式声明不新增编译产物；
+# Task 6b 的 serve_forever 用 TcpListener（net）
+tokio = { version = "1", features = ["sync", "macros", "time", "net"] }
 
 # DPAPI 解密（WinAuth 导入）+ 系统锁屏事件（plan16 T15，WTS 会话通知与隐藏窗口）：
 # 仅 Windows 目标编译
