@@ -362,7 +362,8 @@ impl TotpMcp {
         tool: &str,
         args: serde_json::Value,
     ) -> Result<serde_json::Value, McpError> {
-        // 配置每请求重读：设置页改动即时生效（免重启的 enabled/档位/白名单/token）
+        // 配置每请求重读：覆盖 enabled/档位/白名单，设置页改动即时生效；
+        // token/端口变更经 restart_if_needed 重启生效（bearer 快照与端口绑定在 serve_forever 启动时定型，6c 落地）
         let cfg = load_mcp_config_inner(&self.cfg_file);
         if !cfg.enabled {
             return Err(McpError::invalid_params("mcp disabled", None));
@@ -374,7 +375,7 @@ impl TotpMcp {
             GateDecision::NeedsApproval if self.sessions.once_valid(&ident) => {}
             GateDecision::NeedsApproval if self.sessions.denied_recently(&ident) => {
                 return Err(McpError::invalid_params(
-                    "approval denied; ask the user to reopen the approval dialog",
+                    "approval denied; try again in about a minute to trigger a new approval dialog",
                     None,
                 ));
             }
@@ -485,9 +486,8 @@ pub async fn serve_forever(
     let bearer = std::sync::Arc::new(format!("Bearer {}", cfg.token));
 
     // 工厂闭包：每请求构造一次 TotpMcp，句柄均先克隆再 move 进闭包
-    let (f_app, f_bridge, f_sessions, f_cfg_file) = (app, bridge, sessions, cfg_file);
     let service: StreamableHttpService<TotpMcp, LocalSessionManager> = StreamableHttpService::new(
-        move || Ok(TotpMcp::new(f_app.clone(), f_bridge.clone(), f_sessions.clone(), f_cfg_file.clone())),
+        move || Ok(TotpMcp::new(app.clone(), bridge.clone(), sessions.clone(), cfg_file.clone())),
         LocalSessionManager::default().into(),
         StreamableHttpServerConfig::default().with_json_response(true),
     );
