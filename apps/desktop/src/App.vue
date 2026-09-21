@@ -622,7 +622,9 @@ const approval = ref<{ ident: string; tool: string } | null>(null)
 let lastApproval: { ident: string; time: number } | null = null
 let unlistenApproval: (() => void) | null = null
 
-/** 审批三键裁定：先清窗防连点重复回执；回执失败仅告警不中断（Rust 侧会话超时兜底失效） */
+/** 审批裁定（三键与关闭同路径）：先清窗防连点重复回执；审批无会话无 TTL，
+ *  deny 后 Rust 侧 DENY_COOLDOWN 60s 冷却自然退避；回执失败仅告警不中断
+ *  （客户端重试会再次弹审批窗，用户可再裁定） */
 async function onApprovalAction(action: 'deny' | 'once' | 'trust'): Promise<void> {
   const req = approval.value
   if (!req) return
@@ -732,7 +734,8 @@ const railActions = [{ get label() { return tr('desktop.hideToTray') }, onClick:
   <LockScreen v-else-if="store && locked" :store="store" :dpapi="dpapiOps" @unlocked="runLegacyMigrations" />
   <NavigationShell v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :cloud-platform="cloudPlatform" :icons="icons" :schemes-api="schemesApi" :rail-actions="railActions" :mcp-platform="mcpPlatform" @copy="copyToClipboard" />
   <!-- MCP 首连审批独立于上方 v-if 链：锁定态也要能弹（plan17 T10）；t 走壳层 tr（desktop 无 useI18n 注入） -->
-  <McpConsentDialog :open="approval !== null" :request="approval" :t="tr" @resolve="onApprovalAction" @close="approval = null" />
+  <!-- 关闭（Esc/遮罩）= deny 回执进 60s 冷却，而非静默弃单——否则 "approval pending" 诱导 AI 每 10s 重试、对话框反复重开抢焦点 -->
+  <McpConsentDialog :open="approval !== null" :request="approval" :t="tr" @resolve="onApprovalAction" @close="onApprovalAction('deny')" />
 </template>
 
 <style>

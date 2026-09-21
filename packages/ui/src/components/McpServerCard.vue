@@ -186,7 +186,7 @@ onBeforeUnmount(() => {
         </div>
         <div class="pattern-add">
           <MdTextField
-            class="pattern-input" :model-value="newPattern" :label="t('mcpServer.patternPlaceholder')" :aria-label="t('mcpServer.whitelist')"
+            class="pattern-input" :model-value="newPattern" :label="t('mcpServer.patternPlaceholder')" :aria-label="t('mcpServer.patternPlaceholder')"
             :disabled="busy" autocomplete="off" @update:model-value="newPattern = $event" @keydown.enter="onAddPattern"
           />
           <MdButton variant="tonal" :disabled="busy || newPattern.trim() === ''" @click="onAddPattern">{{ t('mcpServer.add') }}</MdButton>

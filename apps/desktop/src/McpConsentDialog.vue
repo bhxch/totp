@@ -10,7 +10,8 @@ defineProps<{
 }>()
 
 /** resolve=三键裁定（宿主回执 mcp_approval_response：deny=冷却/once=限时放行/trust=入白名单）；
- *  close=Esc 或点遮罩放弃（不回执，交 Rust 侧会话超时自然失效） */
+ *  close=Esc 或点遮罩，宿主按 deny 回执（审批无会话无 TTL，关闭即终局裁定，
+ *  随 DENY_COOLDOWN 60s 冷却自然退避——「关掉=别再问了」） */
 const emit = defineEmits<{ resolve: ['deny' | 'once' | 'trust']; close: [] }>()
 </script>
 
