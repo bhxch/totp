@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import type { AppSettings } from '@totp/core'
 import { useI18n } from 'vue-i18n'
+import type { DevtoolsPlatform } from '../components/devtoolsPlatform'
 import type { McpPlatform } from '../components/mcpCard'
 import type { SecurityPlatform } from '../components/securityPlatform'
 import McpServerCard from '../components/McpServerCard.vue'
@@ -24,7 +25,9 @@ const props = withDefaults(defineProps<{
   showExtension?: boolean
   /** MCP 平台实现；null（扩展宿主缺省）时整卡不渲染（桌面专属） */
   mcpPlatform?: McpPlatform | null
-}>(), { securityPlatform: null, showDesktop: false, showExtension: false, mcpPlatform: null })
+  /** 开发者平台实现（桌面宿主桥接 devtools_* 命令）；null 时开发者卡不渲染（桌面专属） */
+  devtoolsPlatform?: DevtoolsPlatform | null
+}>(), { securityPlatform: null, showDesktop: false, showExtension: false, mcpPlatform: null, devtoolsPlatform: null })
 
 // 解构出顶层 writable computed：模板自动解包，v-model/赋值直达 useTheme 的 set
 // （set 内部已写 settings + localStorage 镜像 + commitSettings，无需页面重复处理）
@@ -83,6 +86,43 @@ async function setPopupDelay(v: string): Promise<void> {
 const hasClipboardClear = computed(() => typeof props.securityPlatform?.setClipboardClear === 'function')
 // 通用卡恒渲染：即使宿主无 desktop/extension/剪贴板能力，也有「记住标签筛选」开关兜底
 const hasGeneralItems = computed(() => true)
+
+// ---------- WebView 远程调试（验收条目4，桌面专属）：开关+端口写 settings.json，重启后经环境注入生效 ----------
+const devtoolsEnabled = ref(false)
+const devtoolsPort = ref('9222')
+/** 最近一次成功提交（或后端返回）的配置：非法输入/写失败回显基准 */
+let devtoolsGood: { enabled: boolean; port: number } = { enabled: false, port: 9222 }
+
+onMounted(async () => {
+  if (!props.devtoolsPlatform) return
+  try {
+    const cfg = await props.devtoolsPlatform.getConfig()
+    devtoolsEnabled.value = cfg.enabled
+    devtoolsPort.value = String(cfg.port)
+    devtoolsGood = cfg
+  } catch {
+    // 预填失败保持默认关（与后端缺省一致），不阻断设置页其余部分
+  }
+})
+
+/** 开关切动与端口 change（失焦/回车）同一提交路径；非法端口回显当前值不提交 */
+async function commitDevtools(): Promise<void> {
+  const platform = props.devtoolsPlatform
+  if (!platform) return
+  const n = Number(devtoolsPort.value)
+  if (devtoolsPort.value.trim() === '' || !Number.isInteger(n) || n < 1024 || n > 65535) {
+    devtoolsPort.value = String(devtoolsGood.port)
+    devtoolsEnabled.value = devtoolsGood.enabled
+    return
+  }
+  try {
+    await platform.setConfig(devtoolsEnabled.value, n)
+    devtoolsGood = { enabled: devtoolsEnabled.value, port: n }
+  } catch {
+    devtoolsEnabled.value = devtoolsGood.enabled
+    devtoolsPort.value = String(devtoolsGood.port)
+  }
+}
 </script>
 
 <template>
@@ -169,6 +209,27 @@ const hasGeneralItems = computed(() => true)
     <MdCard v-if="showDesktop && mcpPlatform" class="block">
       <McpServerCard :platform="mcpPlatform" />
     </MdCard>
+
+    <!-- 开发者（桌面专属，验收条目4）：WebView 远程调试开关；改配置需重启应用（run 最早期环境注入） -->
+    <MdCard v-if="showDesktop && devtoolsPlatform" class="block">
+      <div class="devtools-card">
+        <h2>{{ t('settingsPage.devtoolsTitle') }}</h2>
+        <div class="row devtools-row">
+          <p class="devtools-warn">{{ t('settingsPage.devtoolsWarn') }}</p>
+          <MdSwitch
+            class="set-devtools" :model-value="devtoolsEnabled"
+            :aria-label="t('settingsPage.devtoolsTitle')" @update:model-value="devtoolsEnabled = $event; commitDevtools()"
+          />
+        </div>
+        <div v-if="devtoolsEnabled" class="row devtools-port-row">
+          <MdTextField
+            v-model="devtoolsPort" class="devtools-port" type="number" min="1024" max="65535"
+            :label="t('settingsPage.devtoolsPort')" :aria-label="t('settingsPage.devtoolsPort')" @change="commitDevtools"
+          />
+          <span class="devtools-restart">{{ t('settingsPage.devtoolsRestart') }}</span>
+        </div>
+      </div>
+    </MdCard>
   </section>
 </template>
 
@@ -188,4 +249,12 @@ const hasGeneralItems = computed(() => true)
 .theme-dot__check { color: #fff; font-size: var(--md-sys-typescale-body-medium); line-height: 1; text-shadow: 0 0 2px rgba(0, 0, 0, .6); }
 .theme-resolved { font-size: var(--md-sys-typescale-body-small); opacity: .65; margin: 0; }
 .set-popup-delay { max-width: 220px; }
+/* 开发者卡（验收条目4）：标题排版同 McpServerCard；警示文案用 error 色（高危提示必须醒目） */
+.devtools-card { display: flex; flex-direction: column; gap: 8px; }
+.devtools-card h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
+.devtools-row { align-items: flex-start; }
+.devtools-warn { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); margin: 0; flex: 1; min-width: 0; }
+.devtools-port-row { align-items: center; }
+.devtools-port { width: 140px; }
+.devtools-restart { font-size: var(--md-sys-typescale-body-small); opacity: .65; }
 </style>

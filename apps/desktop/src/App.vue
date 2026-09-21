@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { backupFileName, base64ToBytes, createBackupEnvelope, loadSourceRevs, loadSources, normalizeSchemes, openBackupEnvelope, randomBytes, saveSourceRev, saveSources, SCHEMES_KEY, sha256Hex, type BackupSource, type CloudCred, type ImportScheme, type KdfProfile, type Retention, type StorageAdapter, type Vault } from '@totp/core'
-import { createAppI18n, createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type LocalSourceView, type McpConfigWithStatusDto, type McpPlatform, type SecurityPlatform, type VueStore } from '@totp/ui'
+import { createAppI18n, createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type DevtoolsConfigDto, type DevtoolsPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type LocalSourceView, type McpConfigWithStatusDto, type McpPlatform, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, getCurrentInstance, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createDesktopAutoRunner, formatAutoStatusText } from './autoBackup'
 import { createBackupToSources, listBackupsFromSources, pickBackupDirOs, pickBackupOpenOs, pickBackupSaveOs, readBackupByName, readBackupFileOs, saveConflictBackupToDir, saveCloudSourcesPreservingLocal, writeBackupFileOs, writeBytesFileOs, writeTextFileOs, type DialogFilterSpec, type PickedOsFile } from './backupService'
@@ -616,6 +616,12 @@ const mcpPlatform: McpPlatform = {
   copyText: (value) => copyToClipboard(value),
 }
 
+// 验收条目4：开发者平台适配器（WebView 远程调试设置读写）；改配置后重启，由 run() 最早期 apply_devtools_env 注入生效
+const devtoolsPlatform: DevtoolsPlatform = {
+  getConfig: () => invoke('devtools_get_config') as Promise<DevtoolsConfigDto>,
+  setConfig: (enabled, port) => invoke('devtools_set_config', { enabled, port }) as Promise<void>,
+}
+
 let mcpStop: (() => void) | null = null
 // 首连审批队列（原单槽位 approval 的并发根修：对话框打开期间不同 ident 事件互相覆盖、
 // 弹窗乒乓，见 mcpApprovalQueue.ts）。审批窗独立于锁定态（锁定时取码在桥内报 vault locked，属预期）
@@ -739,7 +745,7 @@ const railActions = [{ get label() { return tr('desktop.hideToTray') }, onClick:
   <div v-if="loadError && !store" class="error">{{ tr('desktop.loadFailed', { message: loadError }) }}</div>
   <!-- 解锁成功回调补跑迁移（plan16 T14，幂等）：口令/PRF 解锁各路径在 LockScreen 内 emit unlocked -->
   <LockScreen v-else-if="store && locked" :store="store" :dpapi="dpapiOps" @unlocked="runLegacyMigrations" />
-  <NavigationShell v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :cloud-platform="cloudPlatform" :icons="icons" :schemes-api="schemesApi" :rail-actions="railActions" :mcp-platform="mcpPlatform" @copy="copyToClipboard" />
+  <NavigationShell v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :cloud-platform="cloudPlatform" :icons="icons" :schemes-api="schemesApi" :rail-actions="railActions" :mcp-platform="mcpPlatform" :devtools-platform="devtoolsPlatform" @copy="copyToClipboard" />
   <!-- MCP 首连审批独立于上方 v-if 链：锁定态也要能弹（plan17 T10）；t 走壳层 tr（desktop 无 useI18n 注入） -->
   <!-- 关闭（Esc/遮罩）= deny 回执进 60s 冷却，而非静默弃单——否则 "approval pending" 诱导 AI 每 10s 重试、对话框反复重开抢焦点 -->
   <McpConsentDialog :open="approval !== null" :request="approval" :t="tr" @resolve="onApprovalAction" @close="onApprovalAction('deny')" />

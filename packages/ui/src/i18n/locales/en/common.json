@@ -634,7 +634,11 @@
     "urlFilter": "URL filter",
     "popupDelay": "Popup close delay (ms)",
     "clipboardClear": "Auto-clear clipboard after copy",
-    "rememberTagFilter": "Remember tag filter"
+    "rememberTagFilter": "Remember tag filter",
+    "devtoolsTitle": "WebView remote debugging",
+    "devtoolsWarn": "While enabled, any process on this machine can read plaintext keys shown in the window via this port. For local diagnostics only — turn it off when done.",
+    "devtoolsPort": "Debug port (default 9222)",
+    "devtoolsRestart": "Takes effect after app restart"
   },
   "popup": {
     "title": "TOTP Codes",

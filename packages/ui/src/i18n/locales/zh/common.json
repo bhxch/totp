@@ -634,7 +634,11 @@
     "urlFilter": "URL 过滤",
     "popupDelay": "弹窗关闭延迟（毫秒）",
     "clipboardClear": "复制后自动清除剪贴板",
-    "rememberTagFilter": "记住标签筛选"
+    "rememberTagFilter": "记住标签筛选",
+    "devtoolsTitle": "WebView 远程调试",
+    "devtoolsWarn": "开放期间本机任意进程可经此端口读取窗口内明文密钥，仅限本机诊断，用完即关",
+    "devtoolsPort": "调试端口（默认 9222）",
+    "devtoolsRestart": "重启应用后生效"
   },
   "popup": {
     "title": "TOTP 验证码",

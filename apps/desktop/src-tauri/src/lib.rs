@@ -137,6 +137,34 @@ fn apply_devtools_env() {
     }
 }
 
+/// devtools 设置读/写（明文 settings.json；读经 settings_path + 文本解析，写走
+/// read-modify-write 合并既有键——同 write_shortcut_to_settings(lib.rs:99) 的合并口径，
+/// 落盘复用其内部的 write_text_atomic（审查 I-5 原子写），不得整文件覆盖丢外来键）
+#[tauri::command]
+fn devtools_get_config<R: Runtime>(app: AppHandle<R>) -> Result<serde_json::Value, String> {
+    let text = settings_path(&app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_else(|| "{}".into());
+    let (enabled, port) = read_devtools_from_settings_text(&text);
+    Ok(serde_json::json!({ "enabled": enabled, "port": port }))
+}
+
+#[tauri::command]
+fn devtools_set_config<R: Runtime>(app: AppHandle<R>, enabled: bool, port: u16) -> Result<(), String> {
+    if port < 1024 { return Err(format!("端口 {port} 不在允许范围 1024-65535")); }
+    let path = settings_path(&app).ok_or("无法定位 settings.json".to_string())?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    // 合并既有键：同 write_shortcut_to_settings——读全文解析后只改 devtools 键，不丢外来键
+    let mut root: serde_json::Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    root["devtools"] = serde_json::json!({ "enabled": enabled, "port": port });
+    write_text_atomic(&path, &serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?)
+}
+
 /** 取消注册当前所有快捷键，按新 spec 重新注册并持久化到 settings.json */
 #[tauri::command]
 fn set_global_shortcut(app: AppHandle, shortcut: String) -> Result<(), String> {
@@ -979,6 +1007,8 @@ pub fn run() {
             os_auto_unprotect,
             os_auto_forget,
             set_global_shortcut,
+            devtools_get_config,
+            devtools_set_config,
             stage_clipboard_write,
             clipboard_clear_if_staged,
             mcp_server::mcp_get_config,

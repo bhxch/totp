@@ -6,6 +6,7 @@ import MdNavigationRail from '../components/md/MdNavigationRail.vue'
 import MdTabs from '../components/md/MdTabs.vue'
 import type { BackupPlatform } from '../components/backupPlatform'
 import type { CloudPlatform } from '../components/cloudPlatform'
+import type { DevtoolsPlatform } from '../components/devtoolsPlatform'
 import type { ImportSchemesApi } from '../components/importPlatform'
 import type { McpPlatform } from '../components/mcpCard'
 import type { SecurityPlatform } from '../components/securityPlatform'
@@ -38,7 +39,9 @@ const props = withDefaults(defineProps<{
   railActions?: { label: string; onClick: () => void }[]
   /** MCP 平台实现(桌面端);null/缺省 settings 页 MCP 卡不渲染 */
   mcpPlatform?: McpPlatform | null
-}>(), { store: null, platform: null, securityPlatform: null, syncPlatform: null, cloudPlatform: null, icons: null, schemesApi: null, mcpPlatform: null })
+  /** 开发者平台实现(桌面端 devtools_* 命令);null/缺省 settings 页开发者卡不渲染 */
+  devtoolsPlatform?: DevtoolsPlatform | null
+}>(), { store: null, platform: null, securityPlatform: null, syncPlatform: null, cloudPlatform: null, icons: null, schemesApi: null, mcpPlatform: null, devtoolsPlatform: null })
 
 const route = useRoute()
 const router = useRouter()
@@ -90,7 +93,7 @@ const pageProps = computed<Record<string, unknown>>(() => {
     case 'import': return { store: p.store, platform: p.platform, schemesApi: p.schemesApi }
     case 'sync': return { store: p.store, platform: p.platform, cloudPlatform: p.cloudPlatform, syncPlatform: p.syncPlatform }
     case 'security': return { securityPlatform: p.securityPlatform }
-    case 'settings': return { store: p.store, securityPlatform: p.securityPlatform, showDesktop: (p.railActions?.length ?? 0) > 0, showExtension: p.syncPlatform != null, mcpPlatform: p.mcpPlatform ?? null }
+    case 'settings': return { store: p.store, securityPlatform: p.securityPlatform, showDesktop: (p.railActions?.length ?? 0) > 0, showExtension: p.syncPlatform != null, mcpPlatform: p.mcpPlatform ?? null, devtoolsPlatform: p.devtoolsPlatform ?? null }
     default: return {}
   }
 })
