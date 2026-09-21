@@ -71,12 +71,17 @@ pub fn add_whitelist_inner(settings_file: &std::path::Path, cfg: &mut McpConfig,
 pub fn generate_token() -> String {
     let mut buf = [0u8; 32];
     getrandom::fill(&mut buf).expect("CSPRNG 不可用属致命环境错误");
+    base64url_nopad(&buf)
+}
+
+/// 手写 base64url 无填充编码：bit 迭代法，字节流按 6bit 查表输出；
+/// 余位（len*8 % 6 != 0 时）左移补零出末字符。已知答案见 tests::base64url_nopad_known_answers
+fn base64url_nopad(bytes: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    // bit 迭代法：32B=256bit 流，每 6bit 查表输出 1 字符；256=42*6+4，末 4bit 左移补零出第 43 字符
-    let mut out = String::with_capacity(43);
+    let mut out = String::with_capacity(bytes.len().div_ceil(6) * 4);
     let mut acc: u32 = 0;
     let mut bits: u32 = 0;
-    for &b in &buf {
+    for &b in bytes {
         acc = (acc << 8) | b as u32;
         bits += 8;
         while bits >= 6 {
@@ -165,6 +170,16 @@ mod tests {
         add_whitelist_inner(&p, &mut cfg, "Claude*").unwrap();
         add_whitelist_inner(&p, &mut cfg, "Claude*").unwrap();
         assert_eq!(cfg.whitelist.len(), 1, "重复 add 不产生重复条目");
+        add_whitelist_inner(&p, &mut cfg, "CLAUDE*").unwrap();
+        assert_eq!(cfg.whitelist.len(), 1, "大小写变体视为同一条目（与 wildcard 匹配口径一致）");
         let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn base64url_nopad_known_answers() {
+        // 期望值经 node Buffer.toString('base64url') 独立验证，防位序/查表错误
+        assert_eq!(base64url_nopad(&[]), "");
+        assert_eq!(base64url_nopad(&[0xfb, 0xff]), "-_8", "62='-',63='_'，URL-safe 表非标准表");
+        assert_eq!(base64url_nopad(&[1, 2, 3]), "AQID", "整 3B 无余位");
     }
 }
