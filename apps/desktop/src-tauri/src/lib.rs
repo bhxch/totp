@@ -9,6 +9,8 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
+/// 验收条目13：无头 MCP 启动参数解析（--headless-mcp / --mcp-port / --mcp-token）
+mod cli;
 mod lock_events;
 // plan17：内嵌 MCP 服务器（配置/门控/事件桥/Streamable HTTP，接线见 setup 与 invoke_handler）
 mod mcp_server;
