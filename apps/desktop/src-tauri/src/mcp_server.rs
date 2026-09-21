@@ -468,8 +468,9 @@ async fn mcp_auth_middleware(
     next.run(req).await
 }
 
-/// MCP 服务主循环：bind 127.0.0.1:port → Bearer/Host/Origin 中间件 → nest_service("/mcp")
-/// → graceful shutdown（shutdown 通道变化即优雅停机）。
+/// MCP 服务主循环：Bearer/Host/Origin 中间件 → nest_service("/mcp") → graceful shutdown
+/// （shutdown 通道变化即优雅停机）。listener 由调用方同步 bind 后传入（bind 失败直接回传
+/// UI，审查 I-1），本函数只做 tokio 化转换，不再 bind。
 /// 配置每请求重读（cfg_file），设置页改动即时生效；port 变更由调用方（6c）重启服务
 pub async fn serve_forever(
     app: AppHandle,
@@ -478,6 +479,7 @@ pub async fn serve_forever(
     cfg: McpConfig,
     cfg_file: std::path::PathBuf,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
+    listener: std::net::TcpListener,
 ) -> Result<(), String> {
     // fail-closed：空 token=未生成，绝不允许 "Bearer " 成为有效凭据（生成与持久化归 start_server，6c）
     if cfg.token.is_empty() {
@@ -498,9 +500,10 @@ pub async fn serve_forever(
     });
 
     let router = axum::Router::new().nest_service("/mcp", service).layer(middleware);
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", cfg.port))
-        .await
-        .map_err(|e| format!("bind 127.0.0.1:{} failed: {e}", cfg.port))?;
+    // std listener → tokio：须已设 nonblocking（start_server 在 spawn 前 set_nonblocking(true)）；
+    // from_std 需在 tokio runtime 上下文调用，本 async fn 即在其上
+    let listener = tokio::net::TcpListener::from_std(listener)
+        .map_err(|e| format!("listener conversion failed: {e}"))?;
     axum::serve(listener, router)
         .with_graceful_shutdown(async move {
             let _ = shutdown.changed().await;
@@ -522,8 +525,9 @@ fn needs_restart(old: &McpConfig, new: &McpConfig) -> bool {
 pub struct McpState {
     pub bridge: std::sync::Arc<BridgeShared>,
     pub sessions: std::sync::Arc<GateSessions>,
-    /// 运行中服务的停机通道（None=未运行）
-    pub shutdown: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
+    /// 运行中服务的停机通道与 serve 任务句柄（None=未运行）。
+    /// 句柄供 stop_server 有界轮询旧任务退出（端口释放）后再重启（审查 I-2）
+    pub shutdown: Mutex<Option<(tokio::sync::watch::Sender<bool>, tauri::async_runtime::JoinHandle<()>)>>,
     /// settings.json 文件路径（load/save *_inner 直接可用）
     pub settings_file: std::path::PathBuf,
 }
@@ -595,9 +599,24 @@ pub fn restart_if_needed(app: &AppHandle, state: &State<'_, McpState>, cfg: &Mcp
 }
 
 pub fn stop_server(state: &State<'_, McpState>) {
-    if let Ok(mut g) = state.shutdown.lock() {
-        if let Some(tx) = g.take() {
+    let handle = if let Ok(mut g) = state.shutdown.lock() {
+        g.take().map(|(tx, handle)| {
             let _ = tx.send(true);
+            handle
+        })
+    } else {
+        None
+    };
+    // 有界等待旧任务真正退出（≤3s，20ms 轮询）：graceful shutdown 需要时间收尾既有连接，
+    // 不等就重启会在 Windows（无 SO_REUSEADDR）上撞 AddrInUse（审查 I-2）。
+    // 有界是防 UI 挂死：drain 只等存量连接，正常远小于 3s；极端超时后放行，
+    // 后续新 bind 失败会如实报错给设置页
+    if let Some(handle) = handle {
+        for _ in 0..150 {
+            if handle.inner().is_finished() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
         }
     }
 }
@@ -609,14 +628,31 @@ pub fn start_server(app: &AppHandle, state: &State<'_, McpState>, cfg: &McpConfi
         save_mcp_config_inner(&state.settings_file, &cfg)?;
     }
     let (tx, rx) = tokio::sync::watch::channel(false);
-    *state.shutdown.lock().map_err(|_| "lock poisoned")? = Some(tx);
+    // bind 前置到本函数同步执行（审查 I-1/I-2）：端口占用立即以 Err 回传设置页；
+    // 本轮尝试的 tx 尚未入槽，失败即 drop（槽保持 None），不留僵尸停机通道
+    let listener = match std::net::TcpListener::bind(("127.0.0.1", cfg.port)) {
+        Ok(l) => l,
+        Err(e) => {
+            drop(tx);
+            return Err(format!("bind 127.0.0.1:{} failed: {e}", cfg.port));
+        }
+    };
+    // from_std 前置条件：std listener 必须非阻塞
+    if let Err(e) = listener.set_nonblocking(true) {
+        drop(tx);
+        return Err(format!("set_nonblocking failed: {e}"));
+    }
     let app = app.clone();
     let bridge = state.bridge.clone();
     let sessions = state.sessions.clone();
     let settings_file = state.settings_file.clone();
-    tauri::async_runtime::spawn(async move {
-        let _ = serve_forever(app, bridge, sessions, cfg, settings_file, rx).await;
+    // 终态错误不再吞掉：进程外可见的最小日志（本 crate 无 tracing）
+    let handle = tauri::async_runtime::spawn(async move {
+        if let Err(e) = serve_forever(app, bridge, sessions, cfg, settings_file, rx, listener).await {
+            eprintln!("[mcp] server terminated: {e}");
+        }
     });
+    *state.shutdown.lock().map_err(|_| "lock poisoned")? = Some((tx, handle));
     Ok(())
 }
 
@@ -637,7 +673,11 @@ pub fn init_state_and_autostart(app: &mut tauri::App) -> Result<(), String> {
     if cfg.enabled {
         let handle = app.handle().clone();
         let st = handle.state::<McpState>();
-        start_server(&handle, &st, &cfg)?;
+        // autostart 失败（bind 占用/token 落盘失败等）不拦启动：setup fatal 只留给
+        // 状态构造/manage，服务没起来仅记日志，设置页重开开关即可按新错误重试
+        if let Err(e) = start_server(&handle, &st, &cfg) {
+            eprintln!("[mcp] autostart failed: {e}");
+        }
     }
     Ok(())
 }
