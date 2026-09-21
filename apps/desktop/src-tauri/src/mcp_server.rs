@@ -253,6 +253,8 @@ mod tests {
         assert!(wildcard_match("exact-name", "exact-name"));
         assert!(!wildcard_match("claude*", "cursor"));
         assert!(wildcard_match("*", "anything"));
+        let huge = "a".repeat(257);
+        assert!(!wildcard_match(&huge, "a"), "超长 pattern 视为配置错误，不匹配（fail-closed）");
     }
 
     #[test]
@@ -271,6 +273,7 @@ mod tests {
         assert!(matches!(decide_gate(&base(Wildcard, &["Claude*"]), Some("cursor")), GateDecision::NeedsApproval));
         // exact 档：精确相等（版本无关，decide 不接收 version）
         assert!(matches!(decide_gate(&base(Exact, &["ZCode"]), Some("ZCode")), GateDecision::Allow));
+        assert!(matches!(decide_gate(&base(Exact, &["ZCode"]), Some("zcode")), GateDecision::Allow), "Exact 档大小写不敏感语义");
         assert!(matches!(decide_gate(&base(Exact, &["ZCode"]), Some("ZCode 2.0")), GateDecision::NeedsApproval));
         // 身份缺失（clientInfo 与 UA 全无）除 token 档外一律待批准
         assert!(matches!(decide_gate(&base(Wildcard, &["*"]), None), GateDecision::NeedsApproval));
