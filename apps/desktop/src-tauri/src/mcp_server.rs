@@ -218,13 +218,14 @@ pub async fn bridge_call(
     }
 }
 
-/// Host 必须是 loopback（DNS rebinding 防护）；Origin 出现时必须是 http loopback 同源
+/// Host 必须是 loopback（DNS rebinding 防护）；Origin 出现时必须是 http loopback 同机（不比端口）
 pub fn validate_host_origin(host: Option<&str>, origin: Option<&str>) -> Result<(), &'static str> {
     fn is_loopback_host(h: &str) -> bool {
         // 去端口：取 ':' 前的主机段；IPv6 字面量（"::1"）解析为空串直接不匹配——
-        // 本服务仅绑 127.0.0.1，IPv6 fail-closed
+        // 本服务仅绑 127.0.0.1，IPv6 fail-closed。
+        // localhost 比较大小写不敏感：兼容非规范化客户端（127.0.0.1 本就无大小写）
         let host = h.split(':').next().unwrap_or(h);
-        host == "127.0.0.1" || host == "localhost"
+        host == "127.0.0.1" || host.eq_ignore_ascii_case("localhost")
     }
     let Some(h) = host else { return Err("missing host") };
     if !is_loopback_host(h) {
@@ -265,12 +266,18 @@ impl GateSessions {
         }
     }
     pub fn once_valid(&self, ident: &str) -> bool {
-        self.once
-            .lock()
-            .ok()
-            .and_then(|m| m.get(ident).copied())
-            .map(|t| t.elapsed() < ONCE_TTL)
-            .unwrap_or(false)
+        let entry = self.once.lock().ok().and_then(|m| m.get(ident).copied());
+        match entry {
+            Some(t) if t.elapsed() < ONCE_TTL => true,
+            // 命中过期条目即回收：进程生命周期内存有界（每 ident 至多一条，过期即删）
+            Some(_) => {
+                if let Ok(mut m) = self.once.lock() {
+                    m.remove(ident);
+                }
+                false
+            }
+            None => false,
+        }
     }
     pub fn mark_denied(&self, ident: &str) {
         if let Ok(mut m) = self.cooldown.lock() {
@@ -278,12 +285,18 @@ impl GateSessions {
         }
     }
     pub fn denied_recently(&self, ident: &str) -> bool {
-        self.cooldown
-            .lock()
-            .ok()
-            .and_then(|m| m.get(ident).copied())
-            .map(|t| t.elapsed() < DENY_COOLDOWN)
-            .unwrap_or(false)
+        let entry = self.cooldown.lock().ok().and_then(|m| m.get(ident).copied());
+        match entry {
+            Some(t) if t.elapsed() < DENY_COOLDOWN => true,
+            // 同 once：过期冷却条目即回收，内存有界
+            Some(_) => {
+                if let Ok(mut m) = self.cooldown.lock() {
+                    m.remove(ident);
+                }
+                false
+            }
+            None => false,
+        }
     }
     #[cfg(test)]
     pub fn expire_all_for_test(&mut self) {
@@ -422,6 +435,10 @@ mod tests {
         assert!(validate_host_origin(None, None).is_err());
         assert!(validate_host_origin(Some("127.0.0.1:47215"), Some("http://127.0.0.1:47215")).is_ok());
         assert!(validate_host_origin(Some("127.0.0.1:47215"), Some("http://evil.com")).is_err());
+        // 跨端口 loopback Origin 属同机，放行（Bearer 才是主闸门）；https 语境被拒
+        assert!(validate_host_origin(Some("127.0.0.1:47215"), Some("http://127.0.0.1:9999")).is_ok());
+        assert!(validate_host_origin(Some("127.0.0.1:47215"), Some("https://127.0.0.1:47215")).is_err());
+        assert!(validate_host_origin(Some("LOCALHOST:47215"), None).is_ok(), "localhost 比较大小写不敏感");
     }
 
     #[test]
@@ -430,6 +447,7 @@ mod tests {
         assert!(!token_eq("abc", "abd"));
         assert!(!token_eq("abc", "ab"));
         assert!(!token_eq("", ""));
+        assert!(!token_eq("", "abc"), "空 token=未生成，不与任何输入相等");
     }
 
     #[test]
