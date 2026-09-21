@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { backupFileName, base64ToBytes, createAutoRunScheduler, createBackupEnvelope, loadSourceRevs, normalizeSchemes, openBackupEnvelope, OVERWRITE_NAME, randomBytes, saveSourceRev, SCHEMES_KEY, type BackupEnvelope, type BackupSource, type CloudCred, type ImportScheme, type Retention, type Vault } from '@totp/core'
-import { CLIPBOARD_CLEAR_DELAY_MS, createAppI18n, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, LockScreen, NavigationShell, prfSupported, useTheme, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
-import { computed, getCurrentInstance, onMounted, onUnmounted, ref } from 'vue'
-import { conflictBackupName, formatAutoStatusText, hasLegacyCloudKeys, loadSourcesImpl, migrateLegacySources, retentionDeletedNote, saveSourcesImpl } from '../../src/cloudCredStore'
+import { backupFileName, base64ToBytes, createAutoRunScheduler, createBackupEnvelope, loadSourceRevs, normalizeSchemes, openBackupEnvelope, OVERWRITE_NAME, randomBytes, saveSourceRev, SCHEMES_KEY, type BackupEnvelope, type ImportScheme, type Retention, type Vault } from '@totp/core'
+import { CLIPBOARD_CLEAR_DELAY_MS, createAppI18n, createIconStore, createPrfCredential, LockScreen, NavigationShell, prfSupported, useTheme, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
+import { computed, getCurrentInstance, onMounted, onUnmounted, ref, watch } from 'vue'
+import { createExtensionCloudRunner, downloadConflictBackup } from '../../src/cloudRunnerFactory'
+import { formatAutoStatusText, hasLegacyCloudKeys, loadSourcesImpl, migrateLegacySources, saveSourcesImpl } from '../../src/cloudCredStore'
+import { createSyncScheduler } from '../../src/syncScheduler'
 import { createDekSession } from '../../src/dekSession'
 import { createIdleLockWatcher } from '../../src/lockEnforcer'
 import { createExtensionStore, storageAdapter } from '../../src/store'
@@ -91,6 +93,8 @@ onMounted(async () => {
     // 自动云同步（页面存活期，勘误 §4.1）：读偏好填充缓存后启动调度器；initStore 失败（页面不可用）则不启动
     await refreshCloudAutoPrefs()
     scheduler.start()
+    // 跟随拉取调度（跨端同步 T2）：解锁边沿 + 3min 轮询，gate 内查锁定态
+    followScheduler.start()
     // idle/锁屏自动锁定（plan16 T12）：initStore 后启动（settings/加密态已就绪，watcher 内部自判 prefs）
     lockWatcher.start()
   } catch (e) {
@@ -101,6 +105,7 @@ onMounted(async () => {
 // 页面卸载即停：清防抖与定时器，stop 后在途 run 不再补跑（彻底静默）；锁定轮询同停
 onUnmounted(() => {
   scheduler.stop()
+  followScheduler.stop()
   lockWatcher.stop()
 })
 
@@ -376,69 +381,22 @@ async function persistCloudAutoPrefs(p: CloudAutoPrefs): Promise<void> {
   await storageAdapter.set(CLOUD_AUTO_PREFS_KEY, JSON.stringify(p))
 }
 
-/** 冲突副本 Blob 下载：命名经 conflictBackupName（与 desktop 同构，带 backendKey 时
- *  conflict-{backendKey}-{yyyyMMdd-HHmmss}.totpbackup，匹配 READABLE_BACKUP_RE 可恢复） */
-async function downloadConflictBackup(bytes: Uint8Array, backendKey?: string): Promise<string> {
-  const name = conflictBackupName(backendKey, new Date)
-  const blob = new Blob([bytes as BlobPart], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = name
-  a.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
-  return name
-}
-
-/** keep 源远端滚动删除的待并入提示（runner 顺序保证：先逐源 onRetentionDeleted 后 recordStatus，
- *  状态写盘前拼入 summary 并清空，不跨轮残留） */
-let retentionNotes: string[] = []
-
-/** 源 id→名称进程内缓存（审查 I4：runner sourceName 同步解析显示名用）；runner 每轮 loadSources
- *  装配时刷新（summary/onRetentionDeleted 均在其后，缓存必已就绪）；取不到回退 id */
-const cloudSourceNames = new Map<string, string>()
-
-/** 存活期自动云同步 runner（D6，ui 共享实现，与 desktop 同一编排；plan16 T13 源口径）：
+/** 存活期自动云同步 runner（D6，ui 共享实现，与 desktop 同一编排；plan16 T13 源口径）。
+ *  跨端同步 T2：装配代码抽至 cloudRunnerFactory（popup/options 共用），差异仅 i18n t 注入；
  *  loadSources 装配「启用云源 × 保管区凭据」对（无凭据的源跳过——锁定态 credsCache 为空自然全跳过）；
- *  GDrive 首推凭据回存由 CloudCard 手动通道持有（runner deps 新口径不含 onCredChange） */
-const cloudSync = createCloudSyncRunner({
-  isLocked: () => store.locked.value,
-  getSecret: () => store.backupSecret.value,
-  getVaultJson: () => JSON.stringify(store.vault),
-  loadSources: async () => {
-    const sources = await loadSourcesImpl(storageAdapter)
-    for (const s of sources) cloudSourceNames.set(s.id, s.name)
-    return sources
-      .filter((s) => s.kind !== 'local') // 云卡通道只装配云源（本地源归 BackupCard，extension 无）
-      .map((s) => ({ source: s, cred: store.credsCache.value[s.id] }))
-      .filter((p): p is { source: BackupSource; cred: CloudCred } => p.cred !== undefined)
-  },
-  loadTargetHash: async (id) => (await loadSourceRevs(storageAdapter))[id] ?? null,
-  saveTargetHash: (id, h) => saveSourceRev(storageAdapter, id, h),
-  makeBackend: (cred) => createCloudBackend(cred),
-  persistAdopted: (json) => replaceAllOp(JSON.parse(json) as Vault),
-  saveConflictBackup: (key, bytes) => {
-    void downloadConflictBackup(bytes, key).catch(() => {})
-  },
-  // KDF 档位（备份设置所选）：云上传/冲突副本 envelope 生成口径与本地备份一致
-  kdfProfile: () => settings.backupKdfProfile,
-  sourceName: (id) => cloudSourceNames.get(id) ?? id,
-  onRetentionDeleted: (name, deleted) => {
-    // 审查 Minor：deleted=0 不追加（「清理 0 份」无信息量）；负值=后端不支持远端清理。
-    // D2 R1 key 化（cloudAuto.retention*）：记录时翻译——提示随 cloudAutoStatus 落盘，存什么显示什么
-    const note = retentionDeletedNote(tr, name, deleted)
-    if (note) retentionNotes.push(note)
-  },
-  // D2 抽串：runner 状态摘要经注入 t() 记录时取词（i18n 在 setup 已同步装入，回调必然晚于装入）
-  t: tr,
-  // 状态记录不 await：storage 写失败不影响同步主流程。ok 三态（批 4）：true/false/null（跳过）
-  recordStatus: (ok: boolean | null, summary) => {
-    // D2 R1：分隔符走 cloudAuto.noteSep（对齐 desktop.noteSep，en 为 '; '）
-    const notes = retentionNotes.join(tr('cloudAuto.noteSep'))
-    retentionNotes = []
-    void storageAdapter.set('cloudAutoStatus', JSON.stringify({ at: Date.now(), ok, summary: notes ? `${summary}${tr('cloudAuto.noteSep')}${notes}` : summary })).catch(() => {})
-  },
-  onError: (err) => console.warn('[cloudAutoSync]', err),
+ *  GDrive 首推凭据回存由 CloudCard 手动通道持有 */
+const cloudSync = createExtensionCloudRunner({ store, t: tr })
+
+/** 跟随拉取调度（跨端同步 T2）：解锁边沿 + 3min 轮询，经 syncScheduler gate（锁定态零网络）。
+ *  与既有 cloudAutoPrefs 的 change/interval 通道相互独立（autoFollow 是跟随拉取的开关，勿混）；
+ *  autoFollowEnabled 待 T3 接 settings.syncPrefs.autoFollow，暂恒 true */
+const followScheduler = createSyncScheduler({
+  isUnlocked: () => !locked.value,
+  onUnlocked: (cb) => watch(locked, (v) => { if (!v) cb() }),
+  runPull: () => cloudSync.run(),
+  autoFollowEnabled: () => true,
+  intervalMs: () => 180_000,
+  onError: (e) => console.warn('[syncFollow]', e),
 })
 
 /** core 调度器（勘误 §4.1：不用 chrome.alarms——SW 后台无解锁 DEK、读不到会话备份口令，

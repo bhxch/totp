@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { buildOtpUri, getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
 import { BatchPastePanel, CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, MdCheckbox, MdIconButton, MdSegmentedButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, OtpQrDialog, parseUriToEntryData, resolvePopupVisible, SearchBar, TagFilterRow, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
+import { createExtensionCloudRunner } from '../../src/cloudRunnerFactory'
+import { createSyncScheduler } from '../../src/syncScheduler'
 import { storageAdapter } from '../../src/store'
 import {
   addEntryOp, addTagOp, commitSettings, initStore, locked, registerStorageSync, removeEntryOp, settings, store, updateEntryOp, vault,
@@ -13,6 +15,27 @@ const icons = createIconStore(storageAdapter)
 
 // D2 抽串：popup 壳层文案走 i18n（popup.*）。i18n 插件由 main.ts 在 mount 前同步装入，useI18n 可用
 const { t } = useI18n()
+
+// ---------- 跟随拉取（跨端同步 T2）：popup 打开时/解锁时单次拉取云端更新，不轮询 ----------
+// runner 工厂与 options 共用（cloudRunnerFactory），差异仅 i18n 注入（useI18n t 的包装同签名）。
+// 锁定态零网络：syncScheduler gate（isUnlocked && autoFollowEnabled）+ runner 内部 isLocked 守护双保险
+const cloudSync = createExtensionCloudRunner({ store, t: (key, params = {}) => t(key, params) })
+const syncFollow = createSyncScheduler({
+  isUnlocked: () => !locked.value,
+  onUnlocked: (cb) => watch(locked, (v) => { if (!v) cb() }),
+  runPull: () => cloudSync.run(),
+  autoFollowEnabled: () => true, // T3：改读 settings.syncPrefs.autoFollow
+  intervalMs: () => null, // popup 不轮询
+  onError: (e) => console.warn('[syncFollow]', e),
+})
+// 打开即跟随一次（已解锁才有动作——gate 拦锁定态）；解锁边沿由 start 内钩子承接。
+// 本块 onMounted 先于下方 async onMounted 注册（注册序=执行序）：watch 先于 initStore 的
+// 解锁翻转注册，initStore 经 session DEK 自动解锁时边沿必被捕获
+onMounted(() => {
+  syncFollow.start()
+  void syncFollow.syncNow()
+})
+onScopeDispose(() => syncFollow.stop())
 
 /** 设置深链:直达 options 的 /settings 页(hash 路由);openOptionsPage 不支持 hash 故用 tabs.create */
 const SETTINGS_ICON_PATH = NAV_ICONS.settings
