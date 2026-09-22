@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { createMemoryStorage } from '../src/storage/memory'
 import type { StorageAdapter } from '../src/storage/adapter'
-import { isBackupSource, loadSourceRevs, loadSources, normalizeRetention, saveSourceRev, saveSources, type BackupSource } from '../src/backup/sources'
+import { isBackupSource, loadSourceRevs, loadSources, normalizeRetention, normalizeSourceRoles, saveSourceRev, saveSources, type BackupSource } from '../src/backup/sources'
 
 const src = (over: Partial<BackupSource> = {}): BackupSource => ({
-  id: 's1', kind: 'webdav', name: '家里 WebDAV', retention: { type: 'overwrite' }, enabled: true, ...over,
+  id: 's1', kind: 'webdav', name: '家里 WebDAV', retention: { type: 'overwrite' }, enabled: true, role: 'replica', ...over,
 })
 
 describe('BackupSource 存取', () => {
@@ -63,5 +63,46 @@ describe('BackupSource 存取', () => {
     expect(await loadSourceRevs(a)).toEqual({ s1: 'abc', s2: 'def' })
     await saveSourceRev(a, 's1', null) // null=删除该源基线
     expect(await loadSourceRevs(a)).toEqual({ s2: 'def' })
+  })
+})
+
+describe('primary/replica 角色（活动目标单选，设计 §2）', () => {
+  it('normalizeSourceRoles：首个启用=primary，其余 replica', () => {
+    const r = normalizeSourceRoles([
+      { id: 'a', kind: 'webdav', name: 'a', retention: { type: 'overwrite' }, enabled: false, role: 'replica' },
+      { id: 'b', kind: 's3', name: 'b', retention: { type: 'overwrite' }, enabled: true, role: 'replica' },
+      { id: 'c', kind: 'gist', name: 'c', retention: { type: 'overwrite' }, enabled: true, role: 'primary' },
+    ])
+    expect(r.find((s) => s.id === 'b')!.role).toBe('primary')
+    expect(r.find((s) => s.id === 'c')!.role).toBe('replica')
+    expect(r.find((s) => s.id === 'a')!.role).toBe('replica') // disabled 不参与，保持归一为 replica
+  })
+  it('normalizeSourceRoles：全部 disabled → 保持输入原 role 不变', () => {
+    const list = [src({ id: 'a', enabled: false, role: 'primary' }), src({ id: 'b', enabled: false, role: 'replica' })]
+    expect(normalizeSourceRoles(list)).toEqual(list)
+  })
+  it('isBackupSource：role 缺失合法（存量数据经 normalize 补齐）；role 值域外拒绝', () => {
+    const legacy: Record<string, unknown> = { ...src() }
+    delete legacy['role']
+    expect(isBackupSource(legacy)).toBe(true)
+    expect(isBackupSource({ ...src(), role: 'bogus' })).toBe(false)
+  })
+  it('loadSources 对无 role 存量数据归一（首个 enabled=primary）', async () => {
+    const a = createMemoryStorage()
+    await a.set('backupSources', JSON.stringify([
+      { id: 'x', kind: 'webdav', name: 'x', retention: { type: 'overwrite' }, enabled: true },
+    ]))
+    const list = await loadSources(a)
+    expect(list[0]!.role).toBe('primary')
+  })
+  it('loadSources：多源存量归一——首个启用 primary，其余（含 disabled）replica', async () => {
+    const a = createMemoryStorage()
+    await a.set('backupSources', JSON.stringify([
+      { id: 'x', kind: 'webdav', name: 'x', retention: { type: 'overwrite' }, enabled: false },
+      { id: 'y', kind: 's3', name: 'y', retention: { type: 'overwrite' }, enabled: true },
+      { id: 'z', kind: 'gist', name: 'z', retention: { type: 'overwrite' }, enabled: true },
+    ]))
+    const list = await loadSources(a)
+    expect(list.map((s) => `${s.id}:${s.role}`)).toEqual(['x:replica', 'y:primary', 'z:replica'])
   })
 })

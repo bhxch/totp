@@ -68,10 +68,10 @@ describe('migrateLegacySources（旧多目标键 → 源模型 + 保管区）', 
 
     await expect(migrateLegacySources(adapter, { saveCred })).resolves.toBe(2)
 
-    // 源列表：id=旧 backend 键（保基线兼容）、kind/name 映射、retention overwrite、enabled 原值
+    // 源列表：id=旧 backend 键（保基线兼容）、kind/name 映射、retention overwrite、enabled 原值、role 构造默认 replica
     expect(JSON.parse(adapter.data[SOURCES_KEY]!)).toEqual([
-      { id: 'webdav', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true },
-      { id: 'gist', kind: 'gist', name: 'GitHub Gist', retention: { type: 'overwrite' }, enabled: false },
+      { id: 'webdav', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true, role: 'replica' },
+      { id: 'gist', kind: 'gist', name: 'GitHub Gist', retention: { type: 'overwrite' }, enabled: false, role: 'replica' },
     ])
     // 凭据逐源写入保管区（调用序列与源顺序一致）
     expect(saveCred).toHaveBeenCalledTimes(2)
@@ -93,7 +93,7 @@ describe('migrateLegacySources（旧多目标键 → 源模型 + 保管区）', 
 
     await expect(migrateLegacySources(adapter, { saveCred })).resolves.toBe(1)
     expect(JSON.parse(adapter.data[SOURCES_KEY]!)).toEqual([
-      { id: 'webdav', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true },
+      { id: 'webdav', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true, role: 'replica' },
     ])
     expect(saveCred).toHaveBeenCalledWith('webdav', WEBDAV)
     expect(JSON.parse(adapter.data[SOURCE_REVS_KEY]!)).toEqual({ webdav: 'legacy-hash' })
@@ -161,8 +161,9 @@ describe('migrateLegacySources（旧多目标键 → 源模型 + 保管区）', 
     const saveCred = vi.fn().mockResolvedValue(undefined)
 
     await expect(migrateLegacySources(adapter, { saveCred })).resolves.toBe(1)
+    // 存量源（无 role 字段）经 loadSources 归一补 replica（全 disabled → 保持/补默认）后原样落盘
     expect(JSON.parse(adapter.data[SOURCES_KEY]!)).toEqual([
-      { id: 'webdav', kind: 'webdav', name: '我的 WebDAV', retention: { type: 'keep', n: 5 }, enabled: false },
+      { id: 'webdav', kind: 'webdav', name: '我的 WebDAV', retention: { type: 'keep', n: 5 }, enabled: false, role: 'replica' },
     ])
     expect(saveCred).toHaveBeenCalledWith('webdav', WEBDAV) // 凭据重放（覆盖写幂等）
     expect(adapter.data[CLOUD_CREDS_KEY]).toBeUndefined() // 本次成功 → 旧键删除
@@ -185,8 +186,8 @@ describe('migrateLegacySources（旧多目标键 → 源模型 + 保管区）', 
 
     await expect(migrateLegacySources(adapter, { saveCred })).resolves.toBe(2) // 去重后实际迁移数
     expect(JSON.parse(adapter.data[SOURCES_KEY]!)).toEqual([
-      { id: 'webdav', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true },
-      { id: 'gist', kind: 'gist', name: 'GitHub Gist', retention: { type: 'overwrite' }, enabled: true },
+      { id: 'webdav', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true, role: 'replica' },
+      { id: 'gist', kind: 'gist', name: 'GitHub Gist', retention: { type: 'overwrite' }, enabled: true, role: 'replica' },
     ])
     // 凭据按去重后的源各写一次（首现凭据胜）
     expect(saveCred).toHaveBeenCalledTimes(2)
@@ -232,8 +233,8 @@ describe('migrateLegacySources（旧多目标键 → 源模型 + 保管区）', 
 })
 
 describe('loadSourcesImpl/saveSourcesImpl（core 包装）', () => {
-  it('⑨roundtrip：saveSourcesImpl → loadSourcesImpl 原样还原', async () => {
-    const sources = [{ id: 'webdav', kind: 'webdav' as const, name: 'WebDAV', retention: { type: 'overwrite' as const }, enabled: true }]
+  it('⑨roundtrip：saveSourcesImpl → loadSourcesImpl 原样还原（首个启用源经归一锚定 primary）', async () => {
+    const sources = [{ id: 'webdav', kind: 'webdav' as const, name: 'WebDAV', retention: { type: 'overwrite' as const }, enabled: true, role: 'primary' as const }]
     await saveSourcesImpl(adapter, sources)
     await expect(loadSourcesImpl(adapter)).resolves.toEqual(sources)
   })

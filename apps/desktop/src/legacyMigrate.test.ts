@@ -46,7 +46,7 @@ describe('migrateLegacyLocalSource（旧备份偏好 → 默认本地源）', ()
     adapter.data[BACKUP_DIR_KEY] = 'D:\\旧自选目录'
     await expect(migrateLegacyLocalSource(adapter, { retention: { type: 'keep', n: 5 }, dir: 'D:\\旧自选目录' })).resolves.toBe('migrated')
     expect(JSON.parse(adapter.data[SOURCES_KEY]!)).toEqual([
-      { id: 'local-default', kind: 'local', name: '本地备份', retention: { type: 'keep', n: 5 }, enabled: true, dir: 'D:\\旧自选目录' },
+      { id: 'local-default', kind: 'local', name: '本地备份', retention: { type: 'keep', n: 5 }, enabled: true, dir: 'D:\\旧自选目录', role: 'replica' },
     ])
     expect(adapter.data[BACKUP_DIR_KEY]).toBeUndefined()
   })
@@ -54,7 +54,7 @@ describe('migrateLegacyLocalSource（旧备份偏好 → 默认本地源）', ()
   it('②新装（无任何旧键）：同样建 dir=null 默认源（开箱即用与旧行为连续）', async () => {
     await expect(migrateLegacyLocalSource(adapter, { retention: { type: 'keep', n: 3 }, dir: null })).resolves.toBe('migrated')
     expect(JSON.parse(adapter.data[SOURCES_KEY]!)).toEqual([
-      { id: 'local-default', kind: 'local', name: '本地备份', retention: { type: 'keep', n: 3 }, enabled: true, dir: null },
+      { id: 'local-default', kind: 'local', name: '本地备份', retention: { type: 'keep', n: 3 }, enabled: true, dir: null, role: 'replica' },
     ])
   })
 
@@ -83,10 +83,10 @@ describe('migrateLegacyCloudSources（旧云多目标键 → 源模型 + 保管�
 
     await expect(migrateLegacyCloudSources(adapter, { saveCred })).resolves.toBe(2)
 
-    // 源列表：id=旧 backend 键（保基线兼容）、kind/name 映射、retention overwrite、enabled 原值
+    // 源列表：id=旧 backend 键（保基线兼容）、kind/name 映射、retention overwrite、enabled 原值、role 构造默认 replica
     expect(JSON.parse(adapter.data[SOURCES_KEY]!)).toEqual([
-      { id: 'webdav', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true },
-      { id: 'gist', kind: 'gist', name: 'GitHub Gist', retention: { type: 'overwrite' }, enabled: false },
+      { id: 'webdav', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true, role: 'replica' },
+      { id: 'gist', kind: 'gist', name: 'GitHub Gist', retention: { type: 'overwrite' }, enabled: false, role: 'replica' },
     ])
     expect(saveCred).toHaveBeenCalledTimes(2)
     expect(saveCred).toHaveBeenNthCalledWith(1, 'webdav', WEBDAV)
@@ -106,7 +106,7 @@ describe('migrateLegacyCloudSources（旧云多目标键 → 源模型 + 保管�
 
     await expect(migrateLegacyCloudSources(adapter, { saveCred })).resolves.toBe(1)
     expect(JSON.parse(adapter.data[SOURCES_KEY]!)).toEqual([
-      { id: 'webdav', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true },
+      { id: 'webdav', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true, role: 'replica' },
     ])
     expect(saveCred).toHaveBeenCalledWith('webdav', WEBDAV)
     expect(JSON.parse(adapter.data[SOURCE_REVS_KEY]!)).toEqual({ webdav: 'legacy-hash' })

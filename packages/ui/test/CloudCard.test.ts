@@ -28,8 +28,8 @@ const EMPTY_RESULT = { results: [], finalVaultJson: VALID_VAULT, adopted: false,
 const WEBDAV_CRED: CloudCred = { backend: 'webdav', serverUrl: 'https://dav.example.com', username: 'alice', password: 'davpw' }
 const GIST_CRED: CloudCred = { backend: 'gist', token: 'tok', gistId: 'gid' }
 
-const WEBDAV_SOURCE: BackupSource = { id: 's-webdav', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true }
-const GIST_SOURCE: BackupSource = { id: 's-gist', kind: 'gist', name: 'GitHub Gist', retention: { type: 'overwrite' }, enabled: true }
+const WEBDAV_SOURCE: BackupSource = { id: 's-webdav', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true, role: 'replica' }
+const GIST_SOURCE: BackupSource = { id: 's-gist', kind: 'gist', name: 'GitHub Gist', retention: { type: 'overwrite' }, enabled: true, role: 'replica' }
 
 function makePlatform(over: Partial<CloudPlatform> = {}): CloudPlatform {
   const base: CloudPlatform = {
@@ -548,7 +548,7 @@ describe('CloudCard（多源）', () => {
   })
 
   it('⑯gdrive 首推回存：后端 onChange 携新凭据（fileId）按 sourceId 更新编辑副本并 saveCred 持久化', async () => {
-    const GDRIVE_SOURCE: BackupSource = { id: 's-gdrive', kind: 'gdrive', name: 'Google Drive', retention: { type: 'overwrite' }, enabled: true }
+    const GDRIVE_SOURCE: BackupSource = { id: 's-gdrive', kind: 'gdrive', name: 'Google Drive', retention: { type: 'overwrite' }, enabled: true, role: 'replica' }
     const GDRIVE_CRED: CloudCred = { backend: 'gdrive', accessToken: 'tok' }
     const p = makePlatform({
       loadSources: vi.fn().mockResolvedValue([GDRIVE_SOURCE]),
@@ -576,7 +576,7 @@ describe('CloudCard（多源）', () => {
   })
 
   it('⑯b onCredChange 单源 op：仅回存该源凭据，另一行未保存编辑不外溢；内存副本已更新', async () => {
-    const GDRIVE_SOURCE: BackupSource = { id: 's-gdrive', kind: 'gdrive', name: 'Google Drive', retention: { type: 'overwrite' }, enabled: true }
+    const GDRIVE_SOURCE: BackupSource = { id: 's-gdrive', kind: 'gdrive', name: 'Google Drive', retention: { type: 'overwrite' }, enabled: true, role: 'replica' }
     const p = makePlatform({
       loadSources: vi.fn().mockResolvedValue([GDRIVE_SOURCE, WEBDAV_SOURCE]),
       creds: { 's-gdrive': { backend: 'gdrive', accessToken: 'tok' }, 's-webdav': WEBDAV_CRED },
@@ -608,7 +608,7 @@ describe('CloudCard（多源）', () => {
   })
 
   it('⑯c onCredChange 回存失败：仅 console.warn，不影响同步结果与状态行', async () => {
-    const GDRIVE_SOURCE: BackupSource = { id: 's-gdrive', kind: 'gdrive', name: 'Google Drive', retention: { type: 'overwrite' }, enabled: true }
+    const GDRIVE_SOURCE: BackupSource = { id: 's-gdrive', kind: 'gdrive', name: 'Google Drive', retention: { type: 'overwrite' }, enabled: true, role: 'replica' }
     const p = makePlatform({
       loadSources: vi.fn().mockResolvedValue([GDRIVE_SOURCE]),
       creds: { 's-gdrive': { backend: 'gdrive', accessToken: 'tok' } },

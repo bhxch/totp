@@ -116,7 +116,7 @@ function blankCred(b: BackendId): CloudCred {
 /** 添加源：生成 uuid 源（name 默认后端名、覆盖策略、enabled 开）+ 空白凭据副本，并展开其配置 */
 function addTarget(b: BackendId): void {
   const id = newSourceId()
-  sources.value.push({ id, kind: b, name: BACKEND_LABEL[b], retention: { type: 'overwrite' }, enabled: true })
+  sources.value.push({ id, kind: b, name: BACKEND_LABEL[b], retention: { type: 'overwrite' }, enabled: true, role: 'replica' })
   credDrafts.value[id] = blankCred(b)
   expanded.value = sources.value.length - 1
   addMenuOpen.value = false

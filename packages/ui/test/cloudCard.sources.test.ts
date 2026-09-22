@@ -26,7 +26,7 @@ const VALID_VAULT = JSON.stringify({ version: 1, entries: [], groups: [], update
 const WEBDAV_CRED: CloudCred = { backend: 'webdav', serverUrl: 'https://dav.example.com', username: 'alice', password: 'davpw' }
 
 const src = (over: Partial<BackupSource> = {}): BackupSource => ({
-  id: 's1', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true, ...over,
+  id: 's1', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true, role: 'replica', ...over,
 })
 
 function makePlatform(over: Partial<CloudPlatform> = {}): CloudPlatform {
@@ -145,7 +145,7 @@ describe('CloudCard（源列表 plan16 T8）', () => {
       await w.find('button.creds-save').trigger('click')
       await flushPromises()
       expect(p.saveSources).toHaveBeenCalledWith([
-        { id: '00000000-0000-4000-8000-000000000001', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true },
+        { id: '00000000-0000-4000-8000-000000000001', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true, role: 'replica' },
       ])
       expect(p.saveCred).not.toHaveBeenCalled() // 空白凭据跳过
     } finally {
@@ -306,8 +306,8 @@ describe('CloudCard（源列表 plan16 T8）', () => {
   })
 
   it('S6 GDrive 回存按 sourceId：仅触发源更新 saveCred(id, next)，同类型另一源不受影响', async () => {
-    const G1: BackupSource = { id: 'g1', kind: 'gdrive', name: 'G-A', retention: { type: 'overwrite' }, enabled: true }
-    const G2: BackupSource = { id: 'g2', kind: 'gdrive', name: 'G-B', retention: { type: 'overwrite' }, enabled: true }
+    const G1: BackupSource = { id: 'g1', kind: 'gdrive', name: 'G-A', retention: { type: 'overwrite' }, enabled: true, role: 'replica' }
+    const G2: BackupSource = { id: 'g2', kind: 'gdrive', name: 'G-B', retention: { type: 'overwrite' }, enabled: true, role: 'replica' }
     const p = makePlatform({
       loadSources: vi.fn().mockResolvedValue([G1, G2]),
       creds: { g1: { backend: 'gdrive', accessToken: 'tok-a' }, g2: { backend: 'gdrive', accessToken: 'tok-b' } },

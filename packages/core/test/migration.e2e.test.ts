@@ -170,6 +170,7 @@ async function migrateLegacyCloudSources(
     name: BACKEND_LABEL[t.cred.backend] ?? t.cred.backend,
     retention: { type: 'overwrite' },
     enabled: t.enabled,
+    role: 'replica',
   }))
   const merged = [...existing, ...migrated.filter((m) => !existing.some((e) => e.id === m.id))]
 
@@ -249,10 +250,10 @@ describe('plan16 迁移端到端（纯 core 模拟宿主序列）', () => {
     expect(migrated).toBe(2)
     await expectMigratedState(adapter, dek, { webdav: WEBDAV, gist: GIST })
 
-    // backupSources 形状：id=旧 backend 键、name 映射、retention overwrite、enabled 原值
+    // backupSources 形状：id=旧 backend 键、name 映射、retention overwrite、enabled 原值、role 经 loadSources 归一（首个启用=primary）
     expect(await loadSources(adapter)).toEqual<BackupSource[]>([
-      { id: 'webdav', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true },
-      { id: 'gist', kind: 'gist', name: 'GitHub Gist', retention: { type: 'overwrite' }, enabled: false },
+      { id: 'webdav', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true, role: 'primary' },
+      { id: 'gist', kind: 'gist', name: 'GitHub Gist', retention: { type: 'overwrite' }, enabled: false, role: 'replica' },
     ])
     // sourceRevs 平移（键=源 id）
     expect(await loadSourceRevs(adapter)).toEqual({ webdav: 'hash-w', gist: 'hash-g' })
@@ -277,7 +278,7 @@ describe('plan16 迁移端到端（纯 core 模拟宿主序列）', () => {
     await expectMigratedState(adapter, dek, { webdav: WEBDAV })
 
     expect(await loadSources(adapter)).toEqual<BackupSource[]>([
-      { id: 'webdav', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true },
+      { id: 'webdav', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true, role: 'primary' },
     ])
     expect(await loadSourceRevs(adapter)).toEqual({ webdav: 'legacy-hash' })
     expect(await adapter.get(SOURCE_REVS_KEY)).not.toBeNull()

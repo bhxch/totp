@@ -142,6 +142,7 @@ export async function migrateLegacySources(
     name: BACKEND_LABEL[t.cred.backend] ?? t.cred.backend,
     retention: { type: 'overwrite' },
     enabled: t.enabled,
+    role: 'replica',
   }))
   // 源列表整体按 id 去重（保留首现：existing 优先）——覆盖中断重跑/用户已建同 backend 源场景
   const mergedIds = new Set<string>()

@@ -194,7 +194,7 @@ const backupPlatform: BackupPlatform = {
   listLocalSources: async () => toLocalViews(await loadAllSources()),
   async saveLocalSource(v) {
     const adapter = requireAdapter()
-    const source: BackupSource = { ...v, kind: 'local' }
+    const source: BackupSource = { ...v, kind: 'local', role: 'replica' }
     const list = await loadSources(adapter)
     const idx = list.findIndex((s) => s.id === v.id)
     if (idx >= 0) list[idx] = source

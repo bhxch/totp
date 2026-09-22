@@ -12,7 +12,7 @@ import { createTestI18n } from './helpers/i18n'
 const WEBDAV_CRED: CloudCred = { backend: 'webdav', serverUrl: 'https://dav.example.com', username: 'alice', password: 'davpw' }
 
 const src = (over: Partial<BackupSource> = {}): BackupSource => ({
-  id: 's1', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true, ...over,
+  id: 's1', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true, role: 'replica', ...over,
 })
 
 function makePlatform(over: Partial<CloudPlatform> = {}): CloudPlatform {

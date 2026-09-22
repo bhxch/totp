@@ -15,7 +15,7 @@ const WEBDAV_CRED: CloudCred = { backend: 'webdav', serverUrl: 'https://dav', us
 const GIST_CRED: CloudCred = { backend: 'gist', token: 't', gistId: 'g' }
 
 const source = (id: string, over: Partial<BackupSource> = {}): BackupSource => ({
-  id, kind: 'webdav', name: id, retention: { type: 'overwrite' }, enabled: true, ...over,
+  id, kind: 'webdav', name: id, retention: { type: 'overwrite' }, enabled: true, role: 'replica', ...over,
 })
 
 /** 内存 fake 后端（复用 core multiTarget.test 模式）：可预置 PATH 初始内容，putCount 供断言重推。

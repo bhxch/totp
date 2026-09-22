@@ -4,6 +4,7 @@ import type { StorageAdapter } from '../storage/adapter'
 
 export type SourceKind = 'webdav' | 's3' | 'gist' | 'gdrive' | 'onedrive' | 'local'
 export type Retention = { type: 'overwrite' } | { type: 'keep'; n: number }
+export type SourceRole = 'primary' | 'replica'
 
 export interface BackupSource {
   id: string
@@ -12,6 +13,9 @@ export interface BackupSource {
   name: string
   retention: Retention
   enabled: boolean
+  /** 活动目标角色（设计 §2）：primary 裁决同步、replica 收敛复制；启用源中恒恰一个 primary。
+   *  存量数据缺省此字段（isBackupSource 容忍缺失），loadSources 经 normalizeSourceRoles 补齐 */
+  role: SourceRole
   /** 本地源目录；null/缺省=应用数据 backups 目录 */
   dir?: string | null
 }
@@ -35,7 +39,9 @@ export function isBackupSource(x: unknown): x is BackupSource {
     typeof o['kind'] === 'string' && (KINDS as readonly string[]).includes(o['kind']) &&
     typeof o['name'] === 'string' &&
     typeof o['enabled'] === 'boolean' &&
-    isRetentionShape(o['retention'])
+    isRetentionShape(o['retention']) &&
+    // role 容忍缺失（存量数据，normalize 补齐）；出现时校验值域
+    (o['role'] === undefined || o['role'] === 'primary' || o['role'] === 'replica')
   )
 }
 
@@ -44,6 +50,14 @@ function isRetentionShape(x: unknown): boolean {
   if (r === null || typeof r !== 'object') return false
   if (r.type === 'overwrite') return true
   return r.type === 'keep' && typeof r.n === 'number' && Number.isInteger(r.n) && r.n >= 1
+}
+
+/** 活动目标单选归一（设计 §2）：首个 enabled 源=primary，其余（含 disabled）强制 replica；
+ *  全部 disabled 时无 primary，保持输入原 role 不变（缺失 role 补 replica） */
+export function normalizeSourceRoles(sources: BackupSource[]): BackupSource[] {
+  const primaryIdx = sources.findIndex((s) => s.enabled)
+  if (primaryIdx === -1) return sources.map((s) => ({ ...s, role: s.role ?? 'replica' }))
+  return sources.map((s, i) => ({ ...s, role: i === primaryIdx ? 'primary' : 'replica' }))
 }
 
 export async function loadSources(adapter: StorageAdapter): Promise<BackupSource[]> {
@@ -56,7 +70,7 @@ export async function loadSources(adapter: StorageAdapter): Promise<BackupSource
   if (!raw) return []
   try {
     const parsed: unknown = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed.filter(isBackupSource) : []
+    return Array.isArray(parsed) ? normalizeSourceRoles(parsed.filter(isBackupSource)) : []
   } catch {
     return []
   }

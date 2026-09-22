@@ -33,7 +33,7 @@ export async function migrateLegacyLocalSource(
   if (raw !== null) return 'skipped'
   const source: BackupSource = {
     id: DEFAULT_LOCAL_SOURCE_ID, kind: 'local', name: '本地备份',
-    retention: legacy.retention, enabled: true, dir: legacy.dir,
+    retention: legacy.retention, enabled: true, dir: legacy.dir, role: 'replica',
   }
   await saveSources(adapter, [source])
   await adapter.delete(BACKUP_DIR_KEY) // dir 已入源：删 AppData 旧偏好键（先写新后删旧）
@@ -129,6 +129,7 @@ export async function migrateLegacyCloudSources(
     name: BACKEND_LABEL[t.cred.backend] ?? t.cred.backend,
     retention: { type: 'overwrite' },
     enabled: t.enabled,
+    role: 'replica',
   }))
   const merged = [...existing, ...migrated.filter((m) => !existing.some((e) => e.id === m.id))]
 

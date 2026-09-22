@@ -159,9 +159,10 @@ describe('createBackupToSources（每源备份）', () => {
 })
 
 describe('saveCloudSourcesPreservingLocal（审查 I11：云源保存不丢本地源）', () => {
-  const LOCAL: BackupSource = { id: 'loc-1', kind: 'local', name: '本地目录', retention: { type: 'keep', n: 3 }, enabled: true, dir: 'C:\\bk' }
-  const CLOUD1: BackupSource = { id: 'w1', kind: 'webdav', name: '家里', retention: { type: 'overwrite' }, enabled: true }
-  const CLOUD2: BackupSource = { id: 'g1', kind: 'gist', name: '备份 Gist', retention: { type: 'overwrite' }, enabled: false }
+  // LOCAL 首个启用源 → loadSources 归一为 primary（toEqual 断言锚定）
+  const LOCAL: BackupSource = { id: 'loc-1', kind: 'local', name: '本地目录', retention: { type: 'keep', n: 3 }, enabled: true, dir: 'C:\\bk', role: 'primary' }
+  const CLOUD1: BackupSource = { id: 'w1', kind: 'webdav', name: '家里', retention: { type: 'overwrite' }, enabled: true, role: 'replica' }
+  const CLOUD2: BackupSource = { id: 'g1', kind: 'gist', name: '备份 Gist', retention: { type: 'overwrite' }, enabled: false, role: 'replica' }
 
   function memAdapter(initial: BackupSource[] = []): StorageAdapter & { dump(): Promise<BackupSource[]> } {
     const m = new Map<string, string>()

@@ -20,7 +20,7 @@ const B = JSON.stringify({ v: 2 })
 const bytesOf = (s: string) => new TextEncoder().encode(s)
 const PW = 'pw'
 const CRED: CloudCred = { backend: 'webdav', serverUrl: 'https://dav', username: 'u', password: 'p' }
-const SOURCE: BackupSource = { id: 's1', kind: 'webdav', name: '家里', retention: { type: 'overwrite' }, enabled: true }
+const SOURCE: BackupSource = { id: 's1', kind: 'webdav', name: '家里', retention: { type: 'overwrite' }, enabled: true, role: 'replica' }
 
 function fakeBackend(initial?: Uint8Array): CloudBackend & { store: Map<string, Uint8Array> } {
   const store = new Map<string, Uint8Array>()
