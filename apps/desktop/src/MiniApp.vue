@@ -76,6 +76,9 @@ const clearer = createClipboardClearer(
 /** 复制后 500ms 自动隐藏控制器（审查 I-1 武装竞态守卫）：纯逻辑抽至 miniAutoHide.ts 便于单测覆盖取消时序 */
 const autoHide = createCopyAutoHide(500, () => { void getCurrentWindow().hide() })
 
+/** 复制失败提示（真机发现：剪贴板被第三方进程独占时 stage 命令拒绝，原实现静默无提示） */
+const copyFailed = ref(false)
+
 async function copy(entry: { uuid: string; type?: string; counter?: number }) {
   // I-1：copy 开始即快照揭示代次——若双击（递增代次）落在下方 await 期间，
   // completeCopy 检出失配跳过武装，覆盖「cancel 先于 timer 武装到达」的竞态时序
@@ -83,7 +86,14 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
   const code = codes.value.get(entry.uuid)?.code
   if (!code) return
   // F16：复制经 Rust stage 命令登记暂存值（退出兜底比对的事实源）
-  await invoke('stage_clipboard_write', { value: code })
+  try {
+    await invoke('stage_clipboard_write', { value: code })
+  } catch {
+    // 复制失败：提示并保持窗口可见（不武装自动隐藏）；码未复制成功，HOTP 不推进 counter
+    copyFailed.value = true
+    return
+  }
+  copyFailed.value = false
   // C14：HOTP 复制的是旧 counter 的码（RFC 语义），复制完成后再递增；TOTP 不动 counter。
   // mini 锁定时模板不渲染条目（见 template v-if="store && locked" 分支），故此处 store 必已解锁；
   // updateEntryOp 在 locked 态会抛错，捕获避免在某些边界场景把窗口隐藏打断
@@ -98,6 +108,7 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
 <template>
   <main class="mini">
     <div v-if="store && locked" class="empty">{{ tr('mini.lockedNote') }}</div>
+    <div v-else-if="copyFailed" class="copy-error" role="alert">{{ tr('mini.copyFailed') }}</div>
     <div v-else-if="!store || sorted.length === 0" class="empty">{{ tr('mini.empty') }}</div>
     <!-- 终审 Important-1：@dblclick 未在 OtpListItem emits 声明，经 attrs fallthrough 合并到组件根元素，
          与组件内部揭示 onDblclick 合并共存（Vue 3 mergeProps 依次调用）——双击即揭示并取消 500ms 自动隐藏
@@ -110,4 +121,5 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
 body { font-family: system-ui, sans-serif; margin: 0; }
 .mini { display: flex; flex-direction: column; gap: 2px; padding: 6px; }
 .empty { text-align: center; opacity: .6; padding: 32px 0; font-size: var(--md-sys-typescale-body-medium); }
+.copy-error { text-align: center; color: var(--md-sys-color-error); background: var(--md-sys-color-error-container); border-radius: 6px; padding: 8px 0; font-size: var(--md-sys-typescale-body-small); }
 </style>

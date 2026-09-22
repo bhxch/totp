@@ -317,6 +317,7 @@ function scheduleClipboardClear(): void {
   void chrome.runtime.sendMessage({ type: 'schedule-clipboard-clear', delayMs: CLIPBOARD_CLEAR_DELAY_MS }).catch(() => {})
 }
 const copied = ref(false) // 「已复制」横幅显隐
+const copyFailed = ref(false) // 复制失败横幅（真机发现：剪贴板被第三方进程独占时 writeText 拒绝，原实现静默无提示）
 let closeTimer: ReturnType<typeof setTimeout> | null = null
 /** 双击揭示代次（审查 I-1 武装竞态守卫）：copy 开始快照、武装前比对 */
 let revealGeneration = 0
@@ -327,7 +328,15 @@ async function copy(entry: OtpEntry) {
   const generation = revealGeneration
   const c = codes.value.get(entry.uuid)?.code
   if (!c) return
-  await navigator.clipboard.writeText(c)
+  try {
+    await navigator.clipboard.writeText(c)
+  } catch {
+    // 复制失败：错误横幅替代「已复制」，不武装自动关窗（用户需要时间看到失败原因）
+    copied.value = false
+    copyFailed.value = true
+    return
+  }
+  copyFailed.value = false
   scheduleClipboardClear()
   // HOTP：复制的是旧 counter 的码（RFC 语义），复制完成后再递增
   if (entry.type === 'hotp') await updateEntryOp(entry.uuid, { counter: (entry.counter ?? 0) + 1 })
@@ -364,6 +373,7 @@ function cancelAutoClose(): void {
     </header>
 
     <div v-if="copied" class="copied-banner">{{ t('popup.copiedBanner') }}</div>
+    <div v-if="copyFailed" class="copied-banner copied-banner--error" role="alert">{{ t('popup.copyFailed') }}</div>
     <div v-if="error" class="error">{{ error }}</div>
 
     <SearchBar v-model="query" />
@@ -443,6 +453,7 @@ header { display: flex; align-items: center; justify-content: space-between; pad
 h1 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .error { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); }
 .copied-banner { font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-primary); background: var(--md-sys-color-primary-container); border-radius: 6px; padding: 4px 8px; margin: 0 4px; }
+.copied-banner--error { color: var(--md-sys-color-error); background: var(--md-sys-color-error-container); }
 .filter-row { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-small); padding: 0 4px; }
 .tag-row { padding: 0 4px; }
 .otpauth-import { font-size: var(--md-sys-typescale-body-medium); padding: 0 4px; }

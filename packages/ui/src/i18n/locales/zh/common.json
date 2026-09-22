@@ -654,6 +654,7 @@
     "settings": "设置",
     "openSettings": "打开设置",
     "copiedBanner": "已复制到剪贴板",
+    "copyFailed": "复制失败：剪贴板不可用",
     "readError": "本地数据读取失败：{message}",
     "filterBySite": "按当前站点过滤",
     "matchCount": "匹配 {count} 条",
@@ -688,13 +689,15 @@
     "retentionUnsupported": "{name} 后端不支持远端清理",
     "noteSep": "；",
     "hideToTray": "隐藏到托盘",
+    "copyFailed": "复制失败：剪贴板被占用或不可写",
     "unlockKeychain": "钥匙串自动解锁",
     "unlockWindows": "Windows 自动解锁",
     "unlockKeyring": "密钥环自动解锁"
   },
   "mini": {
     "lockedNote": "加密启用后迷你窗不可用，请在主窗口解锁使用",
-    "empty": "暂无条目"
+    "empty": "暂无条目",
+    "copyFailed": "复制失败：剪贴板被占用"
   },
   "cloudRunner": {
     "lockedVault": "库已锁定",

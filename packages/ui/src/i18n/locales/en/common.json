@@ -654,6 +654,7 @@
     "settings": "Settings",
     "openSettings": "Open settings",
     "copiedBanner": "Copied to clipboard",
+    "copyFailed": "Copy failed: clipboard unavailable",
     "readError": "Failed to read local data: {message}",
     "filterBySite": "Filter by current site",
     "matchCount": "{count} matches",
@@ -688,13 +689,15 @@
     "retentionUnsupported": "{name}: backend does not support remote cleanup",
     "noteSep": "; ",
     "hideToTray": "Hide to tray",
+    "copyFailed": "Copy failed: clipboard busy or unwritable",
     "unlockKeychain": "Keychain auto-unlock",
     "unlockWindows": "Windows auto-unlock",
     "unlockKeyring": "Keyring auto-unlock"
   },
   "mini": {
     "lockedNote": "Mini window is unavailable while encryption is enabled; unlock in the main window",
-    "empty": "No entries"
+    "empty": "No entries",
+    "copyFailed": "Copy failed: clipboard busy"
   },
   "cloudRunner": {
     "lockedVault": "Vault locked",

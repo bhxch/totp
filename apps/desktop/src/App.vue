@@ -730,9 +730,19 @@ const clearer = createClipboardClearer(
   () => invoke('clipboard_clear_if_staged').then(() => {}),
 )
 
+const copyFailed = ref(false) // 复制失败横幅（真机发现：剪贴板被第三方进程独占时 stage 命令拒绝，原实现静默无提示）
+let copyFailedTimer: ReturnType<typeof setTimeout> | null = null
+
 async function copyToClipboard(code: string) {
   // F16：复制经 Rust stage 命令登记暂存值（退出兜底比对的事实源）
-  await invoke('stage_clipboard_write', { value: code })
+  try {
+    await invoke('stage_clipboard_write', { value: code })
+  } catch {
+    copyFailed.value = true
+    if (copyFailedTimer) clearTimeout(copyFailedTimer)
+    copyFailedTimer = setTimeout(() => (copyFailed.value = false), 3000)
+    return
+  }
   clearer.notifyCopied()
 }
 
@@ -742,6 +752,7 @@ const railActions = [{ get label() { return tr('desktop.hideToTray') }, onClick:
 </script>
 
 <template>
+  <div v-if="copyFailed" class="copy-failed" role="alert">{{ tr('desktop.copyFailed') }}</div>
   <div v-if="loadError && !store" class="error">{{ tr('desktop.loadFailed', { message: loadError }) }}</div>
   <!-- 解锁成功回调补跑迁移（plan16 T14，幂等）：口令/PRF 解锁各路径在 LockScreen 内 emit unlocked -->
   <LockScreen v-else-if="store && locked" :store="store" :dpapi="dpapiOps" @unlocked="runLegacyMigrations" />
@@ -754,4 +765,5 @@ const railActions = [{ get label() { return tr('desktop.hideToTray') }, onClick:
 <style>
 body { font-family: system-ui, sans-serif; margin: 0; }
 .error { color: var(--md-sys-color-error); padding: 16px; }
+.copy-failed { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 1000; color: var(--md-sys-color-error); background: var(--md-sys-color-error-container); border-radius: 8px; padding: 8px 16px; font-size: var(--md-sys-typescale-body-medium); box-shadow: var(--md-sys-elevation-level2, 0 1px 3px rgba(0,0,0,.3)); }
 </style>

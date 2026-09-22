@@ -319,6 +319,41 @@ describe('popup 双击揭示 vs copy 武装竞态（审查 I-1）', () => {
   })
 })
 
+describe('popup 复制失败反馈（真机发现：剪贴板被第三方独占时静默无提示）', () => {
+  it('writeText 拒绝：显示错误横幅（role=alert）不显示「已复制」，且不武装自动关窗', async () => {
+    const closeSpy = vi.spyOn(window, 'close').mockImplementation(() => {})
+    const writeText = vi.fn(() => Promise.reject(new DOMException('Denied', 'NotAllowedError')))
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    vault.entries.push({
+      uuid: 'e1', type: 'totp', issuer: 'GitHub', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
+      algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 0,
+    } as never)
+    try {
+      const wrapper = await mountApp({ otpListItem: OtpListItemStub })
+      await vi.waitFor(() => {
+        expect(wrapper.find('.otp-item-stub').text()).not.toBe('------')
+      })
+      vi.useFakeTimers()
+
+      const item = wrapper.findComponent({ name: 'OtpListItemStub' })
+      item.vm.$emit('copy')
+      await flushPromises()
+      expect(writeText).toHaveBeenCalledTimes(1)
+      expect(wrapper.find('.copied-banner--error').exists()).toBe(true)
+      expect(wrapper.find('.copied-banner--error').attributes('role')).toBe('alert')
+      expect(wrapper.find('.copied-banner:not(.copied-banner--error)').exists()).toBe(false)
+
+      // 失败路径不武装自动关窗：横幅停留可供阅读，窗口不自行关闭
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(closeSpy).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+      closeSpy.mockRestore()
+      vault.entries.length = 0
+    }
+  })
+})
+
 describe('popup 跟随拉取行为（跨端同步 T2/T3，审查修复）', () => {
   // mock 边界：runner 链止于 storage mock——loadSources 读 'backupSources'（mock 返回 null → 空表），
   // 无真网络；runner 触达的可观察信号 = 读源键 + recordStatus 写 'cloudAutoStatus'（工厂硬编码键）。
