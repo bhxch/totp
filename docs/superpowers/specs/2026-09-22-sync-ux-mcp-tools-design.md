@@ -198,6 +198,12 @@ remoteRev == state.lastKnownRemoteRev（云端未动）                   → �
 前置不满足时返回明确 reason，不猜测不重试：`vault locked` / `no backup secret` /
 `no enabled sources` / `no primary target`。**绝不返回 vault 数据**。
 
+> **勘误（2026-09-22 实施）**：`triggered: true` 语义为「已受理执行」——守护判定
+> （锁定/无口令）同步返回 reason 后，通道 fire-and-forget 启动、立即返回，不等待
+> 同步/备份完成（5s 桥超时会击穿慢通道，业务结果经应用状态行呈现，MCP 侧不轮询）。
+> `no enabled sources` / `no primary target` 类业务原因由 runner 状态行承载，
+> 不在工具响应 reason 中重复判定。
+
 #### §6.2 工具级安全标记与门控叠加
 
 工具静态元数据表新增 `kind`：
