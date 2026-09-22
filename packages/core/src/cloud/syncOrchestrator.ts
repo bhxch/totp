@@ -22,7 +22,8 @@
  *
  * pushEnvelope 的 sync 参数缺省时仍写 v2 信封：旧调用方（本地备份形态）行为不变。
  *
- * 旧字节 hash 编排 syncWithCloud 暂保留（@deprecated）：multiTarget.ts 在 Task 8 重写后删除。
+ * 旧字节 hash 编排 syncWithCloud 已删（T7/T8 裁定：multiTarget 重写为 primary 裁决 + replica 收敛
+ * 复制后无人消费）；CloudSyncOutcome 类型暂保留——ui pull 通道文案类型仍引用，T9 改造后随删。
  */
 import {
   createBackupEnvelope,
@@ -38,6 +39,8 @@ import { contentHash } from './canonical'
 import { mergeVaults, type EntryConflict } from '../merge/vaultMerge'
 import type { SourceSyncState } from './syncState'
 
+/** @deprecated 旧字节 hash 编排（syncWithCloud）的返回类型，函数已删（T8）；仅 ui pull 通道
+ *  文案类型仍引用，T9 收敛复制改造后随删。 */
 export interface CloudSyncOutcome {
   action: 'uploaded' | 'downloaded' | 'conflict-resolved' | 'in-sync'
   conflictBackup?: string
@@ -48,25 +51,6 @@ export interface CloudSyncOutcome {
 /** 冲突副本回调返回值：文件名（回填 outcome.conflictBackup）/ null（无副本）/ void（fire-and-forget），
  *  同步或经 Promise。此前在 syncOrchestrator / multiTarget / ui cloudRunner 三处逐字重复（T6 审查） */
 export type ConflictBackupResult = string | null | void | Promise<string | null | void>
-
-export interface SyncWithCloudOpts {
-  backend: CloudBackend
-  path: string
-  /** 当前本地明文 vault */
-  vaultJson: string
-  /** envelope 口令（会话缓存由调用方持有） */
-  password: string
-  /** 上次已知云端内容 hash（cloudRev）；null 表示从未接云 */
-  localHash: string | null
-  /** 冲突分支回调：把本地内容持久化为加密冲突副本（参数为 envelope JSON 字节，可被 openBackupEnvelope 恢复），可返回文件名（回填到 outcome.conflictBackup）。 */
-  onConflictBackup?: (bytes: Uint8Array) => ConflictBackupResult
-  /** KDF 档位（设计 §2）：本次上传/冲突副本 envelope 的生成档位；缺省 balanced */
-  profile?: KdfProfile
-  /** 编译期防误传哨兵（类型为 never）：单目标 syncWithCloud 不接受 onCredChange——凭据回写（如
-   *  gdrive 首推回存 fileId）由宿主 runner 层负责，编排层不感知凭据；调用方误传此属性会在类型
-   *  检查期报错，防止误以为本层会处理凭据变更 */
-  onCredChange?: never
-}
 
 /** SHA-256 摘要转小写 hex（crypto.subtle）。 */
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
@@ -104,57 +88,6 @@ export async function pushEnvelope(opts: {
     throw new Error('云端校验失败：上传内容与回读不一致')
   }
   return { hash, envelopeJson }
-}
-
-/** @deprecated 由 syncWithCloudRev 取代，Task 8 重写 multiTarget 后删除。 */
-export async function syncWithCloud(opts: SyncWithCloudOpts): Promise<CloudSyncOutcome & { hash: string }> {
-  const { backend, path, vaultJson, password, localHash: cloudRev, onConflictBackup, profile } = opts
-
-  const remote = (await backend.exists(path)) ? await backend.get(path) : null
-  if (remote === null) {
-    return { action: 'uploaded', ...(await pushEnvelope({ backend, path, vaultJson, password, profile })) }
-  }
-
-  const remoteHash = await sha256Hex(remote)
-  const vaultHash = await sha256Hex(new TextEncoder().encode(vaultJson))
-  if (remoteHash === vaultHash) {
-    // in-sync：不返回 envelopeJson——其语义为密文/明文混用，调用方需要时应自行 backend.get
-    return { action: 'in-sync', hash: remoteHash }
-  }
-  // 远端未变（与 cloudRev 一致）、本地已改：本地较新，推送
-  if (cloudRev !== null && remoteHash === cloudRev) {
-    return { action: 'uploaded', ...(await pushEnvelope({ backend, path, vaultJson, password, profile })) }
-  }
-
-  // 远端已变且与本地不同：可解密则保留本地冲突副本并采用远端；不可解密抛中文错误
-  let remoteVaultJson: string
-  try {
-    remoteVaultJson = await openBackupEnvelope(JSON.parse(new TextDecoder().decode(remote)), password)
-  } catch {
-    throw new Error('云端备份口令不匹配，无法合并——请确认口令或手动下载处理')
-  }
-
-  // 下载后内容比对（跨端同步审查 C1）：解密成功且与本地一致 → in-sync 仅刷新基线（hash=远端字节
-  // 摘要），不存冲突副本、不收敛回推——envelope 密文随机盐/IV 使字节摘要必不等于任何旧基线，
-  // 若此处不比对内容，对端每次全量重推都会把「内容相同的无意义副本」沉淀为 conflict-resolved。
-  // 与头部 in-sync 分支（mock 形态短路）语义一致：调用方以返回 hash 刷新基线即完成去重。
-  if (remoteVaultJson === vaultJson) {
-    return { action: 'in-sync', hash: remoteHash }
-  }
-
-  // 冲突副本与备份同形态：createBackupEnvelope 加密后的 envelope JSON 字节（密文落盘，恢复链路与备份卡一致）
-  let conflictBackup: string | undefined
-  if (onConflictBackup) {
-    const copyJson = JSON.stringify(await createBackupEnvelope(vaultJson, password, profile))
-    const name = await onConflictBackup(new TextEncoder().encode(copyJson))
-    if (typeof name === 'string' && name.length > 0) conflictBackup = name
-  }
-  return {
-    action: cloudRev === null ? 'downloaded' : 'conflict-resolved',
-    conflictBackup,
-    hash: remoteHash,
-    envelopeJson: remoteVaultJson,
-  }
 }
 
 // ---- rev 逻辑时钟判定（spec §1.3/§1.4；取代上方 syncWithCloud 的字节 hash 判定）----

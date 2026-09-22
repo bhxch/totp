@@ -26,6 +26,9 @@ function makePlatform(over: Partial<CloudPlatform> = {}): CloudPlatform {
     persistDownloaded: vi.fn().mockResolvedValue(undefined),
     loadTargetHash: vi.fn().mockResolvedValue(null),
     saveTargetHash: vi.fn().mockResolvedValue(undefined),
+    loadSourceState: vi.fn(async () => ({ lastKnownRemoteRev: null, baseSnapshot: null })),
+    saveSourceState: vi.fn(async () => undefined),
+    deviceId: vi.fn(async () => 'dev-test'),
     autoPrefs: { get: () => ({ onChange: false, onInterval: false, intervalMinutes: 60 }), set: () => {} },
   }
   return { ...base, ...over }

@@ -15,12 +15,13 @@ vi.mock('./backupService', () => ({ saveConflictBackupToDir: saveConflictBackupT
 // 注：core 的信封加解密用真实现——syncOrchestrator 内部相对路径导入 backup/envelope，
 // mock '@totp/core' 包入口拦截不到；冲突分支需要对称往返可达，真实 envelope 开销可接受
 
-const A = JSON.stringify({ v: 1 })
-const B = JSON.stringify({ v: 2 })
+// 完整 Vault 形态：新编排冲突走条目级合并（mergeVaults 消费 entries/tags 字段）
+const A = JSON.stringify({ version: 2, entries: [{ uuid: 'a', label: 'A' }], tags: [], updatedAt: 1 })
+const B = JSON.stringify({ version: 2, entries: [{ uuid: 'b', label: 'B' }], tags: [], updatedAt: 2 })
 const bytesOf = (s: string) => new TextEncoder().encode(s)
 const PW = 'pw'
 const CRED: CloudCred = { backend: 'webdav', serverUrl: 'https://dav', username: 'u', password: 'p' }
-const SOURCE: BackupSource = { id: 's1', kind: 'webdav', name: '家里', retention: { type: 'overwrite' }, enabled: true, role: 'replica' }
+const SOURCE: BackupSource = { id: 's1', kind: 'webdav', name: '家里', retention: { type: 'overwrite' }, enabled: true, role: 'primary' }
 
 function fakeBackend(initial?: Uint8Array): CloudBackend & { store: Map<string, Uint8Array> } {
   const store = new Map<string, Uint8Array>()
@@ -51,6 +52,9 @@ describe('审查 I9：冲突副本写盘失败传播（desktop 接线）', () =>
       loadSources: async () => [{ source: SOURCE, cred: CRED }],
       loadTargetHash: async () => 'stale',
       saveTargetHash: vi.fn(),
+      loadSourceState: async () => ({ lastKnownRemoteRev: null, baseSnapshot: null }),
+      saveSourceState: vi.fn(),
+      deviceId: async () => 'dev-test',
       makeBackend: () => b,
       persistAdopted: vi.fn(),
       saveConflictBackup,

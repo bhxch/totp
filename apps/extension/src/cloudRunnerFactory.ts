@@ -7,7 +7,7 @@
  * 锁定态零网络：runner 内部 isLocked/无 secret 直接 return（cloudRunner 守护），调用侧
  * syncScheduler gate 双保险。
  */
-import { loadSourceRevs, saveSourceRev, type BackupSource, type CloudCred, type Vault } from '@totp/core'
+import { loadDeviceId, loadSourceRevs, loadSyncState, saveSourceRev, saveSyncState, type BackupSource, type CloudCred, type Vault } from '@totp/core'
 import { createCloudBackend, createCloudSyncRunner, type VueStore } from '@totp/ui'
 import { conflictBackupName, loadSourcesImpl, retentionDeletedNote } from './cloudCredStore'
 import { storageAdapter } from './store'
@@ -64,6 +64,10 @@ export function createExtensionCloudRunner(deps: ExtensionCloudRunnerDeps): { ru
     },
     loadTargetHash: async (id) => (await loadSourceRevs(storageAdapter))[id] ?? null,
     saveTargetHash: (id, h) => saveSourceRev(storageAdapter, id, h),
+    // rev 基线（spec §1.2）：seal 缺省=明文落盘，DEK 静态保护随 T9 装配约定接入
+    loadSourceState: (id) => loadSyncState(storageAdapter, id),
+    saveSourceState: (id, st) => saveSyncState(storageAdapter, id, st),
+    deviceId: () => loadDeviceId(storageAdapter),
     makeBackend: (cred) => createCloudBackend(cred),
     persistAdopted: (json) => store.replaceAllOp(JSON.parse(json) as Vault),
     saveConflictBackup: (key, bytes) => {

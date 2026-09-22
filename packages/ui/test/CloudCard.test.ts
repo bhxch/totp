@@ -13,7 +13,7 @@ vi.mock('../src/components/cloudPlatform', async (importOriginal) => {
   return { ...actual, createCloudBackend: vi.fn(actual.createCloudBackend) }
 })
 
-import { pushEnvelope, syncMultipleTargets, type BackupSource, type CloudBackend, type CloudCred } from '@totp/core'
+import { pushEnvelope, syncMultipleTargets, type BackupSource, type CloudBackend, type CloudCred, type SourceSyncState } from '@totp/core'
 import { createCloudBackend } from '../src/components/cloudPlatform'
 import CloudCard from '../src/components/CloudCard.vue'
 import { createTestI18n } from './helpers/i18n'
@@ -23,7 +23,7 @@ const mockedSync = vi.mocked(syncMultipleTargets)
 const mockedPush = vi.mocked(pushEnvelope)
 
 const VALID_VAULT = JSON.stringify({ version: 2, entries: [], tags: [], updatedAt: 0 })
-const EMPTY_RESULT = { results: [], finalVaultJson: VALID_VAULT, adopted: false, hashes: {} }
+const EMPTY_RESULT = { results: [], finalVaultJson: VALID_VAULT, adopted: false, conflicts: [], states: {} }
 
 const WEBDAV_CRED: CloudCred = { backend: 'webdav', serverUrl: 'https://dav.example.com', username: 'alice', password: 'davpw' }
 const GIST_CRED: CloudCred = { backend: 'gist', token: 'tok', gistId: 'gid' }
@@ -42,6 +42,9 @@ function makePlatform(over: Partial<CloudPlatform> = {}): CloudPlatform {
     persistDownloaded: vi.fn().mockResolvedValue(undefined),
     loadTargetHash: vi.fn().mockResolvedValue(null),
     saveTargetHash: vi.fn().mockResolvedValue(undefined),
+    loadSourceState: vi.fn(async () => ({ lastKnownRemoteRev: null, baseSnapshot: null })),
+    saveSourceState: vi.fn(async () => undefined),
+    deviceId: vi.fn(async () => 'dev-test'),
     autoPrefs: { get: () => ({ onChange: false, onInterval: false, intervalMinutes: 60 }), set: () => {} },
   }
   return { ...base, ...over }
@@ -125,40 +128,45 @@ describe('CloudCard（多源）', () => {
     ])
   })
 
-  it('⑤hash 逐源透传与回写：失败源回写 null（删基线）', async () => {
+  it('⑤rev 基线逐源透传与回写：in-sync 源 state 即时落盘，失败源不落盘（states=原样）', async () => {
+    const stW: SourceSyncState = { lastKnownRemoteRev: 3, baseSnapshot: VALID_VAULT }
+    const stG: SourceSyncState = { lastKnownRemoteRev: null, baseSnapshot: null }
     mockedSync.mockResolvedValue({
       results: [
-        { key: 's-webdav', outcome: { action: 'in-sync', hash: 'hw1' } },
+        { key: 's-webdav', outcome: { action: 'in-sync', remoteRev: 3 } },
         { key: 's-gist', outcome: null, error: 'boom' },
       ],
       finalVaultJson: VALID_VAULT,
       adopted: false,
-      hashes: { 's-webdav': 'hw1' },
+      conflicts: [],
+      states: { 's-webdav': stW, 's-gist': stG },
     })
     const p = makePlatform({
       loadSources: vi.fn().mockResolvedValue([WEBDAV_SOURCE, GIST_SOURCE]),
       creds: { 's-webdav': WEBDAV_CRED, 's-gist': GIST_CRED },
-      loadTargetHash: vi.fn(async (id: string) => (id === 's-webdav' ? 'h-w' : 'h-g')),
+      loadSourceState: vi.fn(async (id: string) => (id === 's-webdav' ? stW : stG)),
     })
     const w = await mountCard(p)
     await clickSync(w)
     const inputs = mockedSync.mock.calls[0]![0].targets
-    expect(inputs.map((x) => ({ key: x.key, hash: x.hash }))).toEqual([
-      { key: 's-webdav', hash: 'h-w' },
-      { key: 's-gist', hash: 'h-g' },
+    expect(inputs.map((x) => ({ key: x.key, state: x.state }))).toEqual([
+      { key: 's-webdav', state: stW },
+      { key: 's-gist', state: stG },
     ])
-    expect(p.saveTargetHash).toHaveBeenCalledWith('s-webdav', 'hw1')
-    expect(p.saveTargetHash).toHaveBeenCalledWith('s-gist', null)
+    expect(p.saveSourceState).toHaveBeenCalledWith('s-webdav', stW)
+    expect(p.saveSourceState).not.toHaveBeenCalledWith('s-gist', stG) // 失败源 state 原样不落盘，下轮重做
     expect(w.text()).toContain('失败：boom')
     expect(w.text()).toContain('已是最新')
   })
 
   it('⑥adopted：行内确认出现且确认前不落基线，确认后 persistDownloaded(finalVaultJson)+补写基线', async () => {
+    const stOut: SourceSyncState = { lastKnownRemoteRev: 9, baseSnapshot: VALID_VAULT }
     mockedSync.mockResolvedValue({
-      results: [{ key: 's-webdav', outcome: { action: 'downloaded', hash: 'h9', envelopeJson: VALID_VAULT } }],
+      results: [{ key: 's-webdav', outcome: { action: 'downloaded', remoteRev: 9, appliedVaultJson: VALID_VAULT } }],
       finalVaultJson: VALID_VAULT,
       adopted: true,
-      hashes: { 's-webdav': 'h9' },
+      conflicts: [],
+      states: { 's-webdav': stOut },
     })
     const p = makePlatform({
       loadSources: vi.fn().mockResolvedValue([WEBDAV_SOURCE]),
@@ -169,7 +177,7 @@ describe('CloudCard（多源）', () => {
     expect(w.find('.confirm-row').exists()).toBe(true)
     expect(w.text()).toContain('采用云端将覆盖本地')
     expect(p.persistDownloaded).not.toHaveBeenCalled()
-    expect(p.saveTargetHash).not.toHaveBeenCalled() // 采纳源基线延后
+    expect(p.saveSourceState).not.toHaveBeenCalled() // 采纳源基线延后
     // 确认行挂起期间禁用立即同步（防二次同步覆盖待确认状态）
     expect((w.find('button.cloud-sync').element as HTMLButtonElement).disabled).toBe(true)
     // 三态互斥：采纳确认挂起期间，行内移除按钮同步禁用
@@ -177,7 +185,7 @@ describe('CloudCard（多源）', () => {
     await w.findAll('button').find((b) => b.text() === '采用云端')!.trigger('click')
     await flushPromises()
     expect(p.persistDownloaded).toHaveBeenCalledWith(VALID_VAULT)
-    expect(p.saveTargetHash).toHaveBeenCalledWith('s-webdav', 'h9')
+    expect(p.saveSourceState).toHaveBeenCalledWith('s-webdav', stOut)
     expect(w.text()).toContain('已采用云端数据覆盖本地')
     expect(w.find('.confirm-row').exists()).toBe(false)
     expect((w.find('button.cloud-sync').element as HTMLButtonElement).disabled).toBe(false)
@@ -185,10 +193,11 @@ describe('CloudCard（多源）', () => {
 
   it('⑦取消采用：persistDownloaded 不调、基线不写，提示已保留冲突副本', async () => {
     mockedSync.mockResolvedValue({
-      results: [{ key: 's-webdav', outcome: { action: 'conflict-resolved', hash: 'h8', envelopeJson: VALID_VAULT, conflictBackup: 'conflict-s-webdav-20260916-120000.totpbackup' } }],
+      results: [{ key: 's-webdav', outcome: { action: 'merged', remoteRev: 8, appliedVaultJson: VALID_VAULT, conflicts: [] } }],
       finalVaultJson: VALID_VAULT,
       adopted: true,
-      hashes: { 's-webdav': 'h8' },
+      conflicts: [],
+      states: {},
     })
     const p = makePlatform({
       loadSources: vi.fn().mockResolvedValue([WEBDAV_SOURCE]),
@@ -207,12 +216,13 @@ describe('CloudCard（多源）', () => {
   it('⑦b混合采纳：确认前非采纳源基线已写、采纳源未写；取消后采纳源零调用且非采纳基线保持', async () => {
     mockedSync.mockResolvedValue({
       results: [
-        { key: 's-webdav', outcome: { action: 'downloaded', hash: 'hw', envelopeJson: VALID_VAULT } },
-        { key: 's-gist', outcome: { action: 'in-sync', hash: 'hg' } },
+        { key: 's-webdav', outcome: { action: 'downloaded', remoteRev: 4, appliedVaultJson: VALID_VAULT } },
+        { key: 's-gist', outcome: { action: 'in-sync', remoteRev: 7 } },
       ],
       finalVaultJson: VALID_VAULT,
       adopted: true,
-      hashes: { 's-webdav': 'hw', 's-gist': 'hg' },
+      conflicts: [],
+      states: { 's-webdav': { lastKnownRemoteRev: 4, baseSnapshot: VALID_VAULT }, 's-gist': { lastKnownRemoteRev: 7, baseSnapshot: VALID_VAULT } },
     })
     const p = makePlatform({
       loadSources: vi.fn().mockResolvedValue([WEBDAV_SOURCE, GIST_SOURCE]),
@@ -222,13 +232,13 @@ describe('CloudCard（多源）', () => {
     await clickSync(w)
     expect(w.find('.confirm-row').exists()).toBe(true)
     // 确认前：非采纳源（in-sync）基线已立即回写；采纳源（downloaded）基线延后未写
-    expect(p.saveTargetHash).toHaveBeenCalledTimes(1)
-    expect(p.saveTargetHash).toHaveBeenCalledWith('s-gist', 'hg')
-    // 取消：采纳源 saveTargetHash 零调用，persistDownloaded 不调，非采纳源已写基线保持（不回滚）
+    expect(p.saveSourceState).toHaveBeenCalledTimes(1)
+    expect(p.saveSourceState).toHaveBeenCalledWith('s-gist', { lastKnownRemoteRev: 7, baseSnapshot: VALID_VAULT })
+    // 取消：采纳源 saveSourceState 零调用，persistDownloaded 不调，非采纳源已写基线保持（不回滚）
     await w.findAll('button').find((b) => b.text() === '取消')!.trigger('click')
     await flushPromises()
-    expect(p.saveTargetHash).toHaveBeenCalledTimes(1)
-    expect(p.saveTargetHash).not.toHaveBeenCalledWith('s-webdav', 'hw')
+    expect(p.saveSourceState).toHaveBeenCalledTimes(1)
+    expect(p.saveSourceState).not.toHaveBeenCalledWith('s-webdav', { lastKnownRemoteRev: 4, baseSnapshot: VALID_VAULT })
     expect(p.persistDownloaded).not.toHaveBeenCalled()
     expect(w.text()).toContain('已保留冲突副本，未改动本地')
   })
@@ -272,11 +282,12 @@ describe('CloudCard（多源）', () => {
     mockedSync.mockResolvedValue({
       results: [
         { key: 's-webdav', outcome: null, error: '网络错误' },
-        { key: 's-gist', outcome: { action: 'uploaded', hash: 'hu' } },
+        { key: 's-gist', outcome: { action: 'uploaded', remoteRev: null, newRev: 2 } },
       ],
       finalVaultJson: VALID_VAULT,
       adopted: false,
-      hashes: { 's-gist': 'hu' },
+      conflicts: [],
+      states: { 's-gist': { lastKnownRemoteRev: 2, baseSnapshot: VALID_VAULT } },
     })
     const p = makePlatform({
       loadSources: vi.fn().mockResolvedValue([WEBDAV_SOURCE, GIST_SOURCE]),
@@ -561,10 +572,11 @@ describe('CloudCard（多源）', () => {
       return { id: cred.backend, put: async () => {}, get: async () => null, delete: async () => {}, exists: async () => false } as CloudBackend
     })
     mockedSync.mockResolvedValue({
-      results: [{ key: 's-gdrive', outcome: { action: 'uploaded', hash: 'h1' } }],
+      results: [{ key: 's-gdrive', outcome: { action: 'uploaded', remoteRev: null, newRev: 1 } }],
       finalVaultJson: VALID_VAULT,
       adopted: false,
-      hashes: { 's-gdrive': 'h1' },
+      conflicts: [],
+      states: { 's-gdrive': { lastKnownRemoteRev: 1, baseSnapshot: VALID_VAULT } },
     })
     const w = await mountCard(p)
     await clickSync(w)
@@ -593,10 +605,11 @@ describe('CloudCard（多源）', () => {
       return { id: cred.backend, put: async () => {}, get: async () => null, delete: async () => {}, exists: async () => false } as CloudBackend
     })
     mockedSync.mockResolvedValue({
-      results: [{ key: 's-gdrive', outcome: { action: 'in-sync', hash: 'h1' } }],
+      results: [{ key: 's-gdrive', outcome: { action: 'in-sync', remoteRev: 1 } }],
       finalVaultJson: VALID_VAULT,
       adopted: false,
-      hashes: { 's-gdrive': 'h1' },
+      conflicts: [],
+      states: { 's-gdrive': { lastKnownRemoteRev: 1, baseSnapshot: VALID_VAULT } },
     })
     await clickSync(w)
     // 持久化 = 单源 saveCred：webdav 的未保存编辑不外溢
@@ -618,10 +631,11 @@ describe('CloudCard（多源）', () => {
       return { id: cred.backend, put: async () => {}, get: async () => null, delete: async () => {}, exists: async () => false } as CloudBackend
     })
     mockedSync.mockResolvedValue({
-      results: [{ key: 's-gdrive', outcome: { action: 'in-sync', hash: 'h1' } }],
+      results: [{ key: 's-gdrive', outcome: { action: 'in-sync', remoteRev: 1 } }],
       finalVaultJson: VALID_VAULT,
       adopted: false,
-      hashes: { 's-gdrive': 'h1' },
+      conflicts: [],
+      states: { 's-gdrive': { lastKnownRemoteRev: 1, baseSnapshot: VALID_VAULT } },
     })
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const w = await mountCard(p)
@@ -648,7 +662,7 @@ describe('CloudCard（多源）', () => {
     mockedSync.mockRejectedValue(new Error('编排崩溃'))
     await clickSync(w)
     expect(w.text()).toContain('编排崩溃')
-    expect(p.saveTargetHash).not.toHaveBeenCalled()
+    expect(p.saveSourceState).not.toHaveBeenCalled()
   })
 
   const PW_MISMATCH_ERROR = '云端备份口令不匹配，无法合并——请确认口令或手动下载处理'
@@ -658,7 +672,8 @@ describe('CloudCard（多源）', () => {
       results: [{ key: 's-webdav', outcome: null, error: PW_MISMATCH_ERROR }],
       finalVaultJson: VALID_VAULT,
       adopted: false,
-      hashes: {},
+      conflicts: [],
+      states: {},
     })
     mockedPush.mockResolvedValue({ hash: 'rh1', envelopeJson: '{"enc":1}' })
     const p = makePlatform({
@@ -690,7 +705,8 @@ describe('CloudCard（多源）', () => {
       results: [{ key: 's-webdav', outcome: null, error: PW_MISMATCH_ERROR }],
       finalVaultJson: VALID_VAULT,
       adopted: false,
-      hashes: {},
+      conflicts: [],
+      states: {},
     })
     mockedPush.mockResolvedValue({ hash: 'rh1', envelopeJson: '{"enc":1}' })
     const p = makePlatform({
@@ -717,7 +733,8 @@ describe('CloudCard（多源）', () => {
       results: [{ key: 's-webdav', outcome: null, error: PW_MISMATCH_ERROR }],
       finalVaultJson: VALID_VAULT,
       adopted: false,
-      hashes: {},
+      conflicts: [],
+      states: {},
     })
     const p = makePlatform({
       loadSources: vi.fn().mockResolvedValue([WEBDAV_SOURCE]),
@@ -741,12 +758,16 @@ describe('CloudCard 手动同步成功回调（跨端同步审查 I1 恢复闭�
   it('全部目标成功（含 in-sync）→ onManualSynced 触发（宿主复位警示并重启跟随轮询）', async () => {
     mockedSync.mockResolvedValue({
       results: [
-        { key: 's-webdav', outcome: { action: 'in-sync', hash: 'hw' } },
-        { key: 's-gist', outcome: { action: 'uploaded', hash: 'hg' } },
+        { key: 's-webdav', outcome: { action: 'in-sync', remoteRev: 3 } },
+        { key: 's-gist', outcome: { action: 'uploaded', remoteRev: null, newRev: 4 } },
       ],
       finalVaultJson: VALID_VAULT,
       adopted: false,
-      hashes: { 's-webdav': 'hw', 's-gist': 'hg' },
+      conflicts: [],
+      states: {
+        's-webdav': { lastKnownRemoteRev: 3, baseSnapshot: VALID_VAULT },
+        's-gist': { lastKnownRemoteRev: 4, baseSnapshot: VALID_VAULT },
+      },
     })
     const onManualSynced = vi.fn()
     const p = makePlatform({
@@ -762,12 +783,13 @@ describe('CloudCard 手动同步成功回调（跨端同步审查 I1 恢复闭�
   it('部分目标失败（如凭据仍 401）→ 不触发（警示保留）；宿主回调抛错不影响同步结果呈现', async () => {
     mockedSync.mockResolvedValue({
       results: [
-        { key: 's-webdav', outcome: { action: 'uploaded', hash: 'hw' }, errorStatus: undefined },
+        { key: 's-webdav', outcome: { action: 'uploaded', remoteRev: 2, newRev: 3 } },
         { key: 's-gist', outcome: null, error: 'Google Drive 请求失败（HTTP 401）' },
       ],
       finalVaultJson: VALID_VAULT,
       adopted: false,
-      hashes: { 's-webdav': 'hw' },
+      conflicts: [],
+      states: { 's-webdav': { lastKnownRemoteRev: 3, baseSnapshot: VALID_VAULT } },
     })
     const onManualSynced = vi.fn(() => {
       throw new Error('宿主复位失败')
@@ -785,10 +807,11 @@ describe('CloudCard 手动同步成功回调（跨端同步审查 I1 恢复闭�
 
   it('收敛回推失败（convergeError）→ 不触发；未提供 onManualSynced（desktop）时静默', async () => {
     mockedSync.mockResolvedValue({
-      results: [{ key: 's-webdav', outcome: { action: 'uploaded', hash: 'hw' }, convergeError: '回推失败' }],
+      results: [{ key: 's-webdav', outcome: { action: 'uploaded', remoteRev: 2, newRev: 3 }, convergeError: '回推失败' }],
       finalVaultJson: VALID_VAULT,
       adopted: false,
-      hashes: { 's-webdav': 'hw' },
+      conflicts: [],
+      states: {},
     })
     const p = makePlatform({
       loadSources: vi.fn().mockResolvedValue([WEBDAV_SOURCE]),

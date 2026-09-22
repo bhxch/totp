@@ -2,7 +2,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { backupFileName, base64ToBytes, createBackupEnvelope, loadSourceRevs, loadSources, normalizeSchemes, openBackupEnvelope, randomBytes, saveSourceRev, saveSources, SCHEMES_KEY, sha256Hex, type BackupSource, type CloudCred, type ImportScheme, type KdfProfile, type Retention, type StorageAdapter, type Vault } from '@totp/core'
+import { backupFileName, base64ToBytes, createBackupEnvelope, loadDeviceId, loadSourceRevs, loadSources, loadSyncState, normalizeSchemes, openBackupEnvelope, randomBytes, saveSourceRev, saveSources, saveSyncState, SCHEMES_KEY, sha256Hex, type BackupSource, type CloudCred, type ImportScheme, type KdfProfile, type Retention, type StorageAdapter, type Vault } from '@totp/core'
 import { createAppI18n, createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type DevtoolsConfigDto, type DevtoolsPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type LocalSourceView, type McpConfigWithStatusDto, type McpPlatform, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, getCurrentInstance, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createDesktopAutoRunner, formatAutoStatusText } from './autoBackup'
@@ -379,6 +379,10 @@ const cloudPlatform: CloudPlatform = {
   saveConflictBackup: async (bytes, sourceId) => saveConflictBackupToDir(bytes, null, sourceId),
   loadTargetHash: async (id) => (await loadSourceRevs(requireAdapter()))[id] ?? null,
   saveTargetHash: (id, h) => saveSourceRev(requireAdapter(), id, h),
+  // rev 基线（spec §1.2）：seal 缺省=明文落盘，DEK 静态保护随 T9 装配约定接入
+  loadSourceState: (id) => loadSyncState(requireAdapter(), id),
+  saveSourceState: (id, st) => saveSyncState(requireAdapter(), id, st),
+  deviceId: () => loadDeviceId(requireAdapter()),
   // KDF 档位（备份设置所选）：云上传/冲突副本 envelope 生成口径与本地备份一致
   kdfProfile: () => kdfProfileOf(),
   autoPrefs: {
@@ -416,9 +420,13 @@ const cloudSync = createCloudSyncRunner({
   },
   loadTargetHash: async (id) => (await loadSourceRevs(requireAdapter()))[id] ?? null,
   saveTargetHash: (id, h) => saveSourceRev(requireAdapter(), id, h),
+  // rev 基线（spec §1.2）：seal 缺省=明文落盘，DEK 静态保护随 T9 装配约定接入
+  loadSourceState: (id) => loadSyncState(requireAdapter(), id),
+  saveSourceState: (id, st) => saveSyncState(requireAdapter(), id, st),
+  deviceId: () => loadDeviceId(requireAdapter()),
   makeBackend: (cred) => createCloudBackend(cred),
   persistAdopted: (json) => replaceAllOps(JSON.parse(json) as Vault),
-  // 审查 I9：Promise 原样交回 runner/core（syncWithCloud await 冲突回调）——写盘失败让该目标
+  // 审查 I9：Promise 原样交回 runner/core（syncWithCloudRev await 冲突回调）——写盘失败让该目标
   // 同步失败（recordStatus 记失败），不再静默吞掉后照常采纳远端并回推覆盖云端旧版本
   saveConflictBackup: (key, bytes) => saveConflictBackupToDir(bytes, null, key),
   kdfProfile: () => kdfProfileOf(),

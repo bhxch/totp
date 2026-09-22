@@ -134,8 +134,8 @@ export function createDesktopAutoRunner(deps: AutoBackupDeps, opts?: { debounceM
     // 云侧不做 lastHash 去重。勘误（2026-09-18 审查）：原注释声称「多目标编排自去重（in-sync 判定）」，
     // 实际该判据拿远端 envelope 密文摘要与本地明文摘要比较，生产形态下不可达，编排层并无去重；
     // 本地 hash 门会误伤多目标（各目标基线独立）。云通道内容级去重已由 cloudRunner 的自动通道
-    // 明文内容 hash 门落地（doCloudSync 即该 runner，见 packages/ui/src/components/cloudRunner.ts），
-    // 编排层现状仍每轮全量 syncWithCloud
+    // 明文内容 hash 门落地（doCloudSync 即该 runner，见 packages/ui/src/components/cloudRunner.ts）。
+    // T8 起编排层为 rev 逻辑时钟（syncWithCloudRev）：基线一致即 in-sync 零写，不再每轮全量重推
     await deps.doCloudSync()
   }
 

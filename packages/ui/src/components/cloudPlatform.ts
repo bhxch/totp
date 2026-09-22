@@ -1,6 +1,6 @@
 import {
   createGDriveBackend, createGistBackend, createOneDriveBackend, createS3Backend, createWebdavBackend,
-  type BackupSource, type CloudBackend, type CloudCred, type KdfProfile,
+  type BackupSource, type CloudBackend, type CloudCred, type KdfProfile, type SourceSyncState,
 } from '@totp/core'
 
 /** 云端对象固定路径（内容=加密 envelope JSON，见计划 10 Global Constraints）
@@ -82,10 +82,18 @@ export interface CloudPlatform {
   /** [可选] 冲突副本落盘（desktop=AppData/backups；extension=Blob 下载），返回副本名回填提示；
    *  sourceId=源 id（多源场景副本名 conflict-{sourceId}-{ts} 区分来源） */
   saveConflictBackup?(bytes: Uint8Array, sourceId?: string): Promise<string | null>
-  /** 按源 id 读取该源的远端字节摘要基线（迁移约定见上）；该源无基线 → null */
+  /** 按源 id 读取该源的远端字节摘要基线（迁移约定见上）；该源无基线 → null。
+   *  @deprecated 旧 hash 基线，仅 pull 通道去重门仍消费；rev 基线走 loadSourceState，T9 后随删 */
   loadTargetHash(sourceId: string): Promise<string | null>
-  /** 按源 id 写入基线；hash=null 语义为删除该源的基线键（不是写入 null 值） */
+  /** 按源 id 写入基线；hash=null 语义为删除该源的基线键（不是写入 null 值）。
+   *  @deprecated 同 loadTargetHash */
   saveTargetHash(sourceId: string, hash: string | null): Promise<void>
+  /** 按源 id 读取该源 rev 基线（core loadSyncState；spec §1.2 SourceSyncState），无记录 → 空状态 */
+  loadSourceState(sourceId: string): Promise<SourceSyncState>
+  /** 按源 id 持久化 rev 基线（core saveSyncState；同步编排返回的 states 逐源回写） */
+  saveSourceState(sourceId: string, state: SourceSyncState): Promise<void>
+  /** 本机设备标识（core loadDeviceId 持久 UUID，写入 v3 sync 头） */
+  deviceId(): Promise<string>
   /** 云同步自动触发偏好（desktop/extension 均提供；缺省则卡片不渲染自动区）。
    *  get 允许异步返回（extension storage.local 读写即异步，卡片 await 兼容同步/异步两种形态） */
   autoPrefs: { get(): CloudAutoPrefs | Promise<CloudAutoPrefs>; set(p: CloudAutoPrefs): void | Promise<void> }

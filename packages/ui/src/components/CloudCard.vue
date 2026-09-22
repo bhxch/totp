@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { BackupSource, CloudCred, GDriveCred, GistCred, OneDriveCred, S3Cred, WebdavCred } from '@totp/core'
+import type { BackupSource, CloudCred, GDriveCred, GistCred, OneDriveCred, S3Cred, SourceSyncState, WebdavCred } from '@totp/core'
 import {
   DEFAULT_OBJECT_PATH, enforceRemoteRetention, pushEnvelope, resolveObjectPath, resolveTimestampPath, syncMultipleTargets,
 } from '@totp/core'
@@ -30,6 +30,7 @@ const { t } = useI18n()
 const ACTION_LABEL_KEY: Record<string, string> = {
   uploaded: 'cloudCard.actionUploaded',
   downloaded: 'cloudCard.actionDownloaded',
+  merged: 'cloudCard.actionMerged',
   'conflict-resolved': 'cloudCard.actionConflictResolved',
   'in-sync': 'cloudCard.actionInSync',
 }
@@ -60,7 +61,8 @@ function statusFor(id: string): string {
 /** 已解密待确认覆盖的远端 vault JSON（两步确认防误覆盖，沿用旧卡行内确认交互） */
 const pendingAdopt = ref<string | null>(null)
 /** 采纳源待确认的基线 hash：「采用云端」确认成功后才落盘；取消则不写（下次同步重新下载提示） */
-const pendingHashes = ref<Array<[string, string]>>([])
+/** 采纳源 rev 基线延后至「采用云端」确认成功才落盘（取消则不写，下次同步重新下载提示） */
+const pendingStates = ref<Array<[string, SourceSyncState]>>([])
 
 /** 同步报「口令不匹配」的源 id（换口令后云端为旧口令信封）：提供行内重置救济入口 */
 const resettableBackends = ref<string[]>([])
@@ -169,7 +171,7 @@ function removeTarget(id: string): void {
   const expandedId = expanded.value >= 0 ? sources.value[expanded.value]?.id : null
   sources.value = sources.value.filter((x) => x.id !== id)
   resettableBackends.value = resettableBackends.value.filter((x) => x !== id)
-  pendingHashes.value = pendingHashes.value.filter(([k]) => k !== id)
+  pendingStates.value = pendingStates.value.filter(([k]) => k !== id)
   delete statusMap.value[id]
   delete credDrafts.value[id]
   expanded.value = expandedId !== undefined && expandedId !== null
@@ -347,7 +349,7 @@ async function onSync(): Promise<void> {
   msg.value = ''
   statusMap.value = {}
   try {
-    const inputs: Array<{ key: string; backend: ReturnType<typeof createCloudBackend>; path: string; hash: string | null }> = []
+    const inputs: Array<{ key: string; backend: ReturnType<typeof createCloudBackend>; path: string; source: BackupSource; state: SourceSyncState }> = []
     for (const s of enabled) {
       const cred = credDrafts.value[s.id] ?? p.creds[s.id]
       if (!cred || isBlankCred(cred)) {
@@ -363,7 +365,8 @@ async function onSync(): Promise<void> {
           void p.saveCred(s.id, next).catch((e) => console.warn('[CloudCard] 凭据回存失败:', e))
         }),
         path: s.retention.type === 'keep' ? resolveTimestampPath(cred, new Date()) : resolveObjectPath(cred),
-        hash: await p.loadTargetHash(s.id),
+        source: s,
+        state: await p.loadSourceState(s.id),
       })
     }
     if (inputs.length === 0) return fail(new Error(t('cloudCard.allCredsMissing')))
@@ -371,11 +374,12 @@ async function onSync(): Promise<void> {
       targets: inputs,
       vaultJson: p.readVaultJson(),
       password: props.sessionSecret,
+      deviceId: await p.deviceId(),
       onConflictBackup: (key, bytes) => p.saveConflictBackup?.(bytes, key),
       profile: p.kdfProfile?.(),
     })
     resettableBackends.value = []
-    pendingHashes.value = []
+    pendingStates.value = []
     for (const res of r.results) {
       if (!res.outcome) {
         const errMsg = res.error ?? ''
@@ -386,7 +390,7 @@ async function onSync(): Promise<void> {
         } else {
           statusMap.value[res.key] = t('cloudCard.failed', { message: trunc(errMsg) })
         }
-        await p.saveTargetHash(res.key, null) // 失败源删基线，下轮全量重比
+        // 失败源 rev 基线不落盘（states=原样，回写幂等）——下轮按原基线重做
         continue
       }
       statusMap.value[res.key] = ACTION_LABEL_KEY[res.outcome.action] ? t(ACTION_LABEL_KEY[res.outcome.action]!) : res.outcome.action
@@ -408,10 +412,11 @@ async function onSync(): Promise<void> {
           }
         }
       }
-      if (res.outcome.action === 'downloaded' || res.outcome.action === 'conflict-resolved') {
-        pendingHashes.value.push([res.key, r.hashes[res.key] ?? '']) // 采纳源基线延后至确认成功
-      } else {
-        await p.saveTargetHash(res.key, r.hashes[res.key] ?? null)
+      const st = r.states[res.key]
+      if (res.outcome.action === 'downloaded' || res.outcome.action === 'merged') {
+        if (st) pendingStates.value.push([res.key, st]) // 采纳源基线延后至确认成功
+      } else if (st) {
+        await p.saveSourceState(res.key, st)
       }
     }
     if (p.loadAutoStatus) {
@@ -445,9 +450,9 @@ async function onConfirmAdopt(): Promise<void> {
   busy.value = true
   try {
     await p.persistDownloaded(json)
-    for (const [key, hash] of pendingHashes.value) await p.saveTargetHash(key, hash)
+    for (const [key, st] of pendingStates.value) await p.saveSourceState(key, st)
     pendingAdopt.value = null
-    pendingHashes.value = []
+    pendingStates.value = []
     msg.value = t('cloudCard.adopted')
     msgKind.value = 'ok'
   } catch (e) {
@@ -460,7 +465,7 @@ async function onConfirmAdopt(): Promise<void> {
 /** 取消采用：本地不动、采纳基线不写（下次同步仍会重新下载提示），提示冲突副本已保留 */
 function onCancelAdopt(): void {
   pendingAdopt.value = null
-  pendingHashes.value = []
+  pendingStates.value = []
   msg.value = t('cloudCard.adoptCanceled')
   msgKind.value = 'hint'
 }

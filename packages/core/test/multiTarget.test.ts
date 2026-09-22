@@ -1,21 +1,45 @@
 import { describe, expect, it } from 'vitest'
-import { createBackupEnvelope, KDF_PROFILES, openBackupEnvelope } from '../src/backup/envelope'
-import { pushEnvelope, syncMultipleTargets } from '../src/cloud/multiTarget'
-import { sha256Hex } from '../src/cloud/syncOrchestrator'
+import { createSyncEnvelope, KDF_PROFILES, openBackupEnvelope } from '../src/backup/envelope'
+import type { OtpEntry } from '../src/model'
+import { mergeVaults } from '../src/merge/vaultMerge'
+import type { BackupSource } from '../src/backup/sources'
+import type { SourceSyncState } from '../src/cloud/syncState'
 import type { CloudBackend } from '../src/cloud/backend'
+import { CloudHttpError } from '../src/cloud/backend'
+import { contentHash } from '../src/cloud/canonical'
+import { pushEnvelope, sha256Hex, type RevSyncOutcome } from '../src/cloud/syncOrchestrator'
+import { syncMultipleTargets, type MultiTargetInput, type MultiTargetSyncResult, type TargetResult } from '../src/cloud/multiTarget'
 
 const PATH = 'p'
 const PW = 'pw'
-const A = JSON.stringify({ version: 2, entries: [{ label: 'A' }], tags: [], updatedAt: 1 })
-const B = JSON.stringify({ version: 2, entries: [{ label: 'B' }], tags: [], updatedAt: 2 })
-const bytesOf = (s: string) => new TextEncoder().encode(s)
+const DEV = 'dev-a'
+const OTHER_DEV = 'dev-b'
+const ENC = new TextEncoder()
 
-/** 内存 fake 后端：多目标各持独立 store，可预置初始内容；putCount 供断言收敛轮是否重推 */
+const e = (uuid: string, over: Partial<OtpEntry> = {}): OtpEntry => ({
+  uuid, type: 'totp', issuer: 'I', label: uuid, secret: 'S', algorithm: 'SHA1', digits: 6, period: 30,
+  tagIds: [], order: 0, createdAt: 1, updatedAt: 1, ...over,
+})
+const v = (entries: OtpEntry[], updatedAt = 1): string => JSON.stringify({ version: 2, entries, tags: [], updatedAt })
+const uuidsOf = (json: string): string[] =>
+  (JSON.parse(json) as { entries: Array<{ uuid: string }> }).entries.map((x) => x.uuid).sort()
+
+const A = v([e('a')])
+const AB = v([e('a'), e('b')])
+
+const emptyState = (): SourceSyncState => ({ lastKnownRemoteRev: null, baseSnapshot: null })
+const revState = (lastKnownRemoteRev: number | null, baseSnapshot: string | null): SourceSyncState => ({ lastKnownRemoteRev, baseSnapshot })
+
+const src = (role: 'primary' | 'replica', over: Partial<BackupSource> = {}): BackupSource => ({
+  id: role === 'primary' ? 'pri' : 'rep',
+  kind: 'webdav', name: role, retention: { type: 'overwrite' }, enabled: true, role, ...over,
+})
+
+/** 内存 fake 后端：各目标独立 store，可预置初始内容；putCount 供断言零写/推平次数 */
 function fakeBackend(initial?: Uint8Array): CloudBackend & { store: Map<string, Uint8Array>; putCount: number } {
   const store = new Map<string, Uint8Array>()
   if (initial) store.set(PATH, initial)
   const backend: CloudBackend & { store: Map<string, Uint8Array>; putCount: number } = {
-    store,
     id: 'webdav',
     putCount: 0,
     async put(path, data) {
@@ -31,325 +55,365 @@ function fakeBackend(initial?: Uint8Array): CloudBackend & { store: Map<string, 
     async exists(path) {
       return store.has(path)
     },
+    store,
   }
   return backend
 }
 
-/** 预置远端 envelope：vaultJson 加密后的 JSON 字节 */
-async function envelopeBytesOf(vaultJson: string, password: string): Promise<Uint8Array> {
-  return bytesOf(JSON.stringify(await createBackupEnvelope(vaultJson, password)))
+/** 以 v3 信封预置远端（他设备 dev-b 写入形态）；baseContentHash 可注入错误值构造降级合并 */
+async function sealedRemote(rev: number, content: string, baseContentHash?: string): Promise<Uint8Array> {
+  const env = await createSyncEnvelope(content, PW, 'balanced',
+    { rev, deviceId: OTHER_DEV, baseRev: rev - 1, baseContentHash: baseContentHash ?? (await contentHash(content)) })
+  return ENC.encode(JSON.stringify(env))
 }
 
-/** 断言云端字节可用口令解开为期望的 vault 明文 */
+/** 断言云端字节可用口令解开为期望 vault 明文 */
 async function expectOpensTo(bytes: Uint8Array, password: string, expected: string): Promise<void> {
   const env = JSON.parse(new TextDecoder().decode(bytes))
   expect(await openBackupEnvelope(env, password)).toBe(expected)
 }
 
+/** 读远端 v3 信封 sync 头 */
+function syncHeaderOf(bytes: Uint8Array): { v: number; sync: { rev: number; deviceId: string; baseRev: number; baseContentHash: string } } {
+  return JSON.parse(new TextDecoder().decode(bytes))
+}
+
+function pri(t: Partial<MultiTargetInput> = {}): MultiTargetInput {
+  return { key: 'pri', backend: fakeBackend(), path: PATH, source: src('primary'), state: emptyState(), ...t }
+}
+function rep(t: Partial<MultiTargetInput> = {}): MultiTargetInput {
+  return { key: 'rep', backend: fakeBackend(), path: PATH, source: src('replica'), state: emptyState(), ...t }
+}
+const find = (r: MultiTargetSyncResult, key: string): TargetResult =>
+  r.results.find((x) => x.key === key)!
+
 describe('pushEnvelope', () => {
-  it('上传并回读校验：hash 为上传信封字节的摘要（cloudRev 口径），store 有对象且可解开为原文', async () => {
+  it('上传并回读校验：hash 为上传信封字节的摘要，store 有对象且可解开为原文', async () => {
     const backend = fakeBackend()
     const pushed = await pushEnvelope({ backend, path: PATH, vaultJson: A, password: PW })
     const stored = backend.store.get(PATH)!
     expect(stored).toBeDefined()
-    expect(pushed.hash).toBe(await sha256Hex(stored))
     // 回读校验已内建于 pushEnvelope：存储内容可同口令解开为 A
     await expectOpensTo(stored, PW, A)
-    // envelopeJson 与存储字节一致
-    expect(await sha256Hex(bytesOf(pushed.envelopeJson))).toBe(await sha256Hex(stored))
+    expect(pushed.hash).toBe(await sha256Hex(stored))
+    expect(await sha256Hex(ENC.encode(pushed.envelopeJson))).toBe(await sha256Hex(stored))
   })
 })
 
-describe('syncMultipleTargets', () => {
-  it('本地新 → 双目标都 uploaded，两目标云端内容一致（解密后均为 A）', async () => {
-    const b1 = fakeBackend()
-    const b2 = fakeBackend()
+describe('syncMultipleTargets（primary 裁决 + replica 收敛复制）', () => {
+  it('primary 上传裁决 + replica 内容一致且 rev 匹配 → replica 跳过零写，states 按出口推导', async () => {
+    const pb = fakeBackend()
+    const rb = fakeBackend(await sealedRemote(2, A))
     const r = await syncMultipleTargets({
-      targets: [
-        { key: 'k1', backend: b1, path: PATH, hash: null },
-        { key: 'k2', backend: b2, path: PATH, hash: null },
-      ],
-      vaultJson: A,
-      password: PW,
+      targets: [pri({ backend: pb }), rep({ backend: rb, state: revState(2, A) })],
+      vaultJson: A, password: PW, deviceId: DEV,
     })
-    expect(r.adopted).toBe(false)
-    expect(r.results).toHaveLength(2)
-    expect(r.results[0]!.outcome!.action).toBe('uploaded')
-    expect(r.results[1]!.outcome!.action).toBe('uploaded')
-    // envelope 含随机盐/nonce，密文字节必然不同——「内容相等」按解密后语义断言
-    await expectOpensTo(b1.store.get(PATH)!, PW, A)
-    await expectOpensTo(b2.store.get(PATH)!, PW, A)
-  })
-
-  it('目标2云端较新 → 采纳并回推目标1（收敛）', async () => {
-    const b1 = fakeBackend()
-    const b2 = fakeBackend(await envelopeBytesOf(B, PW))
-    const r = await syncMultipleTargets({
-      targets: [
-        { key: 'fake1', backend: b1, path: PATH, hash: null },
-        { key: 'fake2', backend: b2, path: PATH, hash: null },
-      ],
-      vaultJson: A,
-      password: PW,
-      // profile 透传：pass1 上传与收敛回推的信封均按注入档位生成
-      profile: 'fast',
-    })
-    expect(r.adopted).toBe(true)
-    expect(r.finalVaultJson).toBe(B)
-    // 目标1（原空）被回推 B，基线为回推后服务器现字节的摘要
-    await expectOpensTo(b1.store.get(PATH)!, PW, B)
-    // 收敛回推透传 profile：回推信封以 fast 档展开参数落盘
-    const converged = JSON.parse(new TextDecoder().decode(b1.store.get(PATH)!)) as { kdf: { profile: string; m: number } }
-    expect(converged.kdf.profile).toBe('fast')
-    expect(converged.kdf.m).toBe(KDF_PROFILES.fast.m)
-    expect(r.results[0]!.outcome!.action).toBe('uploaded')
-    expect(r.hashes['fake1']).toBe(await sha256Hex(b1.store.get(PATH)!))
-    // 采纳源 t2 基线已等于赢家（downloaded 的 hash 即远端字节摘要）→ 收敛轮跳过，不被重推
-    expect(b2.putCount).toBe(0)
-    expect(r.hashes['fake2']).toBe(await sha256Hex(b2.store.get(PATH)!))
-  })
-
-  it('远端存 envelope 且内容与基线一致 → 现状走 uploaded 重传（in-sync 判据生产不可达，去重由宿主门承担）', async () => {
-    // 生产形态：远端恒为 envelope 密文。in-sync 分支判据 remoteHash === sha256(vaultJson) 拿密文摘要
-    // 与本地明文摘要比较，永不相等——本用例锁定现状行为：基线一致也全量重传（审查建议 5：远端 mock
-    // 一律用 envelope 密文，防「远端存明文」假 in-sync 回归）。该路径的去重已由宿主自动通道的
-    // 明文内容 hash 门承担（cloudRunner，见 packages/ui/src/components/cloudRunner.ts）
-    const remote = await envelopeBytesOf(A, PW)
-    const b = fakeBackend(remote)
-    const r = await syncMultipleTargets({
-      targets: [{ key: 'k', backend: b, path: PATH, hash: await sha256Hex(remote) }],
-      vaultJson: A,
-      password: PW,
-    })
-    expect(r.adopted).toBe(false)
-    expect(r.results[0]!.outcome!.action).toBe('uploaded')
-    expect(b.putCount).toBe(1)
-    // 重传后远端可解开为 A，基线为新信封字节摘要
-    await expectOpensTo(b.store.get(PATH)!, PW, A)
-    expect(r.hashes['k']).toBe(await sha256Hex(b.store.get(PATH)!))
-  })
-
-  it('双目标远端均 envelope 且各自基线一致 → 两目标各自 uploaded，编排层无内容级去重（现状防回归哨兵）', async () => {
-    // envelope 含随机盐：两目标密文字节不同但内容同为 A；各自基线均与远端一致仍各重传一次
-    // （编排层无「未变→跳过」短路），去重已由宿主明文 hash 门承担（见 cloudRunner hash 门）
-    const r1 = await envelopeBytesOf(A, PW)
-    const r2 = await envelopeBytesOf(A, PW)
-    const b1 = fakeBackend(r1)
-    const b2 = fakeBackend(r2)
-    const r = await syncMultipleTargets({
-      targets: [
-        { key: 'k1', backend: b1, path: PATH, hash: await sha256Hex(r1) },
-        { key: 'k2', backend: b2, path: PATH, hash: await sha256Hex(r2) },
-      ],
-      vaultJson: A,
-      password: PW,
-    })
-    expect(r.adopted).toBe(false)
-    expect(r.results[0]!.outcome!.action).toBe('uploaded')
-    expect(r.results[1]!.outcome!.action).toBe('uploaded')
-    expect(b1.putCount).toBe(1)
-    expect(b2.putCount).toBe(1)
-  })
-
-  it('单目标失败不阻断：失败目标 outcome 为 null 且带 error，成功目标正常 uploaded', async () => {
-    const bad = fakeBackend()
-    bad.get = async () => {
-      throw new Error('网络错误')
-    }
-    const good = fakeBackend()
-    const r = await syncMultipleTargets({
-      targets: [
-        { key: 'bad', backend: bad, path: PATH, hash: null },
-        { key: 'good', backend: good, path: PATH, hash: null },
-      ],
-      vaultJson: A,
-      password: PW,
-    })
-    expect(r.results[0]!.outcome).toBeNull()
-    expect(r.results[0]!.error).toContain('网络错误')
-    expect(r.results[1]!.outcome!.action).toBe('uploaded')
-    expect(r.adopted).toBe(false)
-  })
-
-  it('pass1 失败的目标在收敛回推成功后改写为 uploaded 且清除残留 error', async () => {
-    // flaky 仅首次 get 抛错：pass1 上传回读失败；收敛回推时 get 已恢复，可成功
-    const flaky = fakeBackend()
-    let getCalls = 0
-    flaky.get = async (p) => {
-      getCalls++
-      if (getCalls === 1) throw new Error('网络错误')
-      return flaky.store.get(p) ?? null
-    }
-    const newer = fakeBackend(await envelopeBytesOf(B, PW))
-    const r = await syncMultipleTargets({
-      targets: [
-        { key: 'flaky', backend: flaky, path: PATH, hash: null },
-        { key: 'newer', backend: newer, path: PATH, hash: null },
-      ],
-      vaultJson: A,
-      password: PW,
-    })
-    expect(r.adopted).toBe(true)
-    expect(r.finalVaultJson).toBe(B)
-    // pass1 失败（outcome null + error），收敛回推成功后改写为 uploaded 且 error 清除
-    expect(r.results[0]!.outcome!.action).toBe('uploaded')
-    expect(r.results[0]!.error).toBeUndefined()
-    expect(r.results[0]!.convergeError).toBeUndefined()
-    await expectOpensTo(flaky.store.get(PATH)!, PW, B)
-    expect(r.hashes['flaky']).toBe(await sha256Hex(flaky.store.get(PATH)!))
-  })
-
-  it('云端口令不符 → 该目标报错不采纳（localHash=null 时远端解不开直接抛错）', async () => {
-    const b = fakeBackend(await envelopeBytesOf(A, 'other'))
-    const r = await syncMultipleTargets({
-      targets: [{ key: 'k', backend: b, path: PATH, hash: null }],
-      vaultJson: A,
-      password: PW,
-    })
-    expect(r.results[0]!.outcome).toBeNull()
-    expect(r.results[0]!.error).toContain('口令')
-    expect(r.adopted).toBe(false)
-    expect(r.hashes['k']).toBeUndefined()
-  })
-
-  it('conflict-resolved 触发采纳并回推其他目标', async () => {
-    const b1 = fakeBackend()
-    const b2 = fakeBackend(await envelopeBytesOf(B, PW))
-    const calls: Array<{ key: string; bytes: Uint8Array }> = []
-    const r = await syncMultipleTargets({
-      targets: [
-        { key: 'k1', backend: b1, path: PATH, hash: null },
-        { key: 'k2', backend: b2, path: PATH, hash: 'stale' },
-      ],
-      vaultJson: A,
-      password: PW,
-      onConflictBackup: (key, bytes) => {
-        calls.push({ key, bytes })
-      },
-    })
-    // t2 触发 conflict 流程，副本回调以目标 key 透传，副本为本地 A 的加密 envelope
-    expect(calls).toHaveLength(1)
-    expect(calls[0]!.key).toBe('k2')
-    await expectOpensTo(calls[0]!.bytes, PW, A)
-    expect(r.adopted).toBe(true)
-    expect(r.finalVaultJson).toBe(B)
-    await expectOpensTo(b1.store.get(PATH)!, PW, B)
-  })
-
-  it('C1 基线漂移但解密内容一致 → in-sync 零处理：不采纳、无副本、不触发收敛回推', async () => {
-    // 对端重推同内容（密文随机盐 → 字节摘要必变）：修复前 k1 走 conflict-resolved → 采纳 A →
-    // 终局把 A 回推 k2（无意义云端写）。修复后 k1 in-sync 仅刷基线，无赢家 → 无收敛轮。
-    const b1 = fakeBackend(await envelopeBytesOf(A, PW))
-    const b2 = fakeBackend()
-    const copies: string[] = []
-    const r = await syncMultipleTargets({
-      targets: [
-        { key: 'k1', backend: b1, path: PATH, hash: 'stale' }, // 基线 ≠ 远端字节（漂移），内容同为 A
-        { key: 'k2', backend: b2, path: PATH, hash: null },
-      ],
-      vaultJson: A,
-      password: PW,
-      onConflictBackup: (key) => {
-        copies.push(key)
-      },
-    })
-    expect(r.adopted).toBe(false)
-    expect(r.results[0]!.outcome!.action).toBe('in-sync')
-    expect(r.results[0]!.error).toBeUndefined()
-    expect(copies).toHaveLength(0)
-    expect(b1.putCount).toBe(0) // 零重推、零收敛回推
-    expect(r.hashes['k1']).toBe(await sha256Hex(b1.store.get(PATH)!)) // 基线=远端字节摘要（供宿主回写）
-    // 空云目标照常上传（推通道职责不受影响）
-    expect(r.results[1]!.outcome!.action).toBe('uploaded')
-    await expectOpensTo(b2.store.get(PATH)!, PW, A)
-  })
-
-  it('onConflictBackup 透传目标 key', async () => {
-    const b = fakeBackend(await envelopeBytesOf(B, PW))
-    const keys: string[] = []
-    const r = await syncMultipleTargets({
-      targets: [{ key: 'only', backend: b, path: PATH, hash: 'stale' }],
-      vaultJson: A,
-      password: PW,
-      onConflictBackup: (key) => {
-        keys.push(key)
-      },
-    })
-    expect(keys).toEqual(['only'])
-    expect(r.adopted).toBe(true)
-  })
-
-  it('hashes 只含本轮处理成功的目标', async () => {
-    const bad = fakeBackend()
-    bad.get = async () => {
-      throw new Error('网络错误')
-    }
-    const good = fakeBackend()
-    const r = await syncMultipleTargets({
-      targets: [
-        { key: 'bad', backend: bad, path: PATH, hash: null },
-        { key: 'good', backend: good, path: PATH, hash: null },
-      ],
-      vaultJson: A,
-      password: PW,
-    })
-    expect(Object.keys(r.hashes)).toEqual(['good'])
-  })
-
-  it('基线一致目标（envelope 重传态）在 adopted 终局被回推（基线 ≠ 赢家）', async () => {
-    const r1 = await envelopeBytesOf(A, PW)
-    const b1 = fakeBackend(r1)
-    const b2 = fakeBackend(await envelopeBytesOf(B, PW))
-    const r = await syncMultipleTargets({
-      targets: [
-        { key: 't1', backend: b1, path: PATH, hash: await sha256Hex(r1) },
-        { key: 't2', backend: b2, path: PATH, hash: null },
-      ],
-      vaultJson: A,
-      password: PW,
-    })
-    expect(r.adopted).toBe(true)
-    expect(r.finalVaultJson).toBe(B)
-    // t1 远端为 envelope(A) 且基线一致：pass1 现状仍重传（无内容级短路，去重由宿主门承担），
-    // 基线变为新信封摘要 ≠ 赢家 → 收敛回推 B 且 outcome 改写 uploaded，基线为回推后现字节摘要
-    expect(b1.putCount).toBe(2)
-    expect(r.results[0]!.outcome!.action).toBe('uploaded')
-    expect(r.hashes['t1']).toBe(await sha256Hex(b1.store.get(PATH)!))
-    await expectOpensTo(b1.store.get(PATH)!, PW, B)
-    // 采纳源 t2 基线已等于赢家（downloaded 的 hash 即远端字节摘要）→ 收敛轮跳过，不被重推
-    expect(b2.putCount).toBe(0)
-    expect(r.hashes['t2']).toBe(await sha256Hex(b2.store.get(PATH)!))
-  })
-
-  it('空 targets 数组 → adopted=false、finalVaultJson 为入参、results/hashes 为空', async () => {
-    const r = await syncMultipleTargets({ targets: [], vaultJson: A, password: PW })
+    expect(find(r, 'pri').outcome!.action).toBe('uploaded')
+    expect(find(r, 'pri').outcome!.newRev).toBe(1)
+    expect(find(r, 'rep').outcome!.action).toBe('in-sync')
+    expect(find(r, 'rep').outcome!.remoteRev).toBe(2)
+    expect(rb.putCount).toBe(0) // 跳过零写
+    // primary uploaded → { lastKnownRemoteRev: newRev, baseSnapshot: 实际上传内容 }
+    expect(r.states['pri']).toEqual({ lastKnownRemoteRev: 1, baseSnapshot: A, primaryRev: { rep: 2 } })
+    // replica 跳过 → 原 state 不变（内容等价）；primaryRev 记录承载 replica 已知 rev
+    expect(r.states['rep']).toEqual({ lastKnownRemoteRev: 2, baseSnapshot: A })
     expect(r.adopted).toBe(false)
     expect(r.finalVaultJson).toBe(A)
-    expect(r.results).toEqual([])
-    expect(r.hashes).toEqual({})
+    expect(r.conflicts).toEqual([])
   })
 
-  it('收敛回推失败：convergeError 记录原因、outcome 保持 null 且 pass1 error 保留', async () => {
-    // 云端不存在 → pass1 走上传分支；put/回读均坏 → pass1 error；收敛回推 pushEnvelope 再次 put 抛错
-    const bad = fakeBackend()
-    bad.put = async () => {
+  it('replica 内容落后 → 推平 final（newRev=replica remote+1），states 与 primaryRev 记录更新', async () => {
+    const pb = fakeBackend()
+    const rb = fakeBackend(await sealedRemote(2, v([e('x')])))
+    const r = await syncMultipleTargets({
+      targets: [pri({ backend: pb }), rep({ backend: rb, state: revState(2, v([e('x')])) })],
+      vaultJson: A, password: PW, deviceId: DEV,
+    })
+    expect(find(r, 'rep').outcome!.action).toBe('uploaded')
+    expect(find(r, 'rep').outcome!.newRev).toBe(3)
+    // 推平后 replica 云端可解开为 final
+    await expectOpensTo(rb.store.get(PATH)!, PW, A)
+    const header = syncHeaderOf(rb.store.get(PATH)!)
+    expect(header.v).toBe(3)
+    expect(header.sync).toMatchObject({ rev: 3, deviceId: DEV, baseRev: 2, baseContentHash: await contentHash(v([e('x')])) })
+    // profile 缺省 balanced：推平信封按默认档位生成
+    expect((JSON.parse(new TextDecoder().decode(rb.store.get(PATH)!)) as { kdf: { profile: string } }).kdf.profile).toBe('balanced')
+    expect(r.states['rep']).toEqual({ lastKnownRemoteRev: 3, baseSnapshot: A })
+    expect(r.states['pri']!.primaryRev).toEqual({ rep: 3 })
+  })
+
+  it('profile 透传：推平信封按注入档位展开 KDF 参数', async () => {
+    const pb = fakeBackend()
+    const rb = fakeBackend(await sealedRemote(2, v([e('x')])))
+    await syncMultipleTargets({
+      targets: [pri({ backend: pb }), rep({ backend: rb, state: revState(2, v([e('x')])) })],
+      vaultJson: A, password: PW, deviceId: DEV, profile: 'fast',
+    })
+    const env = JSON.parse(new TextDecoder().decode(rb.store.get(PATH)!)) as { kdf: { profile: string; m: number } }
+    expect(env.kdf.profile).toBe('fast')
+    expect(env.kdf.m).toBe(KDF_PROFILES.fast.m)
+  })
+
+  it('replica rev 领先（误配置他设备写入）→ 先合并进 final 再推平，不丢数据', async () => {
+    // final=AB（primary 裁决后），replica 云端被 dev-b 写入 AC rev5（base 声明失配 → 降级两方合并）
+    const ac = v([e('a'), e('c')])
+    const pb = fakeBackend()
+    const rb = fakeBackend(await sealedRemote(5, ac, 'wrong'))
+    const r = await syncMultipleTargets({
+      targets: [pri({ backend: pb }), rep({ backend: rb, state: revState(2, A) })],
+      vaultJson: AB, password: PW, deviceId: DEV,
+    })
+    expect(find(r, 'rep').outcome!.action).toBe('merged')
+    expect(find(r, 'rep').outcome!.mergeDegraded).toBe(true)
+    expect(find(r, 'rep').outcome!.newRev).toBe(6) // max(remoteRev=5, known=2) + 1：不回退时钟
+    // final 采纳合并结果：误配置写入的 c 不丢
+    expect(uuidsOf(r.finalVaultJson)).toEqual(['a', 'b', 'c'])
+    expect(r.adopted).toBe(true)
+    await expectOpensTo(rb.store.get(PATH)!, PW, r.finalVaultJson)
+    expect(r.states['rep']).toEqual({ lastKnownRemoteRev: 6, baseSnapshot: r.finalVaultJson })
+    expect(r.states['pri']!.primaryRev).toEqual({ rep: 6 })
+  })
+
+  it('primary 失败 → 该源 outcome null + error，replica 仍按 final=本地内容推平（不阻断）', async () => {
+    const pb = fakeBackend()
+    pb.get = async () => {
+      throw new Error('网络错误')
+    }
+    const stale = v([e('x')])
+    const rb = fakeBackend(await sealedRemote(2, stale))
+    const r = await syncMultipleTargets({
+      targets: [pri({ backend: pb }), rep({ backend: rb, state: revState(2, stale) })],
+      vaultJson: A, password: PW, deviceId: DEV,
+    })
+    expect(find(r, 'pri').outcome).toBeNull()
+    expect(find(r, 'pri').error).toContain('网络错误')
+    expect(find(r, 'rep').outcome!.action).toBe('uploaded')
+    expect(find(r, 'rep').outcome!.newRev).toBe(3)
+    await expectOpensTo(rb.store.get(PATH)!, PW, A)
+    expect(r.finalVaultJson).toBe(A)
+    // primary 失败：state 原样保留；replica 已知 rev 记录照常推进
+    expect(r.states['pri']).toEqual({ lastKnownRemoteRev: null, baseSnapshot: null, primaryRev: { rep: 3 } })
+    expect(r.states['rep']).toEqual({ lastKnownRemoteRev: 3, baseSnapshot: A })
+  })
+
+  it('primary 凭据失效（CloudHttpError）→ errorStatus 结构化透传', async () => {
+    const pb = fakeBackend()
+    pb.get = async () => {
+      throw new CloudHttpError('WebDAV', 401)
+    }
+    const r = await syncMultipleTargets({
+      targets: [pri({ backend: pb })],
+      vaultJson: A, password: PW, deviceId: DEV,
+    })
+    expect(find(r, 'pri').outcome).toBeNull()
+    expect(find(r, 'pri').errorStatus).toBe(401)
+  })
+
+  it.each([
+    ['空 targets', []],
+    ['仅 replica', [rep()]],
+    ['primary 未启用', [pri({ source: src('primary', { enabled: false }) }), rep()]],
+    ['role=primary 但 disabled 的残留 + replica', [pri({ source: src('primary', { enabled: false }) })]],
+  ])('%s → 抛 no primary target', async (_name, targets) => {
+    await expect(
+      syncMultipleTargets({ targets: targets as MultiTargetInput[], vaultJson: A, password: PW, deviceId: DEV }),
+    ).rejects.toThrow('no primary target')
+  })
+
+  it('preview：primary merged → 不写云不存副本，conflicts 汇总返回，states 原样（宿主不得持久化）', async () => {
+    const base = v([e('a', { label: 'old' })])
+    const ours = v([e('a', { label: 'local', updatedAt: 2 }), e('b')])
+    const theirs = v([e('a', { label: 'remote', updatedAt: 3 }), e('c')])
+    const pb = fakeBackend(await sealedRemote(5, theirs, await contentHash(base)))
+    const rb = fakeBackend()
+    const copies: Array<{ key: string; bytes: Uint8Array }> = []
+    const r = await syncMultipleTargets({
+      targets: [pri({ backend: pb, state: revState(4, base) }), rep({ backend: rb })],
+      vaultJson: ours, password: PW, deviceId: DEV, mode: 'preview',
+      onConflictBackup: (key, bytes) => {
+        copies.push({ key, bytes })
+      },
+    })
+    const priOut = find(r, 'pri').outcome!
+    expect(priOut.action).toBe('merged')
+    expect(priOut.newRev).toBeUndefined() // preview 无写入时钟
+    expect(priOut.conflicts).toHaveLength(1)
+    expect(r.conflicts).toHaveLength(1) // 冲突汇总拼接
+    expect(r.adopted).toBe(true) // final 为合并预览
+    expect(uuidsOf(r.finalVaultJson)).toEqual(['a', 'b', 'c'])
+    expect(copies).toHaveLength(0)
+    expect(pb.putCount).toBe(0)
+    expect(rb.putCount).toBe(0) // replica 空云也只预览不首推
+    // 整轮只读：states 原样返回（零推导，preview 结果不得落盘）
+    expect(r.states['pri']).toEqual(revState(4, base))
+    expect(r.states['rep']).toEqual(emptyState())
+  })
+
+  it('replica 云端无对象（remoteRev null）→ 首推 rev 从 1 起、baseRev 0', async () => {
+    const pb = fakeBackend()
+    const rb = fakeBackend()
+    const r = await syncMultipleTargets({
+      targets: [pri({ backend: pb }), rep({ backend: rb })],
+      vaultJson: A, password: PW, deviceId: DEV,
+    })
+    expect(find(r, 'rep').outcome!.action).toBe('uploaded')
+    expect(find(r, 'rep').outcome!.remoteRev).toBeNull() // null=云端无对象，与 rev=0 不混用
+    expect(find(r, 'rep').outcome!.newRev).toBe(1)
+    const header = syncHeaderOf(rb.store.get(PATH)!)
+    expect(header.sync).toMatchObject({ rev: 1, baseRev: 0, deviceId: DEV, baseContentHash: await contentHash(A) })
+    expect(r.states['rep']).toEqual({ lastKnownRemoteRev: 1, baseSnapshot: A })
+  })
+
+  it('replica 云端较新且 final 未动 → downloaded 两方并入 final（base 未知防丢）后推平', async () => {
+    // 外部改写丢了条目 b：replica 上次收敛在 AB（state 基线=final），云端被 dev-b 重写为 AD rev5 →
+    // downloaded；并入（merge(null, AB, AD)=ABD）后 ≠ 远端现内容 → 二次调用推平 newRev=6
+    const ad = v([e('a'), e('d')])
+    const pb = fakeBackend()
+    const rb = fakeBackend(await sealedRemote(5, ad))
+    const r = await syncMultipleTargets({
+      targets: [pri({ backend: pb }), rep({ backend: rb, state: revState(2, AB) })],
+      vaultJson: AB, password: PW, deviceId: DEV,
+    })
+    expect(find(r, 'rep').outcome!.action).toBe('uploaded')
+    expect(find(r, 'rep').outcome!.newRev).toBe(6)
+    expect(uuidsOf(r.finalVaultJson)).toEqual(['a', 'b', 'd']) // replica 云端的 d 并入 final，不丢
+    expect(r.adopted).toBe(true)
+    await expectOpensTo(rb.store.get(PATH)!, PW, r.finalVaultJson)
+    expect(r.states['rep']).toEqual({ lastKnownRemoteRev: 6, baseSnapshot: r.finalVaultJson })
+    expect(r.states['pri']!.primaryRev).toEqual({ rep: 6 })
+  })
+
+  it('replica 云端为 final 超集且 final 未动 → 并入后与远端一致，in-sync 零写（推平无必要）', async () => {
+    const ad = v([e('a'), e('d')])
+    const pb = fakeBackend()
+    const rb = fakeBackend(await sealedRemote(5, ad))
+    const r = await syncMultipleTargets({
+      targets: [pri({ backend: pb }), rep({ backend: rb, state: revState(2, A) })],
+      vaultJson: A, password: PW, deviceId: DEV,
+    })
+    expect(find(r, 'rep').outcome!.action).toBe('in-sync')
+    expect(rb.putCount).toBe(0)
+    expect(uuidsOf(r.finalVaultJson)).toEqual(['a', 'd']) // 并入生效
+    expect(r.adopted).toBe(true)
+    // in-sync 落 state 以远端现值刷新（远端内容==final），下轮零处理
+    expect(r.states['rep']).toEqual({ lastKnownRemoteRev: 5, baseSnapshot: ad })
+  })
+
+  it('downloaded 后推平失败 → convergeError 记录原因，outcome 保持 downloaded 原值，state 原样', async () => {
+    const ad = v([e('a'), e('d')])
+    const pb = fakeBackend()
+    const rb = fakeBackend(await sealedRemote(5, ad))
+    rb.put = async () => {
       throw new Error('put坏')
     }
-    const newer = fakeBackend(await envelopeBytesOf(B, PW))
+    const r = await syncMultipleTargets({
+      targets: [pri({ backend: pb }), rep({ backend: rb, state: revState(2, AB) })],
+      vaultJson: AB, password: PW, deviceId: DEV,
+    })
+    const repRes = find(r, 'rep')
+    expect(repRes.outcome!.action).toBe('downloaded') // 不被推平失败覆盖
+    expect(repRes.outcome!.appliedVaultJson).toBe(ad)
+    expect(repRes.convergeError).toContain('put坏')
+    expect(repRes.error).toBeUndefined()
+    // 并入不因推平失败回滚（数据不丢，随 finalVaultJson 交宿主采纳）
+    expect(uuidsOf(r.finalVaultJson)).toEqual(['a', 'b', 'd'])
+    // 推平失败 → 原 state 不变（下轮重做）
+    expect(r.states['rep']).toEqual(revState(2, AB))
+  })
+
+  it('apply 模式 primary merged：副本先于上传、副本回调透传 target key、conflicts 汇总', async () => {
+    const base = v([e('a', { label: 'old' })])
+    const ours = v([e('a', { label: 'local', updatedAt: 2 }), e('b')])
+    const theirs = v([e('a', { label: 'remote', updatedAt: 3 }), e('c')])
+    const pb = fakeBackend(await sealedRemote(5, theirs, await contentHash(base)))
+    const events: string[] = []
+    const copies: Array<{ key: string; bytes: Uint8Array }> = []
+    const origPut = pb.put.bind(pb)
+    pb.put = async (p, d) => {
+      await origPut(p, d)
+      events.push('put')
+    }
+    const r = await syncMultipleTargets({
+      targets: [pri({ backend: pb, state: revState(4, base) })],
+      vaultJson: ours, password: PW, deviceId: DEV,
+      onConflictBackup: (key, bytes) => {
+        events.push('copy')
+        copies.push({ key, bytes })
+      },
+    })
+    expect(events).toEqual(['copy', 'put']) // 安全序：先存本地旧内容副本，再上传合并结果
+    expect(copies).toHaveLength(1)
+    expect(copies[0]!.key).toBe('pri')
+    await expectOpensTo(copies[0]!.bytes, PW, ours) // 副本为合并前的本地旧内容
+    expect(find(r, 'pri').outcome!.action).toBe('merged')
+    expect(find(r, 'pri').outcome!.newRev).toBe(6)
+    expect(r.conflicts).toHaveLength(1)
+    expect(r.conflicts[0]!.ours!.label).toBe('local')
+    expect(r.conflicts[0]!.theirs!.label).toBe('remote')
+    expect(r.states['pri']!.primaryRev).toBeUndefined() // 无 replica → 不落 primaryRev 键
+  })
+
+  it('多 replica：首个 replica 并入的内容随 final 推给后续 replica', async () => {
+    const ad = v([e('a'), e('d')])
+    const pb = fakeBackend()
+    const r1b = fakeBackend(await sealedRemote(5, ad))
+    const r2b = fakeBackend(await sealedRemote(2, A))
     const r = await syncMultipleTargets({
       targets: [
-        { key: 'bad', backend: bad, path: PATH, hash: null },
-        { key: 'newer', backend: newer, path: PATH, hash: null },
+        pri({ backend: pb }),
+        rep({ key: 'rep1', backend: r1b, state: revState(2, A) }),
+        rep({ key: 'rep2', backend: r2b, state: revState(2, A) }),
       ],
-      vaultJson: A,
-      password: PW,
+      vaultJson: A, password: PW, deviceId: DEV,
     })
-    expect(r.adopted).toBe(true)
-    expect(r.finalVaultJson).toBe(B)
-    expect(r.results[0]!.outcome).toBeNull()
-    expect(r.results[0]!.error).toContain('put坏')
-    expect(r.results[0]!.convergeError).toContain('put坏')
-    expect(r.hashes['newer']).toBeDefined()
-    expect(r.hashes['bad']).toBeUndefined()
+    // rep1 云端较新 → 并入 d 进 final（并入后与远端一致 → in-sync，记录=远端现值 5）；
+    // rep2 处理时 final 已含 d → 推平 AD
+    expect(uuidsOf(r.finalVaultJson)).toEqual(['a', 'd'])
+    expect(find(r, 'rep1').outcome!.action).toBe('in-sync')
+    expect(find(r, 'rep2').outcome!.action).toBe('uploaded')
+    await expectOpensTo(r2b.store.get(PATH)!, PW, r.finalVaultJson)
+    expect(r.states['pri']!.primaryRev).toEqual({ rep1: 5, rep2: 3 })
+  })
+
+  it('单 replica 失败不阻断其余 replica 与结果汇总', async () => {
+    const pb = fakeBackend()
+    const bad = fakeBackend()
+    bad.get = async () => {
+      throw new Error('网络错误')
+    }
+    const good = fakeBackend()
+    const r = await syncMultipleTargets({
+      targets: [pri({ backend: pb }), rep({ key: 'bad', backend: bad }), rep({ key: 'good', backend: good })],
+      vaultJson: A, password: PW, deviceId: DEV,
+    })
+    expect(find(r, 'bad').outcome).toBeNull()
+    expect(find(r, 'bad').error).toContain('网络错误')
+    expect(find(r, 'good').outcome!.action).toBe('uploaded')
+    expect(find(r, 'pri').outcome!.action).toBe('uploaded')
+    // 失败 replica state 原样，成功 replica 正常推导
+    expect(r.states['bad']).toEqual(emptyState())
+    expect(r.states['good']).toEqual({ lastKnownRemoteRev: 1, baseSnapshot: A })
+  })
+
+  it('disabled replica 不参与收敛复制', async () => {
+    const pb = fakeBackend()
+    const rb = fakeBackend()
+    const r = await syncMultipleTargets({
+      targets: [pri({ backend: pb }), rep({ backend: rb, source: src('replica', { enabled: false }) })],
+      vaultJson: A, password: PW, deviceId: DEV,
+    })
+    expect(rb.putCount).toBe(0)
+    expect(r.results.map((x) => x.key)).toEqual(['pri'])
+    expect(r.states['rep']).toBeUndefined()
+  })
+})
+
+describe('mergeVaults 两方并入参数序（裁定 4 防丢语义哨兵）', () => {
+  it('mergeVaults(null, ours=final, theirs=replica)：theirs 独有条目保留，ours 改动胜出', () => {
+    const final = v([e('a', { label: 'final' })])
+    const replicaApplied = v([e('a', { label: 'replica' }), e('d')])
+    const merged = mergeVaults(null, JSON.parse(final), JSON.parse(replicaApplied))
+    expect(merged.vault.entries.map((x: { uuid: string }) => x.uuid).sort()).toEqual(['a', 'd'])
+    expect(merged.conflicts).toHaveLength(1) // 双方同改 → 冲突记录（不静默覆盖）
   })
 })

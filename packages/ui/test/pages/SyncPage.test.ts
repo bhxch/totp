@@ -35,6 +35,9 @@ function cloudPlatform(): CloudPlatform {
     persistDownloaded: vi.fn(async () => {}),
     loadTargetHash: vi.fn(async () => null),
     saveTargetHash: vi.fn(async () => {}),
+    loadSourceState: vi.fn(async () => ({ lastKnownRemoteRev: null, baseSnapshot: null })),
+    saveSourceState: vi.fn(async () => {}),
+    deviceId: vi.fn(async () => 'dev-test'),
     autoPrefs: { get: () => ({ onChange: false, onInterval: false, intervalMinutes: 60 }), set: () => {} },
   }
 }

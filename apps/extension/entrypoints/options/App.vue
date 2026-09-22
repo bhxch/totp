@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { backupFileName, base64ToBytes, createAutoRunScheduler, createBackupEnvelope, loadSourceRevs, normalizeSchemes, openBackupEnvelope, OVERWRITE_NAME, randomBytes, saveSourceRev, SCHEMES_KEY, type BackupEnvelope, type ImportScheme, type Retention, type Vault } from '@totp/core'
+import { backupFileName, base64ToBytes, createAutoRunScheduler, createBackupEnvelope, loadDeviceId, loadSourceRevs, loadSyncState, normalizeSchemes, openBackupEnvelope, OVERWRITE_NAME, randomBytes, saveSourceRev, saveSyncState, SCHEMES_KEY, type BackupEnvelope, type ImportScheme, type Retention, type Vault } from '@totp/core'
 import { CLIPBOARD_CLEAR_DELAY_MS, createAppI18n, createIconStore, createPrfCredential, LockScreen, NavigationShell, prfSupported, useTheme, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
 import { computed, getCurrentInstance, onMounted, onUnmounted, ref, watch } from 'vue'
 import { createExtensionCloudRunner, downloadConflictBackup } from '../../src/cloudRunnerFactory'
@@ -462,6 +462,10 @@ const cloudPlatform: CloudPlatform = {
   saveConflictBackup: (bytes, sourceId) => downloadConflictBackup(bytes, sourceId),
   loadTargetHash: async (id) => (await loadSourceRevs(storageAdapter))[id] ?? null,
   saveTargetHash: (id, h) => saveSourceRev(storageAdapter, id, h),
+  // rev 基线（spec §1.2）：seal 缺省=明文落盘，DEK 静态保护随 T9 装配约定接入
+  loadSourceState: (id) => loadSyncState(storageAdapter, id),
+  saveSourceState: (id, st) => saveSyncState(storageAdapter, id, st),
+  deviceId: () => loadDeviceId(storageAdapter),
   kdfProfile: () => settings.backupKdfProfile,
   autoPrefs: {
     get: () => cloudAutoPrefs,

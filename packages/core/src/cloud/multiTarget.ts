@@ -1,39 +1,67 @@
 /**
- * 多云目标同步编排（设计 §6.2 收敛规则）：各目标持有独立基线 hash，顺序（不并发）逐目标
- * syncWithCloud；任一目标采纳到较新的云端版本后，终局把该版本收敛回推到所有基线不一致的
- * 目标（含本轮失败过的）。单目标失败不阻断其余目标。
+ * 多云目标同步编排（spec §2 活动目标单选）：primary 裁决 + replica 收敛复制，基线为 rev 逻辑时钟
+ * （spec §1.2 SourceSyncState，取代旧字节 hash 基线——密文随机 IV 使字节摘要每轮必变，旧 hashes
+ * 口径已随 syncWithCloud 一并删除）。
  *
- * 基线口径：全程「云端远端字节摘要」，与既有 cloudRev 语义一致——outcome.hash（in-sync/downloaded/
- * conflict-resolved 为远端 get 字节 sha256，uploaded 为本次上传信封字节 sha256）与 pushEnvelope 返回的
- * hash 同一口径；宿主可把 hashes 原样持久化并在下轮作 localHash 使用。
+ * 流程（每轮，顺序不并发）：
+ * 1. primary = 首个 `source.enabled && source.role === 'primary'` 的目标；无 → throw
+ *    Error('no primary target')（MCP 触发器 reason 复用此消息）。全 disabled 时可残留 role='primary'
+ *    的源（normalizeSourceRoles 只在存在 enabled 源时归一），故必须同时校验 enabled（T6 审查裁定），
+ *    不得只看 role。
+ * 2. primary 裁决：syncWithCloudRev 四出口（in-sync/downloaded/uploaded/merged）推拉，产出
+ *    finalVault（裁决后内容基线）。primary 失败（outcome=null + error/errorStatus）不阻断：
+ *    final 回退本地入参，replica 仍按本地内容推平。
+ * 3. replica 收敛复制：逐个以 final 为「本地内容」跑 syncWithCloudRev（state=replica 自身 state）——
+ *    - 云端与 final 一致且 rev 未动 → in-sync 零写（spec §2 跳过）；
+ *    - 云端未动、final 较新 → uploaded 推平：v3 头 rev=remoteRev+1 / baseRev=remoteRev /
+ *      baseContentHash=远端旧内容 hash，由 syncOrchestrator uploaded 分支生成（审查 Critical-2 勘误
+ *      后的 base 声明语义，以 syncOrchestrator 实际代码为准）；云端无对象时 rev 从 replica 已知时钟
+ *      续起（首推为 1、baseRev 0），不因对象被删而回退时钟；
+ *    - 云端较新且 final 未动（相对 replica 基线）→ downloaded：误配置/漂移保护——远端内容先按
+ *      `mergeVaults(null, ours=final, theirs=replica内容)` 两方并入 final（base 未知，防丢；任务外
+ *      裁定 4），随后以「远端现值」刷新 replica 基线再调一次 syncWithCloudRev 完成推平（其 uploaded
+ *      分支保证 v3 头语义；并入后若与远端一致则 in-sync 零写，推平无必要）；
+ *    - 双方都动（含 replica 被他设备误当主目标写入）→ merged：syncWithCloudRev 已合并并上传
+ *      （base 可信则三方、否则降级两方，均不丢数据，spec §2「任何误配置下不丢数据」），final 采纳
+ *      合并结果。
+ *    推平失败记 convergeError 不覆盖原 outcome；单 replica 失败不阻断其余。
  *
- * 勘误（2026-09-18 审查）：in-sync 分支判据 remoteHash === sha256(vaultJson) 拿远端 envelope 密文摘要
- * 与本地明文摘要比较，生产形态（远端恒为 envelope 密文）下永不相等、不可达——编排层并无「内容未变→
- * 跳过」自去重。生产去重已由宿主自动通道的明文内容 hash 门落地（cloudRunner，见
- * packages/ui/src/components/cloudRunner.ts；desktop 云通道经 autoBackup 委托同一 runner）；
- * 编排层保留该分支仅为测试/mock 形态（远端存明文）下的短路。
+ * states（每目标一份 SourceSyncState，spec §1.2/§2）推导（仅 apply 模式；preview 整轮只读、零推导，
+ * 返回的 states 全为入参原样，宿主不得持久化）：
+ * - primary：uploaded → { lastKnownRemoteRev: newRev, baseSnapshot: 实际上传内容(final) }；
+ *   downloaded/merged → { lastKnownRemoteRev: remoteRev, baseSnapshot: 采纳内容(final) }（remoteRev
+ *   null=云端无对象或 v2 无头，保持原值不写 0）；in-sync / 失败 → 原 state 不变。
+ * - replica：跳过（in-sync）→ 原 state 不变；推平/合并成功 → { lastKnownRemoteRev: newRev,
+ *   baseSnapshot: final }；失败 → 原 state 不变。
+ * - replica 已知 rev 汇总记录在 primary 的 `state.primaryRev[key]`（二选一裁定采用 primary 承载制，
+ *   T9 装配按此约定：装配时把 primary state 装入 primary 目标、同步后持久化各 state 即完成记录维护）。
+ *
+ * conflicts = 各目标 outcome.conflicts 拼接（EntryConflict[]）；adopted = final ≠ 入参 vaultJson
+ * （primary 采纳/合并与 replica 误配置并入都计入，宿主据此 persistAdopted）。
  */
-import { pushEnvelope, syncWithCloud, type ConflictBackupResult } from './syncOrchestrator'
 import type { KdfProfile } from '../backup/envelope'
+import type { BackupSource } from '../backup/sources'
+import { mergeVaults, type EntryConflict } from '../merge/vaultMerge'
 import type { CloudBackend } from './backend'
+import { syncWithCloudRev, type ConflictBackupResult, type RevSyncOutcome } from './syncOrchestrator'
+import type { SourceSyncState } from './syncState'
 
-/** 供测试与其他调用方直接复用单目标加密推送（re-export 自 syncOrchestrator）。 */
-export { pushEnvelope }
-
-/** 单个云目标的同步输入：key 为宿主侧稳定标识，hash 为该目标上次已知云端内容基线。 */
-export interface CloudTargetInput {
+/** 单个云目标同步输入：key 为宿主侧稳定标识（源 id）；source 携带 role/enabled 裁定元数据；
+ *  state 为该源本端持久 rev 基线（primary 的 primaryRev 字段承载各 replica 已知 rev）。 */
+export interface MultiTargetInput {
   key: string
   backend: CloudBackend
   path: string
-  hash: string | null
+  source: BackupSource
+  state: SourceSyncState
 }
 
-/** 单目标结果：outcome 为 null 表示该目标本轮 syncWithCloud 抛错（error 为消息）；convergeError 仅在收敛回推失败时出现。
- *  errorStatus（审查 I2）：抛错对象携带数字 status（CloudHttpError）时透传，供宿主结构化判定凭据失效；
- *  缺失时宿主按 error 消息定界形式兜底匹配。 */
+/** 单目标结果：outcome 为 null 表示该目标本轮 syncWithCloudRev 抛错（error 为消息）；convergeError
+ *  仅在 replica 推平阶段失败时出现（不覆盖原 outcome）。errorStatus（审查 I2）：抛错对象携带数字
+ *  status（CloudHttpError）时透传，供宿主结构化判定凭据失效。 */
 export interface TargetResult {
   key: string
-  outcome: Awaited<ReturnType<typeof syncWithCloud>> | null
+  outcome: RevSyncOutcome | null
   error?: string
   errorStatus?: number
   convergeError?: string
@@ -41,85 +69,165 @@ export interface TargetResult {
 
 export interface MultiTargetSyncResult {
   results: TargetResult[]
-  /** 收敛后的最终本地明文 vault（adopted 时为被采纳的云端版本，否则为入参原值） */
+  /** 收敛后的最终本地明文 vault（primary 采纳/合并与 replica 误配置并入都会推进；preview 时为预览） */
   finalVaultJson: string
-  /** 本轮是否从某目标采纳了较新的云端版本 */
+  /** 本轮 final 是否偏离入参（宿主据此 persistAdopted；preview 时表示「将采纳」的预览） */
   adopted: boolean
-  /** 各目标最终基线 hash（宿主持久化用，仅含本轮处理成功的目标） */
-  hashes: Record<string, string>
+  /** 各目标 outcome.conflicts 拼接（merged 分支产出） */
+  conflicts: EntryConflict[]
+  /** 各目标推导后的本端持久基线；失败目标=原样。preview 模式全为入参原样，宿主不得持久化 */
+  states: Record<string, SourceSyncState>
 }
 
-/**
- * 多目标顺序同步 + 收敛：
- * 1. 逐目标 syncWithCloud（独立基线）；downloaded / conflict-resolved 且有 envelopeJson 时采纳为当前内容，
- *    赢家基线 = 该目标 outcome.hash（远端字节摘要，见 syncOrchestrator 冲突分支返回值）。
- * 2. 收敛终局：凡基线 ≠ 赢家 hash 的目标（含本轮失败过的）一律 pushEnvelope 回推赢家内容——成功则
- *    基线更新为新信封字节摘要、outcome 就地改写为 uploaded（类型完整，其余字段置 undefined）；
- *    失败则记 convergeError，outcome 保持原值。基线已等于赢家（如采纳源自身）跳过不重推。
- */
+function errorFields(err: unknown): { error: string; errorStatus?: number } {
+  const status = (err as { status?: unknown } | null)?.status
+  return {
+    error: err instanceof Error ? err.message : String(err),
+    ...(typeof status === 'number' ? { errorStatus: status } : {}),
+  }
+}
+
 export async function syncMultipleTargets(opts: {
-  targets: CloudTargetInput[]
+  targets: MultiTargetInput[]
   vaultJson: string
   password: string
-  onConflictBackup?: (key: string, bytes: Uint8Array) => ConflictBackupResult
-  /** KDF 档位（设计 §2）：透传给全部上传/收敛回推/冲突副本 envelope 生成；缺省 balanced */
   profile?: KdfProfile
+  /** 本机设备标识（写入 v3 sync 头，宿主经 core loadDeviceId 持久化） */
+  deviceId: string
+  /** preview：整轮只读（任何目标不 put 不存副本、states 零推导）；缺省 apply */
+  mode?: 'apply' | 'preview'
+  onConflictBackup?: (key: string, bytes: Uint8Array) => ConflictBackupResult
 }): Promise<MultiTargetSyncResult> {
-  const { targets, vaultJson, password, onConflictBackup, profile } = opts
-  let current = vaultJson
-  let adopted = false
-  let winnerHash: string | undefined
-  const results: TargetResult[] = []
-  const hashes: Record<string, string> = {}
+  const { targets, vaultJson, password, profile, deviceId, onConflictBackup } = opts
+  const mode = opts.mode ?? 'apply'
+  // 裁定 1：enabled + role 双校验（全 disabled 时可残留 role='primary' 的源，不得误判为活动目标）
+  const primary = targets.find((t) => t.source.enabled && t.source.role === 'primary')
+  if (!primary) throw new Error('no primary target')
+  const replicas = targets.filter((t) => t.source.enabled && t.source.role === 'replica')
 
-  for (const t of targets) {
+  const results: TargetResult[] = []
+  const states: Record<string, SourceSyncState> = {}
+  const conflicts: EntryConflict[] = []
+  const replicaRevs: Record<string, number> = { ...(primary.state.primaryRev ?? {}) }
+  let final = vaultJson
+
+  // ---- primary 裁决：四出口推拉，产出 final ----
+  let primaryOutcome: RevSyncOutcome | null = null
+  try {
+    primaryOutcome = await syncWithCloudRev({
+      backend: primary.backend,
+      path: primary.path,
+      vaultJson,
+      password,
+      profile,
+      state: primary.state,
+      deviceId,
+      mode,
+      onConflictBackup: (bytes) => onConflictBackup?.(primary.key, bytes),
+    })
+    if (primaryOutcome.conflicts) conflicts.push(...primaryOutcome.conflicts)
+  } catch (err) {
+    // primary 失败=本轮终止该源：final 保持本地入参，replica 仍按本地内容推平
+    results.push({ key: primary.key, outcome: null, ...errorFields(err) })
+  }
+  if (primaryOutcome !== null) {
+    results.push({ key: primary.key, outcome: primaryOutcome })
+    // downloaded/merged：final 采纳云端/合并结果（uploaded/in-sync 的 final 保持入参）
+    if (
+      (primaryOutcome.action === 'downloaded' || primaryOutcome.action === 'merged') &&
+      primaryOutcome.appliedVaultJson !== undefined
+    ) {
+      final = primaryOutcome.appliedVaultJson
+    }
+    // state 推导（裁定 5）：uploaded → newRev+实际上传内容；downloaded/merged → remoteRev+采纳内容
+    // （remoteRev null 保持原值不写 0）；in-sync → 原 state 不变
+    if (mode === 'apply' && primaryOutcome.action !== 'in-sync') {
+      states[primary.key] = {
+        ...primary.state,
+        lastKnownRemoteRev:
+          (primaryOutcome.action === 'uploaded' ? primaryOutcome.newRev : primaryOutcome.remoteRev) ??
+          primary.state.lastKnownRemoteRev,
+        baseSnapshot: final,
+      }
+    }
+  }
+
+  // ---- replica 收敛复制：逐个以 final 为本地内容，跳过/推平/并入 ----
+  for (const t of replicas) {
+    const result: TargetResult = { key: t.key, outcome: null }
     try {
-      const outcome = await syncWithCloud({
+      let r = await syncWithCloudRev({
         backend: t.backend,
         path: t.path,
-        vaultJson: current,
+        vaultJson: final,
         password,
-        localHash: t.hash,
-        onConflictBackup: (bytes) => onConflictBackup?.(t.key, bytes),
         profile,
+        state: t.state,
+        deviceId,
+        mode,
+        onConflictBackup: (bytes) => onConflictBackup?.(t.key, bytes),
       })
-      hashes[t.key] = outcome.hash
-      if ((outcome.action === 'downloaded' || outcome.action === 'conflict-resolved') && outcome.envelopeJson !== undefined) {
-        current = outcome.envelopeJson
-        adopted = true
-        // downloaded/conflict-resolved 的 outcome.hash 即远端 get 字节的 sha256，直接作赢家基线
-        winnerHash = outcome.hash
+      if (r.action === 'downloaded' && r.appliedVaultJson !== undefined) {
+        // 误配置保护（裁定 4）：replica 云端较新且 final 未动 → 远端内容先两方并入 final
+        //（base 未知，mergeVaults(null, ours=final, theirs=replica) 防丢），再以远端现值刷新
+        // replica 基线并推平（outcome 先记 downloaded，推平失败时不覆盖——裁定 8）
+        result.outcome = r
+        const mergedJson = JSON.stringify(mergeVaults(null, JSON.parse(final), JSON.parse(r.appliedVaultJson)).vault)
+        final = mergedJson // 先并入 final（数据不丢），再推平——推平失败不回滚并入（随 finalVaultJson 交宿主）
+        r = await syncWithCloudRev({
+          backend: t.backend,
+          path: t.path,
+          vaultJson: mergedJson,
+          password,
+          profile,
+          state: { lastKnownRemoteRev: r.remoteRev ?? t.state.lastKnownRemoteRev, baseSnapshot: r.appliedVaultJson },
+          deviceId,
+          mode,
+          onConflictBackup: (bytes) => onConflictBackup?.(t.key, bytes),
+        })
+      } else if (r.action === 'merged' && r.appliedVaultJson !== undefined) {
+        // 双方都动：syncWithCloudRev 已合并并上传（rev 单调、base 校验失败自动降级两方），
+        // final 采纳合并结果——误配置写入的内容不丢
+        final = r.appliedVaultJson
       }
-      results.push({ key: t.key, outcome })
+      result.outcome = r
+      if (r.conflicts) conflicts.push(...r.conflicts)
+      if (mode === 'apply') {
+        // replica state 推导：跳过（in-sync）原样语义由「以远端现值等价刷新」达成（内容/时钟均等价）；
+        // 推平/合并成功 → newRev+final；downloaded 残留不可能（上方必接二次调用）
+        states[t.key] = {
+          ...t.state,
+          lastKnownRemoteRev: (r.newRev ?? r.remoteRev) ?? t.state.lastKnownRemoteRev,
+          baseSnapshot: final,
+        }
+        // primaryRev 记录推进（primary 承载制）：跳过=远端现值（与记录一致或刷新漂移），推平=newRev
+        if (r.newRev !== undefined) replicaRevs[t.key] = r.newRev
+        else if (r.remoteRev !== null) replicaRevs[t.key] = r.remoteRev
+      } else {
+        states[t.key] = t.state
+      }
     } catch (err) {
-      // errorStatus：结构化 status 透传（审查 I2，CloudHttpError 才有；其余错误缺省）
-      const status = (err as { status?: unknown } | null)?.status
-      results.push({
-        key: t.key,
-        outcome: null,
-        error: err instanceof Error ? err.message : String(err),
-        ...(typeof status === 'number' ? { errorStatus: status } : {}),
-      })
-    }
-  }
-
-  if (winnerHash !== undefined) {
-    // 不变量：pass1 对每个目标（无论成败）都恰好产生一条 result，故 results 与 targets 按索引一一对应
-    for (let i = 0; i < targets.length; i++) {
-      const t = targets[i]!
-      if (hashes[t.key] === winnerHash) continue
-      const result = results[i]!
-      try {
-        const pushed = await pushEnvelope({ backend: t.backend, path: t.path, vaultJson: current, password, profile })
-        hashes[t.key] = pushed.hash
-        result.outcome = { action: 'uploaded', envelopeJson: undefined, conflictBackup: undefined, hash: pushed.hash }
-        delete result.error // pass1 失败残留的 error 随收敛改写清除——该目标已有确定的 uploaded 结果
-        delete result.errorStatus // 同上：结构化 status 一并清除，避免残留误导凭据失效判定
-      } catch (err) {
-        result.convergeError = err instanceof Error ? err.message : String(err)
+      const fields = errorFields(err)
+      if (result.outcome === null) {
+        // 首次调用即失败：outcome=null + error/errorStatus，state 原样（下轮重做）
+        Object.assign(result, fields)
+      } else {
+        // 推平阶段失败：convergeError，不覆盖原 outcome（裁定 8），state 原样
+        result.convergeError = fields.error
       }
+      states[t.key] = t.state
     }
+    results.push(result)
   }
 
-  return { results, finalVaultJson: current, adopted, hashes }
+  // states 恒含所有参与目标：primary 键补齐（preview/失败/in-sync=原样），apply 模式挂 primaryRev
+  // 记录（承载制，replica 已知 rev 汇总）；preview 模式全键原样，宿主不得持久化
+  const primaryState = states[primary.key] ?? primary.state
+  if (mode === 'apply' && (replicas.length > 0 || primaryState.primaryRev !== undefined)) {
+    states[primary.key] = { ...primaryState, primaryRev: replicaRevs }
+  } else {
+    states[primary.key] = primaryState
+  }
+
+  return { results, finalVaultJson: final, adopted: final !== vaultJson, conflicts, states }
 }

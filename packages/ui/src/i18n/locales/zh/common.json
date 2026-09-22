@@ -319,6 +319,7 @@
     "actionUploaded": "已上传",
     "actionDownloaded": "已下载",
     "actionConflictResolved": "冲突已解决",
+    "actionMerged": "已合并",
     "actionInSync": "已是最新",
     "endpointPlaceholder": "Endpoint（可选，如 http://localhost:9000）"
   },
@@ -709,7 +710,8 @@
       "uploaded": "已上传",
       "downloaded": "已下载",
       "conflictResolved": "冲突已解决",
-      "inSync": "已是最新"
+    "merged": "已合并",
+    "inSync": "已是最新"
     }
   },
   "cloudAuto": {

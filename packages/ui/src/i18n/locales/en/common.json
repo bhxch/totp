@@ -319,6 +319,7 @@
     "actionUploaded": "Uploaded",
     "actionDownloaded": "Downloaded",
     "actionConflictResolved": "Conflict resolved",
+    "actionMerged": "Merged",
     "actionInSync": "Up to date",
     "endpointPlaceholder": "Endpoint (optional, e.g. http://localhost:9000)"
   },
@@ -709,7 +710,8 @@
       "uploaded": "Uploaded",
       "downloaded": "Downloaded",
       "conflictResolved": "Conflict resolved",
-      "inSync": "Up to date"
+      "merged": "Merged",
+    "inSync": "Up to date"
     }
   },
   "cloudAuto": {

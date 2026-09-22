@@ -25,7 +25,7 @@ import {
   BACKUP_NAME_RE, createBackupEnvelope, enforceRemoteRetention, isAuthError, isAuthErrorCode,
   openBackupEnvelope, resolveObjectPath, resolveTimestampPath, sha256Hex, syncMultipleTargets,
   type BackupSource, type CloudBackend, type CloudCred, type CloudSyncOutcome, type ConflictBackupResult,
-  type KdfProfile, type TargetResult,
+  type KdfProfile, type RevSyncAction, type SourceSyncState, type TargetResult,
 } from '@totp/core'
 
 export interface CloudRunnerDeps {
@@ -37,9 +37,18 @@ export interface CloudRunnerDeps {
   getVaultJson(): string
   /** 启用源与其凭据对（宿主装配：元数据自 backupSources、凭据自保管区 credsCache；锁定态凭据缺失自然为空） */
   loadSources(): Promise<Array<{ source: BackupSource; cred: CloudCred }>>
-  /** 该源「远端字节摘要」基线（sourceRevs；pull 通道的去重门 + 推拉通道的 cloudRev，跨会话持久化） */
+  /** 该源「远端字节摘要」基线（sourceRevs；pull 通道的去重门，跨会话持久化）。
+   *  @deprecated 推拉通道的 rev 基线已改走 loadSourceState（T8），此通道仅 pullAll 仍消费，T9 后随删 */
   loadTargetHash(sourceId: string): Promise<string | null>
+  /** @deprecated 同 loadTargetHash */
   saveTargetHash(sourceId: string, hash: string | null): Promise<void>
+  /** 该源 rev 基线（core loadSyncState；spec §1.2 SourceSyncState，primary 的 primaryRev 承载各
+   *  replica 已知 rev），无记录 → 空状态 */
+  loadSourceState(sourceId: string): Promise<SourceSyncState>
+  /** 该源 rev 基线持久化（core saveSyncState；编排返回 states 逐源回写，失败源=原样幂等） */
+  saveSourceState(sourceId: string, state: SourceSyncState): Promise<void>
+  /** 本机设备标识（core loadDeviceId 持久 UUID，写入 v3 sync 头） */
+  deviceId(): Promise<string>
   /** 凭据 → backend 实例。生产=core 五工厂 dispatch；测试=注入 fake */
   makeBackend(cred: CloudCred): CloudBackend
   /** 采纳云端版本后整体替换本地存储（生产=store.replaceAllOp） */
@@ -71,10 +80,13 @@ export interface CloudRunnerDeps {
   onAuthFailure?(err: string, status?: number): void
 }
 
-/** 同步动作 → 状态文案 key（D2：原 CLOUD_ACTION_LABEL zh 常量上移至 common.json cloudRunner.action.*） */
-const ACTION_LABEL_KEY: Record<CloudSyncOutcome['action'], string> = {
+/** 同步动作 → 状态文案 key（D2：原 CLOUD_ACTION_LABEL zh 常量上移至 common.json cloudRunner.action.*）。
+ *  键 = rev 编排四出口（RevSyncAction，merged 为主线合并文案）∪ pull 通道本地标签 conflict-resolved
+ *  （旧 CloudSyncOutcome['action'] 收窄，该 deprecated 类型 T9 随 pull 通道改造后删除） */
+const ACTION_LABEL_KEY: Record<RevSyncAction | 'conflict-resolved', string> = {
   uploaded: 'cloudRunner.action.uploaded',
   downloaded: 'cloudRunner.action.downloaded',
+  merged: 'cloudRunner.action.merged',
   'conflict-resolved': 'cloudRunner.action.conflictResolved',
   'in-sync': 'cloudRunner.action.inSync',
 }
@@ -246,24 +258,29 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
           backend: deps.makeBackend(cred),
           // keep 源每次写新时间戳文件；overwrite 源写固定对象路径（均经 core 校验/缺省回落）
           path: source.retention.type === 'keep' ? resolveTimestampPath(cred, new Date()) : resolveObjectPath(cred),
-          hash: await deps.loadTargetHash(source.id),
+          source,
+          state: await deps.loadSourceState(source.id),
         })),
       )
       const r = await syncMultipleTargets({
         targets: inputs,
         vaultJson,
         password: secret,
-        // 审查 I9：saveConflictBackup 的 Promise 原样交回 core（syncWithCloud await 该回调），
+        deviceId: await deps.deviceId(),
+        // 审查 I9：saveConflictBackup 的 Promise 原样交回 core（syncWithCloudRev await 该回调），
         // 写盘拒绝 → 该目标同步失败（outcome=null + error），防止无本地副本时照常采纳远端并回推
         onConflictBackup: (key, bytes) => deps.saveConflictBackup?.(key, bytes),
         profile: deps.kdfProfile?.(),
       })
-      // 采纳先于基线回写（审查裁定）：persistAdopted 失败则本轮 hashes 一并不落盘，下轮基线
-      // 缺失/为旧值 → 自动重试下载；若先写基线，失败会使下轮全线 in-sync，云端较新版本永远
+      // 采纳先于基线回写（审查裁定）：persistAdopted 失败则本轮 states 一并不落盘，下轮基线
+      // 缺失/为旧值 → 自动重试下载/合并；若先写基线，失败会使下轮全线 in-sync，云端较新版本永远
       // 不再被自动下载（静默僵持无自愈）
       if (r.adopted) await deps.persistAdopted(r.finalVaultJson)
-      // 回写各源基线：成功目标=新 hash；失败目标（hashes 无键）=null 即删除基线（下轮全量重比）
-      for (const t of inputs) await deps.saveTargetHash(t.key, r.hashes[t.key] ?? null)
+      // 回写各源 rev 基线：states 恒含参与源（失败源=原样，回写幂等；无 primary 时 core 抛错走 catch 不及此）
+      for (const t of inputs) {
+        const st = r.states[t.key]
+        if (st) await deps.saveSourceState(t.key, st)
+      }
       // keep 源滚动删除（基线回写后执行；复用 input.backend 实例，onCredChange 回写口径一致）：
       // 仅对 outcome=uploaded（上传/收敛回推成功）的源执行——in-sync 无新文件，失败源无可清理依据。
       // per-source try/catch 隔离：listBackups 网络抛错或宿主回调抛错只损失本轮清理（下轮重试），

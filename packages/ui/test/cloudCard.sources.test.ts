@@ -40,6 +40,9 @@ function makePlatform(over: Partial<CloudPlatform> = {}): CloudPlatform {
     persistDownloaded: vi.fn().mockResolvedValue(undefined),
     loadTargetHash: vi.fn().mockResolvedValue(null),
     saveTargetHash: vi.fn().mockResolvedValue(undefined),
+    loadSourceState: vi.fn(async () => ({ lastKnownRemoteRev: null, baseSnapshot: null })),
+    saveSourceState: vi.fn(async () => undefined),
+    deviceId: vi.fn(async () => 'dev-test'),
     autoPrefs: { get: () => ({ onChange: false, onInterval: false, intervalMinutes: 60 }), set: () => {} },
   }
   return { ...base, ...over }
@@ -230,10 +233,11 @@ describe('CloudCard（源列表 plan16 T8）', () => {
     const backend = fakeListBackend()
     vi.mocked(createCloudBackend).mockImplementation(() => backend)
     mockedSync.mockResolvedValue({
-      results: [{ key: 'k1', outcome: { action: 'uploaded', hash: 'h1' } }],
+      results: [{ key: 'k1', outcome: { action: 'uploaded', remoteRev: null, newRev: 1 } }],
       finalVaultJson: VALID_VAULT,
       adopted: false,
-      hashes: { k1: 'h1' },
+      conflicts: [],
+      states: { 'k1': { lastKnownRemoteRev: 1, baseSnapshot: VALID_VAULT } },
     })
     const cred = { ...WEBDAV_CRED, objectPath: 'dir/totp-backup.totpbackup' }
     const p = makePlatform({
@@ -256,10 +260,11 @@ describe('CloudCard（源列表 plan16 T8）', () => {
     const delSpy = vi.spyOn(plain, 'delete')
     vi.mocked(createCloudBackend).mockImplementation(() => plain)
     mockedSync.mockResolvedValue({
-      results: [{ key: 'k1', outcome: { action: 'uploaded', hash: 'h1' } }],
+      results: [{ key: 'k1', outcome: { action: 'uploaded', remoteRev: null, newRev: 1 } }],
       finalVaultJson: VALID_VAULT,
       adopted: false,
-      hashes: { k1: 'h1' },
+      conflicts: [],
+      states: { 'k1': { lastKnownRemoteRev: 1, baseSnapshot: VALID_VAULT } },
     })
     const p = makePlatform({
       loadSources: vi.fn().mockResolvedValue([src({ id: 'k1', name: '滚动', retention: { type: 'keep', n: 2 } })]),
@@ -282,12 +287,13 @@ describe('CloudCard（源列表 plan16 T8）', () => {
     vi.mocked(createCloudBackend).mockImplementation((cred) => (cred.backend === 'webdav' ? bad : plain))
     mockedSync.mockResolvedValue({
       results: [
-        { key: 'k1', outcome: { action: 'uploaded', hash: 'h1' } },
-        { key: 's2', outcome: { action: 'uploaded', hash: 'h2' } },
+        { key: 'k1', outcome: { action: 'uploaded', remoteRev: null, newRev: 1 } },
+        { key: 's2', outcome: { action: 'uploaded', remoteRev: null, newRev: 2 } },
       ],
       finalVaultJson: VALID_VAULT,
       adopted: false,
-      hashes: { k1: 'h1', s2: 'h2' },
+      conflicts: [],
+      states: { 'k1': { lastKnownRemoteRev: 1, baseSnapshot: VALID_VAULT }, 's2': { lastKnownRemoteRev: 1, baseSnapshot: VALID_VAULT } },
     })
     const p = makePlatform({
       loadSources: vi.fn().mockResolvedValue([
@@ -300,9 +306,10 @@ describe('CloudCard（源列表 plan16 T8）', () => {
     await clickSync(w)
     const statuses = w.findAll('.target-status').map((s) => s.text())
     expect(statuses).toEqual(['已上传（滚动清理失败，下轮同步重试）', '已上传'])
-    // 异常未中断基线回写：两源基线均按成功结果落盘
-    expect(p.saveTargetHash).toHaveBeenCalledWith('k1', 'h1')
-    expect(p.saveTargetHash).toHaveBeenCalledWith('s2', 'h2')
+    // 异常未中断基线回写：两源 rev 基线均按成功结果落盘
+    const stOut = { lastKnownRemoteRev: 1, baseSnapshot: VALID_VAULT }
+    expect(p.saveSourceState).toHaveBeenCalledWith('k1', stOut)
+    expect(p.saveSourceState).toHaveBeenCalledWith('s2', stOut)
   })
 
   it('S6 GDrive 回存按 sourceId：仅触发源更新 saveCred(id, next)，同类型另一源不受影响', async () => {
@@ -320,12 +327,13 @@ describe('CloudCard（源列表 plan16 T8）', () => {
     })
     mockedSync.mockResolvedValue({
       results: [
-        { key: 'g1', outcome: { action: 'uploaded', hash: 'h1' } },
-        { key: 'g2', outcome: { action: 'uploaded', hash: 'h2' } },
+        { key: 'g1', outcome: { action: 'uploaded', remoteRev: null, newRev: 1 } },
+        { key: 'g2', outcome: { action: 'uploaded', remoteRev: null, newRev: 2 } },
       ],
       finalVaultJson: VALID_VAULT,
       adopted: false,
-      hashes: { g1: 'h1', g2: 'h2' },
+      conflicts: [],
+      states: { 'g1': { lastKnownRemoteRev: 1, baseSnapshot: VALID_VAULT }, 'g2': { lastKnownRemoteRev: 1, baseSnapshot: VALID_VAULT } },
     })
     const w = await mountCard(p)
     await clickSync(w)
@@ -340,10 +348,11 @@ describe('CloudCard（源列表 plan16 T8）', () => {
 
   it('S7 锁定态缺凭据源：状态行「缺少凭据」跳过不阻塞其他源；全部缺失时报错且不调编排', async () => {
     mockedSync.mockResolvedValue({
-      results: [{ key: 's1', outcome: { action: 'uploaded', hash: 'h1' } }],
+      results: [{ key: 's1', outcome: { action: 'uploaded', remoteRev: null, newRev: 1 } }],
       finalVaultJson: VALID_VAULT,
       adopted: false,
-      hashes: { s1: 'h1' },
+      conflicts: [],
+      states: { 's1': { lastKnownRemoteRev: 1, baseSnapshot: VALID_VAULT } },
     })
     // 一有一无：缺失源状态行提示、有凭据源正常同步
     const p = makePlatform({
@@ -379,7 +388,7 @@ describe('CloudCard（源列表 plan16 T8）', () => {
 
   it('S9 kdfProfile 透传：platform.kdfProfile 提供时随 syncMultipleTargets 下发', async () => {
     vi.mocked(createCloudBackend).mockImplementation(() => ({ id: 'webdav', put: async () => {}, get: async () => null, delete: async () => {}, exists: async () => false }))
-    mockedSync.mockResolvedValue({ results: [], finalVaultJson: VALID_VAULT, adopted: false, hashes: {} })
+    mockedSync.mockResolvedValue({ results: [], finalVaultJson: VALID_VAULT, adopted: false, conflicts: [], states: {} })
     const p = makePlatform({
       loadSources: vi.fn().mockResolvedValue([src({ id: 's1' })]),
       creds: { s1: WEBDAV_CRED },
