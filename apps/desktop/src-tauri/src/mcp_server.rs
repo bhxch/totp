@@ -309,6 +309,73 @@ pub async fn bridge_call(
     }
 }
 
+/// action 工具是否需要逐次桌面确认（spec §6.2）：token 档免（持有 token 即主人）；
+/// read 恒否（现有门控行为完全不变）。其余档逐次确认——无 TTL 无 trust，每次都问
+pub fn action_confirm_required(kind: ToolKind, mode: GateMode) -> bool {
+    kind == ToolKind::Action && mode != GateMode::Token
+}
+
+/// 工具级确认窗口（spec §6.2）：现有 5s 桥超时对确认场景延长为 60s
+pub const TOOL_CONFIRM_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// 等待确认回传并解析（tool_confirm_with 的可测核心，不依赖 AppHandle 构造）：
+/// Ok(Ok(Ok(v))) 按 `v.as_bool()==true` 判放行（false=用户拒绝 → Ok(false)）；
+/// Ok(Ok(Err)) 透传前端错误；发送端被弃/超时 → 回收表项并 Err。所有 Err 均不放行（fail-closed）
+async fn await_confirm_response(
+    bridge: &BridgeShared,
+    id: u64,
+    rx: oneshot::Receiver<Result<serde_json::Value, String>>,
+    timeout: Duration,
+) -> Result<bool, String> {
+    match tokio::time::timeout(timeout, rx).await {
+        Ok(Ok(Ok(v))) => Ok(v.as_bool() == Some(true)),
+        Ok(Ok(Err(e))) => {
+            bridge.take(id);
+            Err(e)
+        }
+        _ => {
+            bridge.take(id);
+            Err("tool confirmation timed out or failed".into())
+        }
+    }
+}
+
+/// 工具级逐次确认：emit `mcp://tool-approval` {id, ident, tool}（前端审批队列弹
+/// 「允许执行 <tool>？」Allow/Deny），响应复用既有 mcp_respond 命令与 BridgeShared oneshot
+/// （allow=result true，deny=false）。超时/通道失败/用户拒绝一律不放行（fail-closed）。
+/// 无头模式确认事件发往隐藏窗口=无人响应 → 超时拒绝，符合既有无头设计裁定（应配 token 档）
+async fn tool_confirm(
+    app: &tauri::AppHandle,
+    bridge: &BridgeShared,
+    ident: &str,
+    tool: &str,
+) -> Result<bool, String> {
+    tool_confirm_with(app, bridge, ident, tool, TOOL_CONFIRM_TIMEOUT).await
+}
+
+/// tool_confirm 注入窗口的测试变体：生产走 tool_confirm 固定 60s
+async fn tool_confirm_with(
+    app: &tauri::AppHandle,
+    bridge: &BridgeShared,
+    ident: &str,
+    tool: &str,
+    timeout: Duration,
+) -> Result<bool, String> {
+    use tauri::Emitter;
+    let id = bridge.alloc_id();
+    let (tx, rx) = oneshot::channel();
+    bridge.insert(id, tx);
+    if let Err(e) = app.emit_to(
+        "main",
+        "mcp://tool-approval",
+        serde_json::json!({ "id": id, "ident": ident, "tool": tool }),
+    ) {
+        bridge.take(id);
+        return Err(format!("confirm dialog unavailable: {e}"));
+    }
+    await_confirm_response(bridge, id, rx, timeout).await
+}
+
 /// Host 必须是 loopback（DNS rebinding 防护）；Origin 出现时必须是 http loopback 同机（不比端口）
 pub fn validate_host_origin(host: Option<&str>, origin: Option<&str>) -> Result<(), &'static str> {
     fn is_loopback_host(h: &str) -> bool {
@@ -524,6 +591,22 @@ impl TotpMcp {
                     "approval pending: the user must approve this client in the TOTP app",
                     None,
                 ));
+            }
+        }
+        // action 工具逐次确认（spec §6.2）：客户端级审批（decide_gate/once-TTL）通过后
+        // 再叠加工具级确认——token 档免（持有 token 即主人），其余档每次都问；
+        // deny/超时/通道失败 fail-closed。read 工具零变化（向后兼容）
+        let kind = tool_kind(tool).expect("exposure_check guarantees known tool");
+        if action_confirm_required(kind, cfg.mode) {
+            match tool_confirm(&self.app, &self.bridge, &ident, tool).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    return Err(McpError::invalid_params(
+                        "tool call denied by user in the TOTP app",
+                        None,
+                    ));
+                }
+                Err(e) => return Err(McpError::invalid_params(e, None)),
             }
         }
         bridge_call(&self.app, &self.bridge, "main", tool, args)
@@ -1197,6 +1280,111 @@ mod tests {
         cfg2.exposed_tools.push("trigger_sync".into());
         assert_eq!(exposure_check(&cfg2, "trigger_sync"), Ok(()));
         assert!(exposure_check(&cfg2, "nope").is_err());
+    }
+
+    // 上批次审查建议：save 侧 retain 过滤断言（未知工具名不得落盘）
+    #[test]
+    fn save_filters_unknown_names_from_exposed_tools() {
+        let p = tmp_path("exposed-retain");
+        let cfg = McpConfig {
+            exposed_tools: vec!["list_accounts".into(), "bogus".into()],
+            ..McpConfig::default()
+        };
+        save_mcp_config_inner(&p, &cfg).unwrap();
+        assert_eq!(
+            load_mcp_config_inner(&p).exposed_tools,
+            vec!["list_accounts".to_string()],
+            "保存侧滤除未定义工具名"
+        );
+        let _ = std::fs::remove_file(&p);
+    }
+
+    // ==== Task 3：action 工具逐次确认通道（spec §6.2）====
+
+    #[test]
+    fn action_confirm_matrix() {
+        // token 档：action 免确认（持有 token 即主人）
+        assert!(!action_confirm_required(ToolKind::Action, GateMode::Token));
+        // 其余档：逐次确认（无 TTL 无 trust，每次都问）
+        assert!(action_confirm_required(ToolKind::Action, GateMode::Wildcard));
+        assert!(action_confirm_required(ToolKind::Action, GateMode::Exact));
+        assert!(action_confirm_required(
+            ToolKind::Action,
+            GateMode::AlwaysAsk
+        ));
+        // read：任何档都不加确认（向后兼容）
+        assert!(!action_confirm_required(ToolKind::Read, GateMode::AlwaysAsk));
+        assert!(!action_confirm_required(ToolKind::Read, GateMode::Token));
+    }
+
+    #[test]
+    fn exposure_and_confirm_stack_for_action_tool() {
+        // 暴露面×确认叠加（spec §6.2 组合语义，纯函数级）：默认不暴露的 action 工具
+        // 勾选后先过 exposure_check，wildcard 档仍须逐次确认
+        let mut cfg = McpConfig::default();
+        assert!(
+            exposure_check(&cfg, "trigger_sync").is_err(),
+            "action 工具默认不暴露"
+        );
+        cfg.exposed_tools.push("trigger_sync".into());
+        assert_eq!(exposure_check(&cfg, "trigger_sync"), Ok(()));
+        let kind = tool_kind("trigger_sync").expect("注册表含 trigger_sync");
+        assert!(
+            action_confirm_required(kind, cfg.mode),
+            "wildcard 档暴露后仍逐次确认"
+        );
+    }
+
+    /// tool_confirm 的等待+解析核心（emit 之外的可测单元，不依赖 AppHandle 构造）：
+    /// 假 bridge 手动 send 模拟前端经 mcp_respond 回传
+    #[tokio::test]
+    async fn tool_confirm_response_parsing() {
+        let bridge = BridgeShared::default();
+        // allow：前端回 {ok:true, result:true} → Ok(true)
+        let id = bridge.alloc_id();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        bridge.insert(id, tx);
+        bridge.respond(id, Ok(serde_json::json!(true))).unwrap();
+        assert_eq!(
+            await_confirm_response(&bridge, id, rx, Duration::from_secs(1)).await,
+            Ok(true),
+            "result:true 必须放行"
+        );
+        // deny：前端回 {ok:true, result:false} → Ok(false)（gated_call 换用户拒绝文案）
+        let id = bridge.alloc_id();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        bridge.insert(id, tx);
+        bridge.respond(id, Ok(serde_json::json!(false))).unwrap();
+        assert_eq!(
+            await_confirm_response(&bridge, id, rx, Duration::from_secs(1)).await,
+            Ok(false),
+            "result:false 是用户拒绝而非通道故障"
+        );
+        // 前端显式回传错误（ok:false + error）→ Err 原样透传（fail-closed）
+        let id = bridge.alloc_id();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        bridge.insert(id, tx);
+        bridge
+            .respond(id, Err("frontend error".into()))
+            .unwrap();
+        assert_eq!(
+            await_confirm_response(&bridge, id, rx, Duration::from_secs(1)).await,
+            Err("frontend error".to_string()),
+        );
+    }
+
+    #[tokio::test]
+    async fn tool_confirm_timeout_fails_closed() {
+        // 不接前端：确认窗口内无响应 → Err（缩短窗口注入），且 pending 表项回收无泄漏
+        let bridge = BridgeShared::default();
+        let id = bridge.alloc_id();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        bridge.insert(id, tx);
+        let r = await_confirm_response(&bridge, id, rx, Duration::from_millis(50)).await;
+        assert!(r.is_err(), "超时/通道不可用一律拒绝");
+        assert!(bridge.take(id).is_none(), "超时后 pending 表项必须已清理");
+        // 对外语义固定 60s（比现有 5s 桥超时延长，spec §6.2）
+        assert_eq!(TOOL_CONFIRM_TIMEOUT, Duration::from_secs(60));
     }
 
     // CLI 覆盖合并（验收条目13）：强制 enabled + 字段生效（纯函数语义；
