@@ -12,7 +12,7 @@
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^2.1.0",
-    "simple-icons": "^16.31.0",
+    "simple-icons": "16.31.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
   },

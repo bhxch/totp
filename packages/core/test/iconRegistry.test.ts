@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import builtinData from '../src/icons/builtin.json'
 import { getBuiltinIcons, normalizeIssuer, recommendBuiltinIcon, suggestIcons } from '../src/icons/registry'
 
 describe('iconRegistry', () => {
@@ -40,6 +41,13 @@ describe('builtin icons 扩充回归', () => {
   it('高频 issuer 推荐命中不下降', () => {
     for (const issuer of ['GitHub', 'Google', 'Cloudflare', 'Discord', 'Bilibili', 'Steam', 'Bitwarden']) {
       expect(recommendBuiltinIcon(issuer)).not.toBeNull()
+    }
+  })
+
+  it('别名无悬空引用：所有别名值都存在于内置图标集', () => {
+    const data = builtinData as { icons: Record<string, unknown>; aliases: Record<string, string> }
+    for (const [alias, id] of Object.entries(data.aliases)) {
+      expect(id in data.icons, `别名 ${alias} 悬空指向不存在的图标 id: ${id}`).toBe(true)
     }
   })
 })

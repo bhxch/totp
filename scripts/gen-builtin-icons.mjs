@@ -86,7 +86,6 @@ const ALIASES = {
   claudeai: 'claude',
   battlenet: 'battledotnet',
   battle: 'battledotnet',
-  playstation: 'playstation5',
   psn: 'playstation5',
   ps5: 'playstation5',
   gog: 'gogdotcom',
@@ -148,18 +147,19 @@ function main() {
   }
   if (slugs.length < 64) throw new Error(`BRANDS 需至少 64 项，当前 ${slugs.length}`)
 
-  for (const [alias, id] of Object.entries(ALIASES)) {
-    if (normalizeKey(alias) !== alias) throw new Error(`别名键未规范化: ${alias}`)
-    if (!slugs.includes(id)) throw new Error(`别名 ${alias} 指向未收录的 id: ${id}`)
-  }
-  if (Object.keys(ALIASES).length < 30) throw new Error('别名表需至少 30 条')
-
   const icons = {}
   for (const slug of slugs) {
     if (!bySlug.has(slug)) continue
     const { title, path } = bySlug.get(slug)
     icons[slug] = { id: slug, title, path }
   }
+
+  // 别名校验以实际生成结果为准：候选 slug 若因上游下架被跳过，别名不得悬空指向
+  for (const [alias, id] of Object.entries(ALIASES)) {
+    if (normalizeKey(alias) !== alias) throw new Error(`别名键未规范化: ${alias}`)
+    if (!(id in icons)) throw new Error(`别名 ${alias} 指向未收录的 id: ${id}`)
+  }
+  if (Object.keys(ALIASES).length < 30) throw new Error('别名表需至少 30 条')
 
   const outPath = resolve(root, 'packages/core/src/icons/builtin.json')
   mkdirSync(dirname(outPath), { recursive: true })
