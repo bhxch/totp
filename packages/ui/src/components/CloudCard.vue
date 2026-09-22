@@ -243,6 +243,35 @@ function isOneDriveDraft(d: CloudCred | undefined): d is OneDriveCred {
   return d?.backend === 'onedrive'
 }
 
+// ---------- OAuth 模式切换（spec §5⑦，仅 gdrive/onedrive）：oauth 三元组存在即 OAuth 模式 ----------
+/** 凭据模式二选（MdSegmentedButton）：与后端约定一致——cred.oauth 存在=OAuth 自动刷新，缺省=手工 token */
+const AUTH_MODE_OPTIONS = [
+  { value: 'manual', label: t('cloudCard.oauthModeManual') },
+  { value: 'oauth', label: t('cloudCard.oauthModeOAuth') },
+]
+/** gdrive/onedrive 草稿合并守卫（模式切换/字段写入共用；其余后端无 OAuth 模式） */
+function isOAuthCapableDraft(d: CloudCred | undefined): d is GDriveCred | OneDriveCred {
+  return d?.backend === 'gdrive' || d?.backend === 'onedrive'
+}
+/**
+ * 模式切换（互斥语义在数据本身）：切到 OAuth 惰性建空三元组，切回手工删除 oauth（未保存的
+ * 输入随之丢弃）。accessToken 保留不动——后端以它作初始 Bearer，失效时才走 oauth 刷新，
+ * 手工 token 与 OAuth 可平滑过渡；旧手工凭据不出现 oauth 字段，行为不受影响。
+ */
+function onAuthMode(d: CloudCred | undefined, mode: string | number): void {
+  if (!isOAuthCapableDraft(d)) return
+  if (mode === 'oauth') {
+    if (!d.oauth) d.oauth = { clientId: '', clientSecret: '', refreshToken: '' }
+  } else if (mode === 'manual') {
+    delete d.oauth
+  }
+}
+/** OAuth 三字段写入（oauth 为 undefined 时惰性兜底创建，防模板窄化外的竞态丢字） */
+function setOauthField(d: GDriveCred | OneDriveCred, field: 'clientId' | 'clientSecret' | 'refreshToken', v: string): void {
+  if (!d.oauth) d.oauth = { clientId: '', clientSecret: '', refreshToken: '' }
+  d.oauth[field] = v
+}
+
 /** 保留策略二选（MdSegmentedButton 选项） */
 const RETENTION_OPTIONS = [
   { value: 'overwrite', label: t('cloudCard.retentionOverwrite') },
@@ -771,10 +800,32 @@ const hasDuplicateNames = computed(() => {
             <p v-if="d.public" class="warn" role="alert">{{ t('cloudCard.gistPublicWarn') }}</p>
           </div>
           <div v-else-if="isGDriveDraft(d)" class="fields">
-            <MdTextField v-model="d.accessToken" type="password" :label="t('cloudCard.gdriveTokenLabel')" :placeholder="t('cloudCard.gdriveTokenLabel')" autocomplete="new-password" />
+            <MdSegmentedButton
+              class="auth-mode" :options="AUTH_MODE_OPTIONS"
+              :model-value="d.oauth ? 'oauth' : 'manual'" :aria-label="t('cloudCard.oauthModeAria')"
+              @update:model-value="onAuthMode(d, $event)"
+            />
+            <template v-if="d.oauth">
+              <MdTextField :model-value="d.oauth.clientId" :label="t('cloudCard.oauthClientIdLabel')" :placeholder="t('cloudCard.oauthClientIdLabel')" autocomplete="off" @update:model-value="setOauthField(d, 'clientId', $event)" />
+              <MdTextField :model-value="d.oauth.clientSecret" type="password" :label="t('cloudCard.oauthClientSecretLabel')" :placeholder="t('cloudCard.oauthClientSecretLabel')" autocomplete="new-password" @update:model-value="setOauthField(d, 'clientSecret', $event)" />
+              <MdTextField :model-value="d.oauth.refreshToken" type="password" :label="t('cloudCard.oauthRefreshTokenLabel')" :placeholder="t('cloudCard.oauthRefreshTokenLabel')" autocomplete="new-password" @update:model-value="setOauthField(d, 'refreshToken', $event)" />
+              <p class="hint">{{ t('cloudCard.oauthHint') }}</p>
+            </template>
+            <MdTextField v-else v-model="d.accessToken" type="password" :label="t('cloudCard.gdriveTokenLabel')" :placeholder="t('cloudCard.gdriveTokenLabel')" autocomplete="new-password" />
           </div>
           <div v-else-if="isOneDriveDraft(d)" class="fields">
-            <MdTextField v-model="d.accessToken" type="password" :label="t('cloudCard.onedriveTokenLabel')" :placeholder="t('cloudCard.onedriveTokenLabel')" autocomplete="new-password" />
+            <MdSegmentedButton
+              class="auth-mode" :options="AUTH_MODE_OPTIONS"
+              :model-value="d.oauth ? 'oauth' : 'manual'" :aria-label="t('cloudCard.oauthModeAria')"
+              @update:model-value="onAuthMode(d, $event)"
+            />
+            <template v-if="d.oauth">
+              <MdTextField :model-value="d.oauth.clientId" :label="t('cloudCard.oauthClientIdLabel')" :placeholder="t('cloudCard.oauthClientIdLabel')" autocomplete="off" @update:model-value="setOauthField(d, 'clientId', $event)" />
+              <MdTextField :model-value="d.oauth.clientSecret" type="password" :label="t('cloudCard.oauthClientSecretLabel')" :placeholder="t('cloudCard.oauthClientSecretLabel')" autocomplete="new-password" @update:model-value="setOauthField(d, 'clientSecret', $event)" />
+              <MdTextField :model-value="d.oauth.refreshToken" type="password" :label="t('cloudCard.oauthRefreshTokenLabel')" :placeholder="t('cloudCard.oauthRefreshTokenLabel')" autocomplete="new-password" @update:model-value="setOauthField(d, 'refreshToken', $event)" />
+              <p class="hint">{{ t('cloudCard.oauthHint') }}</p>
+            </template>
+            <MdTextField v-else v-model="d.accessToken" type="password" :label="t('cloudCard.onedriveTokenLabel')" :placeholder="t('cloudCard.onedriveTokenLabel')" autocomplete="new-password" />
           </div>
           <!-- v-if="d" 兼作类型窄化：v-for 单元素 d 在守卫链外无 undefined 窄化，vue-tsc 会报 TS18048 -->
           <MdTextField v-if="d" :model-value="d.objectPath ?? ''" :label="t('cloudCard.objectPathLabel')" :placeholder="DEFAULT_OBJECT_PATH" :aria-label="t('cloudCard.objectPathLabel')" :disabled="busy" @update:model-value="d.objectPath = $event.trim()" />
