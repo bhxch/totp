@@ -629,6 +629,11 @@ pub struct GetCodeParams {
     pub account_id: String,
 }
 
+/// 触发器工具入参（spec §6.1）：无参数——前置校验（vault 锁/备份密钥/启用源/目标）
+/// 全部在桥接侧进行，前置不满足以结构化 reason 返回，不猜测不重试
+#[derive(Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
+pub struct TriggerParams {}
+
 #[tool_router]
 impl TotpMcp {
     #[tool(
@@ -658,6 +663,34 @@ impl TotpMcp {
         let args =
             serde_json::to_value(&p).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
         let result = self.gated_call(&context, "get_code", args).await?;
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            result.to_string(),
+        )]))
+    }
+
+    #[tool(description = "Trigger a backup to all enabled local directory sources. Returns {triggered, reason?}. Never returns vault data.")]
+    async fn trigger_backup(
+        &self,
+        Parameters(_p): Parameters<TriggerParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let result = self
+            .gated_call(&context, "trigger_backup", serde_json::json!({}))
+            .await?;
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            result.to_string(),
+        )]))
+    }
+
+    #[tool(description = "Trigger a manual cloud sync across enabled targets. Returns {triggered, reason?}. Never returns vault data.")]
+    async fn trigger_sync(
+        &self,
+        Parameters(_p): Parameters<TriggerParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let result = self
+            .gated_call(&context, "trigger_sync", serde_json::json!({}))
+            .await?;
         Ok(CallToolResult::success(vec![ContentBlock::text(
             result.to_string(),
         )]))
@@ -1385,6 +1418,35 @@ mod tests {
         assert!(bridge.take(id).is_none(), "超时后 pending 表项必须已清理");
         // 对外语义固定 60s（比现有 5s 桥超时延长，spec §6.2）
         assert_eq!(TOOL_CONFIRM_TIMEOUT, Duration::from_secs(60));
+    }
+
+    // ==== Task 4：触发器工具定义（spec §6.1）====
+
+    #[test]
+    fn trigger_tools_registered_with_empty_params_schema() {
+        let router = TotpMcp::tool_router();
+        let tools = router.list_all();
+        for name in ["trigger_backup", "trigger_sync"] {
+            let t = tools
+                .iter()
+                .find(|t| &*t.name == name)
+                .unwrap_or_else(|| panic!("{name} 必须注册进 rmcp 工具路由"));
+            // 静态元数据口径与门控一致：两触发器均为 action 类
+            assert_eq!(tool_kind(name), Some(ToolKind::Action));
+            // 入参 schema：空 object（无必填参数）
+            let schema = &t.input_schema;
+            assert_eq!(schema.get("type"), Some(&serde_json::json!("object")));
+            assert!(
+                schema
+                    .get("required")
+                    .is_none_or(|r| r.as_array().is_some_and(|a| a.is_empty())),
+                "{name} 不得有必填参数"
+            );
+            assert!(
+                t.description.is_some(),
+                "{name} 必须带描述（客户端可见语义）"
+            );
+        }
     }
 
     // CLI 覆盖合并（验收条目13）：强制 enabled + 字段生效（纯函数语义；
