@@ -6,8 +6,10 @@
  * - 仅解锁会话内执行（锁定/无 secret 记 null 跳过态直接 return），跳过态可观测裁定不变；
  * - auto 内容门（spec §1.3 内容门持久化）：持久化「解密后 vault JSON 规范化 contentHashVault」基线
  *   （loadContentHash/saveContentHash，跨会话/页面重开生效，取代旧实例内存 sha256 字节门）；
- *   内容未变零网络（门在 loadSources 之前短路）；仅全部目标确定结果才刷新基线，部分失败置 null
- *   强制下轮全流程重试（防门吸收部分失败成静默僵死）；manual/pull 不设门（manual 成功后同样刷新）；
+ *   门命中降级 pull-only 轮（零写云、远端基线去重、in-sync 零处理——保持下载可达性，终审 Fix2：
+ *   desktop 唯一云触发是 auto，全静默短路使闲置端永远收不到对端变更）；仅全部目标确定结果才刷新
+ *   基线，部分失败置 null 强制下轮全流程重试（防门吸收部分失败成静默僵死）；
+ *   manual/pull 不设门（manual 成功后同样刷新）；
  * - manual 预览确认（spec §4）：先 mode:'preview' 只读跑一轮（core preview 零写云/零副本/零 state
  *   推导），任一目标 merged 时经 onManualConfirm 以预览摘要征询（缺省=直接执行，T11 接入真对话框）；
  *   false 中止本轮记跳过态，true 重跑 mode:'apply'（预览是只读的，落盘以 apply 轮为准）；
@@ -388,12 +390,17 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
         return
       }
       const vaultJson = deps.getVaultJson()
-      // auto 内容门（spec §1.3 持久化）：持久基线命中且明文内容未变 → 不发起任何同步（连 loadSources
-      // 都不进，零网络请求），记 null 跳过态；manual/pull 不设门（pull 的去重是预览判定的内容比对）
+      // auto 内容门（spec §1.3 持久化）：持久基线命中且明文内容未变 → 降级执行 pull-only 轮
+      // （终审 Fix2/I-2：门命中不再直接 return 全静默——desktop 唯一云触发是 auto，全静默使
+      // 闲置端永远收不到对端变更（downloaded 分支不可达），状态行记「内容未变」误导，同类回归面
+      // 即当年 C1 把门挪到下载前。pullAll 为 runner 内既有只读形态：零写云、远端基线去重、
+      // in-sync 零处理；不推门基线（pull 轮失败不推门语义一致）——采纳使本地内容前进后门自然
+      // 未命中，下一轮完整推拉轮收敛并自愈刷新基线）。门未命中保持完整推拉轮不变；
+      // manual/pull 不设门（pull 的去重是预览判定的内容比对）
       if (mode === 'auto') {
         const baseline = await deps.loadContentHash()
         if (baseline !== null && (await contentHashVault(vaultJson)) === baseline) {
-          deps.recordStatus?.(null, deps.t('cloudRunner.noChange'))
+          await pullAll(secret)
           return
         }
       }

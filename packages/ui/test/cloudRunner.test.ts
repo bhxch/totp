@@ -3,7 +3,7 @@
  *  原 apply 通道用例语义平移保留。新增键文案断言用 LOCAL_T 兜底（资源键随 commit E 落 zh/en，值一致） */
 import { describe, expect, it, vi } from 'vitest'
 import {
-  CloudHttpError, contentHash, createSyncEnvelope,
+  CloudHttpError, contentHash, contentHashVault, createSyncEnvelope,
   type BackupSource, type CloudBackend, type CloudCred, type SourceSyncState,
 } from '@totp/core'
 import { createCloudSyncRunner, type CloudRunnerDeps, type ManualMergePreview } from '../src/components/cloudRunner'
@@ -619,58 +619,118 @@ describe('createCloudSyncRunner', () => {
   })
 })
 
-describe('auto 内容门持久化（spec §1.3）', () => {
-  it('门①内容无变化：首轮同步成功落持久基线，自动重跑跳过（recordStatus null）且不发起 loadSources、不建 backend', async () => {
-    const { deps, loadSources, recordStatus, backends, saveContentHash } = makeDeps({
+describe('auto 内容门持久化（spec §1.3；门命中=降级 pull-only 检查而非全静默）', () => {
+  /** 有状态 rev 基线（真实往返）：完整轮 core 推导的 state 落 map，pull 轮可读 */
+  const statefulStates = () => {
+    const states = new Map<string, SourceSyncState>()
+    return {
+      loadSyncState: vi.fn(async (id: string): Promise<SourceSyncState> =>
+        states.get(id) ?? { lastKnownRemoteRev: null, baseSnapshot: null }),
+      saveSyncState: vi.fn(async (id: string, st: SourceSyncState): Promise<void> => { states.set(id, st) }),
+    }
+  }
+
+  it('门①内容无变化：首轮同步成功落持久基线；自动重跑门命中 → 降级 pull-only 检查（真实 GET、零 PUT、记 in-sync）', async () => {
+    const st = statefulStates()
+    const b = fakeBackend()
+    const { deps, loadSources, recordStatus, saveContentHash } = makeDeps({
       loadSources: vi.fn(async () => [{ source: source('s1'), cred: WEBDAV_CRED }]),
+      makeBackend: () => b,
+      loadSyncState: st.loadSyncState,
+      saveSyncState: st.saveSyncState,
     })
     const runner = createCloudSyncRunner(deps)
     await runner.run()
-    expect(saveContentHash).toHaveBeenLastCalledWith(await contentHash(A)) // 基线=final 内容规范化 hash
+    expect(saveContentHash).toHaveBeenLastCalledWith(await contentHashVault(A)) // 基线=final 内容规范化 hash（剔除顶层 rev 口径）
     expect(loadSources).toHaveBeenCalledTimes(1)
     expect(recordStatus).toHaveBeenLastCalledWith(true, 's1: 已上传')
-    await runner.run() // 内容仍为 A → 门短路
-    expect(loadSources).toHaveBeenCalledTimes(1) // 门在 loadSources 之前
-    expect(backends).toHaveLength(1) // 未再建 backend
-    expect(recordStatus).toHaveBeenLastCalledWith(null, '内容无变化') // 「跳过：」前缀由宿主 formatAutoStatusText 拼装
+    let getCount = 0
+    const origGet = b.get.bind(b)
+    b.get = async (p) => {
+      getCount++
+      return origGet(p)
+    }
+    await runner.run() // 内容仍为 A → 门命中，但不再全静默：降级 pull-only 轮（desktop auto 下载可达性）
+    expect(loadSources).toHaveBeenCalledTimes(2) // pull 轮照常进编排
+    expect(getCount).toBeGreaterThanOrEqual(1) // 发起 GET 比对（远端可及）
+    expect(b.putCount).toBe(1) // pull-only 零写云（仅首轮的上传）
+    expect(recordStatus).toHaveBeenLastCalledWith(true, 's1: 已是最新') // in-sync 零处理，不再误记「内容未变」跳过态
   })
 
-  it('门②持久化跨实例：新 runner 实例（模拟页面重开）loadContentHash 命中 → 零网络', async () => {
-    // saveContentHash 落到外部 map；第二个实例仅共享该 map（deps 全新）——旧实例内存门做不到
+  it('门②持久化跨实例：新 runner 实例（模拟页面重开）门命中 → 降级 pull-only（零写云、远端可及）', async () => {
+    // saveContentHash / rev 基线 / 云对象均落外部 map；第二个实例仅共享这些 map（deps 全新）
     const shared = statefulContentHash()
+    const st = statefulStates()
     const b = fakeBackend()
     const mk = () => makeDeps({
       loadSources: vi.fn(async () => [{ source: source('s1'), cred: WEBDAV_CRED }]),
       makeBackend: () => b,
       loadContentHash: shared.loadContentHash,
       saveContentHash: shared.saveContentHash,
+      loadSyncState: st.loadSyncState,
+      saveSyncState: st.saveSyncState,
     })
     const d1 = mk()
     await createCloudSyncRunner(d1.deps).run()
     expect(b.putCount).toBe(1) // 首轮真实上传
     const d2 = mk() // 模拟页面重开：全新 runner + 全新 deps
     await createCloudSyncRunner(d2.deps).run()
-    expect(d2.loadSources).not.toHaveBeenCalled() // 零网络（连 loadSources 都不进）
-    expect(b.putCount).toBe(1)
-    expect(d2.recordStatus).toHaveBeenCalledWith(null, '内容无变化')
+    expect(d2.loadSources).toHaveBeenCalledTimes(1) // 降级 pull-only 轮真实执行（非全静默短路）
+    expect(b.putCount).toBe(1) // 零写云
+    expect(d2.recordStatus).toHaveBeenCalledWith(true, 's1: 已是最新')
   })
 
-  it('门③内容变化 → 正常同步并刷新基线；同内容再跑又跳过', async () => {
+  it('门③门未命中 → 完整推拉轮行为不变（逐轮真实上传）；门命中后零写', async () => {
     let json = A
-    const { deps, loadSources, recordStatus, backends } = makeDeps({
+    const st = statefulStates()
+    const b = fakeBackend()
+    const { deps, loadSources, recordStatus } = makeDeps({
       getVaultJson: () => json,
       loadSources: vi.fn(async () => [{ source: source('s1'), cred: WEBDAV_CRED }]),
+      makeBackend: () => b,
+      loadSyncState: st.loadSyncState,
+      saveSyncState: st.saveSyncState,
     })
     const runner = createCloudSyncRunner(deps)
     await runner.run()
     json = B
     await runner.run()
     expect(loadSources).toHaveBeenCalledTimes(2)
-    expect(backends).toHaveLength(2)
+    expect(b.putCount).toBe(2) // 门未命中：两轮均完整推拉（uploaded），行为不变
     expect(recordStatus).toHaveBeenLastCalledWith(true, 's1: 已上传')
-    await runner.run() // 基线已随成功刷到 B
-    expect(loadSources).toHaveBeenCalledTimes(2)
-    expect(recordStatus).toHaveBeenLastCalledWith(null, '内容无变化')
+    await runner.run() // 基线已随成功刷到 B → 门命中 → 降级 pull-only 零写
+    expect(loadSources).toHaveBeenCalledTimes(3)
+    expect(b.putCount).toBe(2)
+    expect(recordStatus).toHaveBeenLastCalledWith(true, 's1: 已是最新')
+  })
+
+  it('门⑧门命中+远端有更新 → 下载采纳可达（downloaded 不被门吸收）；pull 轮不推门，下轮门未命中收敛并刷基线', async () => {
+    let json = A
+    const st = statefulStates()
+    const b = fakeBackend()
+    const { deps, loadSources, persistAdopted, recordStatus, saveContentHash } = makeDeps({
+      getVaultJson: () => json,
+      loadSources: vi.fn(async () => [{ source: source('s1'), cred: WEBDAV_CRED }]),
+      makeBackend: () => b,
+      loadSyncState: st.loadSyncState,
+      saveSyncState: st.saveSyncState,
+      // store persistAdopted 语义模拟：采纳内容落为本机 vault（getVaultJson 随之变化）
+      persistAdopted: vi.fn(async (adopted: string) => { json = adopted }),
+    })
+    const runner = createCloudSyncRunner(deps)
+    await runner.run() // 首推 A，落门基线=hashVault(A)
+    expect(recordStatus).toHaveBeenLastCalledWith(true, 's1: 已上传')
+    // 对端（他设备）推进云端：rev2 内容 B；本端明文仍 A → 门命中
+    b.store.set(PATH, await sealedRemote(2, B))
+    await runner.run() // 门命中 → 降级 pull-only → downloaded
+    expect(persistAdopted).toHaveBeenCalledWith(B) // 下载可达：对端变更不因门静默丢失
+    expect(b.putCount).toBe(1) // pull-only 零写云
+    expect(recordStatus).toHaveBeenLastCalledWith(true, 's1: 已下载')
+    // 门基线不被 pull 轮推（pull 轮失败不推门语义一致）：采纳后内容=B ≠ 基线(A) → 下轮门未命中走完整轮收敛
+    await runner.run()
+    expect(b.putCount).toBe(1) // 完整轮 in-sync 零写（rev/内容双一致）
+    expect(saveContentHash).toHaveBeenLastCalledWith(await contentHashVault(B)) // 完整轮刷新门基线
+    expect(recordStatus).toHaveBeenLastCalledWith(true, 's1: 已是最新')
   })
 
   it('门④手动模式不设门：内容无变化 run("manual") 照常同步（成功后基线随之刷新）', async () => {
