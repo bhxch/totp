@@ -52,14 +52,29 @@ export function mergeVaults(base: Vault | null, ours: Vault, theirs: Vault): Mer
       if (o !== null) out.set(id, o) // 云方未动 → 取本方
       continue
     }
-    // 剩余：删/改对撞 或 双方改成不同内容 → updatedAt 新者为主体，另一方入冲突
-    const winner = updatedAtOf(t) > updatedAtOf(o) ? t : updatedAtOf(t) < updatedAtOf(o) ? o : t // tie（含双方都无 updatedAt）取 t=云端胜
-    if (winner !== null) out.set(id, winner)
-    conflicts.push({ entryId: id, issuer: (o ?? t ?? b)!.issuer, label: (o ?? t ?? b)!.label, ours: o, theirs: t, base: b })
+    // 剩余分歧 = 删/改对撞 或 双方改成不同内容
+    if (o === null || t === null) {
+      // 删/改对撞（base 有该条目、恰一方删）：恒保留修改方并记录冲突——spec §3「保留修改」防丢设计意图，
+      // 豁免 updatedAt tie→云端规则（否则 legacy 无时间戳的修改会被删除吞掉）
+      const survivor = (o ?? t)!
+      out.set(id, survivor)
+      conflicts.push({ entryId: id, issuer: survivor.issuer, label: survivor.label, ours: o, theirs: t, base: b })
+      continue
+    }
+    // 双方改成不同内容 → updatedAt 新者为主体（tie 含双方都无 updatedAt → 取 t=云端胜），另一方入冲突
+    const winner = updatedAtOf(t) > updatedAtOf(o) ? t : updatedAtOf(t) < updatedAtOf(o) ? o : t
+    out.set(id, winner)
+    conflicts.push({ entryId: id, issuer: o.issuer, label: o.label, ours: o, theirs: t, base: b })
   }
   const entries = [...out.values()].sort((a, b2) => a.order - b2.order)
   return {
-    vault: { version: 2, entries, tags: mergeTags(ours, theirs), updatedAt: Math.max(ours.updatedAt, theirs.updatedAt) },
+    // ?? 0：畸形输入（updatedAt 运行时缺字段）防御，避免 Math.max 产生 NaN
+    vault: {
+      version: 2,
+      entries,
+      tags: mergeTags(ours, theirs),
+      updatedAt: Math.max(ours.updatedAt ?? 0, theirs.updatedAt ?? 0),
+    },
     conflicts,
     degraded,
   }

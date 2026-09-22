@@ -6,6 +6,11 @@ function entry(p: Partial<OtpEntry> & { uuid: string }): OtpEntry {
   return { type: 'totp', issuer: 'I', label: p.uuid, secret: 'S', algorithm: 'SHA1', digits: 6, period: 30,
     tagIds: [], order: 0, createdAt: 1, updatedAt: 1, ...p }
 }
+/** legacy 条目：去掉 updatedAt（=旧数据无时间戳，裁决按 0 处理） */
+const legacy = (e: OtpEntry): OtpEntry => {
+  const { updatedAt: _updatedAt, ...rest } = e
+  return rest
+}
 function vault(entries: OtpEntry[], updatedAt = 1): Vault {
   return { version: 2, entries, tags: [], updatedAt }
 }
@@ -48,6 +53,34 @@ describe('mergeVaults', () => {
     const r = mergeVaults(base, ours, theirs)
     expect(r.vault.entries[0]!.label).toBe('theirs-new')
     expect(r.conflicts[0]!.ours!.label).toBe('ours-new')
+  })
+  it('双方改成不同内容 → ours 新者胜（方向反转）', () => {
+    const base = vault([entry({ uuid: 'a', label: 'old', updatedAt: 1 })])
+    const r = mergeVaults(
+      base,
+      vault([entry({ uuid: 'a', label: 'ours-newer', updatedAt: 200 })]),
+      vault([entry({ uuid: 'a', label: 'theirs-older', updatedAt: 100 })]),
+    )
+    expect(r.vault.entries[0]!.label).toBe('ours-newer')
+    expect(r.conflicts[0]!.theirs!.label).toBe('theirs-older')
+  })
+  it('删改对撞豁免 tie：ours 删 + theirs 改（theirs 无 updatedAt）→ 保留 theirs', () => {
+    const base = vault([entry({ uuid: 'a', label: 'old', updatedAt: 1 })])
+    const r = mergeVaults(base, vault([]), vault([legacy(entry({ uuid: 'a', label: 'edited' }))]))
+    expect(r.vault.entries.map((e) => e.uuid)).toEqual(['a'])
+    expect(r.vault.entries[0]!.label).toBe('edited')
+    expect(r.conflicts).toHaveLength(1)
+    expect(r.conflicts[0]!.ours).toBeNull()
+    expect(r.conflicts[0]!.theirs!.label).toBe('edited')
+  })
+  it('删改对撞豁免 tie：theirs 删 + ours 改（ours 无 updatedAt）→ 保留 ours', () => {
+    const base = vault([entry({ uuid: 'a', label: 'old', updatedAt: 1 })])
+    const r = mergeVaults(base, vault([legacy(entry({ uuid: 'a', label: 'edited' }))]), vault([]))
+    expect(r.vault.entries.map((e) => e.uuid)).toEqual(['a'])
+    expect(r.vault.entries[0]!.label).toBe('edited')
+    expect(r.conflicts).toHaveLength(1)
+    expect(r.conflicts[0]!.ours!.label).toBe('edited')
+    expect(r.conflicts[0]!.theirs).toBeNull()
   })
   it('双方增同 id 不同内容 → 冲突，tie 时云端为主体', () => {
     const ours = vault([entry({ uuid: 'x', label: 'o', updatedAt: 10 })])
