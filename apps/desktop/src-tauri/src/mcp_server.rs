@@ -38,6 +38,17 @@ pub fn tool_kind(tool: &str) -> Option<ToolKind> {
     }
 }
 
+/// 暴露面门控（纯函数，gated_call 每请求调用；设置页勾选改动即时生效）
+pub fn exposure_check(cfg: &McpConfig, tool: &str) -> Result<(), &'static str> {
+    if tool_kind(tool).is_none() {
+        return Err("unknown tool");
+    }
+    if !cfg.exposed_tools.iter().any(|t| t == tool) {
+        return Err("tool disabled: not in exposed tools");
+    }
+    Ok(())
+}
+
 /// 工具暴露面默认值（spec §6.3）：仅两个只读工具；action 触发器默认关闭。
 /// 序列化为 camelCase `exposedTools`；存量 settings.json 缺字段经 serde default 补齐——存量用户行为零变化
 fn default_exposed_tools() -> Vec<String> {
@@ -482,6 +493,10 @@ impl TotpMcp {
         if !cfg.enabled {
             return Err(McpError::invalid_params("mcp disabled", None));
         }
+        // 暴露面门控（spec §6.2）：不在 exposedTools 的工具直接拒绝；
+        // 同一每请求重读通道，设置页勾选改动即时生效
+        exposure_check(&cfg, tool)
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
         let ident = identity_of(context);
         match decide_gate(&cfg, Some(&ident)) {
             GateDecision::Allow => {}
@@ -1162,6 +1177,26 @@ mod tests {
         };
         save_mcp_config_inner(&f, &cfg).unwrap();
         assert_eq!(load_mcp_config_inner(&f).exposed_tools, cfg.exposed_tools);
+    }
+
+    #[test]
+    fn tool_registry_and_exposure() {
+        assert_eq!(tool_kind("list_accounts"), Some(ToolKind::Read));
+        assert_eq!(tool_kind("get_code"), Some(ToolKind::Read));
+        assert_eq!(tool_kind("trigger_backup"), Some(ToolKind::Action));
+        assert_eq!(tool_kind("trigger_sync"), Some(ToolKind::Action));
+        assert_eq!(tool_kind("nope"), None);
+
+        let cfg = McpConfig::default(); // exposed = 只读两工具
+        assert_eq!(exposure_check(&cfg, "list_accounts"), Ok(()));
+        assert_eq!(
+            exposure_check(&cfg, "trigger_sync"),
+            Err("tool disabled: not in exposed tools")
+        );
+        let mut cfg2 = McpConfig::default();
+        cfg2.exposed_tools.push("trigger_sync".into());
+        assert_eq!(exposure_check(&cfg2, "trigger_sync"), Ok(()));
+        assert!(exposure_check(&cfg2, "nope").is_err());
     }
 
     // CLI 覆盖合并（验收条目13）：强制 enabled + 字段生效（纯函数语义；
