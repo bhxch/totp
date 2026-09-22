@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { backupFileName, base64ToBytes, createBackupEnvelope, loadDeviceId, loadSources, loadSyncState, normalizeSchemes, openBackupEnvelope, randomBytes, saveSources, saveSyncState, SCHEMES_KEY, sha256Hex, type BackupSource, type CloudCred, type ImportScheme, type KdfProfile, type Retention, type Seal, type StorageAdapter, type Vault } from '@totp/core'
-import { createAppI18n, createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type DevtoolsConfigDto, type DevtoolsPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type LocalSourceView, type McpConfigWithStatusDto, type McpPlatform, type SecurityPlatform, type VueStore } from '@totp/ui'
+import { createAppI18n, createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, requestMergeConfirm, setSyncProgress, useTheme, type BackupAutoPrefs, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type DevtoolsConfigDto, type DevtoolsPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type LocalSourceView, type McpConfigWithStatusDto, type McpPlatform, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, getCurrentInstance, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createDesktopAutoRunner, formatAutoStatusText } from './autoBackup'
 import { createBackupToSources, listBackupsFromSources, pickBackupDirOs, pickBackupOpenOs, pickBackupSaveOs, readBackupByName, readBackupFileOs, saveConflictBackupToDir, saveCloudSourcesPreservingLocal, writeBackupFileOs, writeBytesFileOs, writeTextFileOs, type DialogFilterSpec, type PickedOsFile } from './backupService'
@@ -397,10 +397,12 @@ const cloudPlatform: CloudPlatform = {
  *  状态写盘前拼入 summary 并清空，不跨轮残留） */
 let retentionNotes: string[] = []
 
-/** rev 基线 seal（spec §1.2 静态保护，T9 装配约定 5：baseSnapshot 明文落盘问题修复）：解锁态经
- *  store 的 DEK seal 助手加密；助手返回 null（锁定/未启用加密）按明文回落，与 core syncState
- *  「seal 缺省=明文库明文落盘」语义对齐。unseal 不可解（换 DEK/明文记录）回落原文——core 解析层
- *  自然判废（明文可解析=兼容读取，密文垃圾解析失败=回落空态重建） */
+/** rev 基线 seal（spec §1.2 静态保护，T9 装配约定 5）：解锁态经 store 的 DEK seal 助手加密。
+ *  两态语义（审查 Important 1 修正）：未启用加密（security 为空）→ sealWithDek 返回 null → 明文回落
+ *  （明文库语义）；加密启用但窗口锁定（DEK 已清）→ sealWithDek 抛 'vault locked' → 不吞错，
+ *  落盘整体失败（下轮按旧基线重做），绝不把 baseSnapshot/冲突记录明文回落落盘。
+ *  unseal 不可解（换 DEK/明文记录）回落原文——core 解析层自然判废（明文可解析=兼容读取，
+ *  密文垃圾解析失败=回落空态重建） */
 function revSeal(s: VueStore): Seal {
   return {
     seal: async (plain) => (await s.sealWithDek(plain)) ?? plain,
@@ -466,11 +468,16 @@ const cloudSync = createCloudSyncRunner({
   },
   // 未裁决冲突计数（宿主闭包读 store.conflictCount）
   conflictCount: () => store.value?.conflictCount.value ?? 0,
-  // 冲突强提示（spec §4 横幅/托盘 tooltip）：先 console 留痕，T11 接应用内横幅
+  // 冲突强提示（spec §4 应用内横幅）：desktop=SyncPage 健康条 SyncHealthBar 徽标高亮（store
+  // conflictCount 同源），此处留 console 留痕；托盘 tooltip 计数不做，记 backlog
   onConflicts: (count) => {
     console.info('[cloudAutoSync] 未裁决同步冲突:', count)
   },
-  // 手动合并预览确认（spec §4）：本批不传（缺省=直接执行），T11 接 CloudCard/壳层对话框
+  // 手动合并预览确认（spec §4，T11）：经 cloudSyncBridge 挂起征询 → CloudCard 的
+  // MergePreviewDialog 打开，组件事件 settle 结清（取消/卸载=false，runner 记跳过态）
+  onManualConfirm: (preview) => requestMergeConfirm(preview),
+  // 逐源进度（spec §5 ⑥，T11）：经 cloudSyncBridge → CloudCard「x/y 源完成」spinner
+  onProgress: (done, total) => setSyncProgress(done, total),
   onError: (err) => console.warn('[cloudAutoSync]', err),
 })
 

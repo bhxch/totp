@@ -9,14 +9,16 @@
  *   解锁态 baseSnapshot 以 DEK 加密落盘，未启用加密（seal 助手返回 null）按明文回落；
  * - 冲突副本落位改 conflictCopies 列表（storage.local，限 5 份滚动删），废除后台自动文件下载；
  * - 条目冲突入库/计数桥：onMergeConflicts → store.addMergeConflictsOp；conflictCount →
- *   store.conflictCount；onConflicts → storage.local 'cloudConflictCount'（跨上下文通道，T11
- *   badge/横幅消费）+ console 留痕；
- * - onManualConfirm 本批不传（缺省=直接执行），T11 接真对话框。
+ *   store.conflictCount；onConflicts → storage.local 'cloudConflictCount'（跨上下文通道）+
+ *   action badge「!」（conflictBadge，存在性守卫）+ console 留痕；
+ * - onManualConfirm/onProgress（T11）→ cloudSyncBridge：manual 合并预览经 CloudCard 对话框裁定，
+ *   逐源进度驱动 CloudCard「x/y 源完成」。
  * 锁定态零网络：runner 内部 isLocked/无 secret 直接 return（cloudRunner 守护），调用侧
  * syncScheduler gate 双保险。
  */
 import { loadDeviceId, loadSyncState, saveSyncState, type BackupSource, type CloudCred, type Seal, type SourceSyncState, type Vault } from '@totp/core'
-import { createCloudBackend, createCloudSyncRunner, type VueStore } from '@totp/ui'
+import { createCloudBackend, createCloudSyncRunner, requestMergeConfirm, setSyncProgress, type VueStore } from '@totp/ui'
+import { setConflictBadge } from './conflictBadge'
 import { loadSourcesImpl, retentionDeletedNote } from './cloudCredStore'
 import { addConflictCopy } from './conflictCopies'
 import { storageAdapter } from './store'
@@ -109,11 +111,18 @@ export function createExtensionCloudRunner(deps: ExtensionCloudRunnerDeps): { ru
     },
     // 未裁决冲突计数（宿主闭包读 store.conflictCount）
     conflictCount: () => store.conflictCount.value,
-    // 冲突强提示（spec §4 badge/横幅）：先落 storage.local 跨上下文通道（popup/后台读取，T11 接 UI）+ console 留痕
+    // 冲突强提示（spec §4 badge/横幅）：storage.local 跨上下文通道（popup/后台读取）+ action
+    // badge「!」（T11，存在性守卫见 conflictBadge）+ console 留痕；横幅本体=SyncPage 健康条/CloudCard 冲突区块
     onConflicts: (count) => {
       console.info('[cloudAutoSync] 未裁决同步冲突:', count)
       void storageAdapter.set('cloudConflictCount', JSON.stringify(count)).catch(() => {})
+      setConflictBadge(count)
     },
+    // 手动合并预览确认（spec §4，T11）：经 cloudSyncBridge 挂起征询 → CloudCard 的
+    // MergePreviewDialog 打开，组件事件 settle 结清（取消/卸载=false，runner 记跳过态）
+    onManualConfirm: (preview) => requestMergeConfirm(preview),
+    // 逐源进度（spec §5 ⑥，T11）：经 cloudSyncBridge → CloudCard「x/y 源完成」spinner
+    onProgress: (done, total) => setSyncProgress(done, total),
     onError: (err) => console.warn('[cloudAutoSync]', err),
     onAuthFailure: (msg, status) => {
       authError = msg

@@ -4,7 +4,8 @@ import { CLIPBOARD_CLEAR_DELAY_MS, createAppI18n, createIconStore, createPrfCred
 import { computed, getCurrentInstance, onMounted, onUnmounted, ref, watch } from 'vue'
 import { createExtensionCloudRunner, revSeal } from '../../src/cloudRunnerFactory'
 import { formatAutoStatusText, hasLegacyCloudKeys, loadSourcesImpl, migrateLegacySources, saveSourcesImpl } from '../../src/cloudCredStore'
-import { addConflictCopy } from '../../src/conflictCopies'
+import { setConflictBadge } from '../../src/conflictBadge'
+import { addConflictCopy, exportConflictCopy, listConflictCopies } from '../../src/conflictCopies'
 import { createSyncScheduler } from '../../src/syncScheduler'
 import { createDekSession } from '../../src/dekSession'
 import { createIdleLockWatcher } from '../../src/lockEnforcer'
@@ -103,6 +104,13 @@ onMounted(async () => {
     void followScheduler.syncNow()
     // idle/锁屏自动锁定（plan16 T12）：initStore 后启动（settings/加密态已就绪，watcher 内部自判 prefs）
     lockWatcher.start()
+    // T11 badge 初始对账（spec §4）：以持久计数恢复「!」标记——action badge 跨页面会话残留，
+    // 打开 options 时按 cloudConflictCount 键真值校正（全裁决后=0 清空）
+    try {
+      const raw = await storageAdapter.get('cloudConflictCount')
+      const n = raw === null ? 0 : Number(JSON.parse(raw))
+      setConflictBadge(Number.isFinite(n) && n > 0 ? n : 0)
+    } catch { setConflictBadge(0) }
   } catch (e) {
     loadError.value = i18n.global.t('options.readError', { message: e instanceof Error ? e.message : String(e) })
   }
@@ -462,6 +470,9 @@ const cloudPlatform: CloudPlatform = {
   // 冲突副本入 storage.local 列表（spec §4，限 5 份滚动删）：不自动触发浏览器下载，
   // 导出仅由 UI 显式调用 exportConflictCopy；sourceId 仅用于副本命名区分来源
   saveConflictBackup: (bytes, sourceId) => addConflictCopy(storageAdapter, bytes, sourceId),
+  // T11 冲突区块：副本元数据列表 + 手动导出（唯一下载出口；desktop 无此二能力=不渲染副本区）
+  listConflictCopies: async () => (await listConflictCopies(storageAdapter)).map((c) => ({ name: c.name, at: c.at })),
+  exportConflictCopy: (name) => exportConflictCopy(storageAdapter, name),
   // rev 基线（spec §1.2）+ DEK seal 静态保护：与 runner 通道共用同一 revSeal（共享 cloudSyncState
   // 键——手动/自动两侧读写形态必须一致，缺 seal 侧会把密文当明文 bag 互踩并泄漏 baseSnapshot）
   loadSourceState: (id) => loadSyncState(storageAdapter, id, revSeal(store)),
