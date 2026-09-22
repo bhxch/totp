@@ -20,6 +20,30 @@ pub enum GateMode {
     AlwaysAsk,
 }
 
+/// 工具静态注册表（spec §6.2）：kind 决定门控强度；未知名 None（客户端调未知工具的
+/// unknown tool 语义由 rmcp 层处理，此处只服务已定义工具的门控与保存侧过滤）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolKind {
+    /// 只读：现有门控行为完全不变
+    Read,
+    /// 触发写操作（备份/同步）：默认不暴露；非 token 档逐次确认
+    Action,
+}
+
+pub fn tool_kind(tool: &str) -> Option<ToolKind> {
+    match tool {
+        "list_accounts" | "get_code" => Some(ToolKind::Read),
+        "trigger_backup" | "trigger_sync" => Some(ToolKind::Action),
+        _ => None,
+    }
+}
+
+/// 工具暴露面默认值（spec §6.3）：仅两个只读工具；action 触发器默认关闭。
+/// 序列化为 camelCase `exposedTools`；存量 settings.json 缺字段经 serde default 补齐——存量用户行为零变化
+fn default_exposed_tools() -> Vec<String> {
+    vec!["list_accounts".to_string(), "get_code".to_string()]
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct McpConfig {
@@ -30,6 +54,9 @@ pub struct McpConfig {
     pub token: String,
     /// 白名单 pattern 列表（wildcard/exact 两档共用）
     pub whitelist: Vec<String>,
+    /// 暴露给 MCP 客户端的工具名列表（每请求重读即时生效；未知名在保存时滤除，见 save 侧校验）
+    #[serde(default = "default_exposed_tools")]
+    pub exposed_tools: Vec<String>,
 }
 
 impl Default for McpConfig {
@@ -40,6 +67,7 @@ impl Default for McpConfig {
             port: 47215,
             token: String::new(),
             whitelist: Vec::new(),
+            exposed_tools: default_exposed_tools(),
         }
     }
 }
@@ -63,6 +91,9 @@ pub fn save_mcp_config_inner(
     settings_file: &std::path::Path,
     cfg: &McpConfig,
 ) -> Result<(), String> {
+    // 保存侧校验：滤除暴露面里的未知名（防手改 settings.json/前端注入未定义工具名）
+    let mut cfg = cfg.clone();
+    cfg.exposed_tools.retain(|t| tool_kind(t).is_some());
     if let Some(parent) = settings_file.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -1107,6 +1138,32 @@ mod tests {
         assert!(c.whitelist.is_empty());
     }
 
+    #[test]
+    fn exposed_tools_default_and_roundtrip() {
+        // 存量 settings.json 无 exposedTools 字段 → 反序列化补默认（只读两工具）
+        let legacy: McpConfig = serde_json::from_str(
+            r#"{"enabled":true,"mode":"wildcard","port":47215,"token":"t","whitelist":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(legacy.exposed_tools, default_exposed_tools());
+        // 全缺省
+        let d = McpConfig::default();
+        assert_eq!(
+            d.exposed_tools,
+            vec!["list_accounts".to_string(), "get_code".to_string()]
+        );
+        // 写读往返保留自定义暴露面
+        let dir = std::env::temp_dir().join("mcp-exposed-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("settings.json");
+        let cfg = McpConfig {
+            exposed_tools: vec!["list_accounts".into(), "trigger_sync".into()],
+            ..McpConfig::default()
+        };
+        save_mcp_config_inner(&f, &cfg).unwrap();
+        assert_eq!(load_mcp_config_inner(&f).exposed_tools, cfg.exposed_tools);
+    }
+
     // CLI 覆盖合并（验收条目13）：强制 enabled + 字段生效（纯函数语义；
     // 真实落盘路径回归见下方 override_with_blank_token_persists_raw_cfg_never_override_values）
     #[test]
@@ -1346,6 +1403,7 @@ mod tests {
             port: 0,
             token: "t".into(),
             whitelist: whitelist.iter().map(|s| s.to_string()).collect(),
+            exposed_tools: default_exposed_tools(),
         };
         // token 档：不看名字
         assert!(matches!(
@@ -1557,6 +1615,7 @@ mod tests {
             port: 47215,
             token: "t1".into(),
             whitelist: vec!["A".into()],
+            exposed_tools: default_exposed_tools(),
         };
         // 白名单/档位变化：每请求重读已覆盖，无需重启
         let b = McpConfig {
