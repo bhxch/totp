@@ -11,7 +11,7 @@ import { decryptDpapiOs, pickImportFileOs, readImportFileBytesOs, readImportFile
 import { createIdleLockExecutor } from './idleLock'
 import { lockPrefsUnsupportedKeys } from './lockPrefs'
 import { BACKUP_DIR_KEY, migrateLegacyCloudSources, migrateLegacyLocalSource } from './legacyMigrate'
-import { createMcpApprovalQueue, type McpApprovalAction } from './mcpApprovalQueue'
+import { createMcpApprovalQueue, isToolConfirmItem, type McpApprovalAction } from './mcpApprovalQueue'
 import { startMcpBridge, type McpBridgeDeps } from './mcpBridge'
 import McpConsentDialog from './McpConsentDialog.vue'
 import { createTauriFs } from './tauriFs'
@@ -677,13 +677,30 @@ const approvalQueue = createMcpApprovalQueue({
 /** 模板消费的队首待审批；null=无待审批 */
 const approval = approvalQueue.current
 let unlistenApproval: (() => void) | null = null
+// 工具级确认事件监听（T7）：与首连审批监听同风格独立容错注册
+let unlistenToolApproval: (() => void) | null = null
 
-/** 审批裁定（三键与关闭同路径）：队列先弹出队首再回执（清窗防连点重复回执）；审批无会话无 TTL，
+/** 首连审批裁定（三键与关闭同路径）：队列先弹出队首再回执（清窗防连点重复回执）；审批无会话无 TTL，
  *  deny 后 Rust 侧 DENY_COOLDOWN 60s 冷却自然退避；回执失败仅告警不中断
- *  （客户端重试会再次弹审批窗，用户可再裁定） */
+ *  （客户端重试会再次弹审批窗，用户可再裁定）。队首为工具确认时不响应（通道分流，防误弹） */
 function onApprovalAction(action: McpApprovalAction): void {
   const head = approvalQueue.current.value
-  if (head) approvalQueue.resolve(head.ident, action)
+  if (head && !isToolConfirmItem(head)) approvalQueue.resolve(head.ident, action)
+}
+
+/** 工具确认 Allow（T7）：逐次即焚无记忆授权，裁定即弹出并由 onDecide 回执 mcp_respond */
+function onToolAllow(): void {
+  const head = approvalQueue.current.value
+  if (head && isToolConfirmItem(head)) approvalQueue.resolveTool(head.id, true)
+}
+
+/** 对话框关闭（Esc/遮罩/工具确认 Deny 键）：按队首通道分流 deny——首连审批回执 deny 进 60s
+ *  冷却（「关掉=别再问了」）；工具确认回 result:false（拒绝统一 false，ok:false 留给异常） */
+function onConsentClose(): void {
+  const head = approvalQueue.current.value
+  if (!head) return
+  if (isToolConfirmItem(head)) approvalQueue.resolveTool(head.id, false)
+  else approvalQueue.resolve(head.ident, 'deny')
 }
 
 onMounted(async () => {
@@ -769,15 +786,32 @@ onMounted(async () => {
   } catch (e) {
     console.warn('[mcp] MCP 审批监听注册失败，已降级跳过（不影响应用主流程）', e)
   }
+  // 工具级确认事件（spec §6.2，T7）：入同一审批队列弹「允许执行 <tool>？」（无 trust/once 梯度）；
+  // 裁定后经既有 mcp_respond 回 {id, ok:true, result:allow, error:null}（allow=result true，
+  // 拒绝统一 result:false）。60s 无响应由 Rust 侧超时兜底 fail-closed，回执失败仅告警
+  try {
+    unlistenToolApproval = await listen<{ id: number; ident: string; tool: string }>('mcp://tool-approval', (e) => {
+      approvalQueue.queueToolConfirmation(e.payload, (allow) => {
+        void invoke('mcp_respond', { id: e.payload.id, ok: true, result: allow, error: null }).catch((err) =>
+          console.warn('[mcp] mcp_respond(tool confirm) failed', err),
+        )
+      })
+    })
+  } catch (e) {
+    console.warn('[mcp] MCP 工具确认监听注册失败，已降级跳过（不影响应用主流程）', e)
+  }
 })
 
 onScopeDispose(() => {
   auto.stop()
   mcpStop?.()
   unlistenApproval?.()
+  unlistenToolApproval?.()
   unlistenFocus?.()
   unlistenSystemLock?.()
   idleLock.stop()
+  // 卸载清算（T7）：未决工具确认立即回 result:false（Rust oneshot 不悬挂等 60s 超时兜底）
+  approvalQueue.dispose()
   document.removeEventListener('pointerdown', onUserActivity)
   document.removeEventListener('keydown', onUserActivity)
 })
@@ -818,9 +852,10 @@ const railActions = [{ get label() { return tr('desktop.hideToTray') }, onClick:
   <!-- 解锁成功回调补跑迁移（plan16 T14，幂等）：口令/PRF 解锁各路径在 LockScreen 内 emit unlocked -->
   <LockScreen v-else-if="store && locked" :store="store" :dpapi="dpapiOps" @unlocked="runLegacyMigrations" />
   <NavigationShell v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :cloud-platform="cloudPlatform" :icons="icons" :schemes-api="schemesApi" :rail-actions="railActions" :mcp-platform="mcpPlatform" :devtools-platform="devtoolsPlatform" @copy="copyToClipboard" />
-  <!-- MCP 首连审批独立于上方 v-if 链：锁定态也要能弹（plan17 T10）；t 走壳层 tr（desktop 无 useI18n 注入） -->
-  <!-- 关闭（Esc/遮罩）= deny 回执进 60s 冷却，而非静默弃单——否则 "approval pending" 诱导 AI 每 10s 重试、对话框反复重开抢焦点 -->
-  <McpConsentDialog :open="approval !== null" :request="approval" :t="tr" @resolve="onApprovalAction" @close="onApprovalAction('deny')" />
+  <!-- MCP 首连审批/工具确认独立于上方 v-if 链：锁定态也要能弹（plan17 T10）；t 走壳层 tr（desktop 无 useI18n 注入） -->
+  <!-- 关闭（Esc/遮罩/工具 Deny）按通道分流 deny：首连回执进 60s 冷却，工具确认回 result:false（逐次即焚）——
+       否则 "approval pending" 诱导 AI 每 10s 重试、对话框反复重开抢焦点 -->
+  <McpConsentDialog :open="approval !== null" :request="approval" :t="tr" @resolve="onApprovalAction" @allow="onToolAllow" @close="onConsentClose" />
 </template>
 
 <style>

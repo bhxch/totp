@@ -107,3 +107,101 @@ describe('createMcpApprovalQueue', () => {
     warn.mockRestore()
   })
 })
+
+describe('createMcpApprovalQueue 工具级确认（spec §6.2，T7）', () => {
+  it('工具确认：FIFO 顺序决定并回调；同 ident 10s 去重（就地更新，被顶掉旧 id 立即回 false）', () => {
+    const { q, advance } = harness()
+    const decided: Array<{ id: number; allow: boolean }> = []
+    const record = (id: number) => (allow: boolean) => {
+      decided.push({ id, allow })
+    }
+    q.queueToolConfirmation({ id: 1, ident: 'a', tool: 'trigger_sync' }, record(1))
+    q.queueToolConfirmation({ id: 2, ident: 'b', tool: 'trigger_backup' }, record(2))
+    advance(5_000)
+    q.queueToolConfirmation({ id: 3, ident: 'a', tool: 'trigger_sync' }, record(3))
+    // 同 ident 窗口内重复：不重复入队；被顶掉的 id 1 立即回 false 快速失败（不悬挂等 Rust 60s 超时）
+    expect(decided).toEqual([{ id: 1, allow: false }])
+    expect(q.size.value).toBe(2)
+    expect(q.current.value).toEqual({ id: 3, ident: 'a', tool: 'trigger_sync' })
+    // FIFO：队首 id 3 先裁，队尾 id 2 后裁
+    q.resolveTool(2, true) // 非队首 id 不匹配 → no-op（防错位）
+    expect(decided).toEqual([{ id: 1, allow: false }])
+    q.resolveTool(3, true)
+    q.resolveTool(2, true)
+    expect(decided).toEqual([
+      { id: 1, allow: false },
+      { id: 3, allow: true },
+      { id: 2, allow: true },
+    ])
+    expect(q.size.value).toBe(0)
+  })
+
+  it('拒绝路径：resolveTool(false) 与 close（Esc/遮罩）均回调 allow=false', () => {
+    const { q, advance } = harness()
+    const decided: boolean[] = []
+    q.queueToolConfirmation({ id: 7, ident: 'a', tool: 'trigger_sync' }, (allow) => {
+      decided.push(allow)
+    })
+    q.resolveTool(7, false)
+    expect(decided).toEqual([false])
+    advance(10_000) // 过同 ident 去重窗口（离队后窗口内重试被挡是既有口径）
+    q.queueToolConfirmation({ id: 8, ident: 'a', tool: 'trigger_sync' }, (allow) => {
+      decided.push(allow)
+    })
+    q.close()
+    expect(decided).toEqual([false, false])
+    expect(q.size.value).toBe(0)
+  })
+
+  it('去重键按通道隔离：首连审批裁定后 10s 内同 ident 工具确认照常入队（主流程不吞）', () => {
+    const { q } = harness()
+    const decided: boolean[] = []
+    q.enqueue(ev('a'))
+    q.resolve('a', 'once') // 首连批准
+    q.queueToolConfirmation({ id: 5, ident: 'a', tool: 'trigger_sync' }, (allow) => {
+      decided.push(allow)
+    })
+    expect(q.size.value).toBe(1)
+    expect(q.current.value).toEqual({ id: 5, ident: 'a', tool: 'trigger_sync' })
+    q.resolveTool(5, true)
+    expect(decided).toEqual([true])
+  })
+
+  it('首连审批与工具确认同一 FIFO 串行：工具确认排队时 resolve(ident) 不误弹', () => {
+    const { q } = harness()
+    const decided: boolean[] = []
+    q.queueToolConfirmation({ id: 9, ident: 'a', tool: 'trigger_sync' }, (allow) => {
+      decided.push(allow)
+    })
+    q.enqueue(ev('b'))
+    // 队首是工具确认时，首连回执路径不得弹出（id/通道不匹配一律 no-op）
+    q.resolve('a', 'trust')
+    expect(q.size.value).toBe(2)
+    expect(q.current.value).toEqual({ id: 9, ident: 'a', tool: 'trigger_sync' })
+    q.resolveTool(9, false)
+    expect(q.current.value?.ident).toBe('b')
+    expect(decided).toEqual([false])
+  })
+
+  it('dispose：全部未决工具确认立即回 false，队列与去重窗口清空（卸载不悬挂未决 id）', () => {
+    const { q, advance } = harness()
+    const decided: Array<{ id: number; allow: boolean }> = []
+    const record = (id: number) => (allow: boolean) => {
+      decided.push({ id, allow })
+    }
+    q.enqueue(ev('c')) // 首连审批无 id 无 oneshot：清空即可，无回执
+    q.queueToolConfirmation({ id: 11, ident: 'a', tool: 'trigger_sync' }, record(11))
+    q.queueToolConfirmation({ id: 12, ident: 'b', tool: 'trigger_backup' }, record(12))
+    q.dispose()
+    expect(decided).toEqual([
+      { id: 11, allow: false },
+      { id: 12, allow: false },
+    ])
+    expect(q.size.value).toBe(0)
+    expect(q.current.value).toBeNull()
+    // 去重窗口一并清空：dispose 后同 ident 重入队不受旧窗口阻挡
+    advance(0)
+    q.queueToolConfirmation({ id: 13, ident: 'a', tool: 'trigger_sync' }, record(13))
+    expect(q.current.value).toEqual({ id: 13, ident: 'a', tool: 'trigger_sync' })
+  })
+})

@@ -583,6 +583,9 @@
     "client": "Client",
     "tool": "Requested tool",
     "hint": "While the vault is unlocked, approved clients can read verification codes over MCP; secret material is never exposed.",
+    "toolConfirmTitle": "Allow {tool}?",
+    "toolConfirmBody": "The client requests a one-shot action tool run (e.g. backup/sync trigger). Confirmed per call, never remembered; only acceptance status is returned — no vault data is ever exposed.",
+    "allow": "Allow",
     "deny": "Deny",
     "once": "Allow once",
     "trust": "Add to whitelist"
