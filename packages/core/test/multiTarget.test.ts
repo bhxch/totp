@@ -236,6 +236,34 @@ describe('syncMultipleTargets', () => {
     await expectOpensTo(b1.store.get(PATH)!, PW, B)
   })
 
+  it('C1 基线漂移但解密内容一致 → in-sync 零处理：不采纳、无副本、不触发收敛回推', async () => {
+    // 对端重推同内容（密文随机盐 → 字节摘要必变）：修复前 k1 走 conflict-resolved → 采纳 A →
+    // 终局把 A 回推 k2（无意义云端写）。修复后 k1 in-sync 仅刷基线，无赢家 → 无收敛轮。
+    const b1 = fakeBackend(await envelopeBytesOf(A, PW))
+    const b2 = fakeBackend()
+    const copies: string[] = []
+    const r = await syncMultipleTargets({
+      targets: [
+        { key: 'k1', backend: b1, path: PATH, hash: 'stale' }, // 基线 ≠ 远端字节（漂移），内容同为 A
+        { key: 'k2', backend: b2, path: PATH, hash: null },
+      ],
+      vaultJson: A,
+      password: PW,
+      onConflictBackup: (key) => {
+        copies.push(key)
+      },
+    })
+    expect(r.adopted).toBe(false)
+    expect(r.results[0]!.outcome!.action).toBe('in-sync')
+    expect(r.results[0]!.error).toBeUndefined()
+    expect(copies).toHaveLength(0)
+    expect(b1.putCount).toBe(0) // 零重推、零收敛回推
+    expect(r.hashes['k1']).toBe(await sha256Hex(b1.store.get(PATH)!)) // 基线=远端字节摘要（供宿主回写）
+    // 空云目标照常上传（推通道职责不受影响）
+    expect(r.results[1]!.outcome!.action).toBe('uploaded')
+    await expectOpensTo(b2.store.get(PATH)!, PW, A)
+  })
+
   it('onConflictBackup 透传目标 key', async () => {
     const b = fakeBackend(await envelopeBytesOf(B, PW))
     const keys: string[] = []

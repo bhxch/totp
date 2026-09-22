@@ -100,7 +100,35 @@ function describeUrl(url: string): string {
   }
 }
 
-/** 非 2xx 统一抛中文错误（含状态码）；404 分支由调用方按接口语义处理。 */
+/** 非 2xx 统一抛中文错误（含状态码）；404 分支由调用方按接口语义处理。
+ *  审查 I2：错误对象携带数字 status（CloudHttpError）供结构化判定凭据失效，
+ *  message 原文形态不变（「xx 请求失败（HTTP nnn）」），既有字符串匹配兜底兼容。 */
+export class CloudHttpError extends Error {
+  /** HTTP 状态码（数字，结构化判定用） */
+  readonly status: number
+  constructor(label: string, status: number) {
+    super(`${label} 请求失败（HTTP ${status}）`)
+    this.name = 'CloudHttpError'
+    this.status = status
+  }
+}
+
 export function ensureHttpOk(label: string, res: Response): void {
-  if (!res.ok) throw new Error(`${label} 请求失败（HTTP ${res.status}）`)
+  if (!res.ok) throw new CloudHttpError(label, res.status)
+}
+
+/** 凭据失效状态码判定（结构化分支）：401/403。 */
+export function isAuthErrorCode(status: unknown): boolean {
+  return status === 401 || status === 403
+}
+
+/** 凭据失效判定（审查 I2）：优先读错误对象的数字 status（ensureHttpOk 抛 CloudHttpError 携带），
+ *  兜底按「（HTTP 401）/（HTTP 403）」全角定界形式匹配消息原文（向后兼容字符串形态——旧 /401|403/
+ *  裸匹配会把任意含这些数字的文本（路径、ETag、时间戳、配额提示等）误判为凭据失效）。
+ *  已知边界：GDrive 403 配额类（userRateLimitExceeded 等）与凭据失效在 HTTP 层同码，ensureHttpOk
+ *  不读响应体无法可靠区分，二者同判（宁可多暂停一次轮询，不可对真失效继续风暴重试）。 */
+export function isAuthError(err: unknown): boolean {
+  const status = (err as { status?: unknown } | null)?.status
+  if (typeof status === 'number') return isAuthErrorCode(status)
+  return /（HTTP (?:401|403)）/.test(err instanceof Error ? err.message : String(err))
 }

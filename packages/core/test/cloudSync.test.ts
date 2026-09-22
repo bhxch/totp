@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CloudBackend } from '../src/cloud/backend'
+import { CloudHttpError, ensureHttpOk, isAuthError } from '../src/cloud/backend'
 import { createBackupEnvelope, openBackupEnvelope } from '../src/backup/envelope'
 import { sha256Hex, syncWithCloud } from '../src/cloud/syncOrchestrator'
 
@@ -229,5 +230,83 @@ describe('syncWithCloud', () => {
     await expect(
       syncWithCloud({ backend, path: PATH, vaultJson: LOCAL_VAULT, password: PASSWORD, localHash: '0'.repeat(64) }),
     ).rejects.toThrow('云端备份口令不匹配，无法合并——请确认口令或手动下载处理')
+  })
+})
+
+describe('syncWithCloud 下载后内容比对（跨端同步审查 C1）', () => {
+  it('基线漂移但解密内容与本地一致 → in-sync 仅刷新基线：不存副本、不写云（密文随机 IV 去重）', async () => {
+    // 场景：对端全量重推了内容相同的 vault（密文随机盐/IV → 字节摘要必变，旧基线恒失配）。
+    // 修复前此处走 conflict-resolved：存无意义副本 + converge 回推，且 hash 持续漂移。
+    const { bytes, hash } = await putRemoteEnvelope(LOCAL_VAULT, PASSWORD)
+    const backend = mockBackend(bytes)
+    let copyCalled = false
+    const out = await syncWithCloud({
+      backend,
+      path: PATH,
+      vaultJson: LOCAL_VAULT,
+      password: PASSWORD,
+      localHash: '0'.repeat(64), // 基线 ≠ 远端字节（漂移态）→ 旧实现必走 conflict 分支
+      onConflictBackup: () => {
+        copyCalled = true
+        return 'conflict-x.json'
+      },
+    })
+    expect(out.action).toBe('in-sync')
+    expect(out.hash).toBe(hash) // hash=远端字节摘要，调用方回写即完成基线刷新
+    expect(out.envelopeJson).toBeUndefined() // in-sync 契约：不含 envelopeJson
+    expect(copyCalled).toBe(false) // 不存冲突副本
+    expect(backend.putCount).toBe(0) // 不写云（不回推）
+  })
+
+  it('手动路径回归不变：基线漂移且内容不同 → 仍 conflict-resolved 存副本（既有冲突语义不受 C1 影响）', async () => {
+    const { bytes } = await putRemoteEnvelope(REMOTE_VAULT, PASSWORD)
+    const backend = mockBackend(bytes)
+    const seen: Uint8Array[] = []
+    const out = await syncWithCloud({
+      backend,
+      path: PATH,
+      vaultJson: LOCAL_VAULT,
+      password: PASSWORD,
+      localHash: '0'.repeat(64),
+      onConflictBackup: (b) => {
+        seen.push(b)
+        return 'conflict-keep.json'
+      },
+    })
+    expect(out.action).toBe('conflict-resolved')
+    expect(seen).toHaveLength(1)
+    expect(backend.putCount).toBe(0)
+  })
+})
+
+describe('CloudHttpError / isAuthError（审查 I2 结构化凭据失效判定）', () => {
+  const res = (status: number, ok = status >= 200 && status < 300) => ({ ok, status }) as Response
+
+  it('ensureHttpOk 抛 CloudHttpError：message 原形态（「label 请求失败（HTTP nnn）」）+ 数字 status', () => {
+    try {
+      ensureHttpOk('WebDAV', res(401))
+      expect.unreachable()
+    } catch (err) {
+      expect(err).toBeInstanceOf(Error)
+      expect((err as CloudHttpError).message).toBe('WebDAV 请求失败（HTTP 401）')
+      expect((err as CloudHttpError).status).toBe(401)
+    }
+  })
+
+  it('isAuthError：结构化 status 优先——401/403 命中、500 不误判，消息不含状态码也判定', () => {
+    expect(isAuthError(new CloudHttpError('WebDAV', 401))).toBe(true)
+    expect(isAuthError(new CloudHttpError('S3', 403))).toBe(true)
+    expect(isAuthError(new CloudHttpError('WebDAV', 500))).toBe(false)
+    expect(isAuthError(Object.assign(new Error('令牌已刷新请重试'), { status: 401 }))).toBe(true)
+    expect(isAuthError(Object.assign(new Error('令牌已刷新请重试'), { status: 502 }))).toBe(false)
+  })
+
+  it('isAuthError 兜底：仅「（HTTP 401）/（HTTP 403）」定界形式命中；裸数字文本（配额提示/路径含 403）不误判', () => {
+    expect(isAuthError(new Error('WebDAV 请求失败（HTTP 401）'))).toBe(true)
+    expect(isAuthError(new Error('Google Drive 请求失败（HTTP 403）'))).toBe(true)
+    expect(isAuthError(new Error('同步了 403 个条目'))).toBe(false)
+    expect(isAuthError(new Error('路径 /bucket-4013/obj 不存在'))).toBe(false)
+    expect(isAuthError(new Error('网络超时'))).toBe(false)
+    expect(isAuthError('字符串形态：Gist 请求失败（HTTP 401）')).toBe(true)
   })
 })

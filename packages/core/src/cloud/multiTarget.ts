@@ -28,11 +28,14 @@ export interface CloudTargetInput {
   hash: string | null
 }
 
-/** 单目标结果：outcome 为 null 表示该目标本轮 syncWithCloud 抛错（error 为消息）；convergeError 仅在收敛回推失败时出现。 */
+/** 单目标结果：outcome 为 null 表示该目标本轮 syncWithCloud 抛错（error 为消息）；convergeError 仅在收敛回推失败时出现。
+ *  errorStatus（审查 I2）：抛错对象携带数字 status（CloudHttpError）时透传，供宿主结构化判定凭据失效；
+ *  缺失时宿主按 error 消息定界形式兜底匹配。 */
 export interface TargetResult {
   key: string
   outcome: Awaited<ReturnType<typeof syncWithCloud>> | null
   error?: string
+  errorStatus?: number
   convergeError?: string
 }
 
@@ -89,7 +92,14 @@ export async function syncMultipleTargets(opts: {
       }
       results.push({ key: t.key, outcome })
     } catch (err) {
-      results.push({ key: t.key, outcome: null, error: err instanceof Error ? err.message : String(err) })
+      // errorStatus：结构化 status 透传（审查 I2，CloudHttpError 才有；其余错误缺省）
+      const status = (err as { status?: unknown } | null)?.status
+      results.push({
+        key: t.key,
+        outcome: null,
+        error: err instanceof Error ? err.message : String(err),
+        ...(typeof status === 'number' ? { errorStatus: status } : {}),
+      })
     }
   }
 
@@ -104,6 +114,7 @@ export async function syncMultipleTargets(opts: {
         hashes[t.key] = pushed.hash
         result.outcome = { action: 'uploaded', envelopeJson: undefined, conflictBackup: undefined, hash: pushed.hash }
         delete result.error // pass1 失败残留的 error 随收敛改写清除——该目标已有确定的 uploaded 结果
+        delete result.errorStatus // 同上：结构化 status 一并清除，避免残留误导凭据失效判定
       } catch (err) {
         result.convergeError = err instanceof Error ? err.message : String(err)
       }

@@ -91,6 +91,10 @@ export interface CloudPlatform {
   autoPrefs: { get(): CloudAutoPrefs | Promise<CloudAutoPrefs>; set(p: CloudAutoPrefs): void | Promise<void> }
   /** [可选] 读取「上次自动同步」状态文本（宿主自 cloudAutoStatus 键 JSON {at,ok,summary} 格式化）；缺省则卡片不显示自动状态行 */
   loadAutoStatus?(): Promise<string | null>
+  /** [可选] 手动同步成功回调（跨端同步审查 I1）：手动同步全部目标成功（无目标级失败/收敛失败）
+   *  后触发——extension 宿主借此复位云凭据失效警示并重启跟随轮询（重新授权闭环，无需重开页面）；
+   *  缺省不通知（desktop 无跟随调度器，零影响） */
+  onManualSynced?(): void
   /** KDF 档位（备份设置所选，信封生成用）；缺省 balanced */
   kdfProfile?: () => KdfProfile
 }

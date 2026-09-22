@@ -23,7 +23,9 @@ const cloudSync = createExtensionCloudRunner({ store, t: (key, params = {}) => t
 const syncFollow = createSyncScheduler({
   isUnlocked: () => !locked.value,
   onUnlocked: (cb) => watch(locked, (v) => { if (!v) cb() }),
-  runPull: () => cloudSync.run(),
+  // 跨端同步审查 C1：跟随走 pull-only 通道（下载后远端 hash 基线去重，零上传零副本）；
+  // 旧实现走全量推拉 run()，本地零变化也每次打开重写云端（密文随机 IV 恒判本地较新）
+  runPull: () => cloudSync.run('pull'),
   autoFollowEnabled: () => settings.syncPrefs.autoFollow !== false, // T3 开关（设置页通用卡）
   intervalMs: () => null, // popup 不轮询
   onError: (e) => console.warn('[syncFollow]', e),

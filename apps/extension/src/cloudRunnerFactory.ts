@@ -1,8 +1,9 @@
 /**
  * 扩展宿主云同步 runner 工厂（跨端同步 T2）：从 options App.vue 抽出 createCloudSyncRunner
  * 的装配（原 options 独享 → popup/options 共用），两宿主差异仅 i18n t 注入。
- * - popup：打开时/解锁时单次跟随拉取（syncScheduler intervalMs=null）；
- * - options：存活期自动云同步（既有 createAutoRunScheduler change/interval 通道）+ 跟随调度。
+ * - popup：打开时/解锁时单次跟随拉取（run('pull')，syncScheduler intervalMs=null）；
+ * - options：存活期自动云同步（既有 createAutoRunScheduler change/interval 通道，run() 推拉）+
+ *   跟随调度（run('pull')，跨端同步审查 C1：跟随为 pull-only 通道，远端 hash 基线去重）。
  * 锁定态零网络：runner 内部 isLocked/无 secret 直接 return（cloudRunner 守护），调用侧
  * syncScheduler gate 双保险。
  */
@@ -33,7 +34,7 @@ export async function downloadConflictBackup(bytes: Uint8Array, backendKey?: str
   return name
 }
 
-export function createExtensionCloudRunner(deps: ExtensionCloudRunnerDeps): { run(mode?: 'auto' | 'manual'): Promise<void> } {
+export function createExtensionCloudRunner(deps: ExtensionCloudRunnerDeps): { run(mode?: 'auto' | 'manual' | 'pull'): Promise<void> } {
   const { store, t } = deps
   /** keep 源远端滚动删除的待并入提示（runner 顺序保证：先逐源 onRetentionDeleted 后 recordStatus，
    *  状态写盘前拼入 summary 并清空，不跨轮残留） */
@@ -43,9 +44,11 @@ export function createExtensionCloudRunner(deps: ExtensionCloudRunnerDeps): { ru
    *  装配时刷新（summary/onRetentionDeleted 均在其后，缓存必已就绪）；取不到回退 id */
   const cloudSourceNames = new Map<string, string>()
 
-  /** 本轮凭据失效消息（T4）：runner 经 onAuthFailure 上抛，包装 run 在 resolve 后转 reject——
-   *  core 编排对目标级失败不抛错，不转 reject 则 syncScheduler 的 401/403 分类（停轮询）永不触发 */
+  /** 本轮凭据失效消息与状态码（T4）：runner 经 onAuthFailure 上抛，包装 run 在 resolve 后转 reject——
+   *  core 编排对目标级失败不抛错，不转 reject 则 syncScheduler 的凭据失效分类（停轮询）永不触发。
+   *  status 为 CloudHttpError 携带的数字状态码（审查 I2 结构化判定），缺省 undefined 走消息兜底 */
   let authError: string | null = null
+  let authStatus: number | undefined
 
   const runner = createCloudSyncRunner({
     isLocked: () => store.locked.value,
@@ -85,14 +88,23 @@ export function createExtensionCloudRunner(deps: ExtensionCloudRunnerDeps): { ru
       void storageAdapter.set('cloudAutoStatus', JSON.stringify({ at: Date.now(), ok, summary: notes ? `${summary}${t('cloudAuto.noteSep')}${notes}` : summary })).catch(() => {})
     },
     onError: (err) => console.warn('[cloudAutoSync]', err),
-    onAuthFailure: (msg) => { authError = msg },
+    onAuthFailure: (msg, status) => {
+      authError = msg
+      authStatus = status
+    },
   })
 
   return {
-    async run(mode?: 'auto' | 'manual'): Promise<void> {
+    async run(mode?: 'auto' | 'manual' | 'pull'): Promise<void> {
       authError = null
+      authStatus = undefined
       await runner.run(mode)
-      if (authError !== null) throw new Error(authError) // T4：凭据失效上抛 → syncScheduler 分类停轮询
+      if (authError !== null) {
+        // T4：凭据失效上抛 → syncScheduler 分类停轮询；status 挂错误对象（审查 I2 结构化判定优先）
+        const err: Error & { status?: number } = new Error(authError)
+        if (authStatus !== undefined) err.status = authStatus
+        throw err
+      }
     },
   }
 }

@@ -419,6 +419,13 @@ async function onSync(): Promise<void> {
         autoStatus.value = await p.loadAutoStatus() // 手动完成后刷新自动状态行
       } catch { /* 状态读取失败不影响同步 */ }
     }
+    // 跨端同步审查 I1：全部目标成功（无目标级失败/收敛失败）才算「手动同步成功」——通知宿主
+    // 复位云凭据失效警示并重启跟随轮询（重新授权闭环）；部分失败（如 401 仍在）不通知，警示保留
+    if (r.results.every((res) => res.outcome !== null && !res.convergeError)) {
+      try {
+        p.onManualSynced?.()
+      } catch { /* 宿主通知失败不影响同步结果呈现 */ }
+    }
     if (r.adopted) {
       parseVaultJson(r.finalVaultJson) // 远端内容先过恢复校验，不合格不进入确认流程
       pendingAdopt.value = r.finalVaultJson

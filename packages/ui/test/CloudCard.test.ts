@@ -734,3 +734,75 @@ describe('CloudCard（多源）', () => {
     expect((w.find('button.cloud-sync').element as HTMLButtonElement).disabled).toBe(false)
   })
 })
+
+describe('CloudCard 手动同步成功回调（跨端同步审查 I1 恢复闭环）', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('全部目标成功（含 in-sync）→ onManualSynced 触发（宿主复位警示并重启跟随轮询）', async () => {
+    mockedSync.mockResolvedValue({
+      results: [
+        { key: 's-webdav', outcome: { action: 'in-sync', hash: 'hw' } },
+        { key: 's-gist', outcome: { action: 'uploaded', hash: 'hg' } },
+      ],
+      finalVaultJson: VALID_VAULT,
+      adopted: false,
+      hashes: { 's-webdav': 'hw', 's-gist': 'hg' },
+    })
+    const onManualSynced = vi.fn()
+    const p = makePlatform({
+      loadSources: vi.fn().mockResolvedValue([WEBDAV_SOURCE, GIST_SOURCE]),
+      creds: { 's-webdav': WEBDAV_CRED, 's-gist': GIST_CRED },
+      onManualSynced,
+    })
+    const w = await mountCard(p)
+    await clickSync(w)
+    expect(onManualSynced).toHaveBeenCalledOnce()
+  })
+
+  it('部分目标失败（如凭据仍 401）→ 不触发（警示保留）；宿主回调抛错不影响同步结果呈现', async () => {
+    mockedSync.mockResolvedValue({
+      results: [
+        { key: 's-webdav', outcome: { action: 'uploaded', hash: 'hw' }, errorStatus: undefined },
+        { key: 's-gist', outcome: null, error: 'Google Drive 请求失败（HTTP 401）' },
+      ],
+      finalVaultJson: VALID_VAULT,
+      adopted: false,
+      hashes: { 's-webdav': 'hw' },
+    })
+    const onManualSynced = vi.fn(() => {
+      throw new Error('宿主复位失败')
+    })
+    const p = makePlatform({
+      loadSources: vi.fn().mockResolvedValue([WEBDAV_SOURCE, GIST_SOURCE]),
+      creds: { 's-webdav': WEBDAV_CRED, 's-gist': GIST_CRED },
+      onManualSynced,
+    })
+    const w = await mountCard(p)
+    await clickSync(w)
+    expect(onManualSynced).not.toHaveBeenCalled() // 部分失败不通知
+    expect(w.text()).toContain('失败：Google Drive 请求失败（HTTP 401）') // 同步结果照常呈现
+  })
+
+  it('收敛回推失败（convergeError）→ 不触发；未提供 onManualSynced（desktop）时静默', async () => {
+    mockedSync.mockResolvedValue({
+      results: [{ key: 's-webdav', outcome: { action: 'uploaded', hash: 'hw' }, convergeError: '回推失败' }],
+      finalVaultJson: VALID_VAULT,
+      adopted: false,
+      hashes: { 's-webdav': 'hw' },
+    })
+    const p = makePlatform({
+      loadSources: vi.fn().mockResolvedValue([WEBDAV_SOURCE]),
+      creds: { 's-webdav': WEBDAV_CRED },
+      onManualSynced: vi.fn(),
+    })
+    const w = await mountCard(p)
+    await clickSync(w)
+    expect(p.onManualSynced).not.toHaveBeenCalled()
+    // 未提供回调（desktop 宿主零影响）：成功也不抛错
+    mockedSync.mockResolvedValue(EMPTY_RESULT)
+    const bare = makePlatform({ loadSources: vi.fn().mockResolvedValue([WEBDAV_SOURCE]), creds: { 's-webdav': WEBDAV_CRED } })
+    const w2 = await mountCard(bare)
+    await clickSync(w2)
+    expect(w2.text()).toBeDefined()
+  })
+})

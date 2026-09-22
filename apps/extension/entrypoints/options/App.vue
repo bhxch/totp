@@ -398,17 +398,26 @@ const cloudAuthFailed = ref(false)
 
 /** 跟随拉取调度（跨端同步 T2）：解锁边沿 + 3min 轮询，经 syncScheduler gate（锁定态零网络）。
  *  与既有 cloudAutoPrefs 的 change/interval 通道相互独立（autoFollow 是跟随拉取的开关，勿混）；
- *  gate 每次触发现读 settings（响应式），开关关闭后即时静默；intervalMs 仅 start 读取一次，
- *  关闭后的 interval tick 由 gate 拦截（零网络），重开在下次挂载恢复轮询 */
+ *  gate 每次触发现读 settings（响应式），开关关闭后即时静默。审查 C1：跟随走 pull-only 通道
+ *  run('pull')——下载后远端 hash 基线去重（跨会话持久于 sourceRevs），本地内容不变也能拉到云端
+ *  更新，且零上传零副本。intervalMs 仅 start 读取一次，开关/间隔变更由下方 watch stop+start 重建 */
 const followScheduler = createSyncScheduler({
   isUnlocked: () => !locked.value,
   onUnlocked: (cb) => watch(locked, (v) => { if (!v) cb() }),
-  runPull: () => cloudSync.run(),
+  runPull: () => cloudSync.run('pull'),
   autoFollowEnabled: () => settings.syncPrefs.autoFollow !== false,
   intervalMs: () => (settings.syncPrefs.autoFollow ? 180_000 : null),
   onError: (e) => console.warn('[syncFollow]', e),
-  // T4：凭据失效（401/403）→ 停轮询 + SyncCard 重授权警示（下轮恢复靠 start() 复位或成功同步复位）
+  // T4：凭据失效（401/403）→ 停轮询 + SyncCard 重授权警示（恢复闭环：手动同步成功 onManualSynced → resume()）
   onAuthFailed: () => { cloudAuthFailed.value = true },
+})
+
+// 审查 M4：intervalMs 仅 start 读取一次——开关变更 stop+start 重建轮询，新间隔/关停即时生效；
+// start() 复位 authFailed 标志，宿主 ref 同步镜像（与挂载时同口径，防警示滞留）
+watch(() => settings.syncPrefs.autoFollow, () => {
+  followScheduler.stop()
+  followScheduler.start()
+  cloudAuthFailed.value = followScheduler.authFailed()
 })
 
 /** core 调度器（勘误 §4.1：不用 chrome.alarms——SW 后台无解锁 DEK、读不到会话备份口令，
@@ -466,6 +475,12 @@ const cloudPlatform: CloudPlatform = {
     } catch {
       return null
     }
+  },
+  // 审查 I1 恢复闭环：CloudCard 手动同步全部目标成功后回调——复位云凭据失效警示并重启跟随轮询
+  // （用户重新授权 + 手动同步成功即闭环，无需重开 options 页）。回调内同步调用，宿主自兜错
+  onManualSynced: () => {
+    followScheduler.resume()
+    cloudAuthFailed.value = followScheduler.authFailed()
   },
 }
 </script>

@@ -108,7 +108,9 @@ onUnmounted(() => {
     <p v-if="plainSyncWarn" class="warn" role="alert">
       {{ t('syncCard.plainWarn') }}
     </p>
-    <!-- T4 云凭据失效警示（自动跟随已暂停）：宿主持 ref 传入，重新授权并同步成功/start() 后消失 -->
+    <!-- T4 云凭据失效警示（自动跟随已暂停）：宿主持 ref 传入。消失途径（审查 I1 闭环）：
+         重新授权后在 CloudCard 手动同步成功（platform.onManualSynced → 宿主 resume() 复位镜像）、
+         或重启宿主页（start() 复位）——本组件只读渲染，复位动作在宿主 -->
     <p v-if="props.authFailed" class="warn" role="alert">
       {{ t('syncCard.authFailed') }}
     </p>

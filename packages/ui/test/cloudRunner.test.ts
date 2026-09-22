@@ -1,7 +1,7 @@
 /** plan16 T8 源化改写：CloudRunnerDeps.loadCreds → loadSources（{source, cred} 对）；
  *  原用例语义平移（key=source.id），新增 keep 源时间戳路径/滚动删除/profile 透传/双同类型源用例 */
 import { describe, expect, it, vi } from 'vitest'
-import { createBackupEnvelope, sha256Hex, type BackupSource, type CloudBackend, type CloudCred } from '@totp/core'
+import { CloudHttpError, createBackupEnvelope, sha256Hex, type BackupSource, type CloudBackend, type CloudCred } from '@totp/core'
 import { createCloudSyncRunner, type CloudRunnerDeps } from '../src/components/cloudRunner'
 import { createTestI18n } from './helpers/i18n'
 
@@ -51,6 +51,19 @@ async function envelopeBytesOf(vaultJson: string, password: string): Promise<Uin
 
 /** t 注入 zh 资源查找（D2 抽串）：runner 摘要断言维持 zh 字面量与资源逐字一致 */
 const testT = createTestI18n().global.t
+
+/** 有状态基线（模拟 sourceRevs 持久化闭环）：loadTargetHash/saveTargetHash 读写同一 map，
+ *  供 pull 通道用例验证「跨 tick 基线真实生效」（默认 makeDeps 的 loadTargetHash 恒 null 不闭环） */
+function statefulRevs() {
+  const revs = new Map<string, string>()
+  return {
+    loadTargetHash: vi.fn(async (id: string): Promise<string | null> => revs.get(id) ?? null),
+    saveTargetHash: vi.fn(async (id: string, h: string | null): Promise<void> => {
+      if (h === null) revs.delete(id)
+      else revs.set(id, h)
+    }),
+  }
+}
 
 /** 基线 deps：解锁、有 secret、默认无源（可逐项覆写）；makeBackend 默认每次新建 fake backend。
  *  返回的 mock 引用在 over 覆盖后取 deps 上的最终值（断言永远指向实际注入的实现） */
@@ -623,5 +636,172 @@ describe('自动通道明文内容 hash 门（审查 I1 最小闭环）', () => 
     expect(recordStatus).toHaveBeenLastCalledWith(true, 's-conv: 冲突已解决; s-stuck: 失败')
     await runner.run() // 基线置 null → 下轮照常重试
     expect(loadSources).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('跟随拉取 pull-only 通道（跨端同步审查 C1）', () => {
+  it('核心验收：本地不变+云端变 → 两次 run("pull") 间桌面更新被拉到（persistAdopted(B)）；修复前本地内容门在下载前短路，本用例必失败', async () => {
+    // 旧实现 run() 以 sha256(vaultJson) 门短路：options 首拉后基线刷新，此后本地不变 → 每 tick
+    // 连下载都不做 → 桌面端后续更新永远拉不到。修复后去重门改为「下载后的远端 hash 基线」。
+    const b = fakeBackend(await envelopeBytesOf(A, PW))
+    const revs = statefulRevs()
+    const { deps, persistAdopted, saveTargetHash, saveConflictBackup, recordStatus } = makeDeps({
+      getVaultJson: () => A, // 本地内容全程不变
+      loadSources: vi.fn(async () => [{ source: source('s1'), cred: WEBDAV_CRED }]),
+      makeBackend: () => b,
+      loadTargetHash: revs.loadTargetHash,
+      saveTargetHash: revs.saveTargetHash,
+    })
+    const runner = createCloudSyncRunner(deps)
+    await runner.run('pull') // 首拉：云端 A 与本地一致 → 零处理仅刷基线
+    expect(persistAdopted).not.toHaveBeenCalled()
+    expect(saveTargetHash).toHaveBeenCalledWith('s1', await sha256Hex(b.store.get(PATH)!))
+
+    b.store.set(PATH, await envelopeBytesOf(B, PW)) // 桌面端后续更新上云，本地仍为 A
+    await runner.run('pull') // options 3min tick
+    expect(persistAdopted).toHaveBeenCalledTimes(1)
+    expect(persistAdopted).toHaveBeenCalledWith(B)
+    expect(saveTargetHash).toHaveBeenLastCalledWith('s1', await sha256Hex(b.store.get(PATH)!))
+    expect(saveConflictBackup).toHaveBeenCalledTimes(1) // 本地 A 存加密冲突副本（设计 §4 既有冲突语义）
+    expect(recordStatus).toHaveBeenLastCalledWith(true, 's1: 冲突已解决')
+  })
+
+  it('远端 hash 门（下载后）：基线一致 → 零解密零落盘零写云（调用计数断言）', async () => {
+    // 远端为不可解密字节、基线=其字节摘要：若门失效走解密必记「失败」——以此证明零解密
+    const garbage = bytesOf('{"not":"an envelope"}')
+    const b = fakeBackend(garbage)
+    let getCount = 0
+    const origGet = b.get.bind(b)
+    b.get = async (p) => {
+      getCount++
+      return origGet(p)
+    }
+    const { deps, persistAdopted, saveTargetHash, saveConflictBackup, recordStatus } = makeDeps({
+      loadSources: vi.fn(async () => [{ source: source('s1'), cred: WEBDAV_CRED }]),
+      makeBackend: () => b,
+      loadTargetHash: vi.fn(async () => sha256Hex(garbage)),
+    })
+    await createCloudSyncRunner(deps).run('pull')
+    expect(getCount).toBe(1) // 下载发生（门在下载之后）
+    expect(saveTargetHash).not.toHaveBeenCalled() // 零落盘（基线无需动）
+    expect(persistAdopted).not.toHaveBeenCalled()
+    expect(saveConflictBackup).not.toHaveBeenCalled()
+    expect(b.putCount).toBe(0) // 零写云
+    expect(recordStatus).toHaveBeenLastCalledWith(true, 's1: 已是最新') // 零处理而非解密失败
+  })
+
+  it('症状 B 回归：popup 打开（新 runner 基线 null）本地零变化 → 零云端写、零冲突副本下载，仅刷基线', async () => {
+    // 旧实现 popup 每次打开新建 runner（内存门基线=null）→ 走全量推拉：密文随机 IV 使 hash 必变
+    // → 本地零变化也写一次云端，且远端 hash 漂移使下次走 conflict 分支弹无意义副本下载。
+    const b = fakeBackend(await envelopeBytesOf(A, PW))
+    const { deps, persistAdopted, saveConflictBackup, recordStatus } = makeDeps({
+      getVaultJson: () => A,
+      loadSources: vi.fn(async () => [{ source: source('s1'), cred: WEBDAV_CRED }]),
+      makeBackend: () => b,
+    })
+    await createCloudSyncRunner(deps).run('pull')
+    expect(b.putCount).toBe(0) // 不写云
+    expect(saveConflictBackup).not.toHaveBeenCalled() // 不产生冲突副本下载
+    expect(persistAdopted).not.toHaveBeenCalled()
+    expect(recordStatus).toHaveBeenLastCalledWith(true, 's1: 已是最新')
+  })
+
+  it('云端无对象 → pull-only 不做首推（零处理），云端保持为空', async () => {
+    const b = fakeBackend()
+    const { deps, recordStatus } = makeDeps({
+      loadSources: vi.fn(async () => [{ source: source('s1'), cred: WEBDAV_CRED }]),
+      makeBackend: () => b,
+    })
+    await createCloudSyncRunner(deps).run('pull')
+    expect(b.putCount).toBe(0)
+    expect(recordStatus).toHaveBeenLastCalledWith(true, 's1: 已是最新')
+  })
+
+  it('keep 源：listBackups 取时间戳最新份拉取；pull-only 不新增时间戳文件（旧行为每 tick 上传一份）', async () => {
+    const b = fakeBackend()
+    b.store.set('dir/vault-20260101-000000.totpbackup', await envelopeBytesOf(A, PW))
+    b.store.set('dir/vault-20260202-000000.totpbackup', await envelopeBytesOf(B, PW))
+    b.listBackups = async () => [...b.store.keys()]
+    const { deps, persistAdopted } = makeDeps({
+      getVaultJson: () => A,
+      loadSources: vi.fn(async () => [
+        { source: source('s-keep', { retention: { type: 'keep', n: 2 } }), cred: { ...WEBDAV_CRED, objectPath: 'dir/totp-backup.totpbackup' } },
+      ]),
+      makeBackend: () => b,
+    })
+    await createCloudSyncRunner(deps).run('pull')
+    expect(persistAdopted).toHaveBeenCalledWith(B) // 字典序最新份（=时间序）胜出
+    expect(b.store.size).toBe(2) // 零上传：不再新增时间戳文件
+  })
+
+  it('解密失败（口令不匹配）→ 本源记失败不动基线；恢复后同内容下轮重试拉到（断网/自愈同径）', async () => {
+    const b = fakeBackend(await envelopeBytesOf(B, '另一个口令'))
+    const revs = statefulRevs()
+    const { deps, saveTargetHash, persistAdopted, recordStatus } = makeDeps({
+      getVaultJson: () => A,
+      loadSources: vi.fn(async () => [{ source: source('s1'), cred: WEBDAV_CRED }]),
+      makeBackend: () => b,
+      loadTargetHash: revs.loadTargetHash,
+      saveTargetHash: revs.saveTargetHash,
+    })
+    const runner = createCloudSyncRunner(deps)
+    await runner.run('pull')
+    expect(saveTargetHash).not.toHaveBeenCalled() // 基线不动 → 下轮重试
+    expect(persistAdopted).not.toHaveBeenCalled()
+    expect(recordStatus).toHaveBeenLastCalledWith(true, 's1: 失败')
+    b.store.set(PATH, await envelopeBytesOf(B, PW)) // 口令问题修复（或网络恢复后云端可读）
+    await runner.run('pull')
+    expect(persistAdopted).toHaveBeenCalledWith(B)
+    expect(saveTargetHash).toHaveBeenLastCalledWith('s1', await sha256Hex(b.store.get(PATH)!))
+  })
+
+  it('凭据失效：get 抛 CloudHttpError(401) → onAuthFailure 收 (消息原文, 401) 结构化透传（宿主转 reject 停轮询）', async () => {
+    const b = fakeBackend(bytesOf('remote-bytes')) // 预置字节：exists 为真才走到 get（pull 经 exists → get）
+    b.get = async () => {
+      throw new CloudHttpError('WebDAV', 401)
+    }
+    const onAuthFailure = vi.fn()
+    const { deps, recordStatus } = makeDeps({
+      loadSources: vi.fn(async () => [{ source: source('s1'), cred: WEBDAV_CRED }]),
+      makeBackend: () => b,
+      onAuthFailure,
+    })
+    await createCloudSyncRunner(deps).run('pull')
+    expect(onAuthFailure).toHaveBeenCalledOnce()
+    expect(onAuthFailure).toHaveBeenCalledWith('WebDAV 请求失败（HTTP 401）', 401)
+    expect(recordStatus).toHaveBeenLastCalledWith(true, 's1: 失败')
+  })
+
+  it('pull 不受推送通道内容门影响（本地门仅属 auto）：同内容多次 run("pull") 每次都真实下载比对', async () => {
+    const b = fakeBackend(await envelopeBytesOf(A, PW))
+    let getCount = 0
+    const origGet = b.get.bind(b)
+    b.get = async (p) => {
+      getCount++
+      return origGet(p)
+    }
+    const { deps } = makeDeps({
+      getVaultJson: () => A,
+      loadSources: vi.fn(async () => [{ source: source('s1'), cred: WEBDAV_CRED }]),
+      makeBackend: () => b,
+    })
+    const runner = createCloudSyncRunner(deps)
+    await runner.run('pull')
+    await runner.run('pull')
+    await runner.run('pull')
+    expect(getCount).toBe(3) // 每 tick 都下载（零处理由远端 hash 门承担，非跳过网络）
+    expect(b.putCount).toBe(0)
+  })
+
+  it('pull 空/锁定/无 secret 跳过态与推拉通道同口径', async () => {
+    const { deps, recordStatus } = makeDeps({ isLocked: () => true })
+    await createCloudSyncRunner(deps).run('pull')
+    expect(recordStatus).toHaveBeenCalledWith(null, '库已锁定')
+    const { deps: deps2, recordStatus: record2 } = makeDeps({ getSecret: () => null })
+    await createCloudSyncRunner(deps2).run('pull')
+    expect(record2).toHaveBeenCalledWith(null, '未设置备份口令')
+    const { deps: deps3, recordStatus: record3 } = makeDeps()
+    await createCloudSyncRunner(deps3).run('pull')
+    expect(record3).toHaveBeenCalledWith(null, '未启用云源')
   })
 })

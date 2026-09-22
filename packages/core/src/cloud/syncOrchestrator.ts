@@ -11,7 +11,9 @@
  *   （cloudRunner，见 packages/ui/src/components/cloudRunner.ts）
  * - remoteHash === cloudRev：远端未变、本地已改（本地较新）→ 推送本地 envelope → 回读校验 → uploaded
  * - 其余（远端已变且与本地不同）：openBackupEnvelope 解远端——
- *   - 成功：先经 onConflictBackup 把本地内容保存为加密冲突副本（envelope 字节），再采用远端覆盖本地——
+ *   - 成功且解密内容与本地一致：in-sync（仅刷新基线，不存副本不回推；跨端同步审查 C1——密文
+ *     随机 IV 使远端字节摘要必异于旧基线，按内容去重避免无意义副本与回推）
+ *   - 成功且内容不同：先经 onConflictBackup 把本地内容保存为加密冲突副本（envelope 字节），再采用远端覆盖本地——
  *     cloudRev 缺失（首次接云）为 downloaded，有基线为 conflict-resolved
  *   - 失败（口令错/结构坏）：抛中文错误，不做任何写操作
  *
@@ -115,6 +117,14 @@ export async function syncWithCloud(opts: SyncWithCloudOpts): Promise<CloudSyncO
     remoteVaultJson = await openBackupEnvelope(JSON.parse(new TextDecoder().decode(remote)), password)
   } catch {
     throw new Error('云端备份口令不匹配，无法合并——请确认口令或手动下载处理')
+  }
+
+  // 下载后内容比对（跨端同步审查 C1）：解密成功且与本地一致 → in-sync 仅刷新基线（hash=远端字节
+  // 摘要），不存冲突副本、不收敛回推——envelope 密文随机盐/IV 使字节摘要必不等于任何旧基线，
+  // 若此处不比对内容，对端每次全量重推都会把「内容相同的无意义副本」沉淀为 conflict-resolved。
+  // 与头部 in-sync 分支（mock 形态短路）语义一致：调用方以返回 hash 刷新基线即完成去重。
+  if (remoteVaultJson === vaultJson) {
+    return { action: 'in-sync', hash: remoteHash }
   }
 
   // 冲突副本与备份同形态：createBackupEnvelope 加密后的 envelope JSON 字节（密文落盘，恢复链路与备份卡一致）
