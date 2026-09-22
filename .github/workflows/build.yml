@@ -17,14 +17,19 @@ permissions:
 jobs:
   desktop-windows:
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-        with: { ref: "${{ inputs.ref }}" }
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: "${{ inputs.ref }}"
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 22, cache: pnpm }
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      # dtolnay/rust-toolchain 的 stable 是浮动分支，pin 到 2026-09-22 的分支 HEAD
+      #（来源 api.github.com/repos/dtolnay/rust-toolchain/commits/stable）
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable HEAD @ 2026-09-22
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with: { workspaces: apps/desktop/src-tauri }
       - run: pnpm install --frozen-lockfile
       - run: pnpm tauri build
@@ -36,7 +41,7 @@ jobs:
           $tag = "$(Get-Date -Format yyyyMMdd).$($env:GITHUB_SHA.Substring(0,7))"
           Get-ChildItem apps/desktop/src-tauri/target/release/bundle/nsis/*.exe |
             Rename-Item -NewName { $_.Name -replace '\.exe$', ".$tag.exe" }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: desktop-windows-${{ inputs.suffix }}
           path: apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
@@ -44,15 +49,18 @@ jobs:
 
   desktop-macos:
     runs-on: macos-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-        with: { ref: "${{ inputs.ref }}" }
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: "${{ inputs.ref }}"
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 22, cache: pnpm }
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable HEAD @ 2026-09-22
         with: { targets: "aarch64-apple-darwin,x86_64-apple-darwin" }
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with: { workspaces: apps/desktop/src-tauri }
       - run: pnpm install --frozen-lockfile
       # --bundles dmg 必须显式指定：tauri.conf.json targets 为 ["nsis"]（仅 Windows 有效），
@@ -65,7 +73,7 @@ jobs:
           tag="$(date +%Y%m%d).${GITHUB_SHA::7}"
           cd apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg
           for f in *.dmg; do mv "$f" "${f%.dmg}.$tag.dmg"; done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: desktop-macos-${{ inputs.suffix }}
           path: apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
@@ -73,17 +81,20 @@ jobs:
 
   desktop-linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-        with: { ref: "${{ inputs.ref }}" }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: "${{ inputs.ref }}"
+          persist-credentials: false
       # libayatana-appindicator3-dev：ubuntu-24.04（ubuntu-latest）已移除 libappindicator3-dev；
       # libxdo-dev 为 tauri v2 Linux 官方依赖清单项。
       - run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev libxdo-dev
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 22, cache: pnpm }
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable HEAD @ 2026-09-22
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with: { workspaces: apps/desktop/src-tauri }
       - run: pnpm install --frozen-lockfile
       - run: pnpm tauri build --bundles deb,appimage
@@ -94,7 +105,7 @@ jobs:
           tag="$(date +%Y%m%d).${GITHUB_SHA::7}"
           cd apps/desktop/src-tauri/target/release/bundle
           for f in deb/*.deb appimage/*.AppImage; do [ -f "$f" ] && mv "$f" "$(dirname $f)/$(basename $f | sed -E "s/\.(deb|AppImage)$/.$tag.\1/")"; done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: desktop-linux-${{ inputs.suffix }}
           path: |
@@ -104,6 +115,7 @@ jobs:
 
   extension:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       matrix:
         # browser 值必须匹配 wxt 的 -b/--browser 取值（chrome/firefox）
@@ -115,24 +127,28 @@ jobs:
           - browser: firefox
             artifact_os: firefox
     steps:
-      - uses: actions/checkout@v4
-        with: { ref: "${{ inputs.ref }}" }
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: "${{ inputs.ref }}"
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec wxt build -b ${{ matrix.browser }}
         working-directory: apps/extension
       # working-directory 固定在 apps/extension：zip 落到 $OLDPWD（apps/extension），
       # 与下方 upload path 的 glob 对齐（workspace 根会错位）。
+      # zip 名注入 package.json 版本，契约名 totp-extension-<os>-<ver>.zip（nightly 追加 .日期.sha）。
       - name: Zip
         working-directory: apps/extension
         run: |
+          ver="$(node -p "require('./package.json').version")"
           tag=""
           if [ "${{ inputs.nightly }}" = "true" ]; then tag=".$(date +%Y%m%d).${GITHUB_SHA::7}"; fi
           cd .output/${{ matrix.browser }}-mv3
-          zip -r "$OLDPWD/totp-extension-${{ matrix.artifact_os }}${tag}.zip" .
-      - uses: actions/upload-artifact@v4
+          zip -r "$OLDPWD/totp-extension-${{ matrix.artifact_os }}-$ver$tag.zip" .
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: extension-${{ matrix.artifact_os }}-${{ inputs.suffix }}
           path: apps/extension/totp-extension-*.zip
