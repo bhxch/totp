@@ -12,19 +12,26 @@ export function encodeDrivePath(path: string): string {
   return path.split('/').map(encodeURIComponent).join('/')
 }
 
+export interface OneDriveBackendOptions {
+  /** OAuth 刷新响应含轮转 refresh_token 时上抛新凭据（含原字段），由调用方持久化（spec §5⑦，
+   *  MS /common 轮转撤销策略需真机实测）；手工 token 模式与无 oauth 模式不触发。 */
+  onCredChange?: (cred: OneDriveCred) => void
+}
+
 /** OneDrive（Microsoft Graph）后端：root:/path:/content PUT upsert 单文件存加密 envelope。 */
-export function createOneDriveBackend(cred: OneDriveCred): CloudBackend {
+export function createOneDriveBackend(cred: OneDriveCred, opts: OneDriveBackendOptions = {}): CloudBackend {
   // OAuth 模式（spec §5⑦）：Authorization 可变——401 刷新后原地改写，后续请求即取新 token；
   // 手工 token 模式该值恒为 cred.accessToken，行为不变。
   const auth = { Authorization: `Bearer ${cred.accessToken}` }
 
   /** OAuth 自愈请求（spec §5⑦）：语义与 gdrive.ts authFetch 一致——请求 401 且 cred.oauth 存在
-   *  → 刷新 access token（模块级会话缓存去重）后原请求重试一次（重试重建 Authorization）；
-   *  重试仍 401/403 交由 ensureHttpOk 抛，无 oauth 时与 cloudFetch 直连完全一致。 */
+   *  → 刷新 access token（模块级会话缓存去重、并发单飞行）后原请求重试一次（重试重建
+   *  Authorization）；刷新响应含轮转 refresh_token 经 opts.onCredChange 上抛。重试仍 401/403
+   *  交由 ensureHttpOk 抛，无 oauth 时与 cloudFetch 直连完全一致。 */
   const authFetch = async (url: string, init?: RequestInit): Promise<Response> => {
     const res = await cloudFetch(LABEL, url, init)
     if (res.status !== 401 || !cred.oauth) return res
-    auth.Authorization = `Bearer ${await refreshAccessToken(cred)}`
+    auth.Authorization = `Bearer ${await refreshAccessToken(cred, { onCredChange: opts.onCredChange })}`
     return cloudFetch(LABEL, url, { ...init, headers: { ...(init?.headers as Record<string, string>), Authorization: auth.Authorization } })
   }
 

@@ -266,10 +266,11 @@ function onAuthMode(d: CloudCred | undefined, mode: string | number): void {
     delete d.oauth
   }
 }
-/** OAuth 三字段写入（oauth 为 undefined 时惰性兜底创建，防模板窄化外的竞态丢字） */
+/** OAuth 三字段写入——写时复制（审查 Important 1）：草稿为浅拷贝，d.oauth 与 credsCache/
+ *  bag.creds 中已存凭据共享同一嵌套对象，原地改字段会把未保存编辑外溢到已存凭据且无法放弃；
+ *  整对象替换断开共享（放弃编辑/重进页面即恢复已存值）。oauth 缺失时惰性兜底创建。 */
 function setOauthField(d: GDriveCred | OneDriveCred, field: 'clientId' | 'clientSecret' | 'refreshToken', v: string): void {
-  if (!d.oauth) d.oauth = { clientId: '', clientSecret: '', refreshToken: '' }
-  d.oauth[field] = v
+  d.oauth = { ...(d.oauth ?? { clientId: '', clientSecret: '', refreshToken: '' }), [field]: v }
 }
 
 /** 保留策略二选（MdSegmentedButton 选项） */

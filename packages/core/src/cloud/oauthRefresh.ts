@@ -28,9 +28,14 @@ interface CachedToken {
  *  「新 access token 仅存会话内存」）。key=credKey（clientId+refreshToken 摘要）。 */
 const sessionCache = new Map<string, CachedToken>()
 
-/** 测试隔离：清空会话缓存（生产代码勿调）。 */
+/** 单飞行 Map（审查 Minor 1）：同一凭据的并发 401（多方法各自 authFetch）只发一次刷新请求，
+ *  全部等待同一 Promise；失败也会移除（下个调用可重试）。 */
+const inflight = new Map<string, Promise<string>>()
+
+/** 测试隔离：清空会话缓存与单飞行 Map（生产代码勿调）。 */
 export function __resetOAuthCacheForTest(): void {
   sessionCache.clear()
+  inflight.clear()
 }
 
 function labelOf(backend: 'gdrive' | 'onedrive'): string {
@@ -48,13 +53,22 @@ async function credKeyOf(oauth: { clientId: string; refreshToken: string }): Pro
 }
 
 /**
- * 以 refresh_token 换新 access_token：命中未过期缓存直接返回；否则 POST token 端点
- * （grant_type=refresh_token + client_id/client_secret/refresh_token）。
+ * 以 refresh_token 换新 access_token：命中未过期缓存直接返回；并发同凭据调用合并为单次刷新
+ * （inflight 单飞行）；否则 POST token 端点（grant_type=refresh_token + 三参数）。
  * 刷新失败（HTTP 非 200 / 响应无 access_token）一律抛 CloudHttpError(status=401)——与既有
  * 「凭据失效」结构化判定（isAuthError）兼容：refresh_token 失效语义 = 凭据失效（spec §5⑦）。
  * 调用方约定 cred.oauth 已存在；缺省时抛普通 Error（编程错误防御，不发请求）。
+ *
+ * refresh_token 轮转（审查 Important 2，MS /common 端点可能在响应中下发新 refresh_token 并
+ * 撤销旧值——轮转撤销策略需真机实测，backlog）：响应含新 refresh_token 时并入 cred 经
+ * opts.onCredChange 上抛（沿用 gdrive onCredChange「宿主回存」先例；refreshToken 敏感，仅回传
+ * 宿主回存 secretBag 的通道，不上日志）。无消费方（自动通道缺省）时安全丢弃——降级为下轮
+ * 401 再刷新，MS 未撤销旧值则仍可用。Google 不轮转（通常无此字段），gdrive 同通道透传无副作用。
  */
-export async function refreshAccessToken(cred: GDriveCred | OneDriveCred): Promise<string> {
+export async function refreshAccessToken<C extends GDriveCred | OneDriveCred>(
+  cred: C,
+  opts?: { onCredChange?: (cred: C) => void },
+): Promise<string> {
   const oauth = cred.oauth
   const label = labelOf(cred.backend)
   if (!oauth) throw new Error(`${label} OAuth 刷新缺少配置（clientId/clientSecret/refreshToken）`)
@@ -62,28 +76,43 @@ export async function refreshAccessToken(cred: GDriveCred | OneDriveCred): Promi
   const key = await credKeyOf(oauth)
   const cached = sessionCache.get(key)
   if (cached && cached.expiresAt - EXPIRY_SKEW_MS > Date.now()) return cached.token
+  const pending = inflight.get(key)
+  if (pending) return pending
 
-  let res: Response
+  const refreshing = (async (): Promise<string> => {
+    let res: Response
+    try {
+      res = await fetch(tokenUrlOf(cred.backend), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          client_id: oauth.clientId,
+          client_secret: oauth.clientSecret,
+          refresh_token: oauth.refreshToken,
+        }),
+      })
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err)
+      throw new Error(`${label} OAuth 刷新请求网络失败：${reason}`)
+    }
+    if (!res.ok) throw new CloudHttpError(label, 401)
+    const json = (await res.json().catch(() => ({}))) as { access_token?: string; refresh_token?: string; expires_in?: number }
+    if (!json.access_token) throw new CloudHttpError(label, 401)
+
+    const expiresSec = typeof json.expires_in === 'number' && json.expires_in > 0 ? json.expires_in : DEFAULT_EXPIRES_IN_SEC
+    sessionCache.set(key, { token: json.access_token, expiresAt: Date.now() + expiresSec * 1000 })
+    // 轮转响应（Important 2）：新 refresh_token 并入凭据上抛回存；无 onCredChange 消费方则丢弃
+    // （注释即契约：丢弃的影响=旧 token 被 MS 撤销时下轮 401 走凭据失效救济，需重新配置 OAuth）
+    if (typeof json.refresh_token === 'string' && json.refresh_token && json.refresh_token !== oauth.refreshToken) {
+      opts?.onCredChange?.({ ...cred, oauth: { ...oauth, refreshToken: json.refresh_token } })
+    }
+    return json.access_token
+  })()
+  inflight.set(key, refreshing)
   try {
-    res = await fetch(tokenUrlOf(cred.backend), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'refresh_token',
-        client_id: oauth.clientId,
-        client_secret: oauth.clientSecret,
-        refresh_token: oauth.refreshToken,
-      }),
-    })
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err)
-    throw new Error(`${label} OAuth 刷新请求网络失败：${reason}`)
+    return await refreshing
+  } finally {
+    inflight.delete(key)
   }
-  if (!res.ok) throw new CloudHttpError(label, 401)
-  const json = (await res.json().catch(() => ({}))) as { access_token?: string; expires_in?: number }
-  if (!json.access_token) throw new CloudHttpError(label, 401)
-
-  const expiresSec = typeof json.expires_in === 'number' && json.expires_in > 0 ? json.expires_in : DEFAULT_EXPIRES_IN_SEC
-  sessionCache.set(key, { token: json.access_token, expiresAt: Date.now() + expiresSec * 1000 })
-  return json.access_token
 }

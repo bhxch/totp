@@ -663,4 +663,46 @@ describe('OAuth 401 自愈（spec §5⑦：cred.oauth 存在 → 刷新重试一
     expect(new TextDecoder().decode((await backend.get(PATH))!)).toBe('hello')
     expect(apiAuths).toEqual(['Bearer stale', 'Bearer ms-newtok'])
   })
+
+  it('gdrive：token 响应含轮转 refresh_token → onCredChange 上抛合并凭据（宿主回存 secretBag），不含旧值', async () => {
+    let apiCalls = 0
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url) === GDRIVE_TOKEN_URL) {
+        return jsonRes({ access_token: 'newtok', refresh_token: 'rtok-2', expires_in: 3600 })
+      }
+      apiCalls++
+      return apiCalls === 1 ? new Response(null, { status: 401 }) : new Response(BYTES, { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const onCredChange = vi.fn()
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'stale', fileId: 'fid9', oauth: { ...OAUTH } }, { onCredChange })
+    expect(new TextDecoder().decode((await backend.get(PATH))!)).toBe('hello')
+    expect(onCredChange).toHaveBeenCalledOnce()
+    expect(onCredChange).toHaveBeenCalledWith({
+      backend: 'gdrive', accessToken: 'stale', fileId: 'fid9',
+      oauth: { clientId: 'cid-1', clientSecret: 'sec-1', refreshToken: 'rtok-2' },
+    })
+    expect(JSON.stringify(onCredChange.mock.calls[0]![0])).not.toContain('rtok-1')
+  })
+
+  it('onedrive：token 响应含轮转 refresh_token → onCredChange 上抛合并凭据；无回调时不抛（安全丢弃）', async () => {
+    let apiCalls = 0
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url) === 'https://login.microsoftonline.com/common/oauth2/v2.0/token') {
+        return jsonRes({ access_token: 'ms-newtok', refresh_token: 'rtok-2', expires_in: 3600 })
+      }
+      apiCalls++
+      return apiCalls === 1 ? new Response(null, { status: 401 }) : new Response(BYTES, { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const onCredChange = vi.fn()
+    const backend = createOneDriveBackend({ backend: 'onedrive', accessToken: 'stale', oauth: { ...OAUTH } }, { onCredChange })
+    expect(new TextDecoder().decode((await backend.get(PATH))!)).toBe('hello')
+    expect(onCredChange).toHaveBeenCalledWith({ backend: 'onedrive', accessToken: 'stale', oauth: { clientId: 'cid-1', clientSecret: 'sec-1', refreshToken: 'rtok-2' } })
+    // 无消费方（自动通道缺省）：刷新照常成功，轮转字段安全丢弃
+    __resetOAuthCacheForTest()
+    vi.stubGlobal('fetch', fetchMock)
+    const bare = createOneDriveBackend({ backend: 'onedrive', accessToken: 'stale', oauth: { ...OAUTH } })
+    await expect(bare.get(PATH)).resolves.not.toBeNull()
+  })
 })

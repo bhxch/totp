@@ -13,7 +13,7 @@ vi.mock('../src/components/cloudPlatform', async (importOriginal) => {
   return { ...actual, createCloudBackend: vi.fn(actual.createCloudBackend) }
 })
 
-import { enforceRemoteRetention, syncMultipleTargets, type BackupSource, type CloudBackend, type CloudCred } from '@totp/core'
+import { enforceRemoteRetention, syncMultipleTargets, type BackupSource, type CloudBackend, type CloudCred, type GDriveCred } from '@totp/core'
 import { createCloudBackend } from '../src/components/cloudPlatform'
 import CloudCard from '../src/components/CloudCard.vue'
 import { createTestI18n } from './helpers/i18n'
@@ -396,5 +396,51 @@ describe('CloudCard（源列表 plan16 T8）', () => {
     await clickSync(w)
     expect(mockedSync).toHaveBeenCalledTimes(2) // T11F：preview+apply 两轮均携带
     expect(mockedSync.mock.calls[0]![0].profile).toBe('paranoid')
+  })
+})
+
+describe('CloudCard OAuth 凭据表单（spec §5⑦）', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('已存凭据含 oauth → 默认 OAuth 模式（渲染三字段）；编辑 oauth 字段为写时复制——credsCache 中已存对象不被改写（审查 Important 1）', async () => {
+    const savedOauth = { clientId: 'cid-0', clientSecret: 'sec-0', refreshToken: 'rtok-0' }
+    const savedCred: CloudCred = { backend: 'gdrive', accessToken: '', oauth: savedOauth }
+    const p = makePlatform({
+      creds: { s1: savedCred },
+      loadSources: vi.fn().mockResolvedValue([src({ id: 's1', kind: 'gdrive', name: 'G-Drive' })]),
+    })
+    const w = await mountCard(p)
+    await w.findAll('button.target-toggle')[0]!.trigger('click') // 展开配置
+    // oauth 存在 → 默认 OAuth 模式：渲染 Client ID 与 Refresh Token 框（无手工 Access Token 框）
+    const byPlaceholder = (ph: string) => w.findAll('input').find((i) => i.attributes('placeholder') === ph)
+    expect(byPlaceholder('Client ID')).toBeDefined()
+    const rt = byPlaceholder('Refresh Token')
+    expect(rt).toBeDefined()
+    expect(byPlaceholder('Access Token（Google OAuth）')).toBeUndefined()
+    // 编辑 refreshToken：草稿更新为写时复制的新对象
+    await rt!.setValue('rtok-EDIT')
+    expect((rt!.element as HTMLInputElement).value).toBe('rtok-EDIT')
+    // 锚定（Important 1）：credsCache 中的已存凭据对象及其嵌套 oauth 引用未被改写、值不变
+    expect((p.creds.s1 as GDriveCred).oauth).toBe(savedOauth)
+    expect(savedOauth.refreshToken).toBe('rtok-0')
+  })
+
+  it('手工模式编辑不产生 oauth 字段；切换 OAuth 后空三元组入草稿，未保存不外溢', async () => {
+    const savedCred: CloudCred = { backend: 'gdrive', accessToken: 'old-tok' }
+    const p = makePlatform({
+      creds: { s1: savedCred },
+      loadSources: vi.fn().mockResolvedValue([src({ id: 's1', kind: 'gdrive', name: 'G-Drive' })]),
+    })
+    const w = await mountCard(p)
+    await w.findAll('button.target-toggle')[0]!.trigger('click')
+    const byPlaceholder = (ph: string) => w.findAll('input').find((i) => i.attributes('placeholder') === ph)
+    // 默认手工模式：accessToken 框在、OAuth 三字段不在
+    expect(byPlaceholder('Access Token（Google OAuth）')).toBeDefined()
+    expect(byPlaceholder('Refresh Token')).toBeUndefined()
+    // 切到 OAuth 模式：新建的是草稿自有空三元组，已存凭据对象无 oauth 字段
+    const oauthSeg = w.findAll('button[role="radio"]').find((b) => b.text() === 'OAuth 自动刷新')
+    await oauthSeg!.trigger('click')
+    expect(byPlaceholder('Refresh Token')).toBeDefined()
+    expect((p.creds.s1 as GDriveCred).oauth).toBeUndefined()
   })
 })

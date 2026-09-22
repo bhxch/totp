@@ -11,7 +11,8 @@ export const CLOUD_BACKUP_PATH = 'totp-backup.totpbackup'
 /**
  * cred → backend 实例工厂（ui 侧 switch 五个 core create*Backend——core 无统一工厂，
  * 取 ui 侧 switch：不加 core API 面，与简报「backend 由 cred 工厂创建（switch backend id）」一致）。
- * onCredChange 仅 GDrive 消费（首推自动建文件回存 fileId），由调用方持久化新凭据。
+ * onCredChange 消费方：GDrive 首推自动建文件回存 fileId；GDrive/OneDrive OAuth 刷新响应含
+ * 轮转 refresh_token 时回存新凭据（spec §5⑦）——两者均由调用方持久化新凭据入 secretBag。
  */
 export function createCloudBackend(cred: CloudCred, onCredChange?: (cred: CloudCred) => void): CloudBackend {
   switch (cred.backend) {
@@ -19,7 +20,7 @@ export function createCloudBackend(cred: CloudCred, onCredChange?: (cred: CloudC
     case 's3': return createS3Backend(cred)
     case 'gist': return createGistBackend(cred)
     case 'gdrive': return createGDriveBackend(cred, onCredChange ? { onCredChange } : {})
-    case 'onedrive': return createOneDriveBackend(cred)
+    case 'onedrive': return createOneDriveBackend(cred, onCredChange ? { onCredChange } : {})
     default: throw new Error('未知的云后端类型')
   }
 }

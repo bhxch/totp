@@ -24,13 +24,14 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
   const auth = { Authorization: `Bearer ${cred.accessToken}` }
 
   /** OAuth 自愈请求（spec §5⑦）：请求 401 且 cred.oauth 存在 → 刷新 access token（模块级会话缓存
-   *  去重）后原请求重试一次。重试须重建 Authorization——调用方构造 init 时已把当时的 auth 展开/引用
-   *  进 headers，原地改写 auth 不会回填旧 init。重试仍 401/403 交由调用方 ensureHttpOk 抛
+   *  去重、并发单飞行）后原请求重试一次。重试须重建 Authorization——调用方构造 init 时已把当时的
+   *  auth 展开/引用进 headers，原地改写 auth 不会回填旧 init。刷新响应若含轮转 refresh_token 经
+   *  opts.onCredChange 上抛（宿主回存 secretBag）。重试仍 401/403 交由调用方 ensureHttpOk 抛
    *  （凭据失效语义不变）；无 oauth 时与 cloudFetch 直连完全一致（401 照原样返回给上层判定）。 */
   const authFetch = async (url: string, init?: RequestInit): Promise<Response> => {
     const res = await cloudFetch(LABEL, url, init)
     if (res.status !== 401 || !cred.oauth) return res
-    auth.Authorization = `Bearer ${await refreshAccessToken(cred)}`
+    auth.Authorization = `Bearer ${await refreshAccessToken(cred, { onCredChange: opts.onCredChange })}`
     return cloudFetch(LABEL, url, { ...init, headers: { ...(init?.headers as Record<string, string>), Authorization: auth.Authorization } })
   }
 

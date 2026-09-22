@@ -107,4 +107,63 @@ describe('oauthRefresh：refreshAccessToken', () => {
     await expect(refreshAccessToken(cred)).rejects.toThrow('OAuth')
     expect(fetchMock).not.toHaveBeenCalled()
   })
+
+  it('轮转（审查 Important 2）：响应含新 refresh_token → onCredChange 收到合并 cred（新值、不含旧值），原 cred 对象不被改写', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ access_token: 'tokR', refresh_token: 'rtok-2', expires_in: 3600 }),
+      { status: 200 },
+    )))
+    const cred = { backend: 'gdrive' as const, accessToken: 'stale', oauth: { ...OAUTH } }
+    const onCredChange = vi.fn()
+    expect(await refreshAccessToken(cred, { onCredChange })).toBe('tokR')
+    expect(onCredChange).toHaveBeenCalledOnce()
+    expect(onCredChange).toHaveBeenCalledWith({
+      backend: 'gdrive', accessToken: 'stale',
+      oauth: { clientId: 'cid-1', clientSecret: 'sec-1', refreshToken: 'rtok-2' },
+    })
+    // 上抛凭据不含旧 refresh_token；入参 cred 原对象不被原地改写
+    expect(JSON.stringify(onCredChange.mock.calls[0]![0])).not.toContain('rtok-1')
+    expect(cred.oauth?.refreshToken).toBe('rtok-1')
+  })
+
+  it('轮转：响应 refresh_token 与旧值相同/缺失 → 不触发 onCredChange（Google 不轮转零副作用）', async () => {
+    const onCredChange = vi.fn()
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ access_token: 'tokR', refresh_token: 'rtok-1', expires_in: 3600 }),
+      { status: 200 },
+    )))
+    await refreshAccessToken({ backend: 'gdrive', accessToken: '', oauth: { ...OAUTH } }, { onCredChange })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ access_token: 'tokS', expires_in: 3600 }),
+      { status: 200 },
+    )))
+    await refreshAccessToken({ backend: 'onedrive', accessToken: '', oauth: { ...OAUTH } }, { onCredChange })
+    expect(onCredChange).not.toHaveBeenCalled()
+  })
+
+  it('轮转：无 onCredChange 消费方 → 安全丢弃不抛（降级=下轮 401 再刷新）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ access_token: 'tokR', refresh_token: 'rtok-2', expires_in: 3600 }),
+      { status: 200 },
+    )))
+    const cred = { backend: 'onedrive' as const, accessToken: '', oauth: { ...OAUTH } }
+    await expect(refreshAccessToken(cred)).resolves.toBe('tokR')
+  })
+
+  it('单飞行（审查 Minor 1）：同凭据并发刷新只发一次请求，共享同一结果', async () => {
+    let hits = 0
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      hits++
+      await new Promise((r) => setTimeout(r, 5)) // 拉开窗口确保第二调用落在首刷在途期
+      return new Response(JSON.stringify({ access_token: 'tokF', expires_in: 3600 }), { status: 200 })
+    }))
+    const cred = { backend: 'gdrive' as const, accessToken: '', oauth: { ...OAUTH } }
+    const [a, b] = await Promise.all([refreshAccessToken(cred), refreshAccessToken(cred)])
+    expect(a).toBe('tokF')
+    expect(b).toBe('tokF')
+    expect(hits).toBe(1)
+    // 在途完成后，并发窗口关闭：再次调用走缓存仍零请求
+    await refreshAccessToken(cred)
+    expect(hits).toBe(1)
+  })
 })
