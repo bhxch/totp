@@ -12,7 +12,7 @@ import { createIdleLockExecutor } from './idleLock'
 import { lockPrefsUnsupportedKeys } from './lockPrefs'
 import { BACKUP_DIR_KEY, migrateLegacyCloudSources, migrateLegacyLocalSource } from './legacyMigrate'
 import { createMcpApprovalQueue, isToolConfirmItem, type McpApprovalAction } from './mcpApprovalQueue'
-import { startMcpBridge, type McpBridgeDeps } from './mcpBridge'
+import { createMcpTriggers, startMcpBridge, type McpBridgeDeps } from './mcpBridge'
 import McpConsentDialog from './McpConsentDialog.vue'
 import { createTauriFs } from './tauriFs'
 import { isEntropyBoundDekWrap, osAutoForgetOs, osAutoProtectOs, osAutoUnprotectOs } from './tauriSecurity'
@@ -756,23 +756,21 @@ onMounted(async () => {
         const tags = store.value?.vault.tags ?? []
         return e.tagIds.map((id) => tags.find((t) => t.id === id)?.name).filter((n): n is string => !!n)
       },
-      // 触发器装配（spec §6.1，T6）：前置不满足回结构化 reason；no enabled sources /
-      // no primary target 类原因由 runner recordStatus 记录、此处不重复判定——
-      // triggered=true 语义为「已受理执行」，业务结果经状态行呈现，绝不返回 vault 数据
-      triggerSync: async () => {
-        const s = store.value
-        if (!s || s.locked.value) return { triggered: false, reason: 'vault locked' }
-        if (s.backupSecret.value === null) return { triggered: false, reason: 'no backup secret' }
-        await cloudSync.run('manual')
-        return { triggered: true }
-      },
-      triggerBackup: async () => {
-        const s = store.value
-        if (!s || s.locked.value) return { triggered: false, reason: 'vault locked' }
-        if (s.backupSecret.value === null) return { triggered: false, reason: 'no backup secret' }
-        await auto.runBackupNow()
-        return { triggered: true }
-      },
+      // 触发器装配（spec §6.1；终审 I2 受理即返回）：前置同步判定回结构化 reason，触发通道
+      // 启动但不等待（bridge_call 固定 5s 超时，慢同步/备份若 await 会把「仍在后台执行」误报
+      // 成 app busy）；no enabled sources / no primary target 类原因由 runner recordStatus 记录、
+      // 此处不重复判定——triggered=true 语义为「已受理执行」，业务结果经状态行呈现，绝不返回
+      // vault 数据
+      ...createMcpTriggers({
+        guard: () => {
+          const s = store.value
+          if (!s || s.locked.value) return { triggered: false, reason: 'vault locked' }
+          if (s.backupSecret.value === null) return { triggered: false, reason: 'no backup secret' }
+          return null
+        },
+        runSync: () => cloudSync.run('manual'),
+        runBackup: () => auto.runBackupNow(),
+      }),
     }
     mcpStop = await startMcpBridge(mcpDeps, { listen, invoke: (c, a) => invoke(c, a as never).then(() => {}) })
   } catch (e) {

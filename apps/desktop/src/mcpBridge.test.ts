@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { filterAccounts, handleMcpRequest, startMcpBridge, type McpBridgeDeps, type McpRequestPayload } from './mcpBridge'
+import { createMcpTriggers, filterAccounts, handleMcpRequest, startMcpBridge, type McpBridgeDeps, type McpRequestPayload } from './mcpBridge'
 import type { OtpEntry } from '@totp/core'
 
 const mkEntry = (o: Partial<OtpEntry>): OtpEntry => ({
@@ -141,6 +141,43 @@ describe('handleMcpRequest 触发器（spec §6.1，T5）', () => {
       triggerBackup: async () => ({ triggered: true }),
     } satisfies McpBridgeDeps
     expect((await handleMcpRequest(deps, { id: 3, tool: 'x', args: {} })).ok).toBe(false)
+  })
+})
+
+describe('createMcpTriggers（spec §6.1 + 终审 I2 受理即返回）', () => {
+  const blocked = { triggered: false as const, reason: 'vault locked' }
+  it('前置不满足 → 结构化 reason，不启动触发通道', async () => {
+    const runSync = vi.fn(() => Promise.resolve())
+    const runBackup = vi.fn(() => Promise.resolve())
+    const t = createMcpTriggers({ guard: () => blocked, runSync, runBackup })
+    await expect(t.triggerSync()).resolves.toEqual({ triggered: false, reason: 'vault locked' })
+    await expect(t.triggerBackup()).resolves.toEqual({ triggered: false, reason: 'vault locked' })
+    expect(runSync).not.toHaveBeenCalled()
+    expect(runBackup).not.toHaveBeenCalled()
+  })
+
+  it('受理即返回：triggered:true 不等待触发通道完成（deferred 未决即返回）', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    const runSync = vi.fn(() => gate)
+    const t = createMcpTriggers({ guard: () => null, runSync, runBackup: () => Promise.resolve() })
+    const r = await t.triggerSync()
+    expect(r).toEqual({ triggered: true }) // 同步通道仍挂起（gate 未放行）即已返回受理态
+    expect(runSync).toHaveBeenCalledTimes(1)
+    release()
+  })
+
+  it('触发通道失败不冒泡到工具响应、不产生未处理 rejection', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const boom = Promise.reject(new Error('net down'))
+    const t = createMcpTriggers({ guard: () => null, runSync: () => boom, runBackup: () => Promise.reject(new Error('disk full')) })
+    await expect(t.triggerSync()).resolves.toEqual({ triggered: true })
+    await expect(t.triggerBackup()).resolves.toEqual({ triggered: true })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(warn).not.toHaveBeenCalled() // 静默兜底：错误由 runner 内部 recordStatus/onError 呈现
+    warn.mockRestore()
   })
 })
 

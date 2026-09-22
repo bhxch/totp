@@ -249,6 +249,40 @@ describe('createDesktopAutoRunner.runBackupNow（spec §6.1 trigger_backup 执�
     expect(doBackup).not.toHaveBeenCalled()
     expect(recordStatus).not.toHaveBeenCalled()
   })
+
+  it('并发调用排队串行（审查 Important 1 single-flight 链）：首轮在跑时第二轮等待，不并发 doBackup', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    const doBackup = vi.fn(() => gate.then(() => ({ ...OK_RESULT })))
+    const { deps } = makeDeps({ doBackup })
+    const runner = createDesktopAutoRunner(deps)
+    const p1 = runner.runBackupNow()
+    const p2 = runner.runBackupNow()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(doBackup).toHaveBeenCalledTimes(1) // 第二轮已排队，未并发执行
+    release()
+    await Promise.all([p1, p2])
+    expect(doBackup).toHaveBeenCalledTimes(2)
+  })
+
+  it('前轮失败不毒化队列：后轮照常执行（链不断）', async () => {
+    const doBackup = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        throw new Error('disk full')
+      })
+      .mockImplementationOnce(async () => OK_RESULT)
+    const { deps, setLastBackupHash } = makeDeps({ doBackup })
+    const runner = createDesktopAutoRunner(deps)
+    const p1 = runner.runBackupNow()
+    const p2 = runner.runBackupNow()
+    await expect(p1).rejects.toThrow('disk full')
+    await p2
+    expect(doBackup).toHaveBeenCalledTimes(2)
+    expect(setLastBackupHash).toHaveBeenCalledWith(HASH1)
+  })
 })
 
 describe('formatAutoStatusText（宿主状态行格式化，App.vue readAutoStatusText 委托）', () => {

@@ -72,8 +72,9 @@ export function createMcpApprovalQueue(deps: McpApprovalQueueDeps) {
   const dedupeKey = (e: McpConsentItem): string => ('id' in e ? `tool:${e.ident}` : `conn:${e.ident}`)
 
   /** 通用入队：同键 10s 窗口内 → 就地更新已排队项（onDisplaced 收到被顶掉的旧载荷，
-   *  供工具确认对旧 id 快速回执）；窗口外 → 追加队尾 */
-  function upsert(item: McpConsentItem, onDisplaced?: (old: McpConsentItem) => void): void {
+   *  供工具确认对旧 id 快速回执）；窗口外 → 追加队尾。返回是否实际入队（窗口内重试
+   *  且已离队被挡 → false，调用方需自行收敛该载荷的待决状态，见 Minor 1） */
+  function upsert(item: McpConsentItem, onDisplaced?: (old: McpConsentItem) => void): boolean {
     const t = now()
     const key = dedupeKey(item)
     const last = lastSeen.get(key)
@@ -87,11 +88,13 @@ export function createMcpApprovalQueue(deps: McpApprovalQueueDeps) {
         queue.value = next
         lastSeen.set(key, t)
         onDisplaced?.(old)
+        return true
       }
-      return
+      return false
     }
     lastSeen.set(key, t)
     queue.value = [...queue.value, item]
+    return true
   }
 
   /** 审批事件入队：同 ident 10s 窗口内 → 就地更新已排队项；窗口外 → 追加队尾 */
@@ -100,15 +103,20 @@ export function createMcpApprovalQueue(deps: McpApprovalQueueDeps) {
   }
 
   /** 工具级确认入队（spec §6.2）：与首连审批同一 FIFO/10s 去重口径；同 ident 窗口内
-   *  重复事件就地更新（被顶掉的旧 id 立即回调 false 快速失败） */
+   *  重复事件就地更新（被顶掉的旧 id 立即回调 false 快速失败）；窗口内重试且已离队被挡
+   *  时新 id 也立即回 false（审查 Minor 1：否则 onDecide 闭包泄漏且该 id 白等 Rust 60s 超时） */
   function queueToolConfirmation(payload: McpToolConfirmEvent, onDecide: McpToolDecide): void {
     pendingDecide.set(payload.id, onDecide)
-    upsert({ ...payload }, (old) => {
+    const queued = upsert({ ...payload }, (old) => {
       if (!('id' in old)) return
       const displaced = pendingDecide.get(old.id)
       pendingDecide.delete(old.id)
       if (displaced) safeDecide(displaced, false)
     })
+    if (!queued) {
+      pendingDecide.delete(payload.id)
+      safeDecide(onDecide, false)
+    }
   }
 
   /** 裁定回调安全执行：同步调用恰一次（与 respond 同时机）；同步抛错或返回 Promise 拒绝

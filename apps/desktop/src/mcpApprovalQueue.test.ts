@@ -204,4 +204,28 @@ describe('createMcpApprovalQueue 工具级确认（spec §6.2，T7）', () => {
     q.queueToolConfirmation({ id: 13, ident: 'a', tool: 'trigger_sync' }, record(13))
     expect(q.current.value).toEqual({ id: 13, ident: 'a', tool: 'trigger_sync' })
   })
+
+  it('窗口内重试已离队被挡：新 id 立即回 false（审查 Minor 1，不泄漏 onDecide/白等 60s）', () => {
+    const { q, advance } = harness()
+    const decided: Array<{ id: number; allow: boolean }> = []
+    const record = (id: number) => (allow: boolean) => {
+      decided.push({ id, allow })
+    }
+    q.queueToolConfirmation({ id: 20, ident: 'a', tool: 'trigger_sync' }, record(20))
+    q.resolveTool(20, true)
+    expect(decided).toEqual([{ id: 20, allow: true }])
+    advance(1_000) // 离队后 10s 窗口内重试：被去重挡下
+    q.queueToolConfirmation({ id: 21, ident: 'a', tool: 'trigger_sync' }, record(21))
+    expect(q.size.value).toBe(0)
+    expect(decided).toEqual([
+      { id: 20, allow: true },
+      { id: 21, allow: false },
+    ])
+    // id 21 不在队也不在登记表：迟到的 resolveTool no-op（双重消费被挡）
+    q.resolveTool(21, true)
+    expect(decided).toEqual([
+      { id: 20, allow: true },
+      { id: 21, allow: false },
+    ])
+  })
 })

@@ -66,6 +66,41 @@ export async function handleMcpRequest(deps: McpBridgeDeps, payload: McpRequestP
   }
 }
 
+/** 触发器装配依赖（createMcpTriggers 消费） */
+export interface McpTriggerIo {
+  /** 前置守护：null=可受理；非 null=直接回该结构化拒绝（锁定/无口令，同步判定） */
+  guard: () => { triggered: false; reason: string } | null
+  runSync: () => Promise<unknown>
+  runBackup: () => Promise<unknown>
+}
+
+/** 触发器装配工厂（spec §6.1；终审 I2 裁定受理即返回）：前置同步判定后启动触发通道但
+ *  不等待——bridge_call 固定 5s 超时，慢同步/备份若 await 会把「仍在后台执行」误报成
+ *  app busy；triggered=true=已受理执行，业务结果经宿主状态行呈现（runner 内部
+ *  recordStatus/onError），触发失败不冒泡到工具响应（仅防未处理 rejection），绝不返回
+ *  vault 数据，MCP 侧不轮询 */
+export function createMcpTriggers(io: McpTriggerIo): Pick<McpBridgeDeps, 'triggerSync' | 'triggerBackup'> {
+  function fire(run: () => Promise<unknown>): void {
+    void Promise.resolve()
+      .then(run)
+      .catch(() => {})
+  }
+  return {
+    triggerSync: async () => {
+      const blocked = io.guard()
+      if (blocked) return blocked
+      fire(io.runSync)
+      return { triggered: true }
+    },
+    triggerBackup: async () => {
+      const blocked = io.guard()
+      if (blocked) return blocked
+      fire(io.runBackup)
+      return { triggered: true }
+    },
+  }
+}
+
 /** 装配（App.vue 专用）：listen/inject 注入便于测试；返回卸载函数 */
 export async function startMcpBridge(
   deps: McpBridgeDeps,

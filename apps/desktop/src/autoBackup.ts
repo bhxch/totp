@@ -157,6 +157,18 @@ export function createDesktopAutoRunner(deps: AutoBackupDeps, opts?: { debounceM
     onError: (err) => report(err, 'cloud'),
   })
 
+  // 实例级 single-flight（审查 Important 1）：bridge_call 5s 超时 + 慢备份 → 客户端收
+  // "app busy" 重试 → 二次受理并发触发；in-flight promise 链排队串行（与 cloudRunner
+  // 同法），并发轮次依次执行不并发 doBackup——后轮在基线推进后照常执行，unchanged
+  // 自然跳过，不会冗余备份或双写基线
+  let backupNowChain: Promise<void> = Promise.resolve()
+  function runBackupNow(): Promise<void> {
+    const next = backupNowChain.then(() => runBackup('change', { skipPrefsGate: true }))
+    // 链不断：前轮失败（runBackup rethrow）不阻断后续轮次
+    backupNowChain = next.catch(() => {})
+    return next
+  }
+
   return {
     notifyChanged() {
       backup.notifyChanged()
@@ -171,6 +183,6 @@ export function createDesktopAutoRunner(deps: AutoBackupDeps, opts?: { debounceM
       cloud.stop()
     },
     // reason 仅被 prefsGate 消费，跳过偏好门后无语义；执行体与守护与自动通道完全同一份
-    runBackupNow: () => runBackup('change', { skipPrefsGate: true }),
+    runBackupNow,
   }
 }
