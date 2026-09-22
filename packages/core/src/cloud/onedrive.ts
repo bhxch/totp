@@ -1,6 +1,7 @@
 import type { CloudBackend, OneDriveCred } from './backend'
 import { cloudFetch, ensureHttpOk } from './backend'
 import { BACKUP_NAME_RE } from '../backup/policy'
+import { refreshAccessToken } from './oauthRefresh'
 import { resolveDirPath, resolveObjectPath } from './targetPath'
 
 const LABEL = 'OneDrive'
@@ -13,13 +14,26 @@ export function encodeDrivePath(path: string): string {
 
 /** OneDrive（Microsoft Graph）后端：root:/path:/content PUT upsert 单文件存加密 envelope。 */
 export function createOneDriveBackend(cred: OneDriveCred): CloudBackend {
+  // OAuth 模式（spec §5⑦）：Authorization 可变——401 刷新后原地改写，后续请求即取新 token；
+  // 手工 token 模式该值恒为 cred.accessToken，行为不变。
   const auth = { Authorization: `Bearer ${cred.accessToken}` }
+
+  /** OAuth 自愈请求（spec §5⑦）：语义与 gdrive.ts authFetch 一致——请求 401 且 cred.oauth 存在
+   *  → 刷新 access token（模块级会话缓存去重）后原请求重试一次（重试重建 Authorization）；
+   *  重试仍 401/403 交由 ensureHttpOk 抛，无 oauth 时与 cloudFetch 直连完全一致。 */
+  const authFetch = async (url: string, init?: RequestInit): Promise<Response> => {
+    const res = await cloudFetch(LABEL, url, init)
+    if (res.status !== 401 || !cred.oauth) return res
+    auth.Authorization = `Bearer ${await refreshAccessToken(cred)}`
+    return cloudFetch(LABEL, url, { ...init, headers: { ...(init?.headers as Record<string, string>), Authorization: auth.Authorization } })
+  }
+
   const contentUrl = (path: string) => `${GRAPH}/me/drive/root:/${encodeDrivePath(path)}:/content`
   const itemUrl = (path: string) => `${GRAPH}/me/drive/root:/${encodeDrivePath(path)}:`
   return {
     id: 'onedrive',
     async put(path, data) {
-      const res = await cloudFetch(LABEL, contentUrl(path), {
+      const res = await authFetch(contentUrl(path), {
         method: 'PUT',
         headers: { ...auth, 'Content-Type': 'application/octet-stream' },
         body: new Uint8Array(data),
@@ -27,17 +41,17 @@ export function createOneDriveBackend(cred: OneDriveCred): CloudBackend {
       ensureHttpOk(LABEL, res)
     },
     async get(path) {
-      const res = await cloudFetch(LABEL, contentUrl(path), { method: 'GET', headers: auth })
+      const res = await authFetch(contentUrl(path), { method: 'GET', headers: auth })
       if (res.status === 404) return null
       ensureHttpOk(LABEL, res)
       return new Uint8Array(await res.arrayBuffer())
     },
     async delete(path) {
-      const res = await cloudFetch(LABEL, itemUrl(path), { method: 'DELETE', headers: auth })
+      const res = await authFetch(itemUrl(path), { method: 'DELETE', headers: auth })
       ensureHttpOk(LABEL, res)
     },
     async exists(path) {
-      const res = await cloudFetch(LABEL, itemUrl(path), { method: 'GET', headers: auth })
+      const res = await authFetch(itemUrl(path), { method: 'GET', headers: auth })
       if (res.status === 404) return false
       ensureHttpOk(LABEL, res)
       return res.ok
@@ -47,7 +61,7 @@ export function createOneDriveBackend(cred: OneDriveCred): CloudBackend {
       // item 不存在（404）或父引用缺失 → 空数组（宁可不删不可误删）。
       // 返回与 put/get/delete 同域的完整路径（dir/name）——子目录 cred 下裸名会删错层。
       const dir = resolveDirPath(cred)
-      const res = await cloudFetch(LABEL, `${itemUrl(resolveObjectPath(cred))}?select=parentReference`, { method: 'GET', headers: auth })
+      const res = await authFetch(`${itemUrl(resolveObjectPath(cred))}?select=parentReference`, { method: 'GET', headers: auth })
       if (res.status === 404) return []
       ensureHttpOk(LABEL, res)
       const item = (await res.json()) as { parentReference?: { id?: string } }
@@ -58,7 +72,7 @@ export function createOneDriveBackend(cred: OneDriveCred): CloudBackend {
       const out: string[] = []
       let url: string | null = `${GRAPH}/me/drive/items/${encodeURIComponent(parentId)}/children`
       for (let page = 0; url !== null && page < 10; page++) {
-        const children = await cloudFetch(LABEL, url, { method: 'GET', headers: auth })
+        const children = await authFetch(url, { method: 'GET', headers: auth })
         ensureHttpOk(LABEL, children)
         const json = (await children.json()) as { value?: Array<{ name?: string }>; '@odata.nextLink'?: string }
         for (const f of json.value ?? []) {

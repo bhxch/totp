@@ -53,9 +53,22 @@ export interface S3Cred {
   objectPath?: string
 }
 
+/** OAuth 自动刷新模式三元组（spec §5⑦）：用户自建 OAuth client 的凭据，敏感字段随 CloudCred
+ *  整体入 DEK 保管区 secretBag（与既有凭据同存储通道）；refresh_token 换取的 access token 仅存
+ *  会话内存（见 oauthRefresh.ts），不落盘。 */
+export interface OAuthRefreshConfig {
+  clientId: string
+  clientSecret: string
+  refreshToken: string
+}
+
 export interface GDriveCred {
   backend: 'gdrive'
   accessToken: string
+  /** OAuth 自动刷新（spec §5⑦）：提供时请求 401 自动以 refresh_token 换新 access token（会话内存）
+   *  并重试原请求一次；accessToken 仍作初始 Bearer（OAuth 模式下可为空串——空 token 首请求 401 即
+   *  触发刷新）。缺省=手工 token 模式，行为与现状完全一致。 */
+  oauth?: OAuthRefreshConfig
   /** 目标文件 id；缺省时首推自动创建并经 onCredChange 回存。 */
   fileId?: string
   /** 云端目标对象路径，缺省 DEFAULT_OBJECT_PATH（见 targetPath.ts）。 */
@@ -65,6 +78,8 @@ export interface GDriveCred {
 export interface OneDriveCred {
   backend: 'onedrive'
   accessToken: string
+  /** OAuth 自动刷新（spec §5⑦）：语义同 GDriveCred.oauth。 */
+  oauth?: OAuthRefreshConfig
   /** 云端目标对象路径，缺省 DEFAULT_OBJECT_PATH（见 targetPath.ts）。 */
   objectPath?: string
 }

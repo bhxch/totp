@@ -1,6 +1,8 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { isAuthError } from '../src/cloud/backend'
 import { createGDriveBackend } from '../src/cloud/gdrive'
 import { createOneDriveBackend } from '../src/cloud/onedrive'
+import { __resetOAuthCacheForTest } from '../src/cloud/oauthRefresh'
 
 const PATH = 'totp-backup.totpbackup'
 const BYTES = new TextEncoder().encode('hello')
@@ -556,5 +558,109 @@ describe('OneDrive 后端', () => {
     expect(await backend.listBackups!()).toEqual([])
     vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 500 })))
     await expect(backend.listBackups!()).rejects.toThrow('OneDrive 请求失败（HTTP 500）')
+  })
+})
+
+describe('OAuth 401 自愈（spec §5⑦：cred.oauth 存在 → 刷新重试一次）', () => {
+  const GDRIVE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
+  const GRAPH = 'https://graph.microsoft.com/v1.0'
+  const OAUTH = { clientId: 'cid-1', clientSecret: 'sec-1', refreshToken: 'rtok-1' }
+
+  beforeEach(() => {
+    __resetOAuthCacheForTest()
+  })
+
+  it('gdrive：请求 401 且带 oauth → POST token 端点刷新，重试带新 token 成功', async () => {
+    let apiCalls = 0
+    // Authorization 在请求时点捕获：headers 传 auth 引用（真实 fetch 调用时读取），刷新后旧记录会被同步改写
+    const apiAuths: string[] = []
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const u = String(url)
+      if (u === GDRIVE_TOKEN_URL) {
+        expect(init!.method).toBe('POST')
+        const body = new URLSearchParams(String(init!.body))
+        expect(body.get('grant_type')).toBe('refresh_token')
+        expect(body.get('client_id')).toBe('cid-1')
+        expect(body.get('client_secret')).toBe('sec-1')
+        expect(body.get('refresh_token')).toBe('rtok-1')
+        return jsonRes({ access_token: 'newtok', expires_in: 3600 })
+      }
+      if (u === 'https://www.googleapis.com/drive/v3/files/fid9?alt=media') {
+        apiCalls++
+        apiAuths.push(headersOf(init).Authorization ?? '')
+        return apiCalls === 1 ? new Response(null, { status: 401 }) : new Response(BYTES, { status: 200 })
+      }
+      throw new Error(`意外请求：${init!.method} ${u}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'stale', fileId: 'fid9', oauth: OAUTH })
+    expect(new TextDecoder().decode((await backend.get(PATH))!)).toBe('hello')
+    // 首次请求带旧 token、重试带新 token；token 端点仅命中一次（会话缓存去重）
+    expect(apiAuths).toEqual(['Bearer stale', 'Bearer newtok'])
+    expect(fetchMock.mock.calls.filter(([u]) => String(u) === GDRIVE_TOKEN_URL)).toHaveLength(1)
+  })
+
+  it('gdrive：重试仍 401 → 抛凭据失效语义（API 恰两次、token 恰一次，不风暴重试）', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url) === GDRIVE_TOKEN_URL) return jsonRes({ access_token: 'newtok', expires_in: 3600 })
+      return new Response(null, { status: 401 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'stale', fileId: 'fid9', oauth: OAUTH })
+    const err = await backend.get(PATH).then(() => null, (e: unknown) => e)
+    expect((err as Error).message).toContain('Google Drive 请求失败（HTTP 401）')
+    expect(isAuthError(err)).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(3) // token 1 + API 2
+    const apiCalls = fetchMock.mock.calls.filter(([u]) => !String(u).includes('oauth2.googleapis.com'))
+    const tokenCalls = fetchMock.mock.calls.filter(([u]) => String(u).includes('oauth2.googleapis.com'))
+    expect(apiCalls).toHaveLength(2)
+    expect(tokenCalls).toHaveLength(1)
+  })
+
+  it('gdrive：刷新失败（token 端点 400）→ 抛结构化 401 语义（isAuthError 判真），不发第二次 API', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url) === GDRIVE_TOKEN_URL) return new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 })
+      return new Response(null, { status: 401 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'stale', fileId: 'fid9', oauth: OAUTH })
+    const err = await backend.get(PATH).then(() => null, (e: unknown) => e)
+    expect(isAuthError(err)).toBe(true)
+    expect((err as Error).message).toContain('（HTTP 401）')
+    expect(fetchMock).toHaveBeenCalledTimes(2) // 1 API + 1 token，重试未发生
+  })
+
+  it('gdrive：无 oauth → 401 直接抛，行为与现状一致（token 端点零调用、无重试）', async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 401 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'stale', fileId: 'fid9' })
+    await expect(backend.get(PATH)).rejects.toThrow('Google Drive 请求失败（HTTP 401）')
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('onedrive：请求 401 且带 oauth → POST login.microsoftonline.com v2.0/token 刷新，重试成功', async () => {
+    let apiCalls = 0
+    const apiAuths: string[] = []
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const u = String(url)
+      if (u === 'https://login.microsoftonline.com/common/oauth2/v2.0/token') {
+        const body = new URLSearchParams(String(init!.body))
+        expect(body.get('grant_type')).toBe('refresh_token')
+        expect(body.get('client_id')).toBe('cid-1')
+        expect(body.get('client_secret')).toBe('sec-1')
+        expect(body.get('refresh_token')).toBe('rtok-1')
+        return jsonRes({ access_token: 'ms-newtok', expires_in: 3600 })
+      }
+      if (u === `${GRAPH}/me/drive/root:/${PATH}:/content`) {
+        apiCalls++
+        apiAuths.push(headersOf(init).Authorization ?? '')
+        return apiCalls === 1 ? new Response(null, { status: 401 }) : new Response(BYTES, { status: 200 })
+      }
+      throw new Error(`意外请求：${init!.method} ${u}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createOneDriveBackend({ backend: 'onedrive', accessToken: 'stale', oauth: OAUTH })
+    expect(new TextDecoder().decode((await backend.get(PATH))!)).toBe('hello')
+    expect(apiAuths).toEqual(['Bearer stale', 'Bearer ms-newtok'])
   })
 })

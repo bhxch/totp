@@ -1,6 +1,7 @@
 import type { CloudBackend, GDriveCred } from './backend'
 import { cloudFetch, ensureHttpOk } from './backend'
 import { BACKUP_NAME_RE } from '../backup/policy'
+import { refreshAccessToken } from './oauthRefresh'
 import { resolveObjectPath } from './targetPath'
 
 const LABEL = 'Google Drive'
@@ -18,7 +19,21 @@ export interface GDriveBackendOptions {
  * get/exists/delete：有 fileId 直接用（校验仍在），否则按 name 查询 files.list（trashed=false）。
  */
 export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions = {}): CloudBackend {
+  // OAuth 模式（spec §5⑦）：Authorization 可变——401 刷新后原地改写，后续请求（含同调用链重试）
+  // 即取新 token；手工 token 模式该值恒为 cred.accessToken，行为不变。
   const auth = { Authorization: `Bearer ${cred.accessToken}` }
+
+  /** OAuth 自愈请求（spec §5⑦）：请求 401 且 cred.oauth 存在 → 刷新 access token（模块级会话缓存
+   *  去重）后原请求重试一次。重试须重建 Authorization——调用方构造 init 时已把当时的 auth 展开/引用
+   *  进 headers，原地改写 auth 不会回填旧 init。重试仍 401/403 交由调用方 ensureHttpOk 抛
+   *  （凭据失效语义不变）；无 oauth 时与 cloudFetch 直连完全一致（401 照原样返回给上层判定）。 */
+  const authFetch = async (url: string, init?: RequestInit): Promise<Response> => {
+    const res = await cloudFetch(LABEL, url, init)
+    if (res.status !== 401 || !cred.oauth) return res
+    auth.Authorization = `Bearer ${await refreshAccessToken(cred)}`
+    return cloudFetch(LABEL, url, { ...init, headers: { ...(init?.headers as Record<string, string>), Authorization: auth.Authorization } })
+  }
+
   let fileId = cred.fileId
   // objectPath 的 basename：delete 判定「目标与主对象同名」用（objectPath 实例生命周期内不变，算一次）
   const objectBasename = resolveObjectPath(cred).split('/').pop()!
@@ -28,7 +43,7 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
    *  envelope 文件，防止用户同名文档被误当作备份命中；parents 限定落点目录）。只返回新 id，
    *  不触碰 fileId——keep 时间戳文件绝不劫持主对象指针（审查 I2）。 */
   const createFileRaw = async (name: string, parents?: string[]): Promise<string> => {
-    const res = await cloudFetch(LABEL, `${DRIVE_API}/files`, {
+    const res = await authFetch(`${DRIVE_API}/files`, {
       method: 'POST',
       headers: { ...auth, 'Content-Type': 'application/json' },
       // 显式 mimeType=application/json:让 queryIdByName 的 mimeType 限定只匹配加密 envelope 文件,
@@ -54,7 +69,7 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
    *  主对象已删（404）→ null（域未知，调用方宁可不删不可误删）。 */
   const primaryParent = async (): Promise<string | null> => {
     if (!fileId) return 'root'
-    const res = await cloudFetch(LABEL, `${DRIVE_API}/files/${fileId}?fields=parents`, { method: 'GET', headers: auth })
+    const res = await authFetch(`${DRIVE_API}/files/${fileId}?fields=parents`, { method: 'GET', headers: auth })
     if (res.status === 404) return null
     ensureHttpOk(LABEL, res)
     const json = (await res.json()) as { parents?: string[] }
@@ -70,7 +85,7 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
     const safe = name.replace(/'/g, "\\'")
     const parentClause = parent === undefined ? '' : ` and '${parent.replace(/'/g, "\\'")}' in parents`
     const q = `name='${safe}' and mimeType='application/json'${parentClause} and trashed=false`
-    const res = await cloudFetch(LABEL, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id,name,mimeType)`, {
+    const res = await authFetch(`${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id,name,mimeType)`, {
       method: 'GET',
       headers: auth,
     })
@@ -88,14 +103,14 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
   /** fileId 已知时校验文件仍在（被删→null）；未知时按 name 查询。 */
   const resolveId = async (name: string): Promise<string | null> => {
     if (!fileId) return queryIdByName(name)
-    const res = await cloudFetch(LABEL, `${DRIVE_API}/files/${fileId}?fields=id`, { method: 'GET', headers: auth })
+    const res = await authFetch(`${DRIVE_API}/files/${fileId}?fields=id`, { method: 'GET', headers: auth })
     if (res.status === 404) return null
     ensureHttpOk(LABEL, res)
     return fileId
   }
 
   const uploadMedia = async (id: string, data: Uint8Array): Promise<void> => {
-    const res = await cloudFetch(LABEL, `${DRIVE_UPLOAD}/files/${id}?uploadType=media`, {
+    const res = await authFetch(`${DRIVE_UPLOAD}/files/${id}?uploadType=media`, {
       method: 'PATCH',
       headers: { ...auth, 'Content-Type': 'application/octet-stream' },
       body: new Uint8Array(data),
@@ -130,7 +145,7 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
     async get(path) {
       const id = fileId ?? (await queryIdByName(path))
       if (!id) return null
-      const res = await cloudFetch(LABEL, `${DRIVE_API}/files/${id}?alt=media`, { method: 'GET', headers: auth })
+      const res = await authFetch(`${DRIVE_API}/files/${id}?alt=media`, { method: 'GET', headers: auth })
       if (res.status === 404) return null
       ensureHttpOk(LABEL, res)
       return new Uint8Array(await res.arrayBuffer())
@@ -150,7 +165,7 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
         id = await queryIdByName(path, false, parent)
       }
       if (!id) return
-      const res = await cloudFetch(LABEL, `${DRIVE_API}/files/${id}`, { method: 'DELETE', headers: auth })
+      const res = await authFetch(`${DRIVE_API}/files/${id}`, { method: 'DELETE', headers: auth })
       ensureHttpOk(LABEL, res)
     },
     async exists(path) {
@@ -172,7 +187,7 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
       let pageToken: string | undefined
       for (let page = 0; page < 10; page++) {
         const tokenQs = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''
-        const list = await cloudFetch(LABEL, `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(name),nextPageToken${tokenQs}`, {
+        const list = await authFetch(`${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(name),nextPageToken${tokenQs}`, {
           method: 'GET',
           headers: auth,
         })
