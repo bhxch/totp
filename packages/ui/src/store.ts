@@ -1,10 +1,10 @@
 import {
   DEFAULT_SETTINGS, SECRET_BAG_KEY, SECURITY_KEY, SECURITY_PENDING_KEY, VAULT_KEY, VAULT_REV_WATERMARK_KEY, VaultRollbackError, addEntry, addPrfSource,
   addTag, base64ToBytes, bytesToBase64, changeVaultPassphrase, createVault, decryptVaultWithDek, decryptVaultWithDekDetailed,
-  dekFingerprint, emptyBag, encryptVaultWithDek, isEncryptedVault, isSecuritySettings, kekSourcesOf, loadSettings, openSecretBag, removeEntry,
-  removeKekSource, removeTag, renameTag, reorderEntries, saveSettings, saveVault, sealSecretBag, setupVaultEncryption,
-  unlockVaultEncryption, updateEntry, validateVaultObject, withDpapiSource,
-  type AppSettings, type CloudCred, type EncryptedVault, type KekSource, type KdfProfile, type OtpEntry, type SecretBagContent,
+  dekFingerprint, emptyBag, encryptVaultWithDek, isEncryptedVault, isSecuritySettings, kekSourcesOf, loadMergeConflicts, loadSettings, openSecretBag, removeEntry,
+  removeKekSource, removeTag, renameTag, reorderEntries, saveMergeConflicts, saveSettings, saveVault, sealSecretBag, setupVaultEncryption,
+  unlockVaultEncryption, updateEntry, validateVaultObject, withDpapiSource, MERGE_CONFLICTS_MAX,
+  type AppSettings, type CloudCred, type EncryptedVault, type EntryConflict, type KekSource, type KdfProfile, type OtpEntry, type Seal, type SecretBagContent,
   type SecuritySettings, type StorageAdapter, type Vault, type VaultRevWatermark,
 } from '@totp/core'
 import { computed, reactive, ref, toRaw, type Ref } from 'vue'
@@ -57,6 +57,9 @@ export function createVueStore(
   const credsCache = ref<Record<string, CloudCred>>({})
   /** 保管区是否存有备份口令（bag.backupPassword 非空）：bag 本身非响应式，用镜像 ref 驱动视图 */
   const bagStoredRef = ref(false)
+  /** 条目级合并冲突记录（spec §3/§4）：runner 同步产出经宿主 addMergeConflictsOp 入库，裁决走
+   *  resolveMergeConflictOp；含整条目秘密，随 DEK seal 落盘、锁定清空、解锁重装载（同保管区生命周期） */
+  const mergeConflicts = ref<EntryConflict[]>([])
   // 初始 unlocked（与原 ref(false) 语义对齐）：明文 vault/未启用加密场景下默认解锁；
   // 加密态在 initStore 阶段根据 vault 密文判定 locked=true
   dekByWin.set(windowId, null)
@@ -92,6 +95,8 @@ export function createVueStore(
   const backupSecret = computed(() => currentBackupSecretRef().value)
   /** 保管区已存备份口令只读视图（bag.backupPassword 非空即 true；lock/forget/关加密清空）——组件三态判定用 */
   const bagStored = computed(() => bagStoredRef.value)
+  /** 未裁决合并冲突计数（冲突 badge/横幅源；0=全部裁决或无冲突，提示随之清除） */
+  const conflictCount = computed(() => mergeConflicts.value.length)
 
   function replaceVault(v: Vault): void {
     // F6：唯一采用收口——所有采纳点（initStore/解锁/同步回调/恢复/commit op 结果）经此校验，
@@ -147,6 +152,85 @@ export function createVueStore(
     const dek = dekByWin.get(windowId)
     if (lockedByWin.get(windowId) || !dek) return
     advanceBag(await loadBagFromDisk(dek))
+  }
+
+  // ---- DEK seal 助手与合并冲突记录（Task 9/10：spec §1.2 静态保护 + §3 冲突记录 + §4 裁决）----
+  // baseSnapshot（SourceSyncState）与 mergeConflicts 均为 vault 明文/整条目秘密：启用加密时必须以
+  // DEK 加密落盘（与 vault 密文同保护级）。宿主 runner 装配把 sealWithDek/unsealWithDek 接进
+  // core loadSyncState/saveSyncState/loadMergeConflicts/saveMergeConflicts 的 Seal 参数。
+
+  /** 明文 → DEK 密封 JSON（EncryptedVault 形态字符串）；锁定/未启用加密 → null（宿主按明文回落，
+   *  与 core syncState「seal 缺省=明文库明文落盘」语义对齐） */
+  async function sealWithDekOp(plain: string): Promise<string | null> {
+    const dek = dekByWin.get(windowId)
+    if (!dek) return null // 锁定/未启用加密：无 DEK 可密封
+    return JSON.stringify(await encryptVaultWithDek(dek, plain))
+  }
+
+  /** sealWithDekOp 逆操作；锁定/未启用加密或密文不可解（换 DEK/损坏）→ null——宿主回落原文，
+   *  让 core 解析层自然判废（明文记录可解析=兼容读取，密文垃圾解析失败=回落空态） */
+  async function unsealWithDekOp(sealed: string): Promise<string | null> {
+    const dek = dekByWin.get(windowId)
+    if (!dek) return null
+    try {
+      return await decryptVaultWithDek(dek, JSON.parse(sealed) as EncryptedVault)
+    } catch {
+      return null
+    }
+  }
+
+  /** 冲突记录通道的 Seal 装配（load/save 共用）：null 回落原文/明文，语义同上 */
+  function mergeConflictSeal(): Seal {
+    return {
+      seal: async (plain) => (await sealWithDekOp(plain)) ?? plain,
+      unseal: async (sealed) => (await unsealWithDekOp(sealed)) ?? sealed,
+    }
+  }
+
+  /** 从盘装载合并冲突记录（解锁路径汇合点调用）：锁定态不装载不持明文（记录含整条目秘密）；
+   *  损坏/换 DEK 回落空列表（core 内部兜底） */
+  async function reloadMergeConflicts(): Promise<void> {
+    if (lockedByWin.get(windowId)) {
+      mergeConflicts.value = []
+      return
+    }
+    try {
+      mergeConflicts.value = await loadMergeConflicts(adapter, mergeConflictSeal())
+    } catch {
+      mergeConflicts.value = []
+    }
+  }
+
+  /** 追加合并冲突（宿主 runner onMergeConflicts 桥）：同 entryId 以新记录替换（最新胜），
+   *  超上限裁最旧（与 core saveMergeConflicts 的上限语义一致，内存视图同步裁剪） */
+  async function addMergeConflictsOp(incoming: EntryConflict[]): Promise<void> {
+    if (incoming.length === 0) return
+    const map = new Map(mergeConflicts.value.map((c) => [c.entryId, c]))
+    for (const c of incoming) map.set(c.entryId, c)
+    const list = [...map.values()]
+    mergeConflicts.value = list.length > MERGE_CONFLICTS_MAX ? list.slice(list.length - MERGE_CONFLICTS_MAX) : list
+    await saveMergeConflictsOp()
+  }
+
+  /** 冲突记录落盘（mergeConflicts 变更时调用；seal 语义同 syncState） */
+  async function saveMergeConflictsOp(): Promise<void> {
+    await saveMergeConflicts(adapter, mergeConflicts.value, mergeConflictSeal())
+  }
+
+  /** 冲突裁决（spec §3/§4，T11 冲突列表消费）：pick='theirs' 以 conflict.theirs 替换/恢复条目
+   *  （theirs=null → 删除条目）；pick='ours' 取 conflict.ours（ours=null → 恢复 base，base 也无 →
+   *  删除条目）。写经 commit（自动推进 vault.rev 并触发常规同步），随后从列表移除并落盘。
+   *  无对应记录抛错（列表 UI 不会出现该入口，防御兜底） */
+  async function resolveMergeConflictOp(entryId: string, pick: 'ours' | 'theirs'): Promise<void> {
+    const conflict = mergeConflicts.value.find((c) => c.entryId === entryId)
+    if (!conflict) throw new Error('合并冲突记录不存在')
+    const chosen = pick === 'theirs' ? conflict.theirs : (conflict.ours ?? conflict.base)
+    await commit((v) => {
+      const rest = v.entries.filter((e) => e.uuid !== entryId)
+      return { ...v, entries: chosen ? [...rest, chosen] : rest }
+    })
+    mergeConflicts.value = mergeConflicts.value.filter((c) => c.entryId !== entryId)
+    await saveMergeConflictsOp()
   }
 
   function readRawVault(): Promise<unknown> {
@@ -262,6 +346,8 @@ export function createVueStore(
     } else {
       replaceVault(createVault())
     }
+    // 合并冲突记录装载（解锁态读盘；锁定态清空不持明文——各分支锁定判定在 reload 内统一处理）
+    await reloadMergeConflicts()
     inited = true
   }
 
@@ -634,6 +720,8 @@ export function createVueStore(
     currentLockedRef().value = false
     // DEK 持久化（设计 §1 重启即锁）：解锁成功即写宿主会话存储（extension=chrome.storage.session base64）
     void opts.dekPersist?.set(key)
+    // 合并冲突记录随解锁重装载（记录含整条目秘密，锁定已清）
+    await reloadMergeConflicts()
   }
 
   /** passkey 解锁第二跳：外部经 core unlockWithPrf 解出 DEK 后注入。
@@ -795,6 +883,7 @@ export function createVueStore(
     bag = emptyBag() // 保管区缓存与 DEK 同生命周期：锁定即清（密文仍留盘，解锁后重装载）
     credsCache.value = {}
     bagStoredRef.value = false
+    mergeConflicts.value = [] // 冲突记录含整条目秘密：与保管区同生命周期，锁定清空（盘上密文留待解锁重装载）
     void opts.dekPersist?.clear() // 持久化 DEK 必清（设计 §1：锁=丢弃 DEK，含宿主会话存储）
     replaceVault(createVault())
   }
@@ -837,6 +926,16 @@ export function createVueStore(
     bagStored,
     /** 保管区凭据只读镜像（sourceId → CloudCred；锁定清空，解锁自动装载；写走 saveSourceCredOp/removeSourceCredOp） */
     credsCache,
+    /** 条目级合并冲突记录（spec §3/§4；解锁自动装载、锁定清空；追加走 addMergeConflictsOp，
+     *  裁决走 resolveMergeConflictOp） */
+    mergeConflicts,
+    /** 未裁决合并冲突计数（badge/横幅源） */
+    conflictCount,
+    /** DEK seal 助手（spec §1.2 静态保护：syncState.baseSnapshot/mergeConflicts 等秘密载体落盘）：
+     *  锁定/未启用加密返回 null，宿主按明文回落 */
+    sealWithDek: sealWithDekOp, unsealWithDek: unsealWithDekOp,
+    /** 合并冲突追加（runner onMergeConflicts 桥）/落盘/裁决（T11 冲突列表消费） */
+    addMergeConflictsOp, saveMergeConflictsOp, resolveMergeConflictOp,
     /** 远端保管区变更重读（审查 I7）：解锁态从盘重读前进内存视图；锁定/无 DEK 忽略。宿主 registerSync 透传 secretBag 键时由 registerStorageSync 自动调用 */
     reloadBagFromDisk,
     setBackupSecret, forgetBackupSecret,
