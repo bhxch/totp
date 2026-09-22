@@ -84,6 +84,11 @@ export interface CloudPlatform {
   /** [可选] 冲突副本落盘（desktop=AppData/backups；extension=storage.local 冲突列表），返回副本名回填提示；
    *  sourceId=源 id（多源场景副本名 conflict-{sourceId}-{ts} 区分来源） */
   saveConflictBackup?(bytes: Uint8Array, sourceId?: string): Promise<string | null>
+  /** [可选] 冲突副本列表（T11 冲突区块：extension storage.local conflictCopies 元数据视图；
+   *  desktop 副本在备份恢复列表可见，不提供=CloudCard 不渲染副本区） */
+  listConflictCopies?(): Promise<Array<{ name: string; at: number }>>
+  /** [可选] 手动导出冲突副本（spec §4：下载仅显式点击触发；无名/已滚动清理=false 交 UI 提示） */
+  exportConflictCopy?(name: string): Promise<boolean>
   /** 按源 id 读取该源 rev 基线（core loadSyncState；spec §1.2 SourceSyncState），无记录 → 空状态 */
   loadSourceState(sourceId: string): Promise<SourceSyncState>
   /** 按源 id 持久化 rev 基线（core saveSyncState；同步编排返回的 states 逐源回写） */

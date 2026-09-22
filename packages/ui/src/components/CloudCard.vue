@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import type { BackupSource, CloudCred, GDriveCred, GistCred, OneDriveCred, S3Cred, SourceSyncState, WebdavCred } from '@totp/core'
+import type { BackupSource, CloudCred, EntryConflict, GDriveCred, GistCred, OneDriveCred, S3Cred, SourceSyncState, WebdavCred } from '@totp/core'
 import {
   contentHash, DEFAULT_OBJECT_PATH, enforceRemoteRetention, pushEnvelope, resolveObjectPath, resolveTimestampPath, syncMultipleTargets,
 } from '@totp/core'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import type { VueStore } from '../store'
 import { createCloudBackend, isPlaintextHttpUrl } from './cloudPlatform'
 import type { CloudAutoPrefs, CloudPlatform } from './cloudPlatform'
+import { pendingMergeConfirm, settleMergeConfirm, syncProgressState } from './cloudSyncBridge'
+import MergeConflictList from './MergeConflictList.vue'
+import MergePreviewDialog from './MergePreviewDialog.vue'
 import { parseVaultJson } from './parseVaultJson'
 import { displaySourceName } from './sourceDisplayNames'
 import MdButton from './md/MdButton.vue'
@@ -17,12 +21,17 @@ import MdSelect from './md/MdSelect.vue'
 import MdSwitch from './md/MdSwitch.vue'
 import MdTextField from './md/MdTextField.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** 云同步平台实现；null 时整卡不渲染（popup 不受影响） */
   platform: CloudPlatform | null
   /** 会话备份口令（D1，即备份加密口令）；null 时同步禁用并提示先设置备份口令 */
   sessionSecret: string | null
-}>()
+  /** 全局响应式 store（T11 冲突裁决面：mergeConflicts/resolveMergeConflictOp）；缺省 null=不渲染冲突区块 */
+  store?: VueStore | null
+  /** [可选] 云凭据失效标志（跨端同步 T4，自 SyncCard 归位）：true 渲染重授权警示（消失途径：
+   *  重新授权后手动同步成功 onManualSynced → 宿主复位镜像，或重启宿主页） */
+  authFailed?: boolean
+}>(), { store: null, authFailed: false })
 
 const { t } = useI18n()
 
@@ -57,6 +66,92 @@ const statusMap = ref<Record<string, string>>({})
 function statusFor(id: string): string {
   return statusMap.value[id] ?? ''
 }
+
+// ---------- T11 冲突裁决面（spec §3/§4 冲突强提示）：条目冲突列表 + extension 冲突副本入口 ----------
+/** 未裁决条目冲突（store.mergeConflicts 只读消费；锁定态 store 已清空 → 区块自然隐藏） */
+const mergeConflicts = computed<EntryConflict[]>(() => props.store?.mergeConflicts.value ?? [])
+const conflictCount = computed(() => props.store?.conflictCount.value ?? 0)
+/** 裁决写回在途（期间全列表按钮禁用防重入；单条 op 含 commit 推进与落盘） */
+const resolvingConflict = ref(false)
+async function onResolveConflict(entryId: string, pick: 'ours' | 'theirs'): Promise<void> {
+  const s = props.store
+  if (!s || resolvingConflict.value) return
+  resolvingConflict.value = true
+  try {
+    await s.resolveMergeConflictOp(entryId, pick)
+    msg.value = t('cloudCard.conflictResolvedMsg')
+    msgKind.value = 'ok'
+  } catch (e) {
+    fail(e)
+  } finally {
+    resolvingConflict.value = false
+  }
+}
+
+/** extension 冲突副本视图（platform.listConflictCopies 提供才启用；desktop 副本在备份恢复列表可见，不渲染此区） */
+interface ConflictCopyView { name: string; at: number }
+const conflictCopies = ref<ConflictCopyView[]>([])
+async function refreshConflictCopies(): Promise<void> {
+  const p = props.platform
+  if (!p?.listConflictCopies) {
+    conflictCopies.value = []
+    return
+  }
+  try {
+    conflictCopies.value = await p.listConflictCopies()
+  } catch {
+    conflictCopies.value = [] // 副本属救灾数据：读取失败按空呈现，不阻塞卡内其余功能
+  }
+}
+/** 手动导出（spec §4：唯一下载出口=显式点击；无名=已被滚动清理，如实提示） */
+async function onExportCopy(name: string): Promise<void> {
+  if (!props.platform?.exportConflictCopy) return
+  try {
+    const ok = await props.platform.exportConflictCopy(name)
+    if (!ok) fail(new Error(t('cloudCard.copyExportMissing')))
+  } catch (e) {
+    fail(e)
+  }
+}
+
+// ---------- T11 角色互斥（spec §2 活动目标单选，T6 遗留收口） ----------
+/** 角色选项（MdSegmentedButton；短文案适配行内排版） */
+const ROLE_OPTIONS = [
+  { value: 'primary', label: t('cloudCard.rolePrimary') },
+  { value: 'replica', label: t('cloudCard.roleReplica') },
+]
+/**
+ * 角色选举：把该源选为 primary——其余源（含禁用）全部降 replica（启用源中恒恰一个 primary；
+ * 已是 primary 或禁用源点击无效果——让位须选举另一启用源）。同时把该源移到列表首位：
+ * loadSources 的 normalizeSourceRoles 按「首个 enabled=primary」归一，非首位保存的 primary
+ * 会在下次装载被改写——置首使选择可持久化。仅内存编辑（与名称/保留/启用同通道），
+ * 随「保存凭据」整体落盘；展开态按 id 重解析防索引漂移。
+ */
+function onRoleChange(s: BackupSource, v: string | number): void {
+  if (v !== 'primary' || s.role === 'primary' || !s.enabled) return
+  const expandedId = expanded.value >= 0 ? sources.value[expanded.value]?.id : null
+  sources.value = [
+    { ...s, role: 'primary' },
+    ...sources.value.filter((x) => x.id !== s.id).map((x) => ({ ...x, role: 'replica' as const })),
+  ]
+  expanded.value = expandedId !== undefined && expandedId !== null
+    ? sources.value.findIndex((x) => x.id === expandedId)
+    : -1
+}
+/** 启用开关切换后的角色归一（对齐 loadSources 归一语义）：存在启用源但无 primary（如唯一 primary
+ *  被关闭）→ 首个启用源升 primary，其余降 replica。v-model 先行赋值 s.enabled，此处读到的为 新值 */
+function onEnabledToggled(): void {
+  if (sources.value.some((x) => x.enabled && x.role === 'primary')) return
+  const first = sources.value.find((x) => x.enabled)
+  if (!first) return
+  sources.value = sources.value.map((x) => ({ ...x, role: x.id === first.id ? ('primary' as const) : ('replica' as const) }))
+}
+
+// ---------- T11 合并预览/逐源进度桥（cloudSyncBridge）：宿主 runner 回调 → 卡内 UI ----------
+/** 挂起的 manual 合并预览征询（非空=对话框打开）；组件卸载视同取消（runner 记跳过态） */
+const pendingConfirm = pendingMergeConfirm()
+const progress = syncProgressState()
+onUnmounted(() => settleMergeConfirm(false))
 
 /** 已解密待确认覆盖的远端 vault JSON（两步确认防误覆盖，沿用旧卡行内确认交互） */
 const pendingAdopt = ref<string | null>(null)
@@ -275,6 +370,7 @@ onMounted(async () => {
       autoStatus.value = null
     }
   }
+  void refreshConflictCopies() // extension 冲突副本列表回填（desktop 无此平台能力 → 恒空不渲染）
 })
 
 // 挂载后解锁（或锁定清空）：宿主 creds 为 credsCache 只读视图（getter→ref），解锁装载换新引用即触发
@@ -424,6 +520,7 @@ async function onSync(): Promise<void> {
         autoStatus.value = await p.loadAutoStatus() // 手动完成后刷新自动状态行
       } catch { /* 状态读取失败不影响同步 */ }
     }
+    void refreshConflictCopies() // 手动同步可能新增冲突副本：刷新列表（extension）
     // 跨端同步审查 I1：全部目标成功（无目标级失败/收敛失败）才算「手动同步成功」——通知宿主
     // 复位云凭据失效警示并重启跟随轮询（重新授权闭环）；部分失败（如 401 仍在）不通知，警示保留
     if (r.results.every((res) => res.outcome !== null && !res.convergeError)) {
@@ -572,10 +669,33 @@ const hasDuplicateNames = computed(() => {
 <template>
   <section v-if="platform" class="card cloud">
     <h2>{{ t('cloudCard.title') }}</h2>
+    <!-- T4 云凭据失效警示（自 SyncCard 归位，spec §5 ⑤）：消失途径=重新授权后手动同步成功
+         （platform.onManualSynced → 宿主复位镜像）或重启宿主页——本组件只读渲染，复位在宿主 -->
+    <p v-if="authFailed" class="warn" role="alert">{{ t('cloudCard.authFailed') }}</p>
+    <!-- 冲突强提示区块（spec §4，T11）：条目裁决列表置顶于源行之前；无 store（popup 等宿主）或
+         锁定态（store 已清空）自然隐藏。副本列表仅 extension（listConflictCopies 平台能力）渲染 -->
+    <div v-if="conflictCount > 0" class="conflict-block" role="alert">
+      <p class="block-title">{{ t('cloudCard.conflictTitle') }}</p>
+      <p class="conflict-banner">{{ t('cloudCard.conflictBanner', { count: conflictCount }) }}</p>
+      <MergeConflictList :conflicts="mergeConflicts" :disabled="resolvingConflict" @resolve="onResolveConflict" />
+    </div>
+    <div v-if="conflictCopies.length > 0" class="copies-block">
+      <p class="block-title">{{ t('cloudCard.copiesTitle') }}</p>
+      <div v-for="c in conflictCopies" :key="c.name" class="copy-row">
+        <span class="copy-name">{{ c.name }}</span>
+        <MdButton variant="text" class="copy-export" :aria-label="t('cloudCard.copyExportAria', { name: c.name })" @click="onExportCopy(c.name)">{{ t('cloudCard.copyExport') }}</MdButton>
+      </div>
+    </div>
     <div v-for="(s, i) in sources" :key="s.id" class="target">
       <div class="target-head">
-        <MdSwitch v-model="s.enabled" :aria-label="t('cloudCard.ariaEnabled', { name: displaySourceName(s.name, t) })" />
+        <MdSwitch v-model="s.enabled" :aria-label="t('cloudCard.ariaEnabled', { name: displaySourceName(s.name, t) })" @update:model-value="onEnabledToggled" />
         <strong>{{ displaySourceName(s.name, t) }}</strong>
+        <!-- 角色互斥展示/切换（spec §2 活动目标单选）：选举 primary 时原 primary 自动降 replica -->
+        <MdSegmentedButton
+          class="target-role" :options="ROLE_OPTIONS" :model-value="s.role"
+          :aria-label="t('cloudCard.roleAria', { name: displaySourceName(s.name, t) })"
+          @update:model-value="onRoleChange(s, $event)"
+        />
         <MdButton variant="text" class="target-toggle" @click="expanded = expanded === i ? -1 : i">{{ expanded === i ? t('cloudCard.collapse') : t('cloudCard.configure') }}</MdButton>
         <MdButton variant="text" danger class="target-remove" :disabled="busy || pendingAdopt !== null" @click="askRemove(s.id)">{{ t('cloudCard.remove') }}</MdButton>
       </div>
@@ -659,6 +779,11 @@ const hasDuplicateNames = computed(() => {
       <MdButton class="creds-save" :disabled="busy" @click="onSaveCreds">{{ t('cloudCard.saveCreds') }}</MdButton>
       <MdButton class="cloud-sync" :disabled="busy || !sessionSecret || pendingAdopt !== null || pendingReset !== null || pendingRemove !== null" @click="onSync">{{ t('cloudCard.syncNow') }}</MdButton>
     </div>
+    <!-- 逐源进度（spec §5 ⑥，T11）：宿主 runner onProgress 经 cloudSyncBridge 驱动；
+         done<total 才显示（轮末 (total,total) 自动隐藏），自动/跟随轮与手动预览轮同样可见 -->
+    <p v-if="progress !== null && progress.done < progress.total" class="sync-progress" role="status">
+      <span class="spinner" aria-hidden="true" />{{ t('cloudCard.progressOf', { done: progress.done, total: progress.total }) }}
+    </p>
     <p v-if="!sessionSecret" class="hint">{{ t('cloudCard.setPwHint') }}</p>
     <p v-if="hasDuplicateNames" class="hint">{{ t('cloudCard.duplicateNamesHint') }}</p>
     <div v-if="platform.autoPrefs" class="auto-block">
@@ -699,6 +824,9 @@ const hasDuplicateNames = computed(() => {
       <MdButton variant="text" :disabled="busy" @click="onCancelRemove">{{ t('cloudCard.cancel') }}</MdButton>
     </div>
     <div v-if="msg" :class="msgKind" role="status">{{ msg }}</div>
+    <!-- manual 合并预览对话框（spec §4）：槽位驱动（cloudSyncBridge 挂起征询非空即打开）；
+         确认=runner 重跑 apply，取消/卸载=runner 记跳过态（预览只读，两端零痕迹） -->
+    <MergePreviewDialog :open="pendingConfirm !== null" :preview="pendingConfirm?.preview ?? null" @confirm="settleMergeConfirm(true)" @cancel="settleMergeConfirm(false)" />
   </section>
 </template>
 
@@ -725,4 +853,18 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .ok { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-medium); }
 .err { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-medium); }
 .warn { color: var(--md-sys-color-tertiary); font-size: var(--md-sys-typescale-body-medium); margin: 0; }
+/* 冲突强提示区块（spec §4）：error 容器底色 + 顶部置位，弱感知小字升级为显眼块 */
+.conflict-block { display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 12px;
+  background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+.block-title { margin: 0; font-size: var(--md-sys-typescale-title-small); font-weight: 500; }
+.conflict-banner { margin: 0; font-size: var(--md-sys-typescale-body-medium); }
+.copies-block { display: flex; flex-direction: column; gap: 4px; }
+.copy-row { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-small); }
+.copy-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .8; }
+/* 逐源进度行（spec §5 ⑥）：CSS spinner + 「x/y 源完成」 */
+.sync-progress { display: flex; align-items: center; gap: 8px; margin: 0; font-size: var(--md-sys-typescale-body-medium); }
+.spinner { width: 14px; height: 14px; border-radius: 50%; flex: none;
+  border: 2px solid var(--md-sys-color-primary); border-top-color: transparent;
+  animation: cloud-spin 1s linear infinite; }
+@keyframes cloud-spin { to { transform: rotate(360deg); } }
 </style>

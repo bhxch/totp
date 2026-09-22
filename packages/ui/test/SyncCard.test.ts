@@ -88,16 +88,6 @@ describe('SyncCard', () => {
     expect(w2.find('.usage').exists()).toBe(false)
   })
 
-  it('T4 authFailed=true：状态区渲染「云端凭据已失效，请重新授权」警示', () => {
-    const w = mount(SyncCard, { global: { plugins: [createTestI18n()] }, props: { platform: mkPlatform(), authFailed: true } })
-    expect(w.text()).toContain('云端凭据已失效，请重新授权')
-    expect(w.find('p[role="alert"]').exists()).toBe(true)
-  })
-
-  it('T4 缺省（未传 authFailed）与 authFailed=false：不渲染凭据失效提示', () => {
-    const absent = mount(SyncCard, { global: { plugins: [createTestI18n()] }, props: { platform: mkPlatform() } })
-    expect(absent.text()).not.toContain('云端凭据已失效')
-    const off = mount(SyncCard, { global: { plugins: [createTestI18n()] }, props: { platform: mkPlatform(), authFailed: false } })
-    expect(off.text()).not.toContain('云端凭据已失效')
-  })
+  // T4 authFailed 警示已自本卡归位 CloudCard（spec §5 ⑤，T11）：原两例随职责迁移删除，
+  // CloudCard 侧呈现见 cloudCard.conflict.test.ts
 })

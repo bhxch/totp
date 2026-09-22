@@ -5,13 +5,10 @@ import type { SyncPlatform, SyncStatus } from './syncPlatform'
 import MdButton from './md/MdButton.vue'
 import MdCheckbox from './md/MdCheckbox.vue'
 
-const props = withDefaults(defineProps<{
+const props = defineProps<{
   /** 同步平台实现；null 时整卡不渲染（desktop/popup 不受影响） */
   platform: SyncPlatform | null
-  /** [可选] 云凭据失效标志（跨端同步 T4）：宿主经 syncScheduler onAuthFailed 持有的 ref 传入，
-   *  true 时状态区渲染重授权警示；未传/false 不渲染（desktop/popup 零影响） */
-  authFailed?: boolean
-}>(), { authFailed: false })
+}>()
 
 const { t } = useI18n()
 
@@ -108,12 +105,8 @@ onUnmounted(() => {
     <p v-if="plainSyncWarn" class="warn" role="alert">
       {{ t('syncCard.plainWarn') }}
     </p>
-    <!-- T4 云凭据失效警示（自动跟随已暂停）：宿主持 ref 传入。消失途径（审查 I1 闭环）：
-         重新授权后在 CloudCard 手动同步成功（platform.onManualSynced → 宿主 resume() 复位镜像）、
-         或重启宿主页（start() 复位）——本组件只读渲染，复位动作在宿主 -->
-    <p v-if="props.authFailed" class="warn" role="alert">
-      {{ t('syncCard.authFailed') }}
-    </p>
+    <!-- T4 云凭据失效警示已归位 CloudCard（spec §5 ⑤ 配置状态归位，T11）：
+         语义属云通道，宿主 cloudAuthFailed 镜像现经 SyncPage → CloudCard 渲染 -->
     <div class="status-row">
       <span v-if="statusText" :class="['status', stateClass]" role="status">{{ statusText }}</span>
       <span v-if="usageText" class="usage" role="status">{{ usageText }}</span>

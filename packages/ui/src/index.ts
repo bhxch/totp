@@ -47,7 +47,10 @@ export type { BackupAutoPrefs, BackupPlatform, LocalSourceView } from './compone
 export { CLOUD_BACKUP_PATH, createCloudBackend } from './components/cloudPlatform'
 export type { CloudAutoPrefs, CloudPlatform } from './components/cloudPlatform'
 export { createCloudSyncRunner } from './components/cloudRunner'
-export type { CloudRunnerDeps } from './components/cloudRunner'
+export type { CloudRunnerDeps, ManualMergePreview } from './components/cloudRunner'
+export {
+  requestMergeConfirm, setSyncProgress,
+} from './components/cloudSyncBridge'
 export type { EntryFormData } from './components/entryForm'
 export type { ImportPlatform, ImportSchemesApi } from './components/importPlatform'
 export type { McpConfigDto, McpConfigWithStatusDto, McpPlatform, ServerStatus, ServerStatusTone } from './components/mcpCard'
