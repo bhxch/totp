@@ -4,7 +4,7 @@
  * - single-flight（spec §5 ④）：实例闭包 chain promise 链串行化 run()——手动到来时自动在跑则排队
  *   合并执行，不丢弃不并发；跨宿主（desktop 与 extension 同时写云）不额外加锁，由 rev 模型天然裁决；
  * - 仅解锁会话内执行（锁定/无 secret 记 null 跳过态直接 return），跳过态可观测裁定不变；
- * - auto 内容门（spec §1.3 内容门持久化）：持久化「解密后 vault JSON 规范化 contentHash」基线
+ * - auto 内容门（spec §1.3 内容门持久化）：持久化「解密后 vault JSON 规范化 contentHashVault」基线
  *   （loadContentHash/saveContentHash，跨会话/页面重开生效，取代旧实例内存 sha256 字节门）；
  *   内容未变零网络（门在 loadSources 之前短路）；仅全部目标确定结果才刷新基线，部分失败置 null
  *   强制下轮全流程重试（防门吸收部分失败成静默僵死）；manual/pull 不设门（manual 成功后同样刷新）；
@@ -28,7 +28,7 @@
  * - 单目标失败由 core 编排隔离（outcome=null + error），仅全程意外抛错才走 onError。
  */
 import {
-  BACKUP_NAME_RE, contentHash, enforceRemoteRetention, isAuthError, isAuthErrorCode,
+  BACKUP_NAME_RE, contentHashVault, enforceRemoteRetention, isAuthError, isAuthErrorCode,
   resolveObjectPath, resolveTimestampPath, syncMultipleTargets, syncWithCloudRev,
   type BackupSource, type CloudBackend, type CloudCred, type ConflictBackupResult, type EntryConflict,
   type KdfProfile, type RevSyncAction, type RevSyncOutcome, type SourceSyncState, type TargetResult,
@@ -60,7 +60,8 @@ export interface CloudRunnerDeps {
   saveSyncState(sourceId: string, state: SourceSyncState): Promise<void>
   /** 本机设备标识（core loadDeviceId 持久 UUID，写入 v3 sync 头） */
   deviceId(): Promise<string>
-  /** auto 内容门持久基线：上次成功同步的规范化内容 hash（spec §1.3；null=无基线必同步）。
+  /** auto 内容门持久基线：上次成功同步的规范化内容 hash（contentHashVault 口径，剔除顶层 rev——
+   *  F8 水位随加密落盘推进，非 vault 内容；spec §1.3；null=无基线必同步）。
    *  跨实例/跨会话生效——页面重开内容未变不再盲目全量推拉 */
   loadContentHash(): Promise<string | null>
   /** 内容门基线持久化：全部目标确定结果=final 内容 hash；部分失败=null（清除，强制下轮重试） */
@@ -352,7 +353,7 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
     // 多做一次同步）
     const allSettled = r.results.every((x) => x.outcome !== null && !x.convergeError) && !stateWriteFailed
     try {
-      await deps.saveContentHash(allSettled ? await contentHash(r.finalVaultJson) : null)
+      await deps.saveContentHash(allSettled ? await contentHashVault(r.finalVaultJson) : null)
     } catch { /* 基线落盘失败：保留下轮重试 */ }
     // T4 凭据失效分类（审查 I2 结构化）：目标级失败不抛错，宿主调度器无从感知——结构化 errorStatus
     // 优先，消息定界匹配兜底，命中上抛钩子（GDrive 403 配额类无法在 HTTP 层区分，同判见 core isAuthError）；
@@ -391,7 +392,7 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
       // 都不进，零网络请求），记 null 跳过态；manual/pull 不设门（pull 的去重是预览判定的内容比对）
       if (mode === 'auto') {
         const baseline = await deps.loadContentHash()
-        if (baseline !== null && (await contentHash(vaultJson)) === baseline) {
+        if (baseline !== null && (await contentHashVault(vaultJson)) === baseline) {
           deps.recordStatus?.(null, deps.t('cloudRunner.noChange'))
           return
         }

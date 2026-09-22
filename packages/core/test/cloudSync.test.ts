@@ -100,6 +100,20 @@ describe('syncWithCloudRev', () => {
     expect(backend.putCount).toBe(0)
   })
 
+  it('F8 水位：vault 带顶层 rev（store 加密落盘恒推进）不判本地已动——采纳后 rev+1 下轮 in-sync 零写', async () => {
+    // 模拟 store persistAdopted：采纳（downloaded）的 JSON 落盘时被 saveVaultToAdapter 附加
+    // rev: n+1（F8 加密写推进水位）。内容 hash 若含 rev，下轮恒误判「本地已动」→ 冗余上传。
+    const adopted = JSON.stringify({ ...JSON.parse(REMOTE_VAULT), rev: 8 })
+    const backend = mockBackend(await sealedRemote(4, REMOTE_VAULT))
+    const r = await syncWithCloudRev({
+      backend, path: PATH, vaultJson: adopted, password: PASSWORD,
+      state: revState(4, REMOTE_VAULT), deviceId: DEV_A,
+    })
+    expect(r.action).toBe('in-sync')
+    expect(r.remoteRev).toBe(4)
+    expect(backend.putCount).toBe(0)
+  })
+
   it('本地未动云端较新 → downloaded：applied=远端明文，零写', async () => {
     const backend = mockBackend(await sealedRemote(4, REMOTE_VAULT))
     const r = await syncWithCloudRev({

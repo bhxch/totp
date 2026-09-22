@@ -4,7 +4,8 @@
  * 基线不再是字节 hash（密文随机 IV/盐使字节摘要每次必变，导致旧实现「in-sync 生产不可达」、
  * 每轮全量重推），改由 v3 信封 sync 头的 rev（单调逻辑时钟）+ 本端 SourceSyncState
  * （lastKnownRemoteRev + baseSnapshot 共同祖先快照）承载。内容比对一律走规范化
- * contentHash（canonical.ts，稳定键序），与字节形态解耦。
+ * contentHashVault（canonical.ts，稳定键序且剔除顶层 rev——F8 水位随加密落盘推进，
+ * 非 vault 内容），与字节形态解耦。
  *
  * syncWithCloudRev 分支语义（按序判定；remoteChanged 含 v2 远端 header===null → 恒视为已变）：
  * - 云端不存在：v3 信封上传（rev = lastKnownRemoteRev+1，首推为 1）→ uploaded
@@ -35,7 +36,7 @@ import {
   type KdfProfile,
 } from '../backup/envelope'
 import type { CloudBackend } from './backend'
-import { contentHash } from './canonical'
+import { contentHashVault } from './canonical'
 import { mergeVaults, type EntryConflict } from '../merge/vaultMerge'
 import type { SourceSyncState } from './syncState'
 
@@ -133,7 +134,7 @@ export async function syncWithCloudRev(opts: SyncWithCloudRevOpts): Promise<RevS
     if (mode === 'preview') return { action: 'uploaded', remoteRev: null }
     const newRev = knownRev + 1
     await pushEnvelope({ backend, path, vaultJson, password, profile,
-      sync: { rev: newRev, deviceId, baseRev: knownRev, baseContentHash: await contentHash(state.baseSnapshot ?? vaultJson) } })
+      sync: { rev: newRev, deviceId, baseRev: knownRev, baseContentHash: await contentHashVault(state.baseSnapshot ?? vaultJson) } })
     return { action: 'uploaded', remoteRev: null, newRev }
   }
 
@@ -148,9 +149,11 @@ export async function syncWithCloudRev(opts: SyncWithCloudRevOpts): Promise<RevS
   }
   const header = readSyncHeader(parsed) // v2/垃圾 → null = 无版本祖先（§1.4 保守路径）
   const remoteRev = header?.rev ?? null // null=远端无 rev（v2 无头），与「rev=0」不混用
-  const remoteContentHash = await contentHash(remoteJson)
-  const localContentHash = await contentHash(vaultJson)
-  const baseContentHash = state.baseSnapshot !== null ? await contentHash(state.baseSnapshot) : null
+  // 内容 hash 一律 contentHashVault（剔除顶层 rev——F8 水位随加密落盘推进，非 vault 内容；
+  // 含 rev 会使采纳落盘后恒判「本地已动」：冗余云写/误报合并副本，见 canonical.ts）
+  const remoteContentHash = await contentHashVault(remoteJson)
+  const localContentHash = await contentHashVault(vaultJson)
+  const baseContentHash = state.baseSnapshot !== null ? await contentHashVault(state.baseSnapshot) : null
   const localUnchanged = baseContentHash !== null && localContentHash === baseContentHash
   // v2 远端（header===null）恒视为远端已变：rev 未知，只能走内容比对保守路径。
   // 同 rev 碰撞核验（审查 Critical-1）：无 CAS 时两设备可先后写同一 rev（先后都成功），
@@ -183,7 +186,7 @@ export async function syncWithCloudRev(opts: SyncWithCloudRevOpts): Promise<RevS
 
   // 双方都动 → 三方合并；base 前提（共同祖先内容）校验失败则降级两方合并（base=null）
   const baseOk =
-    header !== null && state.baseSnapshot !== null && header.baseContentHash === (await contentHash(state.baseSnapshot))
+    header !== null && state.baseSnapshot !== null && header.baseContentHash === (await contentHashVault(state.baseSnapshot))
   const merged = mergeVaults(baseOk ? JSON.parse(state.baseSnapshot!) : null, JSON.parse(vaultJson), JSON.parse(remoteJson))
   const mergedJson = JSON.stringify(merged.vault)
   if (mode === 'preview') {

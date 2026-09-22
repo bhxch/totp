@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { BackupSource, CloudCred, EntryConflict, GDriveCred, GistCred, OneDriveCred, S3Cred, SourceSyncState, WebdavCred } from '@totp/core'
 import {
-  contentHash, DEFAULT_OBJECT_PATH, enforceRemoteRetention, pushEnvelope, resolveObjectPath, resolveTimestampPath, syncMultipleTargets,
+  contentHashVault, DEFAULT_OBJECT_PATH, enforceRemoteRetention, pushEnvelope, resolveObjectPath, resolveTimestampPath, syncMultipleTargets,
 } from '@totp/core'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -661,7 +661,7 @@ async function onConfirmReset(): Promise<void> {
       vaultJson,
       password: props.sessionSecret,
       profile: p.kdfProfile?.(),
-      sync: { rev: knownRev + 1, deviceId: await p.deviceId(), baseRev: knownRev, baseContentHash: await contentHash(st.baseSnapshot ?? vaultJson) },
+      sync: { rev: knownRev + 1, deviceId: await p.deviceId(), baseRev: knownRev, baseContentHash: await contentHashVault(st.baseSnapshot ?? vaultJson) },
     })
     await p.saveSourceState(s.id, {
       ...st,
