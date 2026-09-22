@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createVault, addEntry, removeEntry, updateEntry, addTag, renameTag, removeTag, ensureTag, reorderEntries, newEntryFromUri } from '../src/vault'
 import type { OtpEntry } from '../src/model'
 
@@ -79,5 +79,23 @@ describe('vault 操作', () => {
     expect(e.period).toBe(30)
     expect(e.tagIds).toEqual([])
     expect(e.uuid).toMatch(/^[0-9a-f-]{36}$/)
+  })
+})
+
+describe('entry updatedAt', () => {
+  it('addEntry 无 updatedAt 时盖 createdAt 同值 updatedAt', () => {
+    const now = 1_700_000_000_000
+    const v = addEntry(createVault(), { ...mkEntry('e1'), createdAt: now })
+    expect(v.entries[0]!.updatedAt).toBe(now)
+  })
+
+  it('updateEntry 推进 updatedAt；未变字段不动 createdAt', () => {
+    let v = createVault()
+    v = addEntry(v, { ...mkEntry('e1'), createdAt: 1000 })
+    vi.spyOn(Date, 'now').mockReturnValue(2000)
+    v = updateEntry(v, 'e1', { label: 'x' })
+    expect(v.entries[0]!.updatedAt).toBe(2000)
+    expect(v.entries[0]!.createdAt).toBe(1000)
+    vi.restoreAllMocks()
   })
 })

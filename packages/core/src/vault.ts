@@ -12,7 +12,9 @@ function withVault(v: Vault, patch: Partial<Vault>): Vault {
 
 export function addEntry(v: Vault, entry: OtpEntry): Vault {
   const maxOrder = v.entries.reduce((m, e) => Math.max(m, e.order), -1)
-  return withVault(v, { entries: [...v.entries, { ...entry, order: maxOrder + 1 }] })
+  return withVault(v, {
+    entries: [...v.entries, { ...entry, order: maxOrder + 1, updatedAt: entry.updatedAt ?? entry.createdAt }],
+  })
 }
 
 export function removeEntry(v: Vault, uuid: string): Vault {
@@ -20,7 +22,9 @@ export function removeEntry(v: Vault, uuid: string): Vault {
 }
 
 export function updateEntry(v: Vault, uuid: string, patch: Partial<Omit<OtpEntry, 'uuid'>>): Vault {
-  return withVault(v, { entries: v.entries.map((e) => (e.uuid === uuid ? { ...e, ...patch } : e)) })
+  return withVault(v, {
+    entries: v.entries.map((e) => (e.uuid === uuid ? { ...e, ...patch, updatedAt: Date.now() } : e)),
+  })
 }
 
 // 同名唯一键：trim + 大小写不敏感（spec §1）

@@ -22,6 +22,8 @@ export interface OtpEntry {
   tagIds: string[]
   order: number
   createdAt: number
+  /** 条目级最后修改时间（条目级三方合并裁决用）；缺省 0=旧数据无时间戳（合并 tie 判云端胜） */
+  updatedAt?: number
   /** 是否置顶：列表渲染时优先；缺省 false（向后兼容旧 vault） */
   pinned?: boolean
   /** Yandex（yaotp）的 PIN，可选；缺省/空串按无 PIN 计算（空 pin 亦是合法输入）。不参与 Vault.version 语义 */
