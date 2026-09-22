@@ -53,7 +53,9 @@ export async function createBackupEnvelope(vaultJson: string, password: string, 
 }
 
 export async function openBackupEnvelope(env: unknown, password: string): Promise<string> {
-  if (!isBackupEnvelope(env)) throw new Error('invalid backup envelope')
+  // v3 云同步信封 = v2 加密体 + sync 元数据头，加密封装与 v2 完全同构，解密路径共用；
+  // 版本放行在此处完成（isBackupEnvelope 恒只认 v2，本地备份/导出写侧不升版）
+  if (!isBackupEnvelope(env) && !isSyncEnvelope(env)) throw new Error('invalid backup envelope')
   const kdf = env.kdf as { alg?: string; m?: number; t?: number; p?: number; salt?: string }
   if (kdf.alg !== 'argon2id' || typeof kdf.salt !== 'string') throw new Error('invalid backup envelope')
   // 钳制 envelope 自带的 KDF 参数：恶意文件/云对象可声明超大/超小 m/t/p 使 argon2id 资源耗尽或被旁路；
@@ -83,4 +85,49 @@ export async function openBackupEnvelope(env: unknown, password: string): Promis
   } catch {
     throw new Error('bad password or corrupted backup')
   }
+}
+
+// ---- 云同步信封扩展（spec §1.1）：v3 = v2 加密体 + sync 元数据头。本地备份/导出恒为 v2 不变 ----
+
+// 命名为 CloudSyncMeta 而非 SyncMeta：sync/chunks 已有同名 SyncMeta（扩展端分片同步元数据，
+// 经根出口星导出被 @totp/core 消费），重名将产生星导出歧义（TS2308），故按语境前缀区分
+export interface CloudSyncMeta {
+  /** 云端逻辑时钟：单调递增，每次上传 = 读到的远端 rev + 1 */
+  rev: number
+  /** 写入设备标识（本机持久 UUID，并列裁决与展示用，非秘密） */
+  deviceId: string
+  /** 上传方声明的共同祖先：其本地上次收敛时的云端 rev 与该版本内容 hash */
+  baseRev: number
+  baseContentHash: string
+}
+
+// Omit 交叉而非 interface extends：BackupEnvelope.v 字面量为 2，extends 无法收窄为 3
+export type SyncEnvelope = Omit<BackupEnvelope, 'v'> & {
+  v: 3
+  sync: CloudSyncMeta
+}
+
+export function isSyncEnvelope(x: unknown): x is SyncEnvelope {
+  if (typeof x !== 'object' || x === null) return false
+  const o = x as Record<string, unknown>
+  // 独立展开逐字段校验（不做「改写 v 复用 isBackupEnvelope」的短路技巧，避免语义耦合）
+  const s = o['sync'] as Record<string, unknown> | undefined
+  return (
+    o['v'] === 3 &&
+    typeof s === 'object' && s !== null &&
+    typeof s['rev'] === 'number' && Number.isInteger(s['rev']) && s['rev'] >= 1 &&
+    typeof s['deviceId'] === 'string' && s['deviceId'] !== '' &&
+    typeof s['baseRev'] === 'number' && Number.isInteger(s['baseRev']) && s['baseRev'] >= 0 &&
+    typeof s['baseContentHash'] === 'string'
+  )
+}
+
+/** 只读 sync 头：v2/垃圾返回 null = 「无版本祖先」，调用方走内容比对保守路径 */
+export function readSyncHeader(x: unknown): CloudSyncMeta | null {
+  return isSyncEnvelope(x) ? { ...x.sync } : null
+}
+
+export async function createSyncEnvelope(vaultJson: string, password: string, profile: KdfProfile, sync: CloudSyncMeta): Promise<SyncEnvelope> {
+  const env = await createBackupEnvelope(vaultJson, password, profile)
+  return { ...env, v: 3, sync }
 }

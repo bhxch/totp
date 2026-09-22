@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createBackupEnvelope, isBackupEnvelope, KDF_PROFILES, openBackupEnvelope } from '../src/backup/envelope'
+import { createBackupEnvelope, createSyncEnvelope, isBackupEnvelope, isSyncEnvelope, KDF_PROFILES, openBackupEnvelope, readSyncHeader } from '../src/backup/envelope'
 import { base64ToBytes, bytesToBase64 } from '../src/crypto/aesgcm'
 
 const vaultJson = JSON.stringify({ version: 2, entries: [{ uuid: 'a' }], tags: [], updatedAt: 1 })
@@ -115,5 +115,30 @@ describe('envelope v2', () => {
   it('isBackupEnvelope 拒绝任意对象', () => {
     expect(isBackupEnvelope({})).toBe(false)
     expect(isBackupEnvelope(null)).toBe(false)
+  })
+})
+
+describe('sync envelope v3', () => {
+  const sync = { rev: 7, deviceId: 'dev-a', baseRev: 6, baseContentHash: 'ab12' }
+  it('create→isSyncEnvelope→open 往返', async () => {
+    const env = await createSyncEnvelope('{"a":1}', 'pw', 'balanced', sync)
+    expect(isSyncEnvelope(env)).toBe(true)
+    expect(await openBackupEnvelope(JSON.parse(JSON.stringify(env)), 'pw')).toBe('{"a":1}')
+  })
+  it('isBackupEnvelope 对 v2 仍真、对 v3 假', async () => {
+    const v2 = await createBackupEnvelope('{}', 'pw')
+    expect(isBackupEnvelope(v2)).toBe(true)
+    const v3 = await createSyncEnvelope('{}', 'pw', 'balanced', sync)
+    expect(isBackupEnvelope(v3)).toBe(false)
+  })
+  it('readSyncHeader：v3 返回 sync；v2/垃圾返回 null', async () => {
+    const v3 = await createSyncEnvelope('{}', 'pw', 'balanced', sync)
+    expect(readSyncHeader(v3)).toEqual(sync)
+    expect(readSyncHeader(await createBackupEnvelope('{}', 'pw'))).toBeNull()
+    expect(readSyncHeader({ v: 3 })).toBeNull()
+  })
+  it('openBackupEnvelope 接受 v3', async () => {
+    const v3 = await createSyncEnvelope('{"k":2}', 'pw', 'balanced', sync)
+    expect(await openBackupEnvelope(JSON.parse(JSON.stringify(v3)), 'pw')).toBe('{"k":2}')
   })
 })
