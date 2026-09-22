@@ -315,6 +315,8 @@ const auto = createDesktopAutoRunner({
 
 /** 云同步自动触发偏好：localStorage 键 cloudAutoPrefs，与 loadBackupPrefs 同风格、独立实现（键不同） */
 const CLOUD_AUTO_PREFS_KEY = 'cloudAutoPrefs'
+/** 云同步 auto 内容门持久基线（spec §1.3）：localStorage 键 cloudContentHash（runner loadContentHash/saveContentHash 消费） */
+const CLOUD_CONTENT_HASH_KEY = 'cloudContentHash'
 const DEFAULT_CLOUD_AUTO_PREFS: CloudAutoPrefs = { onChange: false, onInterval: false, intervalMinutes: 60 }
 
 function loadCloudPrefs(): CloudAutoPrefs {
@@ -418,11 +420,16 @@ const cloudSync = createCloudSyncRunner({
       .map((x) => ({ source: x, cred: s.credsCache.value[x.id] }))
       .filter((p): p is { source: BackupSource; cred: CloudCred } => p.cred !== undefined)
   },
-  loadTargetHash: async (id) => (await loadSourceRevs(requireAdapter()))[id] ?? null,
-  saveTargetHash: (id, h) => saveSourceRev(requireAdapter(), id, h),
-  // rev 基线（spec §1.2）：seal 缺省=明文落盘，DEK 静态保护随 T9 装配约定接入
-  loadSourceState: (id) => loadSyncState(requireAdapter(), id),
-  saveSourceState: (id, st) => saveSyncState(requireAdapter(), id, st),
+  loadSyncState: (id) => loadSyncState(requireAdapter(), id),
+  saveSyncState: (id, st) => saveSyncState(requireAdapter(), id, st),
+  // 内容门持久基线（spec §1.3）：localStorage 键 cloudContentHash（跨会话/页面重开生效）
+  loadContentHash: async () => localStorage.getItem(CLOUD_CONTENT_HASH_KEY),
+  saveContentHash: async (h) => {
+    try {
+      if (h === null) localStorage.removeItem(CLOUD_CONTENT_HASH_KEY)
+      else localStorage.setItem(CLOUD_CONTENT_HASH_KEY, h)
+    } catch { /* 基线落盘失败仅影响去重，不阻塞 */ }
+  },
   deviceId: () => loadDeviceId(requireAdapter()),
   makeBackend: (cred) => createCloudBackend(cred),
   persistAdopted: (json) => replaceAllOps(JSON.parse(json) as Vault),

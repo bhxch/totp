@@ -7,7 +7,7 @@
  * 锁定态零网络：runner 内部 isLocked/无 secret 直接 return（cloudRunner 守护），调用侧
  * syncScheduler gate 双保险。
  */
-import { loadDeviceId, loadSourceRevs, loadSyncState, saveSourceRev, saveSyncState, type BackupSource, type CloudCred, type Vault } from '@totp/core'
+import { loadDeviceId, loadSyncState, saveSyncState, type BackupSource, type CloudCred, type Vault } from '@totp/core'
 import { createCloudBackend, createCloudSyncRunner, type VueStore } from '@totp/ui'
 import { conflictBackupName, loadSourcesImpl, retentionDeletedNote } from './cloudCredStore'
 import { storageAdapter } from './store'
@@ -62,11 +62,15 @@ export function createExtensionCloudRunner(deps: ExtensionCloudRunnerDeps): { ru
         .map((s) => ({ source: s, cred: store.credsCache.value[s.id] }))
         .filter((p): p is { source: BackupSource; cred: CloudCred } => p.cred !== undefined)
     },
-    loadTargetHash: async (id) => (await loadSourceRevs(storageAdapter))[id] ?? null,
-    saveTargetHash: (id, h) => saveSourceRev(storageAdapter, id, h),
     // rev 基线（spec §1.2）：seal 缺省=明文落盘，DEK 静态保护随 T9 装配约定接入
-    loadSourceState: (id) => loadSyncState(storageAdapter, id),
-    saveSourceState: (id, st) => saveSyncState(storageAdapter, id, st),
+    loadSyncState: (id) => loadSyncState(storageAdapter, id),
+    saveSyncState: (id, st) => saveSyncState(storageAdapter, id, st),
+    // 内容门持久基线（spec §1.3）：storage.local 键 cloudContentHash（跨会话/页面重开生效）
+    loadContentHash: () => storageAdapter.get('cloudContentHash'),
+    saveContentHash: async (h) => {
+      if (h === null) await storageAdapter.delete('cloudContentHash')
+      else await storageAdapter.set('cloudContentHash', h)
+    },
     deviceId: () => loadDeviceId(storageAdapter),
     makeBackend: (cred) => createCloudBackend(cred),
     persistAdopted: (json) => store.replaceAllOp(JSON.parse(json) as Vault),

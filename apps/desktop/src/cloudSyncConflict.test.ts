@@ -50,10 +50,10 @@ describe('审查 I9：冲突副本写盘失败传播（desktop 接线）', () =>
       getSecret: () => PW,
       getVaultJson: () => A,
       loadSources: async () => [{ source: SOURCE, cred: CRED }],
-      loadTargetHash: async () => 'stale',
-      saveTargetHash: vi.fn(),
-      loadSourceState: async () => ({ lastKnownRemoteRev: null, baseSnapshot: null }),
-      saveSourceState: vi.fn(),
+      loadSyncState: async () => ({ lastKnownRemoteRev: null, baseSnapshot: null }),
+      saveSyncState: vi.fn(),
+      loadContentHash: async () => null,
+      saveContentHash: vi.fn(),
       deviceId: async () => 'dev-test',
       makeBackend: () => b,
       persistAdopted: vi.fn(),
@@ -69,8 +69,8 @@ describe('审查 I9：冲突副本写盘失败传播（desktop 接线）', () =>
     expect(key).toBe('s1')
     expect(dirOverride).toBeNull()
     expect(ArrayBuffer.isView(bytes)).toBe(true)
-    // 该目标失败的连锁表现：本地不被远端覆盖（persistAdopted 未调）、基线在 runner 内被删
-    // （saveTargetHash('s1', null) 由 cloudRunner 对 hashes 缺键的既有回写负责）、
+    // 该目标失败的连锁表现：本地不被远端覆盖（persistAdopted 未调）、rev 基线原样回写
+    // （saveSyncState('s1', 原样 state)，失败源=入参原样幂等——下轮按原基线重做）、
     // 状态行记「失败」（ok 仍为 true 是既有部分失败 summary 语义——全部目标 settle 即 true）
     expect(b.store.get('totp-backup.totpbackup')).toEqual(bytesOf(remoteEnv)) // 云端旧版本原样保留
     expect(recordStatus).toHaveBeenCalledWith(true, 's1: 失败')

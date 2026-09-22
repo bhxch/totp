@@ -23,7 +23,7 @@
  * pushEnvelope 的 sync 参数缺省时仍写 v2 信封：旧调用方（本地备份形态）行为不变。
  *
  * 旧字节 hash 编排 syncWithCloud 已删（T7/T8 裁定：multiTarget 重写为 primary 裁决 + replica 收敛
- * 复制后无人消费）；CloudSyncOutcome 类型暂保留——ui pull 通道文案类型仍引用，T9 改造后随删。
+ * 复制后无人消费）；deprecated 的 CloudSyncOutcome 类型已随 T9 pull 通道改造删除（T9 装配须知 6）。
  */
 import {
   createBackupEnvelope,
@@ -38,15 +38,6 @@ import type { CloudBackend } from './backend'
 import { contentHash } from './canonical'
 import { mergeVaults, type EntryConflict } from '../merge/vaultMerge'
 import type { SourceSyncState } from './syncState'
-
-/** @deprecated 旧字节 hash 编排（syncWithCloud）的返回类型，函数已删（T8）；仅 ui pull 通道
- *  文案类型仍引用，T9 收敛复制改造后随删。 */
-export interface CloudSyncOutcome {
-  action: 'uploaded' | 'downloaded' | 'conflict-resolved' | 'in-sync'
-  conflictBackup?: string
-  /** uploaded 为 envelope JSON（密文）；downloaded / conflict-resolved 为远端 vault JSON（明文）；in-sync 不含 */
-  envelopeJson?: string
-}
 
 /** 冲突副本回调返回值：文件名（回填 outcome.conflictBackup）/ null（无副本）/ void（fire-and-forget），
  *  同步或经 Promise。此前在 syncOrchestrator / multiTarget / ui cloudRunner 三处逐字重复（T6 审查） */
