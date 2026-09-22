@@ -2,8 +2,9 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { McpConfigWithStatusDto, McpPlatform } from './mcpCard'
-import { connectionSnippet, MCP_MODE_OPTIONS, randomDynamicPort, serverStatus } from './mcpCard'
+import { connectionSnippet, DEFAULT_EXPOSED_TOOLS, MCP_MODE_OPTIONS, MCP_TOOLS, randomDynamicPort, sanitizeExposedTools, serverStatus } from './mcpCard'
 import MdButton from './md/MdButton.vue'
+import MdCheckbox from './md/MdCheckbox.vue'
 import MdIconButton from './md/MdIconButton.vue'
 import MdSelect from './md/MdSelect.vue'
 import MdSwitch from './md/MdSwitch.vue'
@@ -35,9 +36,15 @@ const status = computed(() =>
   cfg.value ? serverStatus(cfg.value, cfg.value.running, cfg.value.lastError) : null,
 )
 
-/** 重查配置+运行态（加载、开关切换/重生成 token 等写操作后调用，刷新状态行） */
+/** 重查配置+运行态（加载、开关切换/重生成 token 等写操作后调用，刷新状态行）。
+ * exposedTools 兜底初始化（Task 8 审查）：桥接载荷缺字段时补默认只读档——否则整体回写丢字段，
+ * Rust serde default 会把用户勾选静默重置；sanitize 顺带滤净存储中的未知名并按已知顺序去重 */
 async function refresh(): Promise<void> {
-  cfg.value = await props.platform.getConfig()
+  const next = await props.platform.getConfig()
+  cfg.value = {
+    ...next,
+    exposedTools: sanitizeExposedTools(Array.isArray(next.exposedTools) ? next.exposedTools : [...DEFAULT_EXPOSED_TOOLS]),
+  }
   portText.value = String(cfg.value.port)
 }
 
@@ -83,6 +90,16 @@ function onModeChange(v: string | number): void {
   const cur = cfg.value
   if (!cur) return
   void persist({ ...cur, mode: v as McpConfigWithStatusDto['mode'] }, cur)
+}
+
+// ---------- 暴露工具（spec §6.3）：勾选变更即整体回写，与 mode/whitelist 同语义（Rust 每请求重读配置，即时生效） ----------
+function onToggleTool(name: string, on: boolean): void {
+  const cur = cfg.value
+  if (!cur) return
+  const set = new Set(cur.exposedTools)
+  if (on) set.add(name)
+  else set.delete(name)
+  void persist({ ...cur, exposedTools: sanitizeExposedTools([...set]) }, cur)
 }
 
 // ---------- 白名单：添加（trim 非空、卡内去重，大小写不敏感与 Rust eq_ignore_ascii_case 同口径）与逐条删除，均整体回写 ----------
@@ -223,6 +240,17 @@ onBeforeUnmount(() => {
         />
         <MdIconButton class="random-port" :title="t('mcpServer.randomPort')" :aria-label="t('mcpServer.randomPort')" :disabled="busy" @click="onRandomPort">⟳</MdIconButton>
       </div>
+      <div class="exposed-tools">
+        <span class="opt-label">{{ t('mcpServer.exposedTitle') }}</span>
+        <span class="opt-hint">{{ t('mcpServer.exposedHint') }}</span>
+        <div v-for="tool in MCP_TOOLS" :key="tool.name" class="tool-row">
+          <MdCheckbox
+            class="tool-check" :model-value="cfg.exposedTools.includes(tool.name)" :label="t(tool.key)"
+            :aria-label="t(tool.key)" :disabled="busy" @update:model-value="onToggleTool(tool.name, $event)"
+          />
+          <span v-if="tool.kind === 'action'" class="tool-hint">{{ t('mcpServer.exposedActionHint') }}</span>
+        </div>
+      </div>
       <div class="whitelist">
         <span class="opt-label">{{ t('mcpServer.whitelist') }}</span>
         <span class="opt-hint">{{ t('mcpServer.whitelistHint') }}</span>
@@ -296,6 +324,10 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .port-field { width: 140px; }
 /* 随机端口按钮：与端口输入框垂直居中对齐 */
 .random-port { align-self: center; flex: none; }
+/* 暴露工具勾选组：行序随 MCP_TOOLS，action 行尾随写操作警示 */
+.exposed-tools { display: flex; flex-direction: column; gap: 6px; }
+.tool-row { display: flex; align-items: center; gap: 8px; }
+.tool-hint { font-size: var(--md-sys-typescale-body-small); opacity: .65; }
 .whitelist { display: flex; flex-direction: column; gap: 6px; }
 .pattern-row { display: flex; align-items: center; gap: 8px; }
 .pattern { font-size: var(--md-sys-typescale-body-small); opacity: .8; }

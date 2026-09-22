@@ -5,6 +5,9 @@ export interface McpConfigDto {
   port: number
   token: string
   whitelist: string[]
+  /** 工具暴露面（spec §6.3）：不在清单的工具调用返回 tool disabled；保存前经 sanitizeExposedTools 滤净。
+   * 回写载荷必须携带本字段——Rust 侧缺字段走 serde default，会静默重置用户勾选 */
+  exposedTools: string[]
 }
 
 /** mcp_get_config 返回：配置平铺 + 运行态（与 Rust McpConfigWithStatus flatten 契约对齐） */
@@ -33,6 +36,24 @@ export const MCP_MODE_OPTIONS: ReadonlyArray<{ value: McpConfigDto['mode']; key:
   { value: 'exact', key: 'mcpServer.modeExact' },
   { value: 'alwaysAsk', key: 'mcpServer.modeAlwaysAsk' },
 ]
+
+/** MCP 工具清单（spec §6.2 门控元数据）：read=现有只读门控不变；action=触发写操作、更严门控
+ * （token 档放行，其余档逐次桌面确认）。key 为 i18n 键（组件侧经 t() 出文案），顺序即设置页勾选组行序 */
+export const MCP_TOOLS = [
+  { name: 'list_accounts', kind: 'read', key: 'mcpServer.toolListAccounts' },
+  { name: 'get_code', kind: 'read', key: 'mcpServer.toolGetCode' },
+  { name: 'trigger_backup', kind: 'action', key: 'mcpServer.toolTriggerBackup' },
+  { name: 'trigger_sync', kind: 'action', key: 'mcpServer.toolTriggerSync' },
+] as const
+
+/** 默认暴露面（与 Rust default_exposed_tools 对齐）：只读两工具，存量用户行为零变化 */
+export const DEFAULT_EXPOSED_TOOLS: string[] = ['list_accounts', 'get_code']
+
+/** 暴露面保存前净化：滤未知名 + 按 MCP_TOOLS 已知顺序去重（与 Rust save 侧 retain 同口径） */
+export function sanitizeExposedTools(list: string[]): string[] {
+  const known = new Set(MCP_TOOLS.map((t) => t.name))
+  return MCP_TOOLS.map((t) => t.name).filter((n) => list.includes(n) && known.has(n))
+}
 
 /** 服务运行态色调：ok=运行中；error=启动失败；pending=启动中（瞬态）；muted=已停止 */
 export type ServerStatusTone = 'ok' | 'error' | 'pending' | 'muted'
