@@ -4,6 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { OtpListItem, createAppI18n, createClipboardClearer, createIconStore, createVueStore, iconView, useOtpCodes, useTheme, type IconStore, type VueStore } from '@totp/ui'
 import { computed, getCurrentInstance, onMounted, ref, shallowRef } from 'vue'
 import { createTauriFs } from './tauriFs'
+import { createCopyAutoHide } from './miniAutoHide'
 
 // store 浅包装（T14 审查根修，与 App.vue 同款）：深 ref 会对嵌套 ref/computed 成员自动解包，
 // 模板 `store.locked` 的布尔判断在深 ref 下靠「解包后恰为 boolean」侥幸正确，shallowRef 下
@@ -72,15 +73,13 @@ const clearer = createClipboardClearer(
   () => invoke('clipboard_clear_if_staged').then(() => {}),
 )
 
-/** 复制后 500ms 自动隐藏的 timer 引用：双击揭示时须可取消（终审 Important-1） */
-let hideTimer: ReturnType<typeof setTimeout> | null = null
-/** 双击揭示（OtpListItem 内部 8s）期间取消复制后自动隐藏——否则揭示存活仅 0.5s，spec「双击显示 8 秒」不可达 */
-function cancelAutoHide(): void {
-  if (hideTimer) clearTimeout(hideTimer)
-  hideTimer = null
-}
+/** 复制后 500ms 自动隐藏控制器（审查 I-1 武装竞态守卫）：纯逻辑抽至 miniAutoHide.ts 便于单测覆盖取消时序 */
+const autoHide = createCopyAutoHide(500, () => { void getCurrentWindow().hide() })
 
 async function copy(entry: { uuid: string; type?: string; counter?: number }) {
+  // I-1：copy 开始即快照揭示代次——若双击（递增代次）落在下方 await 期间，
+  // completeCopy 检出失配跳过武装，覆盖「cancel 先于 timer 武装到达」的竞态时序
+  const generation = autoHide.beginCopy()
   const code = codes.value.get(entry.uuid)?.code
   if (!code) return
   // F16：复制经 Rust stage 命令登记暂存值（退出兜底比对的事实源）
@@ -92,10 +91,7 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
     try { await store.value?.updateEntryOp(entry.uuid, { counter: (entry.counter ?? 0) + 1 }) } catch { /* mini 降级不打扰 */ }
   }
   clearer.notifyCopied()
-  hideTimer = setTimeout(() => {
-    hideTimer = null
-    void getCurrentWindow().hide()
-  }, 500)
+  autoHide.completeCopy(generation)
 }
 </script>
 
@@ -104,8 +100,9 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
     <div v-if="store && locked" class="empty">{{ tr('mini.lockedNote') }}</div>
     <div v-else-if="!store || sorted.length === 0" class="empty">{{ tr('mini.empty') }}</div>
     <!-- 终审 Important-1：@dblclick 未在 OtpListItem emits 声明，经 attrs fallthrough 合并到组件根元素，
-         与组件内部揭示 onDblclick 合并共存（Vue 3 mergeProps 依次调用）——双击即揭示并取消 500ms 自动隐藏 -->
-    <OtpListItem v-for="e in sorted" :key="e.uuid" :entry="e" :icon="iconView(e.icon, icons ?? undefined)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" @dblclick="cancelAutoHide" />
+         与组件内部揭示 onDblclick 合并共存（Vue 3 mergeProps 依次调用）——双击即揭示并取消 500ms 自动隐藏
+         （审查 I-1：控制器内部递增揭示代次，使 await 期间在途的 copy 不再武装自动隐藏） -->
+    <OtpListItem v-for="e in sorted" :key="e.uuid" :entry="e" :icon="iconView(e.icon, icons ?? undefined)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" @dblclick="autoHide.onDblclick" />
   </main>
 </template>
 

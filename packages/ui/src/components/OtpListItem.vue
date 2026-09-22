@@ -92,8 +92,10 @@ function onContextMenu(e: MouseEvent): void {
         :class="['code', { invalid: code === 'INVALID' }]"
         :title="code === 'INVALID' ? t('otpListItem.invalidTitle', { message: error ?? '' }) : undefined"
       >{{ displayed }}</span>
-      <MdIconButton class="copy" :title="t('otpListItem.copyTitle')" :aria-label="t('otpListItem.copyTitle')" @click.stop="emit('copy')">⧉</MdIconButton>
-      <MdIconButton class="show-qr" :title="t('otpListItem.qrTitle')" :aria-label="t('otpListItem.qrTitle')" @click.stop="emit('qr')">▣</MdIconButton>
+      <!-- M-3：内嵌按钮只 stop click 不够——快速双击按钮的 dblclick 会冒泡到根元素触发揭示
+           （QR 弹窗打开瞬间底层码明文），按钮层须一并 stop dblclick -->
+      <MdIconButton class="copy" :title="t('otpListItem.copyTitle')" :aria-label="t('otpListItem.copyTitle')" @click.stop="emit('copy')" @dblclick.stop>⧉</MdIconButton>
+      <MdIconButton class="show-qr" :title="t('otpListItem.qrTitle')" :aria-label="t('otpListItem.qrTitle')" @click.stop="emit('qr')" @dblclick.stop>▣</MdIconButton>
       <svg viewBox="0 0 36 36" class="ring" aria-hidden="true">
         <circle cx="18" cy="18" r="16" class="ring-bg" />
         <circle

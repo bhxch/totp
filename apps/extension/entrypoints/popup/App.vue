@@ -318,8 +318,13 @@ function scheduleClipboardClear(): void {
 }
 const copied = ref(false) // 「已复制」横幅显隐
 let closeTimer: ReturnType<typeof setTimeout> | null = null
+/** 双击揭示代次（审查 I-1 武装竞态守卫）：copy 开始快照、武装前比对 */
+let revealGeneration = 0
 
 async function copy(entry: OtpEntry) {
+  // I-1：copy 开始即快照揭示代次——copy 是 async，若双击落在下方 await 期间，
+  // cancelAutoClose 执行时 closeTimer 还是 null（取消落空），须靠代次失配在武装点跳过
+  const generation = revealGeneration
   const c = codes.value.get(entry.uuid)?.code
   if (!c) return
   await navigator.clipboard.writeText(c)
@@ -329,12 +334,17 @@ async function copy(entry: OtpEntry) {
   // 「已复制」反馈：横幅提示后按 popupCloseDelayMs 延迟关闭（简单实现：不重置，到点关闭）
   copied.value = true
   if (closeTimer) clearTimeout(closeTimer)
+  // I-1 竞态守卫：await 期间发生过双击揭示 → 不武装，否则刚取消过的揭示又被本 timer 截断
+  if (generation !== revealGeneration) return
   // M23：loadSettings 走 DEFAULT_SETTINGS 合并兜底（见 vaultStore.loadSettings M4），popupCloseDelayMs 必为 number
   closeTimer = setTimeout(() => window.close(), settings.popupCloseDelayMs)
 }
 
-/** 双击揭示（OtpListItem 内部 8s）时取消本次复制后自动关闭（终审 Important-1）：刚看过码的会话不再自动关，符合「刚交互过」直觉 */
+/** 双击揭示（OtpListItem 内部 8s）时取消本次复制后自动关闭（终审 Important-1）：刚看过码的会话不再自动关，符合「刚交互过」直觉。
+ *  审查 I-1：同时递增揭示代次——双击先于 copy 的 await 落地派发时（慢机器可复现），此处 closeTimer
+ *  还是 null、clearTimeout 取消落空，在途 copy 靠代次失配在武装点跳过，揭示不被自动关闭截断 */
 function cancelAutoClose(): void {
+  revealGeneration++
   if (closeTimer) clearTimeout(closeTimer)
   closeTimer = null
 }

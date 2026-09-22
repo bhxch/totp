@@ -270,6 +270,55 @@ describe('popup 双击揭示取消复制后自动关闭（终审 Important-1）'
   })
 })
 
+describe('popup 双击揭示 vs copy 武装竞态（审查 I-1）', () => {
+  it('copy 的 clipboard await 迟于 dblclick 落地：双击序列两次在途 copy 均不武装自动关闭；其后普通 copy 照常关窗', async () => {
+    const closeSpy = vi.spyOn(window, 'close').mockImplementation(() => {})
+    // writeText 返回可控 promise：模拟慢剪贴板/IPC——resolve 晚于 dblclick 派发（慢机器可复现时序）
+    const resolvers: Array<() => void> = []
+    const writeText = vi.fn(() => new Promise<void>((resolve) => resolvers.push(resolve)))
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+    vault.entries.push({
+      uuid: 'e1', type: 'totp', issuer: 'GitHub', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
+      algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 0,
+    } as never)
+    try {
+      // codes 首算走真实异步 crypto.subtle，须在 fake timers 接管前完成
+      const wrapper = await mountApp({ otpListItem: OtpListItemStub })
+      await vi.waitFor(() => {
+        expect(wrapper.find('.otp-item-stub').text()).not.toBe('------')
+      })
+      vi.useFakeTimers()
+
+      const item = wrapper.findComponent({ name: 'OtpListItemStub' })
+      // 双击序列 click→click→dblclick：两次 copy 都在 await 上挂起（closeTimer 尚未武装）
+      item.vm.$emit('copy')
+      item.vm.$emit('copy')
+      item.vm.$emit('dblclick') // cancel 到达：此刻 closeTimer 仍为 null，仅 clearTimeout 取消落空
+      await flushPromises()
+      resolvers.splice(0).forEach((resolve) => resolve()) // await 落地晚于 dblclick：旧实现在此武装 → 到期关窗截断揭示
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(closeSpy).not.toHaveBeenCalled()
+
+      // 对照：揭示期间的全新普通 copy 到期照常关窗（守卫只作用于 await 期间发生过双击的 copy）
+      item.vm.$emit('copy')
+      await flushPromises()
+      expect(resolvers.length).toBe(1)
+      resolvers[0]!()
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(closeSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+      closeSpy.mockRestore()
+      vault.entries.length = 0
+    }
+  })
+})
+
 describe('popup 跟随拉取行为（跨端同步 T2/T3，审查修复）', () => {
   // mock 边界：runner 链止于 storage mock——loadSources 读 'backupSources'（mock 返回 null → 空表），
   // 无真网络；runner 触达的可观察信号 = 读源键 + recordStatus 写 'cloudAutoStatus'（工厂硬编码键）。
