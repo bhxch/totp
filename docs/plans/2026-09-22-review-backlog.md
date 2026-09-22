@@ -62,3 +62,19 @@
 
 - 旧口径 stored 值自愈:存量 cloudContentHash/baseSnapshot 升级后首轮多一次同步(保守路径),无迁移
 - desktop mcpBridge.test.ts 全仓并发偶发(基线可复现,负载型),建议独立排查 vi.waitFor 确定化
+
+# MCP 触发器工具批次 backlog(2026-09-22,SDD 终审 triage,范围 258bd15..8a33191)
+
+来源:MCP 触发器工具与工具暴露面 spec §6 实施(9 commit)终审 READY TO MERGE,以下为留档项。
+
+| # | 项 | 说明 | 来源 |
+|---|---|---|---|
+| M1 | needs_restart 显式断言 | 补「exposedTools 变更不触发重启」测试(实现上结构不可能触发,一行钉死不变量) | MCP 终审 |
+| M2 | DEFAULT_EXPOSED_TOOLS 类型卫生 | `string[]` → `readonly string[]`(消费方无突变行为,纯类型卫生) | MCP 终审 |
+| M3 | 两弹叠加 UX | once 批准的客户端在非 token 档调 action 工具连两弹(首连审批+工具确认)——终审裁定为既定行为(两独立维度,跳过任一削弱门控);真机验收时向用户演示确认 | MCP-B 审查 |
+
+## 真机验证类(发布前)
+
+- 非 token 档(wildcard)勾选 trigger_sync → MCP 调用 → 桌面弹「允许执行 trigger_sync?」→ Allow 返回 {triggered:true}/Deny 返回 denial 错误;token 档免确认直达
+- 未勾选时 trigger_sync 返回 `tool disabled`;原两只读工具行为与升级前一致(存量 settings.json 兼容)
+- 无头模式(--headless-mcp)非 token 档 action 调用 60s 后 fail-closed 拒绝
