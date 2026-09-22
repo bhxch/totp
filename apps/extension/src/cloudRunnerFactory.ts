@@ -28,11 +28,14 @@ export interface ExtensionCloudRunnerDeps {
   t(key: string, params?: Record<string, unknown>): string
 }
 
-/** rev 基线 seal（spec §1.2 静态保护，T9 装配约定 5）：解锁态经 store DEK 加密；seal 助手返回
- *  null（锁定/未启用加密）按明文回落，与 core syncState「seal 缺省=明文库明文落盘」语义对齐。
+/** rev 基线 seal（spec §1.2 静态保护，T9 装配约定 5）：解锁态经 store DEK 加密；seal 助手未启用
+ *  加密（返回 null）按明文回落，与 core syncState「seal 缺省=明文库明文落盘」语义对齐；锁定抛
+ *  'vault locked'（在途锁定不得明文回落，落盘整体失败按下轮重做处理）。
  *  unseal 不可解（换 DEK/明文记录）回落原文——core 解析层自然判废（明文可解析=兼容读取，
- *  密文垃圾解析失败=回落空态重建） */
-function revSeal(store: VueStore): Seal {
+ *  密文垃圾解析失败=回落空态）。
+ *  导出供 options App.vue 的 CloudCard 手动通道（cloudPlatform.loadSourceState/saveSourceState）
+ *  共用——与 runner 通道同一 seal 形态，共享 cloudSyncState 键互不互踩（审查 Critical 1）。 */
+export function revSeal(store: VueStore): Seal {
   return {
     seal: async (plain) => (await store.sealWithDek(plain)) ?? plain,
     unseal: async (sealed) => (await store.unsealWithDek(sealed)) ?? sealed,

@@ -379,9 +379,10 @@ const cloudPlatform: CloudPlatform = {
   },
   persistDownloaded: (json) => replaceAllOps(JSON.parse(json) as Vault),
   saveConflictBackup: async (bytes, sourceId) => saveConflictBackupToDir(bytes, null, sourceId),
-  // rev 基线（spec §1.2）：seal 缺省=明文落盘，DEK 静态保护随 T9 装配约定接入
-  loadSourceState: (id) => loadSyncState(requireAdapter(), id),
-  saveSourceState: (id, st) => saveSyncState(requireAdapter(), id, st),
+  // rev 基线（spec §1.2）+ DEK seal 静态保护：与 runner 通道共用同一 revSeal（共享 cloudSyncState
+  // 键——手动/自动两侧读写形态必须一致，缺 seal 侧会把密文当明文 bag 互踩并泄漏 baseSnapshot）
+  loadSourceState: (id) => loadSyncState(requireAdapter(), id, revSeal(requireStore())),
+  saveSourceState: (id, st) => saveSyncState(requireAdapter(), id, st, revSeal(requireStore())),
   deviceId: () => loadDeviceId(requireAdapter()),
   // KDF 档位（备份设置所选）：云上传/冲突副本 envelope 生成口径与本地备份一致
   kdfProfile: () => kdfProfileOf(),

@@ -2,7 +2,7 @@
 import { backupFileName, base64ToBytes, createAutoRunScheduler, createBackupEnvelope, loadDeviceId, loadSyncState, normalizeSchemes, openBackupEnvelope, OVERWRITE_NAME, randomBytes, saveSyncState, SCHEMES_KEY, type BackupEnvelope, type ImportScheme, type Retention, type Vault } from '@totp/core'
 import { CLIPBOARD_CLEAR_DELAY_MS, createAppI18n, createIconStore, createPrfCredential, LockScreen, NavigationShell, prfSupported, useTheme, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
 import { computed, getCurrentInstance, onMounted, onUnmounted, ref, watch } from 'vue'
-import { createExtensionCloudRunner } from '../../src/cloudRunnerFactory'
+import { createExtensionCloudRunner, revSeal } from '../../src/cloudRunnerFactory'
 import { formatAutoStatusText, hasLegacyCloudKeys, loadSourcesImpl, migrateLegacySources, saveSourcesImpl } from '../../src/cloudCredStore'
 import { addConflictCopy } from '../../src/conflictCopies'
 import { createSyncScheduler } from '../../src/syncScheduler'
@@ -462,9 +462,10 @@ const cloudPlatform: CloudPlatform = {
   // 冲突副本入 storage.local 列表（spec §4，限 5 份滚动删）：不自动触发浏览器下载，
   // 导出仅由 UI 显式调用 exportConflictCopy；sourceId 仅用于副本命名区分来源
   saveConflictBackup: (bytes, sourceId) => addConflictCopy(storageAdapter, bytes, sourceId),
-  // rev 基线（spec §1.2）：seal 缺省=明文落盘，DEK 静态保护随 T9 装配约定接入
-  loadSourceState: (id) => loadSyncState(storageAdapter, id),
-  saveSourceState: (id, st) => saveSyncState(storageAdapter, id, st),
+  // rev 基线（spec §1.2）+ DEK seal 静态保护：与 runner 通道共用同一 revSeal（共享 cloudSyncState
+  // 键——手动/自动两侧读写形态必须一致，缺 seal 侧会把密文当明文 bag 互踩并泄漏 baseSnapshot）
+  loadSourceState: (id) => loadSyncState(storageAdapter, id, revSeal(store)),
+  saveSourceState: (id, st) => saveSyncState(storageAdapter, id, st, revSeal(store)),
   deviceId: () => loadDeviceId(storageAdapter),
   kdfProfile: () => settings.backupKdfProfile,
   autoPrefs: {
