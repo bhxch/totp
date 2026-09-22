@@ -159,19 +159,27 @@ export function createVueStore(
   // DEK 加密落盘（与 vault 密文同保护级）。宿主 runner 装配把 sealWithDek/unsealWithDek 接进
   // core loadSyncState/saveSyncState/loadMergeConflicts/saveMergeConflicts 的 Seal 参数。
 
-  /** 明文 → DEK 密封 JSON（EncryptedVault 形态字符串）；锁定/未启用加密 → null（宿主按明文回落，
-   *  与 core syncState「seal 缺省=明文库明文落盘」语义对齐） */
+  /** 明文 → DEK 密封 JSON（EncryptedVault 形态字符串）。两态显式区分（在途锁定竞态裁定）：
+   *  - 未启用加密（security 为空）→ null：明文库场景明文落盘，宿主按 null 回落原文；
+   *  - 加密已启用但本窗口无 DEK（锁定）→ 抛 'vault locked'：baseSnapshot/冲突记录含明文秘密，
+   *    锁定后绝不明文回落落盘——宿主 seal 让 saveSyncState/saveMergeConflicts 整体失败，
+   *    runner/裁决路径按「下轮重做」处理（与 persistAdopted 失败同语义） */
   async function sealWithDekOp(plain: string): Promise<string | null> {
+    if (!security.value) return null // 未启用加密：无 DEK 可密封也不需要
     const dek = dekByWin.get(windowId)
-    if (!dek) return null // 锁定/未启用加密：无 DEK 可密封
+    if (!dek) throw new Error('vault locked') // 加密启用但窗口锁定：拒绝明文回落
     return JSON.stringify(await encryptVaultWithDek(dek, plain))
   }
 
-  /** sealWithDekOp 逆操作；锁定/未启用加密或密文不可解（换 DEK/损坏）→ null——宿主回落原文，
-   *  让 core 解析层自然判废（明文记录可解析=兼容读取，密文垃圾解析失败=回落空态） */
+  /** sealWithDekOp 逆操作，两态对称：
+   *  - 未启用加密 → null：宿主回落原文（记录本就是明文形态，可解析读取）；
+   *  - 锁定 → 抛 'vault locked'：core loadSyncState/loadMergeConflicts 捕获后回落空态（锁定窗口
+   *    不解密不持明文），宿主不得吞成明文回落；
+   *  - 密文不可解（换 DEK/损坏）→ null：宿主回落原文，core 解析失败自然回落空态 */
   async function unsealWithDekOp(sealed: string): Promise<string | null> {
+    if (!security.value) return null
     const dek = dekByWin.get(windowId)
-    if (!dek) return null
+    if (!dek) throw new Error('vault locked')
     try {
       return await decryptVaultWithDek(dek, JSON.parse(sealed) as EncryptedVault)
     } catch {
@@ -179,7 +187,8 @@ export function createVueStore(
     }
   }
 
-  /** 冲突记录通道的 Seal 装配（load/save 共用）：null 回落原文/明文，语义同上 */
+  /** 冲突记录通道的 Seal 装配（load/save 共用）：未启用加密 null 回落原文/明文；锁定抛
+   *  'vault locked'（load 侧由 core 捕获回落空列表，save 侧整体失败交调用方按下轮重做处理） */
   function mergeConflictSeal(): Seal {
     return {
       seal: async (plain) => (await sealWithDekOp(plain)) ?? plain,
@@ -932,7 +941,8 @@ export function createVueStore(
     /** 未裁决合并冲突计数（badge/横幅源） */
     conflictCount,
     /** DEK seal 助手（spec §1.2 静态保护：syncState.baseSnapshot/mergeConflicts 等秘密载体落盘）：
-     *  锁定/未启用加密返回 null，宿主按明文回落 */
+     *  未启用加密返回 null（宿主按明文回落）；加密启用但锁定抛 'vault locked'（在途锁定不得明文
+     *  落盘，宿主让落盘整体失败按下轮重做处理） */
     sealWithDek: sealWithDekOp, unsealWithDek: unsealWithDekOp,
     /** 合并冲突追加（runner onMergeConflicts 桥）/落盘/裁决（T11 冲突列表消费） */
     addMergeConflictsOp, saveMergeConflictsOp, resolveMergeConflictOp,

@@ -1,7 +1,7 @@
 // store 合并冲突记录面（Task 9/10 commit B）：DEK seal 助手、mergeConflicts 生命周期（解锁装载/锁定清空）、
 // addMergeConflictsOp 去重/上限、resolveMergeConflictOp 四分支裁决
 import { describe, expect, it } from 'vitest'
-import { createMemoryStorage, VAULT_KEY, decryptVaultWithDek, type EntryConflict, type OtpEntry } from '@totp/core'
+import { createMemoryStorage, loadSyncState, saveSyncState, VAULT_KEY, decryptVaultWithDek, type EntryConflict, type OtpEntry } from '@totp/core'
 import { createVueStore } from '../src/store'
 
 const entry = (uuid: string, marker: string): OtpEntry => ({
@@ -38,19 +38,38 @@ describe('store seal 助手', () => {
     void adapter
   })
 
-  it('未启用加密：sealWithDek/unsealWithDek 返回 null（宿主按明文回落）', async () => {
+  it('未启用加密：sealWithDek/unsealWithDek 返回 null（宿主按明文回落）；锁定（加密启用）抛 vault locked', async () => {
     const adapter = createMemoryStorage()
     const s = createVueStore(adapter)
     await s.initStore()
     expect(await s.sealWithDek('plain')).toBeNull()
     expect(await s.unsealWithDek('{"v":1,"enc":true}')).toBeNull()
+    // 加密启用但窗口锁定：两态显式区分——锁定不得明文回落（在途锁定竞态裁定）
+    const { s: s2 } = await unlockedStore()
+    s2.lock()
+    await expect(s2.sealWithDek('plain')).rejects.toThrow('vault locked')
+    await expect(s2.unsealWithDek('garbage')).rejects.toThrow('vault locked')
   })
 
-  it('锁定态：返回 null；密文不可解（异源串）也返回 null', async () => {
-    const { s } = await unlockedStore()
-    s.lock()
-    expect(await s.sealWithDek('plain')).toBeNull()
-    expect(await s.unsealWithDek('garbage')).toBeNull()
+  it('同步在途锁定（审查 Important 1 锚定）：宿主形态 seal 抛错 → state 落盘整体失败，盘面保持旧密文无明文，解锁后互读一致', async () => {
+    const { adapter, s } = await unlockedStore()
+    // 与宿主 revSeal/mergeConflictSeal 同形态：null 回落原文、异常原样上抛
+    const hostSeal = {
+      seal: async (p: string) => (await s.sealWithDek(p)) ?? p,
+      unseal: async (x: string) => (await s.unsealWithDek(x)) ?? x,
+    }
+    await saveSyncState(adapter, 's1', { lastKnownRemoteRev: 3, baseSnapshot: 'TOPSECRET-SNAPSHOT' }, hostSeal)
+    expect((await adapter.get('cloudSyncState'))!).not.toContain('TOPSECRET-SNAPSHOT') // 加密态落盘为密文
+    s.lock() // 同步在途 lock()：DEK 已清
+    await expect(
+      saveSyncState(adapter, 's1', { lastKnownRemoteRev: 4, baseSnapshot: 'TOPSECRET-SNAPSHOT' }, hostSeal),
+    ).rejects.toThrow('vault locked') // 落盘整体失败（runner per-source 跳过 → 下轮重做）
+    const raw = (await adapter.get('cloudSyncState'))!
+    expect(raw).not.toContain('TOPSECRET-SNAPSHOT') // 盘面保持旧密文，无明文泄漏
+    expect(raw).not.toContain('"baseSnapshot"')
+    await s.unlock('masterpw')
+    // 解锁后读回旧基线：宿主 seal 通道（手动/runner 共用）互读一致
+    expect(await loadSyncState(adapter, 's1', hostSeal)).toEqual({ lastKnownRemoteRev: 3, baseSnapshot: 'TOPSECRET-SNAPSHOT' })
   })
 })
 

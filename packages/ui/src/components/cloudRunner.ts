@@ -315,12 +315,20 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
     // 不再被自动下载（静默僵持无自愈）
     if (r.adopted) await deps.persistAdopted(r.finalVaultJson)
     // 条目冲突入库（spec §3/§4）：fire-and-forget——宿主 store.addMergeConflictsOp 持久化供 T11
-    // 裁决列表消费；入库失败只损失本轮提示，下轮合并重报
+    // 裁决列表消费；入库失败（含在途锁定 seal 抛错）只损失本轮提示，下轮合并重报
     if (r.conflicts.length > 0) deps.onMergeConflicts?.(r.conflicts)
-    // 回写各源 rev 基线：states 恒含参与源（失败源=原样，回写幂等；无 primary 时 core 抛错走 catch 不及此）
+    // 回写各源 rev 基线：states 恒含参与源（失败源=原样，回写幂等；无 primary 时 core 抛错走 catch 不及此）。
+    // per-source 隔离（在途锁定裁定）：宿主 seal 于 lock() 后抛 'vault locked' → 该源跳过基线回写
+    // （下轮按旧基线重做，与 persistAdopted 失败同语义），不中断其余源、不上溢为整轮失败
+    let stateWriteFailed = false
     for (const t of inputs) {
       const st = r.states[t.key]
-      if (st) await deps.saveSyncState(t.key, st)
+      if (!st) continue
+      try {
+        await deps.saveSyncState(t.key, st)
+      } catch {
+        stateWriteFailed = true
+      }
     }
     // keep 源滚动删除（基线回写后执行；复用原 backend 实例）：仅对 outcome=uploaded（上传/收敛
     // 回推成功）的源执行——in-sync 无新文件，失败源无可清理依据。per-source try/catch 隔离：
@@ -339,9 +347,10 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
       }
     }
     // 内容门基线刷新（spec §1.3）：仅当全部目标拿到确定结果（outcome 非 null 且无 convergeError）
-    // 才以 finalVaultJson 刷新；否则置 null——下轮不被门短路，失败目标按全量重比自愈重试，防
-    // 部分失败被门吸收成静默僵死。落盘失败不毁本轮结果（基线残留最多让下轮多做一次同步）
-    const allSettled = r.results.every((x) => x.outcome !== null && !x.convergeError)
+    // 且基线回写无失败 才以 finalVaultJson 刷新；否则置 null——下轮不被门短路，失败目标按全量重比
+    // 自愈重试，防部分失败/在途锁定被门吸收成静默僵死。落盘失败不毁本轮结果（基线残留最多让下轮
+    // 多做一次同步）
+    const allSettled = r.results.every((x) => x.outcome !== null && !x.convergeError) && !stateWriteFailed
     try {
       await deps.saveContentHash(allSettled ? await contentHash(r.finalVaultJson) : null)
     } catch { /* 基线落盘失败：保留下轮重试 */ }

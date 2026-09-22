@@ -552,6 +552,26 @@ describe('createCloudSyncRunner', () => {
     expect(onError).not.toHaveBeenCalled() // 单目标失败由 core 编排隔离，不上溢
   })
 
+  it('⑯b基线回写逐源隔离（审查 Important 1）：单源 saveSyncState 拒绝（如在途锁定 seal 抛错）→ 跳过该源不中断其余源，门基线置 null 防吸收', async () => {
+    const good = fakeBackend()
+    const { deps, saveSyncState, recordStatus, onError, saveContentHash } = makeDeps({
+      loadSources: vi.fn(async () => [
+        { source: source('s-skip', { kind: 'gist' }), cred: GIST_CRED },
+        { source: source('s-good', { role: 'replica' }), cred: WEBDAV_CRED },
+      ]),
+      saveSyncState: vi.fn(async (id: string) => {
+        if (id === 's-skip') throw new Error('vault locked') // 宿主 seal 在途锁定形态
+        return undefined
+      }),
+      makeBackend: (cred) => (cred.backend === 'gist' ? fakeBackend() : good),
+    })
+    await expect(createCloudSyncRunner(deps).run()).resolves.toBeUndefined()
+    expect(saveSyncState).toHaveBeenCalledWith('s-good', expect.any(Object)) // 其余源照常回写
+    expect(onError).not.toHaveBeenCalled() // 不上溢为整轮失败
+    expect(recordStatus).toHaveBeenLastCalledWith(true, 's-skip: 已上传; s-good: 已上传')
+    expect(saveContentHash).toHaveBeenLastCalledWith(null) // 门基线置 null：跳过不被门吸收，下轮重做
+  })
+
   it('T4 任一目标错误消息含 401/403 → onAuthFailure 收到该消息（凭据失效分类供调度暂停）', async () => {
     const bad = fakeBackend()
     bad.get = async () => {
