@@ -81,6 +81,23 @@ describe('primary/replica 角色（活动目标单选，设计 §2）', () => {
     const list = [src({ id: 'a', enabled: false, role: 'primary' }), src({ id: 'b', enabled: false, role: 'replica' })]
     expect(normalizeSourceRoles(list)).toEqual(list)
   })
+  it('normalizeSourceRoles：local 源不参与 primary 选举——盘上 [local(enabled), cloud(enabled)] → cloud=primary、local=replica（T11F）', () => {
+    // desktop saveCloudSourcesPreservingLocal 恒把保留的 local 源置于盘上列表头：按旧「首个 enabled」
+    // 选举会把 local 选为 primary、云源全降 replica，云通道过滤 local 后无 primary → no primary target
+    const r = normalizeSourceRoles([
+      { id: 'loc', kind: 'local', name: '本地目录', retention: { type: 'keep', n: 3 }, enabled: true, dir: 'C:\\bk', role: 'replica' },
+      { id: 'cloud', kind: 'webdav', name: '云', retention: { type: 'overwrite' }, enabled: true, role: 'replica' },
+    ])
+    expect(r.find((s) => s.id === 'cloud')!.role).toBe('primary')
+    expect(r.find((s) => s.id === 'loc')!.role).toBe('replica')
+  })
+  it('normalizeSourceRoles：仅 local enabled → 保持输入原 role 不变（无 primary，T11F）', () => {
+    const list = [
+      { id: 'loc1', kind: 'local', name: '本地目录', retention: { type: 'keep', n: 3 }, enabled: true, dir: null, role: 'replica' },
+      { id: 'cloud', kind: 'webdav', name: '云', retention: { type: 'overwrite' }, enabled: false, role: 'primary' },
+    ] as BackupSource[]
+    expect(normalizeSourceRoles(list)).toEqual(list)
+  })
   it('isBackupSource：role 缺失合法（存量数据经 normalize 补齐）；role 值域外拒绝', () => {
     const legacy: Record<string, unknown> = { ...src() }
     delete legacy['role']

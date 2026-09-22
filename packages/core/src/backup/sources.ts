@@ -52,10 +52,14 @@ function isRetentionShape(x: unknown): boolean {
   return r.type === 'keep' && typeof r.n === 'number' && Number.isInteger(r.n) && r.n >= 1
 }
 
-/** 活动目标单选归一（设计 §2）：首个 enabled 源=primary，其余（含 disabled）强制 replica；
- *  全部 disabled 时无 primary，保持输入原 role 不变（缺失 role 补 replica） */
+/** 活动目标单选归一（设计 §2）：首个 enabled 且非 local 的源=primary，其余（含 disabled 与 local）
+ *  强制 replica；无 enabled 云源（全部 disabled 或仅 local enabled）时无 primary，保持输入原 role
+ *  不变（缺失 role 补 replica）。local 源归桌面 BackupCard 本地通道、不参与云同步，恒不参与 primary
+ *  选举（T11F：desktop saveCloudSourcesPreservingLocal 恒把保留的 local 源置于盘上列表头，按旧
+ *  「首个 enabled」选举会把 local 选为 primary、云源全降 replica——云通道过滤 local 后无 primary
+ *  → no primary target，用户选举静默回退） */
 export function normalizeSourceRoles(sources: BackupSource[]): BackupSource[] {
-  const primaryIdx = sources.findIndex((s) => s.enabled)
+  const primaryIdx = sources.findIndex((s) => s.enabled && s.kind !== 'local')
   if (primaryIdx === -1) return sources.map((s) => ({ ...s, role: s.role ?? 'replica' }))
   return sources.map((s, i) => ({ ...s, role: i === primaryIdx ? 'primary' : 'replica' }))
 }

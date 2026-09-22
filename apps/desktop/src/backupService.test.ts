@@ -159,7 +159,8 @@ describe('createBackupToSources（每源备份）', () => {
 })
 
 describe('saveCloudSourcesPreservingLocal（审查 I11：云源保存不丢本地源）', () => {
-  // LOCAL 首个启用源 → loadSources 归一为 primary（toEqual 断言锚定）
+  // T11F 后 local 源恒不参与 primary 选举：盘上首位 local 经 loadSources 归一为 replica
+  //（LOCAL 以 role 'primary' 落盘、dump 读回为 'replica'，toEqual 锚定其余元数据不丢）
   const LOCAL: BackupSource = { id: 'loc-1', kind: 'local', name: '本地目录', retention: { type: 'keep', n: 3 }, enabled: true, dir: 'C:\\bk', role: 'primary' }
   const CLOUD1: BackupSource = { id: 'w1', kind: 'webdav', name: '家里', retention: { type: 'overwrite' }, enabled: true, role: 'replica' }
   const CLOUD2: BackupSource = { id: 'g1', kind: 'gist', name: '备份 Gist', retention: { type: 'overwrite' }, enabled: false, role: 'replica' }
@@ -182,7 +183,7 @@ describe('saveCloudSourcesPreservingLocal（审查 I11：云源保存不丢本�
     await saveCloudSourcesPreservingLocal(adapter, [LOCAL, CLOUD1]) // 现值：local + 云源（BackupCard 刚写入 local）
     await saveCloudSourcesPreservingLocal(adapter, [{ ...CLOUD1, name: '家里 WebDAV' }]) // CloudCard 盲写旧场景的快照
     const list = await adapter.dump()
-    expect(list.find((s) => s.id === 'loc-1')).toEqual(LOCAL) // 本地源元数据不丢
+    expect(list.find((s) => s.id === 'loc-1')).toEqual({ ...LOCAL, role: 'replica' }) // 本地源元数据不丢（role 归一恒 replica，T11F）
     expect(list.find((s) => s.id === 'w1')?.name).toBe('家里 WebDAV')
   })
 
