@@ -361,8 +361,9 @@ export function importStratum(text: string): ImportResult {
 // 条目：localIssuer→issuer、localAccountName→label、localSecretToken→secret(base32)；
 // localOTPType 'Counter based'→hotp（counter 恒 0：FoxAuth 无 counter 字段），否则 totp；
 // 算法固定 SHA1（无字段）；digits/period 字符串数字，缺省 6/30。
-// 加密备份（isEncrypted:true）：口令 = base64Decode(passwordInfo.encryptPassword)，解密见
-// decryptFoxauth（参数依据 spec 加密参数附录）；未给口令结构级报错。
+// 加密备份（isEncrypted:true）：encryptPassword = Base64(UTF-8(口令))（官方 base64Decode 为 UTF-8 语义），
+// 比对/解密口令即其解码明文；解密见 decryptFoxauth（参数依据 spec 加密参数附录）。
+// 官方另支持口令仅存 sessionStorage（文件无 encryptPassword，结构合法）→ 此时提示无法解密。
 export async function importFoxauth(text: string, password?: string): Promise<ImportResult> {
   const obj = parseJson(text, 'FoxAuth')
   // 加密判定先于 accountInfos 形态检查：未给口令时应报「需要口令」而非「缺少 accountInfos」
@@ -383,17 +384,21 @@ export async function importFoxauth(text: string, password?: string): Promise<Im
     if (!pwdInfo) throw new Error('FoxAuth 文件结构非法：加密备份缺少 passwordInfo')
     const b64pwd = pwdInfo.encryptPassword
     if (typeof b64pwd !== 'string' || b64pwd === '') {
-      throw new Error('FoxAuth 文件结构非法：加密备份缺少 passwordInfo.encryptPassword')
+      // FoxAuth 官方支持口令仅存 sessionStorage（此时文件只有 encryptIV，结构合法）——提示而非结构错误
+      throw new Error('FoxAuth 备份不包含口令（导出时口令可能保存在浏览器会话中），无法解密')
     }
     let pwd: string
     try {
-      pwd = atob(b64pwd) // 口令为 Base64 编码，解码后使用（FoxAuth import.js transformOwnJson base64Decode 口径）
+      // encryptPassword = Base64(UTF-8(口令))（FoxAuth import.js base64Decode = new TextDecoder().decode，
+      // UTF-8 语义）。atob 直接得到的字符串是 UTF-8 字节的 latin1 视图，含 U+0080–U+00FF 的口令
+      // （如 é/ü）必须先经 UTF-8 TextDecoder 还原明文，否则与用户输入比对必失败。
+      pwd = new TextDecoder().decode(Uint8Array.from(atob(b64pwd), (c) => c.charCodeAt(0)))
     } catch {
       throw new Error('FoxAuth 文件结构非法：passwordInfo.encryptPassword 不是合法 Base64')
     }
-    // FoxAuth 导出时把口令 Base64 同存于 encryptPassword（savePasswordInfo），解密口令即该值
-    // （附录口径：口令 = atob(encryptPassword)）；用户输入口令与其比对：合法导出中两者一致（latin1），
-    // 不一致即口令错误——解密前确定性报错（FoxAuth 自身导入亦从文件还原口令，不向用户询问）
+    // FoxAuth 导出时把口令 Base64 同存于 encryptPassword（savePasswordInfo），解密口令即该值；
+    // 用户输入口令与其比对：合法导出中两者一致，不一致即口令错误——解密前确定性报错
+    // （FoxAuth 自身导入亦从文件还原口令，不向用户询问）
     if (pwd !== password) {
       throw new Error('FoxAuth 备份解密失败：口令错误或文件已损坏')
     }
@@ -449,7 +454,8 @@ function collectFoxauthRows(rows: unknown): ImportResult {
 // 解密实现（参数依据 spec「加密参数附录」，源码 FoxAuth/FoxAuth master@65db1142
 // keychain.js L26-52/L154-197、MessageEncryption.js L19、accountInfo.js __encryptAndDecrypt，
 // roundtrip 回验通过）：
-// - rawSecret = 口令逐字符 charCodeAt（latin1 语义，FoxAuth 经 btoa/b64ToArray 往返等价）
+// - rawSecret = 解码明文口令逐字符 charCodeAt（latin1 重编码；官方加密侧 btoa 即 charCodeAt & 0xff
+//   语义，pwd 已是 UTF-8 还原的明文，两口径精确一致）
 // - KDF = HKDF-SHA-256：salt 空（0 字节），info = UTF-8("encryption")，派生 128bit AES-GCM key
 //   （keychain.js 中的 PBKDF2 仅用于 Firefox Send 服务端鉴权，与备份加密无关）
 // - AES-GCM：tagLength 128，无 AAD；IV（12B）不在密文内，来自 encryptIV；同备份所有字段复用同一 key+IV

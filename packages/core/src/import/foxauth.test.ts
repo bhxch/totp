@@ -26,9 +26,16 @@ describe('importFoxauth 明文', () => {
     await expect(importFoxauth(JSON.stringify({ accountInfos: [], isEncrypted: false }))).rejects.toThrow(/无条目/)
   })
 
-  it('加密备份未给口令：明确报错', async () => {
+  it('加密备份未给口令：明确报错（需要口令）', async () => {
     await expect(importFoxauth(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: {} })))
-      .rejects.toThrow(/加密/)
+      .rejects.toThrow(/需要口令/)
+    await expect(importFoxauth(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: {} }), ''))
+      .rejects.toThrow(/需要口令/)
+  })
+
+  it('加密备份缺 encryptPassword：提示备份不含口令（官方支持口令存 sessionStorage）', async () => {
+    await expect(importFoxauth(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: {} }), 'any-password'))
+      .rejects.toThrow(/不包含口令/)
   })
 })
 
@@ -169,5 +176,42 @@ describe('importFoxauth 加密备份（真实导出形态：数组 + 逐字段�
     const replacement = cipher.charAt(mid) === 'A' ? 'B' : 'A'
     entry.localSecretToken = cipher.slice(0, mid) + replacement + cipher.slice(mid + 1)
     await expect(importFoxauth(JSON.stringify(parsed), 'test-password')).rejects.toThrow('FoxAuth 备份解密失败：口令错误或文件已损坏')
+  })
+})
+
+// ---------- 非 ASCII 口令（回归：encryptPassword 的 Base64 是 UTF-8 语义，KDF 输入是 latin1 字节） ----------
+// FoxAuth 官方：encryptPassword = Base64(UTF-8(口令))（base64Decode = new TextDecoder().decode），
+// KDF（HKDF）输入 = 口令 latin1 字节（加密侧 btoa = 逐字符 charCodeAt & 0xff，口令限 U+0000–U+00FF）。
+// 回归点：atob 解码结果必须先经 UTF-8 TextDecoder 还原明文再与用户输入比对（否则含
+// U+0080–U+00FF 的正确口令被误报「口令错误」）；rawSecret 用该明文的 latin1 重编码。
+function b64Utf8(s: string): string {
+  return btoa(String.fromCharCode(...new TextEncoder().encode(s)))
+}
+
+describe('importFoxauth 加密备份（非 ASCII 口令）', () => {
+  const NON_ASCII_PASSWORD = 'pässwörd' // 含 U+00E4/U+00F6/U+00FC
+  let encryptedFixture: string
+  beforeAll(async () => {
+    const accountInfosJson = JSON.stringify([
+      { localIssuer: 'GitHub', localAccountName: 'ä@b.c', localSecretToken: 'JBSWY3DPEHPK3PXP', localOTPType: 'Time based', localOTPDigits: '6', localOTPPeriod: '30' },
+    ])
+    // 测试构造与官方同口径：KDF 输入 = latin1 字节（foxauthTestKey），encryptPassword = Base64(UTF-8(口令))
+    const key = await foxauthTestKey(NON_ASCII_PASSWORD)
+    encryptedFixture = JSON.stringify({
+      accountInfos: await foxauthTestEncrypt(key, FOXAUTH_IV, accountInfosJson),
+      isEncrypted: true,
+      passwordInfo: { encryptPassword: b64Utf8(NON_ASCII_PASSWORD), encryptIV: Array.from(FOXAUTH_IV) },
+    })
+  })
+
+  it('正确口令解密导入：与明文同结果', async () => {
+    const r = await importFoxauth(encryptedFixture, NON_ASCII_PASSWORD)
+    expect(r.entries).toHaveLength(1)
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries[0]).toMatchObject({ type: 'totp', issuer: 'GitHub', label: 'ä@b.c', algorithm: 'SHA1', digits: 6, period: 30 })
+  })
+
+  it('错误口令：结构级报错（口令错误或文件已损坏）', async () => {
+    await expect(importFoxauth(encryptedFixture, 'wrong-password')).rejects.toThrow('FoxAuth 备份解密失败：口令错误或文件已损坏')
   })
 })
