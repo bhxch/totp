@@ -711,8 +711,10 @@
       "downloaded": "Downloaded",
       "conflictResolved": "Conflict resolved",
       "merged": "Merged",
-    "inSync": "Up to date"
-    }
+      "mergedDegraded": "Merged (degraded)",
+      "inSync": "Up to date"
+    },
+    "manualSkipped": "Manual merge skipped"
   },
   "cloudAuto": {
     "retentionDeleted": "{name}: cleaned {count} old cloud backups",

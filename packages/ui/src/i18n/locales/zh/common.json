@@ -710,9 +710,11 @@
       "uploaded": "已上传",
       "downloaded": "已下载",
       "conflictResolved": "冲突已解决",
-    "merged": "已合并",
-    "inSync": "已是最新"
-    }
+      "merged": "已合并",
+      "mergedDegraded": "已合并（降级）",
+      "inSync": "已是最新"
+    },
+    "manualSkipped": "手动合并已跳过"
   },
   "cloudAuto": {
     "retentionDeleted": "{name} 清理 {count} 份旧云备份",
