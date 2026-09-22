@@ -163,8 +163,9 @@ export type RevSyncAction = 'uploaded' | 'downloaded' | 'merged' | 'in-sync'
 
 export interface RevSyncOutcome {
   action: RevSyncAction
-  /** 本轮读到的云端逻辑时钟（v2/无头远端与云端无对象均为 0）；in-sync 刷基线时由调用方回写 state */
-  remoteRev: number
+  /** 本轮读到的云端逻辑时钟；null=远端无 rev（云端无对象或 v2 无头信封），与「rev=0」不混用。
+   *  in-sync 时由调用方回写 state.lastKnownRemoteRev（null 时保持原值不动） */
+  remoteRev: number | null
   /** uploaded / merged 写入的新 rev；preview 恒缺省 */
   newRev?: number
   /** downloaded / merged 为采纳到本地的 vault 明文 JSON；uploaded / in-sync 不含 */
@@ -205,11 +206,11 @@ export async function syncWithCloudRev(opts: SyncWithCloudRevOpts): Promise<RevS
   const remote = (await backend.exists(path)) ? await backend.get(path) : null
   if (remote === null) {
     // 云端无对象：rev 从本端已知时钟续起（对象被外部删除后重推不回退时钟），首推为 1
-    if (mode === 'preview') return { action: 'uploaded', remoteRev: 0 }
+    if (mode === 'preview') return { action: 'uploaded', remoteRev: null }
     const newRev = knownRev + 1
     await pushEnvelope({ backend, path, vaultJson, password, profile,
       sync: { rev: newRev, deviceId, baseRev: knownRev, baseContentHash: await contentHash(state.baseSnapshot ?? vaultJson) } })
-    return { action: 'uploaded', remoteRev: 0, newRev }
+    return { action: 'uploaded', remoteRev: null, newRev }
   }
 
   // 解远端（口令错/结构坏 → 既有中文错误，不做任何写操作）
@@ -222,15 +223,21 @@ export async function syncWithCloudRev(opts: SyncWithCloudRevOpts): Promise<RevS
     throw new Error('云端备份口令不匹配，无法合并——请确认口令或手动下载处理')
   }
   const header = readSyncHeader(parsed) // v2/垃圾 → null = 无版本祖先（§1.4 保守路径）
-  const remoteRev = header?.rev ?? 0
+  const remoteRev = header?.rev ?? null // null=远端无 rev（v2 无头），与「rev=0」不混用
   const remoteContentHash = await contentHash(remoteJson)
-  const localUnchanged =
-    state.baseSnapshot !== null && (await contentHash(vaultJson)) === (await contentHash(state.baseSnapshot))
-  // v2 远端（header===null）恒视为远端已变：rev 未知，只能走内容比对保守路径
-  const remoteChanged = remoteRev !== knownRev || header === null
+  const localContentHash = await contentHash(vaultJson)
+  const baseContentHash = state.baseSnapshot !== null ? await contentHash(state.baseSnapshot) : null
+  const localUnchanged = baseContentHash !== null && localContentHash === baseContentHash
+  // v2 远端（header===null）恒视为远端已变：rev 未知，只能走内容比对保守路径。
+  // 同 rev 碰撞核验（审查 Critical-1）：无 CAS 时两设备可先后写同一 rev（先后都成功），
+  // rev 相等不代表内容一致——baseSnapshot 存在而远端内容不符时仍视为已变，走下载/合并，
+  // 不让双方永久 in-sync 掩盖分歧、下次本地改动静默覆盖对方
+  const remoteChanged =
+    remoteRev !== knownRev || header === null ||
+    (baseContentHash !== null && remoteContentHash !== baseContentHash)
 
   if (!remoteChanged && localUnchanged) return { action: 'in-sync', remoteRev }
-  if (remoteChanged && localUnchanged && remoteContentHash === (await contentHash(vaultJson))) {
+  if (remoteChanged && localUnchanged && remoteContentHash === localContentHash) {
     // 内容相等仅刷基线（「downloaded」意义上的去重）：对端重推同内容，密文随机 IV 使 rev 必变，
     // 按内容口径判定相等 → in-sync，调用方以返回 remoteRev 落 state，零写零副本
     return { action: 'in-sync', remoteRev }
@@ -239,11 +246,14 @@ export async function syncWithCloudRev(opts: SyncWithCloudRevOpts): Promise<RevS
     return { action: 'downloaded', remoteRev, appliedVaultJson: remoteJson }
   }
   if (!remoteChanged) {
-    // 云端未动、本地已改 → 纯上传，base 声明为「旧远端 + 本地新内容」
+    // 云端未动、本地已改 → 纯上传。base 声明为「旧远端 rev + 其内容 hash」（审查 Critical-2，
+    // §1.1：baseContentHash 指 baseRev 版本即远端旧内容的规范化 hash，非本地新内容——否则对端
+    // baseOk 恒失败，非降级合并不可达。不变量：!remoteChanged 蕴含远端内容==baseSnapshot；
+    // 无快照时回退远端内容 hash）
     if (mode === 'preview') return { action: 'uploaded', remoteRev }
     const newRev = remoteRev + 1
     await pushEnvelope({ backend, path, vaultJson, password, profile,
-      sync: { rev: newRev, deviceId, baseRev: remoteRev, baseContentHash: await contentHash(vaultJson) } })
+      sync: { rev: newRev, deviceId, baseRev: remoteRev, baseContentHash: baseContentHash ?? remoteContentHash } })
     return { action: 'uploaded', remoteRev, newRev }
   }
 
@@ -262,8 +272,10 @@ export async function syncWithCloudRev(opts: SyncWithCloudRevOpts): Promise<RevS
     const copyJson = JSON.stringify(await createBackupEnvelope(vaultJson, password, profile))
     await onConflictBackup(new TextEncoder().encode(copyJson))
   }
-  const newRev = remoteRev + 1
+  // 新 rev 从读到的远端时钟续起；v2 无头（remoteRev=null）或远端回滚（rev < 本端已知）时
+  // 从本端已知时钟续起，保证单调（审查 Critical-1 同类形态：v2 无头无法读钟，不静默归零）
+  const newRev = Math.max(remoteRev ?? 0, knownRev) + 1
   await pushEnvelope({ backend, path, vaultJson: mergedJson, password, profile,
-    sync: { rev: newRev, deviceId, baseRev: remoteRev, baseContentHash: remoteContentHash } })
+    sync: { rev: newRev, deviceId, baseRev: remoteRev ?? 0, baseContentHash: remoteContentHash } })
   return { action: 'merged', remoteRev, newRev, appliedVaultJson: mergedJson, conflicts: merged.conflicts, mergeDegraded: merged.degraded }
 }

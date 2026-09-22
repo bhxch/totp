@@ -309,7 +309,7 @@ describe('syncWithCloudRev', () => {
       state: revState(null, null), deviceId: DEV_A,
     })
     expect(r.action).toBe('uploaded')
-    expect(r.remoteRev).toBe(0)
+    expect(r.remoteRev).toBeNull() // null=云端无对象（与「rev=0」不混用）
     expect(r.newRev).toBe(1)
     expect(backend.putCount).toBe(1)
     const stored = JSON.parse(new TextDecoder().decode(backend.store.get(PATH)!))
@@ -341,7 +341,7 @@ describe('syncWithCloudRev', () => {
     expect(backend.putCount).toBe(0)
   })
 
-  it('云端未动本地较新 → uploaded newRev=remoteRev+1：sync 头 baseContentHash 指向本地新内容', async () => {
+  it('云端未动本地较新 → uploaded newRev=remoteRev+1：sync 头 baseContentHash 声明远端旧内容（=baseSnapshot）hash（审查 Critical-2 勘误）', async () => {
     const local = revVaultJson([revEntry('n1', { order: 1 })], 9)
     const backend = mockBackend(await sealedRemote(3, LOCAL_VAULT))
     const r = await syncWithCloudRev({
@@ -351,8 +351,68 @@ describe('syncWithCloudRev', () => {
     expect(r.action).toBe('uploaded')
     expect(r.newRev).toBe(4)
     const stored = JSON.parse(new TextDecoder().decode(backend.store.get(PATH)!))
-    const localHash = await contentHash(local)
-    expect(stored.sync).toMatchObject({ rev: 4, deviceId: DEV_A, baseRev: 3, baseContentHash: localHash })
+    // §1.1：baseContentHash 指 baseRev 版本（远端旧内容）的规范化 hash——本用例不变量下
+    // baseSnapshot==上次收敛内容==云端旧内容（LOCAL_VAULT），非本地新内容 hash
+    const baseHash = await contentHash(LOCAL_VAULT)
+    expect(stored.sync).toMatchObject({ rev: 4, deviceId: DEV_A, baseRev: 3, baseContentHash: baseHash })
+    expect(await contentHash(local)).not.toBe(baseHash) // 确非本地新内容（旧实现固化的错误值）
+  })
+
+  it('纯上传且无 baseSnapshot（状态部分缺失）→ sync 头 baseContentHash 回退远端内容 hash', async () => {
+    const backend = mockBackend(await sealedRemote(3, LOCAL_VAULT))
+    const r = await syncWithCloudRev({
+      backend, path: PATH, vaultJson: LOCAL_VAULT, password: PASSWORD,
+      state: revState(3, null), deviceId: DEV_A,
+    })
+    expect(r.action).toBe('uploaded')
+    expect(r.newRev).toBe(4)
+    const stored = JSON.parse(new TextDecoder().decode(backend.store.get(PATH)!))
+    expect(stored.sync.baseContentHash).toBe(await contentHash(LOCAL_VAULT))
+  })
+
+  it('同 rev 但云端内容≠baseSnapshot（无 CAS 碰撞）→ 视为已变：本地未动 → downloaded（审查 Critical-1）', async () => {
+    // 场景：两设备同读 rev3 各传 rev4（无 CAS 先后都成功），rev 相等不代表内容一致
+    const backend = mockBackend(await sealedRemote(3, REMOTE_VAULT))
+    const r = await syncWithCloudRev({
+      backend, path: PATH, vaultJson: LOCAL_VAULT, password: PASSWORD,
+      state: revState(3, LOCAL_VAULT), deviceId: DEV_A,
+    })
+    expect(r.action).toBe('downloaded')
+    expect(r.appliedVaultJson).toBe(REMOTE_VAULT)
+    expect(r.remoteRev).toBe(3)
+    expect(backend.putCount).toBe(0)
+  })
+
+  it('同 rev 但云端内容≠baseSnapshot 且本地也动 → merged 非降级（审查 Critical-1）', async () => {
+    const base = revVaultJson([revEntry('a', { order: 1 })], 1)
+    const ours = revVaultJson([revEntry('a', { order: 1 }), revEntry('b', { order: 2 })], 2)
+    const theirs = revVaultJson([revEntry('a', { order: 1 }), revEntry('c', { order: 3 })], 3)
+    const backend = mockBackend(await sealedRemote(3, theirs, await contentHash(base)))
+    const r = await syncWithCloudRev({
+      backend, path: PATH, vaultJson: ours, password: PASSWORD,
+      state: revState(3, base), deviceId: DEV_A,
+    })
+    expect(r.action).toBe('merged')
+    expect(r.mergeDegraded).toBe(false)
+    expect(r.remoteRev).toBe(3)
+    expect(r.newRev).toBe(4)
+    expect(JSON.parse(r.appliedVaultJson!).entries.map((x: { uuid: string }) => x.uuid).sort()).toEqual(['a', 'b', 'c'])
+  })
+
+  it('v2 远端（无 rev）且本地也动 → merged 降级：remoteRev=null，newRev 从本端已知时钟续起', async () => {
+    const base = revVaultJson([revEntry('a', { order: 1 })], 1)
+    const ours = revVaultJson([revEntry('a', { order: 1 }), revEntry('b', { order: 2 })], 2)
+    const backend = mockBackend((await putRemoteEnvelope(REMOTE_VAULT, PASSWORD)).bytes)
+    const r = await syncWithCloudRev({
+      backend, path: PATH, vaultJson: ours, password: PASSWORD,
+      state: revState(2, base), deviceId: DEV_A,
+    })
+    expect(r.action).toBe('merged')
+    expect(r.remoteRev).toBeNull() // v2 无头：远端无 rev
+    expect(r.mergeDegraded).toBe(true) // header null → 无祖先声明，两方合并
+    expect(r.newRev).toBe(3) // max(null→0, knownRev=2) + 1：不静默归零
+    const stored = JSON.parse(new TextDecoder().decode(backend.store.get(PATH)!))
+    expect(stored.v).toBe(3) // 采纳合并结果即完成 v3 升级（§1.4）
   })
 
   it('双方都动 → merged：条目并集 + 上传 newRev=remote+1；baseContentHash 不匹配降级 degraded（副本先行、后上传）', async () => {
@@ -438,7 +498,7 @@ describe('syncWithCloudRev', () => {
       state: revState(null, null), deviceId: DEV_A, mode: 'preview',
     })
     expect(r.action).toBe('uploaded')
-    expect(r.remoteRev).toBe(0)
+    expect(r.remoteRev).toBeNull() // null=云端无对象
     expect(r.newRev).toBeUndefined()
     expect(backend.putCount).toBe(0)
   })
@@ -474,7 +534,7 @@ describe('syncWithCloudRev', () => {
       state: revState(3, LOCAL_VAULT), deviceId: DEV_A,
     })
     expect(r2.action).toBe('in-sync')
-    expect(r2.remoteRev).toBe(0) // v2 无头：rev 以 0 参与判定
+    expect(r2.remoteRev).toBeNull() // v2 无头：远端无 rev，null 与「rev=0」不混用
     expect(same.putCount).toBe(0)
   })
 
