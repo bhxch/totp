@@ -33,8 +33,6 @@ function cloudPlatform(): CloudPlatform {
     creds: {},
     readVaultJson: vi.fn(() => ''),
     persistDownloaded: vi.fn(async () => {}),
-    loadTargetHash: vi.fn(async () => null),
-    saveTargetHash: vi.fn(async () => {}),
     loadSourceState: vi.fn(async () => ({ lastKnownRemoteRev: null, baseSnapshot: null })),
     saveSourceState: vi.fn(async () => {}),
     deviceId: vi.fn(async () => 'dev-test'),

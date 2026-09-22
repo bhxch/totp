@@ -38,8 +38,6 @@ function makePlatform(over: Partial<CloudPlatform> = {}): CloudPlatform {
     creds: {},
     readVaultJson: vi.fn().mockReturnValue(VALID_VAULT),
     persistDownloaded: vi.fn().mockResolvedValue(undefined),
-    loadTargetHash: vi.fn().mockResolvedValue(null),
-    saveTargetHash: vi.fn().mockResolvedValue(undefined),
     loadSourceState: vi.fn(async () => ({ lastKnownRemoteRev: null, baseSnapshot: null })),
     saveSourceState: vi.fn(async () => undefined),
     deviceId: vi.fn(async () => 'dev-test'),

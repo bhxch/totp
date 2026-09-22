@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { BackupSource, CloudCred, GDriveCred, GistCred, OneDriveCred, S3Cred, SourceSyncState, WebdavCred } from '@totp/core'
 import {
-  DEFAULT_OBJECT_PATH, enforceRemoteRetention, pushEnvelope, resolveObjectPath, resolveTimestampPath, syncMultipleTargets,
+  contentHash, DEFAULT_OBJECT_PATH, enforceRemoteRetention, pushEnvelope, resolveObjectPath, resolveTimestampPath, syncMultipleTargets,
 } from '@totp/core'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -26,12 +26,12 @@ const props = defineProps<{
 
 const { t } = useI18n()
 
-/** 同步动作 → 状态文案 key（i18n D2：卡内状态行经 t() 渲染；自动 runner 摘要经 deps.t 用 common.json cloudRunner.* 记录） */
+/** 同步动作 → 状态文案 key（i18n D2：卡内状态行经 t() 渲染；自动 runner 摘要经 deps.t 用 common.json cloudRunner.* 记录）。
+ *  键 = rev 编排四出口（RevSyncAction；旧 conflict-resolved 标签随 T9 pull 通道改造删除） */
 const ACTION_LABEL_KEY: Record<string, string> = {
   uploaded: 'cloudCard.actionUploaded',
   downloaded: 'cloudCard.actionDownloaded',
   merged: 'cloudCard.actionMerged',
-  'conflict-resolved': 'cloudCard.actionConflictResolved',
   'in-sync': 'cloudCard.actionInSync',
 }
 
@@ -482,9 +482,12 @@ function onCancelReset(): void {
 }
 
 /**
- * 确认重置（§3.2 换口令救济）：以当前会话备份口令把本地 vault 重新加密覆盖云端该源对象
- * （keep 源按 retention 写新时间戳文件，overwrite 源覆盖固定对象），成功后以新信封 hash
- * 落基线并清出可重置集合；busy 期间防重入。
+ * 确认重置（§3.2 换口令救济，T9 后走新 rev 通道）：以当前会话备份口令把本地 vault 重新加密覆盖云端
+ * 该源对象（keep 源按 retention 写新时间戳文件，overwrite 源覆盖固定对象），信封带 v3 sync 头——
+ * rev 从该源 lastKnownRemoteRev+1 续起（时钟单调，不因重置回退/清零），base 声明与 core 编排
+ * uploaded 分支同语义（baseRev=已知远端 rev、baseContentHash=基线快照 hash，无快照回落本地内容 hash）；
+ * 成功后推进该源 rev 基线（baseSnapshot=本次上传内容）。对端下轮同步见 rev 变化 → 按合并/下载路径
+ * 收敛，不走旧 v2 无头信封的保守降级。busy 期间防重入。
  */
 async function onConfirmReset(): Promise<void> {
   const p = props.platform
@@ -501,13 +504,22 @@ async function onConfirmReset(): Promise<void> {
   }
   busy.value = true
   try {
-    const r = await pushEnvelope({
+    const st = await p.loadSourceState(s.id)
+    const knownRev = st.lastKnownRemoteRev ?? 0
+    const vaultJson = p.readVaultJson()
+    await pushEnvelope({
       backend: createCloudBackend(cred),
       path: s.retention.type === 'keep' ? resolveTimestampPath(cred, new Date()) : resolveObjectPath(cred),
-      vaultJson: p.readVaultJson(),
+      vaultJson,
       password: props.sessionSecret,
+      profile: p.kdfProfile?.(),
+      sync: { rev: knownRev + 1, deviceId: await p.deviceId(), baseRev: knownRev, baseContentHash: await contentHash(st.baseSnapshot ?? vaultJson) },
     })
-    await p.saveTargetHash(s.id, r.hash)
+    await p.saveSourceState(s.id, {
+      ...st,
+      lastKnownRemoteRev: knownRev + 1,
+      baseSnapshot: vaultJson,
+    })
     statusMap.value[s.id] = t('cloudCard.reset')
     resettableBackends.value = resettableBackends.value.filter((x) => x !== s.id)
     pendingReset.value = null

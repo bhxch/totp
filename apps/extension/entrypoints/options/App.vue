@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { backupFileName, base64ToBytes, createAutoRunScheduler, createBackupEnvelope, loadDeviceId, loadSourceRevs, loadSyncState, normalizeSchemes, openBackupEnvelope, OVERWRITE_NAME, randomBytes, saveSourceRev, saveSyncState, SCHEMES_KEY, type BackupEnvelope, type ImportScheme, type Retention, type Vault } from '@totp/core'
+import { backupFileName, base64ToBytes, createAutoRunScheduler, createBackupEnvelope, loadDeviceId, loadSyncState, normalizeSchemes, openBackupEnvelope, OVERWRITE_NAME, randomBytes, saveSyncState, SCHEMES_KEY, type BackupEnvelope, type ImportScheme, type Retention, type Vault } from '@totp/core'
 import { CLIPBOARD_CLEAR_DELAY_MS, createAppI18n, createIconStore, createPrfCredential, LockScreen, NavigationShell, prfSupported, useTheme, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
 import { computed, getCurrentInstance, onMounted, onUnmounted, ref, watch } from 'vue'
-import { createExtensionCloudRunner, downloadConflictBackup } from '../../src/cloudRunnerFactory'
+import { createExtensionCloudRunner } from '../../src/cloudRunnerFactory'
 import { formatAutoStatusText, hasLegacyCloudKeys, loadSourcesImpl, migrateLegacySources, saveSourcesImpl } from '../../src/cloudCredStore'
+import { addConflictCopy } from '../../src/conflictCopies'
 import { createSyncScheduler } from '../../src/syncScheduler'
 import { createDekSession } from '../../src/dekSession'
 import { createIdleLockWatcher } from '../../src/lockEnforcer'
@@ -350,9 +351,9 @@ const backupPlatform: BackupPlatform = {
 /**
  * 云同步平台实现（plan16 T13 源化口径）：源元数据明文存 backupSources 键（core loadSources/saveSources
  * 包装）；凭据是秘密存 DEK 保管区（store.saveSourceCredOp/removeSourceCredOp，解锁态限定，未解锁中文报错）；
- * 基线按源 id 存 sourceRevs（core loadSourceRevs/saveSourceRev）。旧 cloudCreds/cloudCred/cloudRevs/cloudRev
- * 四键由 migrateLegacySources 一次性迁移（见 runLegacyMigrations）。冲突副本经既有 Blob 下载通道；
- * 采用云端数据经 replaceAllOp 整体替换。
+ * rev 基线按源 id 存 cloudSyncState（core loadSyncState/saveSyncState）。旧 cloudCreds/cloudCred/cloudRevs/cloudRev
+ * 四键由 migrateLegacySources 一次性迁移（见 runLegacyMigrations）。冲突副本入 conflictCopies 列表
+ * （storage.local，导出仅 UI 显式触发）；采用云端数据经 replaceAllOp 整体替换。
  */
 
 // ---------- 自动云同步偏好（cloudAutoPrefs 键，storage.local 异步读写）----------
@@ -398,9 +399,9 @@ const cloudAuthFailed = ref(false)
 
 /** 跟随拉取调度（跨端同步 T2）：解锁边沿 + 3min 轮询，经 syncScheduler gate（锁定态零网络）。
  *  与既有 cloudAutoPrefs 的 change/interval 通道相互独立（autoFollow 是跟随拉取的开关，勿混）；
- *  gate 每次触发现读 settings（响应式），开关关闭后即时静默。审查 C1：跟随走 pull-only 通道
- *  run('pull')——下载后远端 hash 基线去重（跨会话持久于 sourceRevs），本地内容不变也能拉到云端
- *  更新，且零上传零副本。intervalMs 仅 start 读取一次，开关/间隔变更由下方 watch stop+start 重建 */
+ *  gate 每次触发现读 settings（响应式），开关关闭后即时静默。T9：跟随走 pull-only 只读形态
+ *  run('pull')——syncWithCloudRev preview 判定，downloaded/merged 只采纳落盘不写云（零上传零副本），
+ *  本地内容不变也能拉到云端更新。intervalMs 仅 start 读取一次，开关/间隔变更由下方 watch stop+start 重建 */
 const followScheduler = createSyncScheduler({
   isUnlocked: () => !locked.value,
   onUnlocked: (cb) => watch(locked, (v) => { if (!v) cb() }),
@@ -458,10 +459,9 @@ const cloudPlatform: CloudPlatform = {
   async persistDownloaded(json) {
     await replaceAllOp(JSON.parse(json) as Vault)
   },
-  // 冲突副本 Blob 下载：sourceId 仅用于文件名区分来源（迁移源 id=旧 backend 键，文件名与旧格式一致）
-  saveConflictBackup: (bytes, sourceId) => downloadConflictBackup(bytes, sourceId),
-  loadTargetHash: async (id) => (await loadSourceRevs(storageAdapter))[id] ?? null,
-  saveTargetHash: (id, h) => saveSourceRev(storageAdapter, id, h),
+  // 冲突副本入 storage.local 列表（spec §4，限 5 份滚动删）：不自动触发浏览器下载，
+  // 导出仅由 UI 显式调用 exportConflictCopy；sourceId 仅用于副本命名区分来源
+  saveConflictBackup: (bytes, sourceId) => addConflictCopy(storageAdapter, bytes, sourceId),
   // rev 基线（spec §1.2）：seal 缺省=明文落盘，DEK 静态保护随 T9 装配约定接入
   loadSourceState: (id) => loadSyncState(storageAdapter, id),
   saveSourceState: (id, st) => saveSyncState(storageAdapter, id, st),

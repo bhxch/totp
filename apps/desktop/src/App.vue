@@ -2,7 +2,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { backupFileName, base64ToBytes, createBackupEnvelope, loadDeviceId, loadSourceRevs, loadSources, loadSyncState, normalizeSchemes, openBackupEnvelope, randomBytes, saveSourceRev, saveSources, saveSyncState, SCHEMES_KEY, sha256Hex, type BackupSource, type CloudCred, type ImportScheme, type KdfProfile, type Retention, type StorageAdapter, type Vault } from '@totp/core'
+import { backupFileName, base64ToBytes, createBackupEnvelope, loadDeviceId, loadSources, loadSyncState, normalizeSchemes, openBackupEnvelope, randomBytes, saveSources, saveSyncState, SCHEMES_KEY, sha256Hex, type BackupSource, type CloudCred, type ImportScheme, type KdfProfile, type Retention, type Seal, type StorageAdapter, type Vault } from '@totp/core'
 import { createAppI18n, createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, useTheme, type BackupAutoPrefs, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type DevtoolsConfigDto, type DevtoolsPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type LocalSourceView, type McpConfigWithStatusDto, type McpPlatform, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, getCurrentInstance, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createDesktopAutoRunner, formatAutoStatusText } from './autoBackup'
@@ -379,8 +379,6 @@ const cloudPlatform: CloudPlatform = {
   },
   persistDownloaded: (json) => replaceAllOps(JSON.parse(json) as Vault),
   saveConflictBackup: async (bytes, sourceId) => saveConflictBackupToDir(bytes, null, sourceId),
-  loadTargetHash: async (id) => (await loadSourceRevs(requireAdapter()))[id] ?? null,
-  saveTargetHash: (id, h) => saveSourceRev(requireAdapter(), id, h),
   // rev 基线（spec §1.2）：seal 缺省=明文落盘，DEK 静态保护随 T9 装配约定接入
   loadSourceState: (id) => loadSyncState(requireAdapter(), id),
   saveSourceState: (id, st) => saveSyncState(requireAdapter(), id, st),
@@ -397,6 +395,17 @@ const cloudPlatform: CloudPlatform = {
 /** keep 源远端滚动删除的待并入提示（runner 顺序保证：先逐源 onRetentionDeleted 后 recordStatus，
  *  状态写盘前拼入 summary 并清空，不跨轮残留） */
 let retentionNotes: string[] = []
+
+/** rev 基线 seal（spec §1.2 静态保护，T9 装配约定 5：baseSnapshot 明文落盘问题修复）：解锁态经
+ *  store 的 DEK seal 助手加密；助手返回 null（锁定/未启用加密）按明文回落，与 core syncState
+ *  「seal 缺省=明文库明文落盘」语义对齐。unseal 不可解（换 DEK/明文记录）回落原文——core 解析层
+ *  自然判废（明文可解析=兼容读取，密文垃圾解析失败=回落空态重建） */
+function revSeal(s: VueStore): Seal {
+  return {
+    seal: async (plain) => (await s.sealWithDek(plain)) ?? plain,
+    unseal: async (sealed) => (await s.unsealWithDek(sealed)) ?? sealed,
+  }
+}
 
 /** 源 id→名称进程内缓存（审查 I4：runner sourceName 同步解析显示名用）；runner 每轮 loadSources
  *  装配时刷新（summary/onRetentionDeleted 均在其后，缓存必已就绪）；取不到回退 id */
@@ -420,8 +429,9 @@ const cloudSync = createCloudSyncRunner({
       .map((x) => ({ source: x, cred: s.credsCache.value[x.id] }))
       .filter((p): p is { source: BackupSource; cred: CloudCred } => p.cred !== undefined)
   },
-  loadSyncState: (id) => loadSyncState(requireAdapter(), id),
-  saveSyncState: (id, st) => saveSyncState(requireAdapter(), id, st),
+  // rev 基线（spec §1.2）+ DEK seal 静态保护（T9 装配约定 5：baseSnapshot 明文落盘问题的修复）
+  loadSyncState: (id) => loadSyncState(requireAdapter(), id, revSeal(requireStore())),
+  saveSyncState: (id, st) => saveSyncState(requireAdapter(), id, st, revSeal(requireStore())),
   // 内容门持久基线（spec §1.3）：localStorage 键 cloudContentHash（跨会话/页面重开生效）
   loadContentHash: async () => localStorage.getItem(CLOUD_CONTENT_HASH_KEY),
   saveContentHash: async (h) => {
@@ -449,6 +459,17 @@ const cloudSync = createCloudSyncRunner({
     retentionNotes = []
     recordAutoStatus(CLOUD_AUTO_STATUS_KEY, ok, notes ? `${summary}${tr('desktop.noteSep')}${notes}` : summary)
   },
+  // 条目冲突入库桥（spec §3/§4）：fire-and-forget，入库失败不影响同步结果（下轮合并重报）
+  onMergeConflicts: (conflicts) => {
+    void requireStore().addMergeConflictsOp(conflicts).catch((err) => console.warn('[cloudAutoSync] 冲突记录入库失败', err))
+  },
+  // 未裁决冲突计数（宿主闭包读 store.conflictCount）
+  conflictCount: () => store.value?.conflictCount.value ?? 0,
+  // 冲突强提示（spec §4 横幅/托盘 tooltip）：先 console 留痕，T11 接应用内横幅
+  onConflicts: (count) => {
+    console.info('[cloudAutoSync] 未裁决同步冲突:', count)
+  },
+  // 手动合并预览确认（spec §4）：本批不传（缺省=直接执行），T11 接 CloudCard/壳层对话框
   onError: (err) => console.warn('[cloudAutoSync]', err),
 })
 

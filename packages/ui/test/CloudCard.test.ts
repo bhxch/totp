@@ -13,7 +13,7 @@ vi.mock('../src/components/cloudPlatform', async (importOriginal) => {
   return { ...actual, createCloudBackend: vi.fn(actual.createCloudBackend) }
 })
 
-import { pushEnvelope, syncMultipleTargets, type BackupSource, type CloudBackend, type CloudCred, type SourceSyncState } from '@totp/core'
+import { contentHash, pushEnvelope, syncMultipleTargets, type BackupSource, type CloudBackend, type CloudCred, type SourceSyncState } from '@totp/core'
 import { createCloudBackend } from '../src/components/cloudPlatform'
 import CloudCard from '../src/components/CloudCard.vue'
 import { createTestI18n } from './helpers/i18n'
@@ -40,8 +40,6 @@ function makePlatform(over: Partial<CloudPlatform> = {}): CloudPlatform {
     creds: {},
     readVaultJson: vi.fn().mockReturnValue(VALID_VAULT),
     persistDownloaded: vi.fn().mockResolvedValue(undefined),
-    loadTargetHash: vi.fn().mockResolvedValue(null),
-    saveTargetHash: vi.fn().mockResolvedValue(undefined),
     loadSourceState: vi.fn(async () => ({ lastKnownRemoteRev: null, baseSnapshot: null })),
     saveSourceState: vi.fn(async () => undefined),
     deviceId: vi.fn(async () => 'dev-test'),
@@ -208,7 +206,7 @@ describe('CloudCard（多源）', () => {
     await w.findAll('button').find((b) => b.text() === '取消')!.trigger('click')
     await flushPromises()
     expect(p.persistDownloaded).not.toHaveBeenCalled()
-    expect(p.saveTargetHash).not.toHaveBeenCalled()
+    expect(p.saveSourceState).not.toHaveBeenCalled()
     expect(w.text()).toContain('已保留冲突副本，未改动本地')
     expect(w.find('.confirm-row').exists()).toBe(false)
   })
@@ -687,15 +685,19 @@ describe('CloudCard（多源）', () => {
     await w.find('button.cloud-reset').trigger('click')
     expect(w.text()).toContain('将用当前备份口令重新加密并覆盖云端源「WebDAV」的对象，云端旧数据将被替换。确认重置？')
     await w.findAll('button').find((b) => b.text() === '确认重置')!.trigger('click')
+    // 新 rev 通道链路含 crypto.subtle（contentHash）原生 promise：单拍 flushPromises 不保证落定，
+    // waitFor 等 pushEnvelope 真实到达后再断言
+    await vi.waitFor(() => expect(mockedPush).toHaveBeenCalledTimes(1))
     await flushPromises()
     expect(vi.mocked(createCloudBackend)).toHaveBeenCalledWith(WEBDAV_CRED)
-    expect(mockedPush).toHaveBeenCalledTimes(1)
+    // T9 后重置走新 rev 通道：信封带 v3 sync 头（rev=已知远端 rev+1，base 声明同 core uploaded 分支）
     expect(mockedPush.mock.calls[0]![0]).toMatchObject({
       path: 'totp-backup.totpbackup',
       vaultJson: VALID_VAULT,
       password: 'pw',
+      sync: { rev: 1, baseRev: 0, baseContentHash: await contentHash(VALID_VAULT) },
     })
-    expect(p.saveTargetHash).toHaveBeenLastCalledWith('s-webdav', 'rh1')
+    expect(p.saveSourceState).toHaveBeenLastCalledWith('s-webdav', { lastKnownRemoteRev: 1, baseSnapshot: VALID_VAULT })
     expect(w.text()).toContain('已重置')
     expect(w.find('button.cloud-reset').exists()).toBe(false) // 重置完成清出可重置集合
   })
@@ -723,6 +725,7 @@ describe('CloudCard（多源）', () => {
     await w.find('input[placeholder="用户名"]').setValue('')
     await w.find('button.cloud-reset').trigger('click')
     await w.findAll('button').find((b) => b.text() === '确认重置')!.trigger('click')
+    await vi.waitFor(() => expect(mockedPush).toHaveBeenCalledTimes(1)) // 链路含 crypto.subtle，waitFor 等真实到达
     await flushPromises()
     expect(vi.mocked(createCloudBackend)).toHaveBeenCalledWith(WEBDAV_CRED) // 回落已存凭据而非空白
     expect(mockedPush).toHaveBeenCalledTimes(1)

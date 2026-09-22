@@ -3,13 +3,22 @@
  * 的装配（原 options 独享 → popup/options 共用），两宿主差异仅 i18n t 注入。
  * - popup：打开时/解锁时单次跟随拉取（run('pull')，syncScheduler intervalMs=null）；
  * - options：存活期自动云同步（既有 createAutoRunScheduler change/interval 通道，run() 推拉）+
- *   跟随调度（run('pull')，跨端同步审查 C1：跟随为 pull-only 通道，远端 hash 基线去重）。
+ *   跟随调度（run('pull')，spec §1.3 pull-only 只读形态）。
+ * T9/10 装配约定落实：
+ * - rev 基线 seal（spec §1.2 静态保护）：loadSyncState/saveSyncState 接 store 的 DEK seal 助手——
+ *   解锁态 baseSnapshot 以 DEK 加密落盘，未启用加密（seal 助手返回 null）按明文回落；
+ * - 冲突副本落位改 conflictCopies 列表（storage.local，限 5 份滚动删），废除后台自动文件下载；
+ * - 条目冲突入库/计数桥：onMergeConflicts → store.addMergeConflictsOp；conflictCount →
+ *   store.conflictCount；onConflicts → storage.local 'cloudConflictCount'（跨上下文通道，T11
+ *   badge/横幅消费）+ console 留痕；
+ * - onManualConfirm 本批不传（缺省=直接执行），T11 接真对话框。
  * 锁定态零网络：runner 内部 isLocked/无 secret 直接 return（cloudRunner 守护），调用侧
  * syncScheduler gate 双保险。
  */
-import { loadDeviceId, loadSyncState, saveSyncState, type BackupSource, type CloudCred, type Vault } from '@totp/core'
+import { loadDeviceId, loadSyncState, saveSyncState, type BackupSource, type CloudCred, type Seal, type SourceSyncState, type Vault } from '@totp/core'
 import { createCloudBackend, createCloudSyncRunner, type VueStore } from '@totp/ui'
-import { conflictBackupName, loadSourcesImpl, retentionDeletedNote } from './cloudCredStore'
+import { loadSourcesImpl, retentionDeletedNote } from './cloudCredStore'
+import { addConflictCopy } from './conflictCopies'
 import { storageAdapter } from './store'
 
 export interface ExtensionCloudRunnerDeps {
@@ -19,19 +28,15 @@ export interface ExtensionCloudRunnerDeps {
   t(key: string, params?: Record<string, unknown>): string
 }
 
-/** 冲突副本 Blob 下载：命名经 conflictBackupName（带 backendKey 时
- *  conflict-{backendKey}-{yyyyMMdd-HHmmss}.totpbackup，匹配 READABLE_BACKUP_RE 可恢复）。
- *  runner 自动通道与 options CloudCard 手动通道（cloudPlatform.saveConflictBackup）共用 */
-export async function downloadConflictBackup(bytes: Uint8Array, backendKey?: string): Promise<string> {
-  const name = conflictBackupName(backendKey, new Date())
-  const blob = new Blob([bytes as BlobPart], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = name
-  a.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
-  return name
+/** rev 基线 seal（spec §1.2 静态保护，T9 装配约定 5）：解锁态经 store DEK 加密；seal 助手返回
+ *  null（锁定/未启用加密）按明文回落，与 core syncState「seal 缺省=明文库明文落盘」语义对齐。
+ *  unseal 不可解（换 DEK/明文记录）回落原文——core 解析层自然判废（明文可解析=兼容读取，
+ *  密文垃圾解析失败=回落空态重建） */
+function revSeal(store: VueStore): Seal {
+  return {
+    seal: async (plain) => (await store.sealWithDek(plain)) ?? plain,
+    unseal: async (sealed) => (await store.unsealWithDek(sealed)) ?? sealed,
+  }
 }
 
 export function createExtensionCloudRunner(deps: ExtensionCloudRunnerDeps): { run(mode?: 'auto' | 'manual' | 'pull'): Promise<void> } {
@@ -62,10 +67,10 @@ export function createExtensionCloudRunner(deps: ExtensionCloudRunnerDeps): { ru
         .map((s) => ({ source: s, cred: store.credsCache.value[s.id] }))
         .filter((p): p is { source: BackupSource; cred: CloudCred } => p.cred !== undefined)
     },
-    // rev 基线（spec §1.2）：seal 缺省=明文落盘，DEK 静态保护随 T9 装配约定接入
-    loadSyncState: (id) => loadSyncState(storageAdapter, id),
-    saveSyncState: (id, st) => saveSyncState(storageAdapter, id, st),
-    // 内容门持久基线（spec §1.3）：storage.local 键 cloudContentHash（跨会话/页面重开生效）
+    // rev 基线（spec §1.2）+ DEK seal 静态保护（baseSnapshot 明文落盘问题的修复）
+    loadSyncState: (id): Promise<SourceSyncState> => loadSyncState(storageAdapter, id, revSeal(store)),
+    saveSyncState: (id, st) => saveSyncState(storageAdapter, id, st, revSeal(store)),
+    // 内容门持久基线（spec §1.3）：storage.local 键 cloudContentHash
     loadContentHash: () => storageAdapter.get('cloudContentHash'),
     saveContentHash: async (h) => {
       if (h === null) await storageAdapter.delete('cloudContentHash')
@@ -74,9 +79,9 @@ export function createExtensionCloudRunner(deps: ExtensionCloudRunnerDeps): { ru
     deviceId: () => loadDeviceId(storageAdapter),
     makeBackend: (cred) => createCloudBackend(cred),
     persistAdopted: (json) => store.replaceAllOp(JSON.parse(json) as Vault),
-    saveConflictBackup: (key, bytes) => {
-      void downloadConflictBackup(bytes, key).catch(() => {})
-    },
+    // 冲突副本入 storage.local 列表（spec §4，限 5 份滚动删）：不再自动触发浏览器下载，
+    // 导出仅由 UI 显式调用 exportConflictCopy。Promise 原样交回 core（写失败=该目标同步失败）
+    saveConflictBackup: (key, bytes) => addConflictCopy(storageAdapter, bytes, key),
     // KDF 档位（备份设置所选）：云上传/冲突副本 envelope 生成口径与本地备份一致
     kdfProfile: () => store.settings.backupKdfProfile,
     sourceName: (id) => cloudSourceNames.get(id) ?? id,
@@ -94,6 +99,17 @@ export function createExtensionCloudRunner(deps: ExtensionCloudRunnerDeps): { ru
       const notes = retentionNotes.join(t('cloudAuto.noteSep'))
       retentionNotes = []
       void storageAdapter.set('cloudAutoStatus', JSON.stringify({ at: Date.now(), ok, summary: notes ? `${summary}${t('cloudAuto.noteSep')}${notes}` : summary })).catch(() => {})
+    },
+    // 条目冲突入库桥（spec §3/§4）：fire-and-forget，入库失败不影响同步结果（下轮合并重报）
+    onMergeConflicts: (conflicts) => {
+      void store.addMergeConflictsOp(conflicts).catch((err) => console.warn('[cloudAutoSync] 冲突记录入库失败', err))
+    },
+    // 未裁决冲突计数（宿主闭包读 store.conflictCount）
+    conflictCount: () => store.conflictCount.value,
+    // 冲突强提示（spec §4 badge/横幅）：先落 storage.local 跨上下文通道（popup/后台读取，T11 接 UI）+ console 留痕
+    onConflicts: (count) => {
+      console.info('[cloudAutoSync] 未裁决同步冲突:', count)
+      void storageAdapter.set('cloudConflictCount', JSON.stringify(count)).catch(() => {})
     },
     onError: (err) => console.warn('[cloudAutoSync]', err),
     onAuthFailure: (msg, status) => {

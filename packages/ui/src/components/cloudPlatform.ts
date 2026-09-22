@@ -45,7 +45,9 @@ export function isPlaintextHttpUrl(url: string): boolean {
  * 存储键约定（plan16 源模型，desktop=AppData JSON 键 / extension=storage.local 键，实现一致）：
  * - 源元数据（非秘密）：`backupSources`（JSON BackupSource[]），经 core loadSources/saveSources 读写；
  * - 源凭据（秘密）：DEK 保管区 `secretBag`，经 store saveSourceCredOp/removeSourceCredOp 读写（解锁态限定）；
- * - 基线：`sourceRevs`（Record<sourceId, string>），经 core saveSourceRev 读写（hash=null 删键）；
+ * - rev 基线：`cloudSyncState`（spec §1.2 SourceSyncState 按 sourceId 一份，DEK seal 静态保护），
+ *   经 core loadSyncState/saveSyncState 读写；
+ * - 内容门：`cloudContentHash`（spec §1.3 持久化规范化内容 hash，runner auto 通道消费）；
  * - 偏好：两端统一键 cloudAutoPrefs（JSON CloudAutoPrefs）。
  * - 自动状态：两端统一键 cloudAutoStatus（JSON {at, ok: boolean|null, summary}，ok=null=跳过态），宿主格式化为文本经 loadAutoStatus 提供。
  * - 旧键 cloudCreds/cloudCred/cloudRevs/cloudRev → 源模型迁移由宿主负责（plan16 T13/T14）。
@@ -79,15 +81,9 @@ export interface CloudPlatform {
   readVaultJson(): string
   /** 采用云端数据（恢复链路：卡内 parseVaultJson 校验+两步确认 → 宿主整体替换本地存储） */
   persistDownloaded(json: string): Promise<void>
-  /** [可选] 冲突副本落盘（desktop=AppData/backups；extension=Blob 下载），返回副本名回填提示；
+  /** [可选] 冲突副本落盘（desktop=AppData/backups；extension=storage.local 冲突列表），返回副本名回填提示；
    *  sourceId=源 id（多源场景副本名 conflict-{sourceId}-{ts} 区分来源） */
   saveConflictBackup?(bytes: Uint8Array, sourceId?: string): Promise<string | null>
-  /** 按源 id 读取该源的远端字节摘要基线（迁移约定见上）；该源无基线 → null。
-   *  @deprecated 旧 hash 基线，仅 pull 通道去重门仍消费；rev 基线走 loadSourceState，T9 后随删 */
-  loadTargetHash(sourceId: string): Promise<string | null>
-  /** 按源 id 写入基线；hash=null 语义为删除该源的基线键（不是写入 null 值）。
-   *  @deprecated 同 loadTargetHash */
-  saveTargetHash(sourceId: string, hash: string | null): Promise<void>
   /** 按源 id 读取该源 rev 基线（core loadSyncState；spec §1.2 SourceSyncState），无记录 → 空状态 */
   loadSourceState(sourceId: string): Promise<SourceSyncState>
   /** 按源 id 持久化 rev 基线（core saveSyncState；同步编排返回的 states 逐源回写） */
