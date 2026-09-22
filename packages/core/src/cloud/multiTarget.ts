@@ -29,8 +29,11 @@
  * states（每目标一份 SourceSyncState，spec §1.2/§2）推导（仅 apply 模式；preview 整轮只读、零推导，
  * 返回的 states 全为入参原样，宿主不得持久化）：
  * - primary：uploaded → { lastKnownRemoteRev: newRev, baseSnapshot: 实际上传内容(final) }；
- *   downloaded/merged → { lastKnownRemoteRev: remoteRev, baseSnapshot: 采纳内容(final) }（remoteRev
- *   null=云端无对象或 v2 无头，保持原值不写 0）；in-sync / 失败 → 原 state 不变。
+ *   downloaded → { lastKnownRemoteRev: remoteRev, baseSnapshot: 采纳内容(final) }；merged →
+ *   { lastKnownRemoteRev: newRev, baseSnapshot: 合并结果(final) }（采纳内容是以上传 newRev 写入云端
+ *   的，state 两字段必须描述同一云版本——T13 缺陷修复：merged 原记 remoteRev 滞后一轮，下轮本地
+ *   改动被误判为双方都动，降级两方合并把裁决结果回滚成合并默认主体）；remoteRev null=云端无对象
+ *   或 v2 无头，保持原值不写 0；in-sync / 失败 → 原 state 不变。
  * - replica：跳过（in-sync）→ 原 state 不变；推平/合并成功 → { lastKnownRemoteRev: newRev,
  *   baseSnapshot: final }；失败 → 原 state 不变。
  * - replica 已知 rev 汇总记录在 primary 的 `state.primaryRev[key]`（二选一裁定采用 primary 承载制，
@@ -139,14 +142,15 @@ export async function syncMultipleTargets(opts: {
     ) {
       final = primaryOutcome.appliedVaultJson
     }
-    // state 推导（裁定 5）：uploaded → newRev+实际上传内容；downloaded/merged → remoteRev+采纳内容
-    // （remoteRev null 保持原值不写 0）；in-sync → 原 state 不变
+    // state 推导（裁定 5 + T13 缺陷修复）：newRev 优先（uploaded 上传内容、merged 合并结果都以
+    // newRev 落云，baseSnapshot 与时钟必须同版本，与下方 replica 推导 newRev ?? remoteRev 同口径）；
+    // downloaded 无 newRev → remoteRev（采纳内容=远端现值）；remoteRev null 保持原值不写 0；
+    // in-sync → 原 state 不变
     if (mode === 'apply' && primaryOutcome.action !== 'in-sync') {
       states[primary.key] = {
         ...primary.state,
         lastKnownRemoteRev:
-          (primaryOutcome.action === 'uploaded' ? primaryOutcome.newRev : primaryOutcome.remoteRev) ??
-          primary.state.lastKnownRemoteRev,
+          (primaryOutcome.newRev ?? primaryOutcome.remoteRev) ?? primary.state.lastKnownRemoteRev,
         baseSnapshot: final,
       }
     }

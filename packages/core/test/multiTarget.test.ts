@@ -353,6 +353,32 @@ describe('syncMultipleTargets（primary 裁决 + replica 收敛复制）', () =>
     expect(r.states['pri']!.primaryRev).toBeUndefined() // 无 replica → 不落 primaryRev 键
   })
 
+  it('primary merged 后 state 记 newRev（非合并前 remoteRev）：下轮本地改动走纯上传，裁决不被降级合并回滚（T13 回归）', async () => {
+    // base 校验通过的三方合并（updatedAt 新者 remote 胜出）→ state 必须记录合并结果落云的 newRev=6；
+    // 若误记合并前 remoteRev=5，下轮本地改动（宿主裁决改回本地方）会被误判为双方都动，且 base 失配
+    // 降级两方合并，把裁决结果回滚成合并默认主体
+    const base = v([e('a', { label: 'old' })])
+    const ours = v([e('a', { label: 'local', updatedAt: 2 })])
+    const theirs = v([e('a', { label: 'remote', updatedAt: 3 })])
+    const pb = fakeBackend(await sealedRemote(5, theirs, await contentHash(base)))
+    const r1 = await syncMultipleTargets({
+      targets: [pri({ backend: pb, state: revState(4, base) })],
+      vaultJson: ours, password: PW, deviceId: DEV,
+    })
+    expect(find(r1, 'pri').outcome).toMatchObject({ action: 'merged', remoteRev: 5, newRev: 6 })
+    expect(r1.states['pri']).toEqual({ lastKnownRemoteRev: 6, baseSnapshot: r1.finalVaultJson })
+
+    // 模拟宿主裁决：重写本地为合并败者（本地方）→ 下轮必须纯上传（云端相对基线未动）
+    const adjudicated = v([e('a', { label: 'local', updatedAt: 2 })])
+    const r2 = await syncMultipleTargets({
+      targets: [pri({ backend: pb, state: r1.states['pri']! })],
+      vaultJson: adjudicated, password: PW, deviceId: DEV,
+    })
+    expect(find(r2, 'pri').outcome).toMatchObject({ action: 'uploaded', newRev: 7 })
+    expect(find(r2, 'pri').outcome!.conflicts).toBeUndefined()
+    await expectOpensTo(pb.store.get(PATH)!, PW, adjudicated)
+  })
+
   it('多 replica：首个 replica 并入的内容随 final 推给后续 replica', async () => {
     const ad = v([e('a'), e('d')])
     const pb = fakeBackend()
