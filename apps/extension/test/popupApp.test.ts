@@ -41,6 +41,14 @@ vi.mock('../src/store', async () => {
     commitSettings: vi.fn(async () => {}),
     commit: vi.fn(async () => {}),
     replaceAllOp: vi.fn(async () => {}),
+    // 云同步 runner/store 冲突面（Task 9/10 后真实导出面的新成员，缺位会让 runner 轮尾
+    // conflictCount() 抛 TypeError 被调度器吞成假绿+噪声——审查 Important 2）
+    conflictCount: { value: 0 },
+    addMergeConflictsOp: vi.fn(async () => {}),
+    saveMergeConflictsOp: vi.fn(async () => {}),
+    resolveMergeConflictOp: vi.fn(async () => {}),
+    sealWithDek: vi.fn(async () => null),
+    unsealWithDek: vi.fn(async () => null),
   }
   return {
     storageAdapter: { get: vi.fn(async () => null), set: vi.fn(async () => {}), delete: vi.fn(async () => {}) },
