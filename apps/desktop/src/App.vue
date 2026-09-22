@@ -739,6 +739,23 @@ onMounted(async () => {
         const tags = store.value?.vault.tags ?? []
         return e.tagIds.map((id) => tags.find((t) => t.id === id)?.name).filter((n): n is string => !!n)
       },
+      // 触发器装配（spec §6.1，T6）：前置不满足回结构化 reason；no enabled sources /
+      // no primary target 类原因由 runner recordStatus 记录、此处不重复判定——
+      // triggered=true 语义为「已受理执行」，业务结果经状态行呈现，绝不返回 vault 数据
+      triggerSync: async () => {
+        const s = store.value
+        if (!s || s.locked.value) return { triggered: false, reason: 'vault locked' }
+        if (s.backupSecret.value === null) return { triggered: false, reason: 'no backup secret' }
+        await cloudSync.run('manual')
+        return { triggered: true }
+      },
+      triggerBackup: async () => {
+        const s = store.value
+        if (!s || s.locked.value) return { triggered: false, reason: 'vault locked' }
+        if (s.backupSecret.value === null) return { triggered: false, reason: 'no backup secret' }
+        await auto.runBackupNow()
+        return { triggered: true }
+      },
     }
     mcpStop = await startMcpBridge(mcpDeps, { listen, invoke: (c, a) => invoke(c, a as never).then(() => {}) })
   } catch (e) {

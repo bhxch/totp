@@ -7,6 +7,9 @@ export interface McpBridgeDeps {
   /** 解锁则返回当前条目；锁定/未就绪抛错（文案即 MCP 错误文案） */
   requireEntries: () => readonly OtpEntry[]
   tagsOf: (e: OtpEntry) => string[]
+  /** 触发器（spec §6.1）：只回受理状态，绝不返回 vault 数据；前置不满足回结构化 reason */
+  triggerSync: () => Promise<{ triggered: boolean; reason?: string }>
+  triggerBackup: () => Promise<{ triggered: boolean; reason?: string }>
 }
 
 export interface McpRequestPayload {
@@ -54,6 +57,9 @@ export async function handleMcpRequest(deps: McpBridgeDeps, payload: McpRequestP
       }
       return { ok: true, result: { code: r.code, expires_in_seconds: r.remaining, period: r.period } }
     }
+    // 触发器（spec §6.1）：只透传受理状态 {triggered, reason?}，业务结果经宿主状态行呈现
+    if (payload.tool === 'trigger_sync') return { ok: true, result: await deps.triggerSync() }
+    if (payload.tool === 'trigger_backup') return { ok: true, result: await deps.triggerBackup() }
     return { ok: false, error: `unknown tool: ${payload.tool}` }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }

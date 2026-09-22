@@ -223,6 +223,34 @@ describe('createDesktopAutoRunner（backup 通道）', () => {
   })
 })
 
+describe('createDesktopAutoRunner.runBackupNow（spec §6.1 trigger_backup 执行体，T6）', () => {
+  it('绕过偏好门：onChange=false 也执行 doBackup 并推进基线', async () => {
+    const { deps, doBackup, setLastBackupHash } = makeDeps({
+      backupPrefs: () => ({ onChange: false, onInterval: false, intervalMinutes: 15 }),
+    })
+    await createDesktopAutoRunner(deps).runBackupNow()
+    expect(doBackup).toHaveBeenCalledTimes(1)
+    expect(doBackup).toHaveBeenCalledWith('sec')
+    expect(setLastBackupHash).toHaveBeenCalledWith(HASH1)
+  })
+
+  it('decideAutoRun 守护照常：锁定静默跳过（不调 doBackup、记 null 跳过态）', async () => {
+    const recordStatus = vi.fn()
+    const { deps, doBackup } = makeDeps({ isLocked: () => true, recordStatus })
+    await createDesktopAutoRunner(deps).runBackupNow()
+    expect(doBackup).not.toHaveBeenCalled()
+    expect(recordStatus).toHaveBeenCalledWith(null, '库已锁定')
+  })
+
+  it('unchanged 静默跳过：不调 doBackup、不记状态（与自动通道同口径）', async () => {
+    const recordStatus = vi.fn()
+    const { deps, doBackup } = makeDeps({ getLastBackupHash: () => HASH1, recordStatus })
+    await createDesktopAutoRunner(deps).runBackupNow()
+    expect(doBackup).not.toHaveBeenCalled()
+    expect(recordStatus).not.toHaveBeenCalled()
+  })
+})
+
 describe('formatAutoStatusText（宿主状态行格式化，App.vue readAutoStatusText 委托）', () => {
   // 本地时区构造 + 本地时区格式化，断言与运行环境时区无关
   const AT = new Date(2026, 8, 17, 14, 30).getTime()

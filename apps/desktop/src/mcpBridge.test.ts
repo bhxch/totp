@@ -26,12 +26,21 @@ describe('filterAccounts', () => {
 
 describe('handleMcpRequest', () => {
   const entries = [mkEntry({ uuid: '1' }), mkEntry({ uuid: '2', type: 'hotp', counter: 3 })]
+  /** 只喂条目的 deps 快捷工厂（触发器成员给无害实现，非本组用例焦点） */
+  const depsOf = (list: OtpEntry[]): McpBridgeDeps => ({
+    requireEntries: () => list,
+    tagsOf: () => [],
+    triggerSync: async () => ({ triggered: true }),
+    triggerBackup: async () => ({ triggered: true }),
+  })
   const deps = (locked: boolean): McpBridgeDeps => ({
     requireEntries: () => {
       if (locked) throw new Error('vault locked')
       return entries
     },
     tagsOf: () => ['work'],
+    triggerSync: async () => ({ triggered: true }),
+    triggerBackup: async () => ({ triggered: true }),
   })
   it('锁定 → vault locked 错误', async () => {
     const r = await handleMcpRequest(deps(true), { id: 1, tool: 'list_accounts', args: {} })
@@ -50,7 +59,7 @@ describe('handleMcpRequest', () => {
       mkEntry({ uuid: 'r2', type: 'hotp', counter: 7, note: 'secret note' }),
     ]
     const r = await handleMcpRequest(
-      { requireEntries: () => risky, tagsOf: () => [] },
+      depsOf(risky),
       { id: 1, tool: 'list_accounts', args: {} },
     )
     expect(r.ok).toBe(true)
@@ -70,7 +79,7 @@ describe('handleMcpRequest', () => {
   it('steam 条目 get_code 走 computeEntryCode 分发（5 位 steam 字符集）', async () => {
     // steam.ts 确认输出形态：STEAM_ALPHABET='23456789BCDFGHJKMNPQRTVWXY'（数字 2-9 + 大写字母，5 位）
     const r = await handleMcpRequest(
-      { requireEntries: () => [mkEntry({ uuid: 's1', type: 'steam', secret: 'GEZDGNBVGY3TQOJQ' })], tagsOf: () => [] },
+      depsOf([mkEntry({ uuid: 's1', type: 'steam', secret: 'GEZDGNBVGY3TQOJQ' })]),
       { id: 5, tool: 'get_code', args: { account_id: 's1' } },
     )
     expect(r.ok).toBe(true)
@@ -81,7 +90,7 @@ describe('handleMcpRequest', () => {
     const pin = '428913'
     // yandex secret 校验要求恰 16 字节 = 26 个 base32 字符（GEZDGNBVGY3TQOJQ 仅 10B 会被拒）
     const r = await handleMcpRequest(
-      { requireEntries: () => [mkEntry({ uuid: 'y1', type: 'yandex', secret: 'GEZDGNBVGY3TQOJQGEZDGNBVGY', pin })], tagsOf: () => [] },
+      depsOf([mkEntry({ uuid: 'y1', type: 'yandex', secret: 'GEZDGNBVGY3TQOJQGEZDGNBVGY', pin })]),
       { id: 6, tool: 'get_code', args: { account_id: 'y1' } },
     )
     expect(r.ok).toBe(true)
@@ -103,6 +112,38 @@ describe('handleMcpRequest', () => {
   })
 })
 
+describe('handleMcpRequest 触发器（spec §6.1，T5）', () => {
+  it('trigger_sync：透传 deps 结果（含 reason）', async () => {
+    const deps = {
+      requireEntries: () => [],
+      tagsOf: () => [],
+      triggerSync: async () => ({ triggered: false, reason: 'vault locked' }),
+      triggerBackup: async () => ({ triggered: true }),
+    } satisfies McpBridgeDeps
+    const r = await handleMcpRequest(deps, { id: 1, tool: 'trigger_sync', args: {} })
+    expect(r).toEqual({ ok: true, result: { triggered: false, reason: 'vault locked' } })
+  })
+  it('trigger_backup：触发成功只回受理状态', async () => {
+    const deps = {
+      requireEntries: () => [],
+      tagsOf: () => [],
+      triggerSync: async () => ({ triggered: true }),
+      triggerBackup: async () => ({ triggered: true }),
+    } satisfies McpBridgeDeps
+    const r = await handleMcpRequest(deps, { id: 2, tool: 'trigger_backup', args: {} })
+    expect(r).toEqual({ ok: true, result: { triggered: true } })
+  })
+  it('未知工具仍报 unknown tool（回归）', async () => {
+    const deps = {
+      requireEntries: () => [],
+      tagsOf: () => [],
+      triggerSync: async () => ({ triggered: true }),
+      triggerBackup: async () => ({ triggered: true }),
+    } satisfies McpBridgeDeps
+    expect((await handleMcpRequest(deps, { id: 3, tool: 'x', args: {} })).ok).toBe(false)
+  })
+})
+
 describe('startMcpBridge', () => {
   /** fake io：捕获 listen 回调与 invoke 调用，手动触发事件驱动整条链路 */
   async function bridgeHarness(lockedRef: { locked: boolean }) {
@@ -117,6 +158,8 @@ describe('startMcpBridge', () => {
           return entries
         },
         tagsOf: () => ['work'],
+        triggerSync: async () => ({ triggered: true }),
+        triggerBackup: async () => ({ triggered: true }),
       },
       {
         listen: (_event, cb) => {

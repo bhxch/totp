@@ -38,6 +38,11 @@ export interface DesktopAutoRunner {
   notifyChanged(): void
   start(): void
   stop(): void
+  /** 手动触发一次备份通道（spec §6.1 trigger_backup 执行体）：绕过通道偏好门（MCP 显式
+   *  请求非自动调度，不与 onChange/onInterval 开关挂钩），decideAutoRun 守护照常——
+   *  locked/no-secret/unchanged 跳过即静默返回（bridge 侧前置检查已给结构化 reason，不重复）；
+   *  业务结果经状态行呈现，不向调用方回传 vault 数据 */
+  runBackupNow(): Promise<void>
 }
 
 const DEFAULT_DEBOUNCE_MS = 10_000
@@ -81,9 +86,9 @@ export function createDesktopAutoRunner(deps: AutoBackupDeps, opts?: { debounceM
     return prefs.intervalMinutes * 60_000
   }
 
-  async function runBackup(reason: AutoRunReason): Promise<void> {
+  async function runBackup(reason: AutoRunReason, opts?: { skipPrefsGate?: boolean }): Promise<void> {
     const prefs = deps.backupPrefs()
-    if (!prefsGate(prefs, reason)) return
+    if (!opts?.skipPrefsGate && !prefsGate(prefs, reason)) return
     try {
       const currentHash = await deps.sha256Hex(deps.getVaultJson())
       const decision = decideAutoRun({
@@ -165,5 +170,7 @@ export function createDesktopAutoRunner(deps: AutoBackupDeps, opts?: { debounceM
       backup.stop()
       cloud.stop()
     },
+    // reason 仅被 prefsGate 消费，跳过偏好门后无语义；执行体与守护与自动通道完全同一份
+    runBackupNow: () => runBackup('change', { skipPrefsGate: true }),
   }
 }
