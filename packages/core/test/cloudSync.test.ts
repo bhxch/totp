@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { CloudBackend } from '../src/cloud/backend'
 import { CloudHttpError, ensureHttpOk, isAuthError } from '../src/cloud/backend'
-import { createBackupEnvelope, openBackupEnvelope } from '../src/backup/envelope'
-import { sha256Hex, syncWithCloud } from '../src/cloud/syncOrchestrator'
+import { createBackupEnvelope, createSyncEnvelope, openBackupEnvelope } from '../src/backup/envelope'
+import { contentHash } from '../src/cloud/canonical'
+import { sha256Hex, syncWithCloud, syncWithCloudRev } from '../src/cloud/syncOrchestrator'
+import type { OtpEntry } from '../src/model'
 
 const PATH = 'totp-backup.totpbackup'
 const PASSWORD = '口令123'
@@ -275,6 +277,243 @@ describe('syncWithCloud 下载后内容比对（跨端同步审查 C1）', () =>
     })
     expect(out.action).toBe('conflict-resolved')
     expect(seen).toHaveLength(1)
+    expect(backend.putCount).toBe(0)
+  })
+})
+
+// ---- syncWithCloudRev：rev 逻辑时钟四分支判定（spec §1.3/§1.4）----
+
+const DEV_A = 'dev-a'
+const DEV_B = 'dev-b'
+
+function revEntry(uuid: string, patch: Partial<OtpEntry> = {}): OtpEntry {
+  return { uuid, type: 'totp', issuer: 'I', label: uuid, secret: 'S', algorithm: 'SHA1', digits: 6, period: 30,
+    tagIds: [], order: 0, createdAt: 1, updatedAt: 1, ...patch }
+}
+function revVaultJson(entries: OtpEntry[], updatedAt: number): string {
+  return JSON.stringify({ version: 2, entries, tags: [], updatedAt })
+}
+/** 以 v3 信封封存对端（dev-b）写入的内容；baseContentHash 可注入错误值以构造降级合并 */
+async function sealedRemote(rev: number, content: string, baseContentHash?: string): Promise<Uint8Array> {
+  const env = await createSyncEnvelope(content, PASSWORD, 'balanced',
+    { rev, deviceId: DEV_B, baseRev: rev - 1, baseContentHash: baseContentHash ?? (await contentHash(content)) })
+  return ENC.encode(JSON.stringify(env))
+}
+const revState = (lastKnownRemoteRev: number | null, baseSnapshot: string | null) => ({ lastKnownRemoteRev, baseSnapshot })
+
+describe('syncWithCloudRev', () => {
+  it('云端无对象 → uploaded newRev=1：写 v3 信封，sync 头记录 deviceId/baseRev/baseContentHash', async () => {
+    const backend = mockBackend()
+    const r = await syncWithCloudRev({
+      backend, path: PATH, vaultJson: LOCAL_VAULT, password: PASSWORD,
+      state: revState(null, null), deviceId: DEV_A,
+    })
+    expect(r.action).toBe('uploaded')
+    expect(r.remoteRev).toBe(0)
+    expect(r.newRev).toBe(1)
+    expect(backend.putCount).toBe(1)
+    const stored = JSON.parse(new TextDecoder().decode(backend.store.get(PATH)!))
+    expect(stored.v).toBe(3)
+    const baseHash = await contentHash(LOCAL_VAULT)
+    expect(stored.sync).toMatchObject({ rev: 1, deviceId: DEV_A, baseRev: 0, baseContentHash: baseHash })
+  })
+
+  it('双方未动（remoteRev==已知 且 本地==基线）→ in-sync 零写', async () => {
+    const backend = mockBackend(await sealedRemote(3, LOCAL_VAULT))
+    const r = await syncWithCloudRev({
+      backend, path: PATH, vaultJson: LOCAL_VAULT, password: PASSWORD,
+      state: revState(3, LOCAL_VAULT), deviceId: DEV_A,
+    })
+    expect(r.action).toBe('in-sync')
+    expect(r.remoteRev).toBe(3)
+    expect(r.newRev).toBeUndefined()
+    expect(backend.putCount).toBe(0)
+  })
+
+  it('本地未动云端较新 → downloaded：applied=远端明文，零写', async () => {
+    const backend = mockBackend(await sealedRemote(4, REMOTE_VAULT))
+    const r = await syncWithCloudRev({
+      backend, path: PATH, vaultJson: LOCAL_VAULT, password: PASSWORD,
+      state: revState(3, LOCAL_VAULT), deviceId: DEV_A,
+    })
+    expect(r.action).toBe('downloaded')
+    expect(r.appliedVaultJson).toBe(REMOTE_VAULT)
+    expect(backend.putCount).toBe(0)
+  })
+
+  it('云端未动本地较新 → uploaded newRev=remoteRev+1：sync 头 baseContentHash 指向本地新内容', async () => {
+    const local = revVaultJson([revEntry('n1', { order: 1 })], 9)
+    const backend = mockBackend(await sealedRemote(3, LOCAL_VAULT))
+    const r = await syncWithCloudRev({
+      backend, path: PATH, vaultJson: local, password: PASSWORD,
+      state: revState(3, LOCAL_VAULT), deviceId: DEV_A,
+    })
+    expect(r.action).toBe('uploaded')
+    expect(r.newRev).toBe(4)
+    const stored = JSON.parse(new TextDecoder().decode(backend.store.get(PATH)!))
+    const localHash = await contentHash(local)
+    expect(stored.sync).toMatchObject({ rev: 4, deviceId: DEV_A, baseRev: 3, baseContentHash: localHash })
+  })
+
+  it('双方都动 → merged：条目并集 + 上传 newRev=remote+1；baseContentHash 不匹配降级 degraded（副本先行、后上传）', async () => {
+    const base = revVaultJson([revEntry('a', { order: 1 })], 1)
+    const ours = revVaultJson([revEntry('a', { order: 1 }), revEntry('b', { order: 2 })], 2)
+    const theirs = revVaultJson([revEntry('a', { order: 1 }), revEntry('c', { order: 3 })], 3)
+    const backend = mockBackend(await sealedRemote(5, theirs, 'wrong'))
+    const events: string[] = []
+    const seen: Uint8Array[] = []
+    const origPut = backend.put.bind(backend)
+    backend.put = async (p, d) => {
+      await origPut(p, d)
+      events.push('put')
+    }
+    const r = await syncWithCloudRev({
+      backend, path: PATH, vaultJson: ours, password: PASSWORD,
+      state: revState(4, base), deviceId: DEV_A,
+      onConflictBackup: (b) => {
+        events.push('copy')
+        seen.push(b)
+      },
+    })
+    expect(r.action).toBe('merged')
+    expect(r.mergeDegraded).toBe(true)
+    expect(r.remoteRev).toBe(5)
+    expect(r.newRev).toBe(6)
+    expect(JSON.parse(r.appliedVaultJson!).entries.map((x: { uuid: string }) => x.uuid).sort()).toEqual(['a', 'b', 'c'])
+    // 安全序：先存本地旧内容（合并前）副本，再上传合并结果
+    expect(events).toEqual(['copy', 'put'])
+    expect(backend.putCount).toBe(1)
+    const copyJson = await openBackupEnvelope(JSON.parse(new TextDecoder().decode(seen[0]!)), PASSWORD)
+    expect(copyJson).toBe(ours)
+    const stored = JSON.parse(new TextDecoder().decode(backend.store.get(PATH)!))
+    const theirsHash = await contentHash(theirs)
+    expect(stored.sync).toMatchObject({ rev: 6, deviceId: DEV_A, baseRev: 5, baseContentHash: theirsHash })
+  })
+
+  it('双方都动且 base 校验通过 → merged 非降级：mergeDegraded=false，双改分歧按 updatedAt 裁决', async () => {
+    const base = revVaultJson([revEntry('a', { order: 1, label: 'old' })], 1)
+    const ours = revVaultJson([revEntry('a', { order: 1, label: 'local-new', updatedAt: 2 }), revEntry('b', { order: 2 })], 2)
+    const theirs = revVaultJson([revEntry('a', { order: 1, label: 'remote-new', updatedAt: 3 }), revEntry('c', { order: 3 })], 3)
+    const backend = mockBackend(await sealedRemote(5, theirs, await contentHash(base)))
+    const r = await syncWithCloudRev({
+      backend, path: PATH, vaultJson: ours, password: PASSWORD,
+      state: revState(4, base), deviceId: DEV_A,
+    })
+    expect(r.action).toBe('merged')
+    expect(r.mergeDegraded).toBe(false)
+    expect(r.newRev).toBe(6)
+    const merged = JSON.parse(r.appliedVaultJson!)
+    expect(merged.entries.map((x: { uuid: string }) => x.uuid).sort()).toEqual(['a', 'b', 'c'])
+    expect(merged.entries.find((x: { uuid: string }) => x.uuid === 'a').label).toBe('remote-new')
+    expect(r.conflicts).toHaveLength(1)
+    expect(r.conflicts![0]!.ours!.label).toBe('local-new')
+    expect(r.conflicts![0]!.theirs!.label).toBe('remote-new')
+  })
+
+  it('preview 模式：merged 分支不写云、不存副本、newRev 缺省', async () => {
+    const base = revVaultJson([revEntry('a', { order: 1 })], 1)
+    const ours = revVaultJson([revEntry('a', { order: 1 }), revEntry('b', { order: 2 })], 2)
+    const theirs = revVaultJson([revEntry('a', { order: 1 }), revEntry('c', { order: 3 })], 3)
+    const backend = mockBackend(await sealedRemote(5, theirs, 'wrong'))
+    let copyCalled = false
+    const r = await syncWithCloudRev({
+      backend, path: PATH, vaultJson: ours, password: PASSWORD,
+      state: revState(4, base), deviceId: DEV_A, mode: 'preview',
+      onConflictBackup: () => {
+        copyCalled = true
+      },
+    })
+    expect(r.action).toBe('merged')
+    expect(r.newRev).toBeUndefined()
+    expect(r.mergeDegraded).toBe(true)
+    expect(JSON.parse(r.appliedVaultJson!).entries.map((x: { uuid: string }) => x.uuid).sort()).toEqual(['a', 'b', 'c'])
+    expect(copyCalled).toBe(false)
+    expect(backend.putCount).toBe(0)
+  })
+
+  it('preview 模式：云端无对象 → uploaded 预览，不写云、newRev 缺省', async () => {
+    const backend = mockBackend()
+    const r = await syncWithCloudRev({
+      backend, path: PATH, vaultJson: LOCAL_VAULT, password: PASSWORD,
+      state: revState(null, null), deviceId: DEV_A, mode: 'preview',
+    })
+    expect(r.action).toBe('uploaded')
+    expect(r.remoteRev).toBe(0)
+    expect(r.newRev).toBeUndefined()
+    expect(backend.putCount).toBe(0)
+  })
+
+  it('内容相等仅刷基线（对端重推同内容，密文随机 IV）→ in-sync：零写、零副本', async () => {
+    const backend = mockBackend(await sealedRemote(4, LOCAL_VAULT)) // rev 4 ≠ 已知 3，解密内容与本地一致
+    let copyCalled = false
+    const r = await syncWithCloudRev({
+      backend, path: PATH, vaultJson: LOCAL_VAULT, password: PASSWORD,
+      state: revState(3, LOCAL_VAULT), deviceId: DEV_A,
+      onConflictBackup: () => {
+        copyCalled = true
+      },
+    })
+    expect(r.action).toBe('in-sync')
+    expect(r.remoteRev).toBe(4)
+    expect(copyCalled).toBe(false)
+    expect(backend.putCount).toBe(0)
+  })
+
+  it('v2 远端（无 sync 头）视为远端已变走保守比对：内容不同 → downloaded；内容一致 → in-sync 零写', async () => {
+    const backend = mockBackend((await putRemoteEnvelope(REMOTE_VAULT, PASSWORD)).bytes)
+    const r = await syncWithCloudRev({
+      backend, path: PATH, vaultJson: LOCAL_VAULT, password: PASSWORD,
+      state: revState(3, LOCAL_VAULT), deviceId: DEV_A,
+    })
+    expect(r.action).toBe('downloaded')
+    expect(r.appliedVaultJson).toBe(REMOTE_VAULT)
+
+    const same = mockBackend((await putRemoteEnvelope(LOCAL_VAULT, PASSWORD)).bytes)
+    const r2 = await syncWithCloudRev({
+      backend: same, path: PATH, vaultJson: LOCAL_VAULT, password: PASSWORD,
+      state: revState(3, LOCAL_VAULT), deviceId: DEV_A,
+    })
+    expect(r2.action).toBe('in-sync')
+    expect(r2.remoteRev).toBe(0) // v2 无头：rev 以 0 参与判定
+    expect(same.putCount).toBe(0)
+  })
+
+  it('口令不匹配 / 远端结构坏 → 抛中文错误，不写云、不触发副本回调', async () => {
+    const backend = mockBackend(await sealedRemote(3, REMOTE_VAULT))
+    let called = false
+    await expect(
+      syncWithCloudRev({
+        backend, path: PATH, vaultJson: LOCAL_VAULT, password: '另一个口令',
+        state: revState(2, LOCAL_VAULT), deviceId: DEV_A,
+        onConflictBackup: () => {
+          called = true
+        },
+      }),
+    ).rejects.toThrow('云端备份口令不匹配，无法合并——请确认口令或手动下载处理')
+    expect(called).toBe(false)
+    expect(backend.putCount).toBe(0)
+
+    const corrupt = mockBackend(ENC.encode('not a json {{'))
+    await expect(
+      syncWithCloudRev({
+        backend: corrupt, path: PATH, vaultJson: LOCAL_VAULT, password: PASSWORD,
+        state: revState(2, LOCAL_VAULT), deviceId: DEV_A,
+      }),
+    ).rejects.toThrow('云端备份口令不匹配，无法合并——请确认口令或手动下载处理')
+  })
+
+  it('副本回调失败（Promise reject）→ merged 分支整体失败：不上传合并结果', async () => {
+    const base = revVaultJson([revEntry('a', { order: 1 })], 1)
+    const ours = revVaultJson([revEntry('a', { order: 1 }), revEntry('b', { order: 2 })], 2)
+    const theirs = revVaultJson([revEntry('a', { order: 1 }), revEntry('c', { order: 3 })], 3)
+    const backend = mockBackend(await sealedRemote(5, theirs, 'wrong'))
+    await expect(
+      syncWithCloudRev({
+        backend, path: PATH, vaultJson: ours, password: PASSWORD,
+        state: revState(4, base), deviceId: DEV_A,
+        onConflictBackup: () => Promise.reject(new Error('副本写入失败')),
+      }),
+    ).rejects.toThrow('副本写入失败')
     expect(backend.putCount).toBe(0)
   })
 })
