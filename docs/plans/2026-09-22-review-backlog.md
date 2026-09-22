@@ -31,3 +31,34 @@
 - **tauri dev 参数透传**:`pnpm tauri dev -- --headless-mcp ...` 在本机 tauri-cli 下参数误喂给 cargo run;headless 请直接运行 `target/debug/totp-desktop.exe`(vite dev server 需存活),真机已验证。
 - **e2e 冲突副本双事件**:CDP/Blob 插桩下一次冲突观测到 2 次下载事件;单测已钉 `saveConflictBackup` 调用次数=1(packages/ui/test/cloudRunner.test.ts:665),判插桩副作用非产品缺陷。
 - **simple-icons 已 pin 16.31.0**,未来升级重跑生成脚本时 builtin.json 会按上游变化漂移,属预期。
+
+# 同步体验优化批次 backlog(2026-09-22,SDD 终审 triage,范围 a6867e2..fcc6ce9)
+
+来源:同步体验优化+MCP 工具面 spec(docs/superpowers/specs/2026-09-22-sync-ux-mcp-tools-design.md)实施终审。30 commit 全部合入 main,以下为终审 triage 放行的留档项。
+
+## 功能增强/清理类
+
+| # | 项 | 说明 | 来源 |
+|---|---|---|---|
+| S1 | merged 轮零冲突副本契约 | 双设备真实并发窗口的 merged 轮即使零条目冲突也产「冲突副本」(T7 安全序契约:先存副本再覆盖);终审裁定维持(修 contentHashVault 后噪声已收敛);若产品期望零冲突不产副本需改 core syncOrchestrator 契约 | 终审+T13 |
+| S2 | 进度失败滞留 | runTargets 抛错(如 no primary target)跳过 onProgress(total,total),spinner 滞留至下一成功轮;try/finally 可修 | 终审 Minor |
+| S3 | CloudCard 缺 mergedDegraded 专用文案 | 降级合并时卡内显示「已合并」与 runner 摘要「降级合并」不一致;状态行 ACTION_LABEL_KEY 补分支即可 | 终审 Minor |
+| S4 | pullAll 全源失败仍 recordStatus(true) | 「部分失败=ok true」惯例边角,cosmetic | 终审 Minor |
+| S5 | 测试 fixture 旧口径 hash | cloudSync/multiTarget/twoDevice/cloudRunner 测试 fixture 仍用旧 contentHash 构造信封 baseContentHash(fixture vault 无 rev 故同值全绿);统一为 contentHashVault 防未来 fixture 引入 rev 静默失配 | 终审修复波复审 |
+| S6 | cloudRunner.noChange 死键 | auto 门命中改降级 pull 轮后「内容无变化」跳过态不再产生,zh/en 键无引用可删 | 终审修复波 |
+| S7 | extension popup 冲突横幅 | spec §4 声明 popup/options 顶部横幅,options 已落地,popup 无冲突感知面 | T11 缺失项 |
+| S8 | desktop 托盘 tooltip 冲突计数 | spec §4 声明,应用内横幅已落地,托盘计数未做 | T11 裁定 backlog |
+| S9 | MS refresh_token 轮转撤销策略真机实测 | onedrive 轮转回存通道已实现(手动通道消费),MS /common 端点是否撤销旧 token 需真实租户实测;若撤销且自动通道未消费回存则 ≤1h 后凭据失效 | T12 |
+| S10 | 禁用源角色分段静默 no-op | MdSegmentedButton 无 disabled 能力,禁用源行 role 切换可点但无效,需视觉禁用 | T11 Minor |
+| S11 | vault.rev 与信封 sync.rev 同名异语义 | vault 顶层 rev(F8 存储水位)随上传进云端明文,与信封 sync.rev(逻辑时钟)并存有混淆风险(既有,非本轮引入) | 终审修复波观察 |
+
+## 真机验证类(发布前)
+
+- 双 desktop 真机:一端编辑→另一端闲置 auto 轮(15min)拉到变更(I-2 修复后 downloaded 可达,需真机确认)
+- GDrive/OneDrive OAuth 模式真机:用户自建 client 全流程(401 自愈/轮转回存)
+- 冲突裁决真机:两设备同条目分歧→badge/横幅→裁决→收敛
+
+## 观察记录类(知悉)
+
+- 旧口径 stored 值自愈:存量 cloudContentHash/baseSnapshot 升级后首轮多一次同步(保守路径),无迁移
+- desktop mcpBridge.test.ts 全仓并发偶发(基线可复现,负载型),建议独立排查 vi.waitFor 确定化
