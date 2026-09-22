@@ -369,7 +369,7 @@ describe('CloudCard（源列表 plan16 T8）', () => {
     const p2 = makePlatform({ loadSources: vi.fn().mockResolvedValue([src({ id: 's1' })]), creds: {} })
     const w2 = await mountCard(p2)
     await clickSync(w2)
-    expect(mockedSync).toHaveBeenCalledTimes(1) // 仅第一次用例调用
+    expect(mockedSync).toHaveBeenCalledTimes(2) // 仅第一次用例调用（T11F：preview+apply 两轮）
     expect(w2.text()).toContain('启用源均缺少凭据，请先解锁并保存凭据')
   })
 
@@ -394,7 +394,7 @@ describe('CloudCard（源列表 plan16 T8）', () => {
     })
     const w = await mountCard(p)
     await clickSync(w)
-    expect(mockedSync).toHaveBeenCalledTimes(1)
+    expect(mockedSync).toHaveBeenCalledTimes(2) // T11F：preview+apply 两轮均携带
     expect(mockedSync.mock.calls[0]![0].profile).toBe('paranoid')
   })
 })

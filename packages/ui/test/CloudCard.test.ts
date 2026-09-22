@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import type { VueWrapper } from '@vue/test-utils'
@@ -13,9 +13,10 @@ vi.mock('../src/components/cloudPlatform', async (importOriginal) => {
   return { ...actual, createCloudBackend: vi.fn(actual.createCloudBackend) }
 })
 
-import { contentHash, pushEnvelope, syncMultipleTargets, type BackupSource, type CloudBackend, type CloudCred, type SourceSyncState } from '@totp/core'
+import { contentHash, pushEnvelope, syncMultipleTargets, type BackupSource, type CloudBackend, type CloudCred, type EntryConflict, type SourceSyncState } from '@totp/core'
 import { createCloudBackend } from '../src/components/cloudPlatform'
 import CloudCard from '../src/components/CloudCard.vue'
+import { clearSyncProgress, settleMergeConfirm } from '../src/components/cloudSyncBridge'
 import { createTestI18n } from './helpers/i18n'
 import type { CloudPlatform } from '../src/components/cloudPlatform'
 
@@ -101,7 +102,7 @@ describe('CloudCard（多源）', () => {
     })
     const w = await mountCard(p)
     await clickSync(w)
-    expect(mockedSync).toHaveBeenCalledTimes(1)
+    expect(mockedSync).toHaveBeenCalledTimes(2) // T11F：手动路径先 preview 只读轮再 apply 轮
     const inputs = mockedSync.mock.calls[0]![0].targets
     expect(inputs).toHaveLength(1)
     expect(inputs[0]!.key).toBe('s-webdav')
@@ -118,7 +119,7 @@ describe('CloudCard（多源）', () => {
     })
     const w = await mountCard(p)
     await clickSync(w)
-    expect(mockedSync).toHaveBeenCalledTimes(1)
+    expect(mockedSync).toHaveBeenCalledTimes(2) // T11F：preview + apply 两轮，targets 两轮一致
     const inputs = mockedSync.mock.calls[0]![0].targets
     expect(inputs.map((x) => ({ key: x.key, path: x.path }))).toEqual([
       { key: 's-webdav', path: 'custom/dir.totpbackup' }, // 反斜杠段归一为 /
@@ -203,6 +204,8 @@ describe('CloudCard（多源）', () => {
     })
     const w = await mountCard(p)
     await clickSync(w)
+    settleMergeConfirm(true) // T11F：apply 轮 merged 先过手动合并预览，确认后才进入采纳两步确认流
+    await flushPromises()
     await w.findAll('button').find((b) => b.text() === '取消')!.trigger('click')
     await flushPromises()
     expect(p.persistDownloaded).not.toHaveBeenCalled()
@@ -830,5 +833,94 @@ describe('CloudCard 手动同步成功回调（跨端同步审查 I1 恢复闭�
     const w2 = await mountCard(bare)
     await clickSync(w2)
     expect(w2.text()).toBeDefined()
+  })
+})
+
+describe('CloudCard 手动合并预览（spec §3/§4 合规缺口，T11F）', () => {
+  beforeEach(() => vi.clearAllMocks())
+  afterEach(() => {
+    settleMergeConfirm(false) // 清挂起征询，防用例间模块级桥状态串扰
+    clearSyncProgress()
+  })
+
+  // 冲突条目取「仅本地方有」形态（ours 在场）——对话框三段渲染可呈现 issuer
+  const LOCAL_ENTRY = {
+    uuid: 'u1', type: 'totp' as const, issuer: 'GitHub', label: 'a@x.com', secret: 'AAAA',
+    algorithm: 'SHA1' as const, digits: 6 as const, period: 30, tagIds: [] as string[], order: 0, createdAt: 0, updatedAt: 0,
+  }
+  const MERGE_CONFLICT: EntryConflict = { entryId: 'e1', issuer: 'GitHub', label: 'a@x.com', ours: LOCAL_ENTRY, theirs: null, base: null }
+  const MERGED_RESULT = {
+    results: [{ key: 's-webdav', outcome: { action: 'merged' as const, remoteRev: 8, appliedVaultJson: VALID_VAULT, conflicts: [MERGE_CONFLICT] } }],
+    finalVaultJson: VALID_VAULT,
+    adopted: false,
+    conflicts: [MERGE_CONFLICT],
+    states: { 's-webdav': { lastKnownRemoteRev: 8, baseSnapshot: VALID_VAULT } },
+  }
+
+  function platformWithWebdav(): CloudPlatform {
+    return makePlatform({
+      loadSources: vi.fn().mockResolvedValue([WEBDAV_SOURCE]),
+      creds: { 's-webdav': WEBDAV_CRED },
+    })
+  }
+
+  it('⑲有 merged：先 preview 只读轮（零落盘）弹预览对话框，确认后才跑 apply 轮', async () => {
+    mockedSync.mockResolvedValue(MERGED_RESULT)
+    const p = platformWithWebdav()
+    const w = await mountCard(p)
+    await clickSync(w)
+    // 第一轮 preview：mode='preview' 只读——零基线落盘、零采纳落盘
+    expect(mockedSync).toHaveBeenCalledTimes(1)
+    expect(mockedSync.mock.calls[0]![0].mode).toBe('preview')
+    expect(p.saveSourceState).not.toHaveBeenCalled()
+    expect(p.persistDownloaded).not.toHaveBeenCalled()
+    // 预览对话框打开（挂起期间 apply 未跑）
+    expect(w.find('[role="dialog"]').exists()).toBe(true)
+    expect(w.text()).toContain('合并预览')
+    expect(w.text()).toContain('GitHub')
+    expect(mockedSync).toHaveBeenCalledTimes(1)
+    // 确认 → 同一 targets 重跑 apply 轮落盘
+    settleMergeConfirm(true)
+    await flushPromises()
+    expect(mockedSync).toHaveBeenCalledTimes(2)
+    expect(mockedSync.mock.calls[1]![0].mode).toBe('apply')
+    expect(mockedSync.mock.calls[1]![0].targets).toEqual(mockedSync.mock.calls[0]![0].targets)
+    expect(w.find('[role="dialog"]').exists()).toBe(false)
+    expect(w.text()).toContain('已合并')
+  })
+
+  it('⑳预览取消：中止不跑 apply（零写云/零基线），提示已跳过且按钮复位', async () => {
+    mockedSync.mockResolvedValue(MERGED_RESULT)
+    const p = platformWithWebdav()
+    const w = await mountCard(p)
+    await clickSync(w)
+    expect(w.find('[role="dialog"]').exists()).toBe(true)
+    settleMergeConfirm(false)
+    await flushPromises()
+    expect(mockedSync).toHaveBeenCalledTimes(1) // apply 轮未跑（preview 只读，云端零痕迹）
+    expect(p.saveSourceState).not.toHaveBeenCalled()
+    expect(p.persistDownloaded).not.toHaveBeenCalled()
+    expect(w.find('[role="dialog"]').exists()).toBe(false)
+    expect(w.text()).toContain('手动合并已跳过')
+    expect((w.find('button.cloud-sync').element as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('㉑无 merged：不弹窗直接执行（preview 后接 apply，结果呈现同既有直调）', async () => {
+    mockedSync.mockResolvedValue({
+      results: [{ key: 's-webdav', outcome: { action: 'uploaded', remoteRev: 2, newRev: 3 } }],
+      finalVaultJson: VALID_VAULT,
+      adopted: false,
+      conflicts: [],
+      states: { 's-webdav': { lastKnownRemoteRev: 3, baseSnapshot: VALID_VAULT } },
+    })
+    const p = platformWithWebdav()
+    const w = await mountCard(p)
+    await clickSync(w)
+    expect(w.find('[role="dialog"]').exists()).toBe(false)
+    expect(mockedSync).toHaveBeenCalledTimes(2)
+    expect(mockedSync.mock.calls[0]![0].mode).toBe('preview')
+    expect(mockedSync.mock.calls[1]![0].mode).toBe('apply')
+    expect(p.saveSourceState).toHaveBeenCalledWith('s-webdav', { lastKnownRemoteRev: 3, baseSnapshot: VALID_VAULT })
+    expect(w.text()).toContain('已上传')
   })
 })

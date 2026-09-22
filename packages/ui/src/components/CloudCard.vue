@@ -8,7 +8,7 @@ import { useI18n } from 'vue-i18n'
 import type { VueStore } from '../store'
 import { createCloudBackend, isPlaintextHttpUrl } from './cloudPlatform'
 import type { CloudAutoPrefs, CloudPlatform } from './cloudPlatform'
-import { pendingMergeConfirm, settleMergeConfirm, syncProgressState } from './cloudSyncBridge'
+import { pendingMergeConfirm, requestMergeConfirm, settleMergeConfirm, syncProgressState } from './cloudSyncBridge'
 import MergeConflictList from './MergeConflictList.vue'
 import MergePreviewDialog from './MergePreviewDialog.vue'
 import { parseVaultJson } from './parseVaultJson'
@@ -466,14 +466,35 @@ async function onSync(): Promise<void> {
       })
     }
     if (inputs.length === 0) return fail(new Error(t('cloudCard.allCredsMissing')))
-    const r = await syncMultipleTargets({
+    // 手动合并预览（spec §3/§4，T11F 补齐直调路径合规缺口）：先 mode:'preview' 只读跑一轮（core
+    // 预览零写云/零副本/零 state 推导），任一目标 merged 时经 cloudSyncBridge 的 requestMergeConfirm
+    // 挂起征询——与宿主 runner 的 onManualConfirm 桥同槽互斥，复用卡内同一 MergePreviewDialog；
+    // 确认=false 中止（预览只读两端零痕迹，提示已跳过），true 以同一 inputs 重跑 apply（keep 源
+    // 时间戳路径两轮一致，预览即所见即所写）。无 merged 不弹窗直接 apply。代价：手动同步恒多一轮
+    // 只读预览请求，与 runner manual 通道（runOnce 'manual' 先 preview 后 apply）同构同价
+    const baseOpts = {
       targets: inputs,
       vaultJson: p.readVaultJson(),
       password: props.sessionSecret,
       deviceId: await p.deviceId(),
-      onConflictBackup: (key, bytes) => p.saveConflictBackup?.(bytes, key),
+      onConflictBackup: (key: string, bytes: Uint8Array) => p.saveConflictBackup?.(bytes, key),
       profile: p.kdfProfile?.(),
-    })
+    }
+    const pv = await syncMultipleTargets({ ...baseOpts, mode: 'preview' })
+    const mergedResults = pv.results.filter((x) => x.outcome?.action === 'merged')
+    if (mergedResults.length > 0) {
+      const ok = await requestMergeConfirm({
+        conflicts: pv.conflicts,
+        mergeDegraded: mergedResults.some((x) => x.outcome?.mergeDegraded === true),
+        sourceName: mergedResults.map((x) => sourceName(x.key)).join('; '),
+      })
+      if (!ok) {
+        msg.value = t('cloudRunner.manualSkipped') // 复用 runner 跳过态文案（common.json 同域键）
+        msgKind.value = 'hint'
+        return
+      }
+    }
+    const r = await syncMultipleTargets({ ...baseOpts, mode: 'apply' })
     resettableBackends.value = []
     pendingStates.value = []
     for (const res of r.results) {
