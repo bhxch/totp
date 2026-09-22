@@ -94,3 +94,26 @@ rmcp tool handler 收到调用 → `emit_to(webview, "mcp://req", {id, tool, arg
 - **架构**：rmcp + 事件桥，否决全 Rust（解锁态数据多驻留一份，安全面变大）与手写协议（合规风险）。
 - **工具面**：仅 `list_accounts`/`get_code`；无 copy（YAGNI）、无管理类工具（只读边界）。
 - **客户端标识**：`clientInfo.name` 而非 UA（UA 随 HTTP 库/版本漂移，会导致升级即失效）。
+
+## 勘误（2026-09-22）：工具面边界放宽
+
+本设计「工具面：仅 list_accounts/get_code、无管理类工具（只读边界）」的裁定，自
+2026-09-22 起放宽为：**默认只读 + 用户显式勾选的 action 类工具（更严门控）**。
+
+依据 `docs/superpowers/specs/2026-09-22-sync-ux-mcp-tools-design.md` §6（用户批准）：
+
+- 新增 `trigger_backup` / `trigger_sync` 两个 action 类触发器工具：只触发、返回
+  `{triggered, reason?}` 受理状态，绝不返回 vault 数据；受理即返回（业务结果经应用
+  状态行呈现）。
+- `McpConfig` 增加 `exposedTools`（默认仅两只读工具——存量用户行为零变化）；不在
+  暴露面的工具返回 `tool disabled`，每请求重读即时生效。
+- 工具级门控叠加在四档客户端门控之上：read 工具行为完全不变；action 工具在 token
+  档放行（持有 token 即主人），wildcard/exact/alwaysAsk 档**逐次桌面确认**
+  （`mcp://tool-approval` 事件 + Allow/Deny，60s 超时 fail-closed；无头模式无人
+  确认恒拒绝——本设计「无头应配 token 档」的裁定延续适用）。
+- 客户端级首连审批（deny/once/trust）语义不变；工具级确认与客户端级审批是两个
+  独立维度，once 批准的客户端在非 token 档调用 action 工具仍会经历工具级确认
+  （连续两弹为既定行为）。
+
+设置页 McpServerCard 增加「暴露工具」勾选组（action 行附「触发写操作，仅 token 档
+免确认」警示）；`mcp-server-design` 的「只读边界」表述以本勘误为准。
