@@ -8,6 +8,7 @@ import { useI18n } from 'vue-i18n'
 import { createCloudBackend, isPlaintextHttpUrl } from './cloudPlatform'
 import type { CloudAutoPrefs, CloudPlatform } from './cloudPlatform'
 import { parseVaultJson } from './parseVaultJson'
+import { displaySourceName } from './sourceDisplayNames'
 import MdButton from './md/MdButton.vue'
 import MdCheckbox from './md/MdCheckbox.vue'
 import MdMenu from './md/MdMenu.vue'
@@ -68,9 +69,10 @@ const pendingReset = ref<string | null>(null)
 /** 待确认移除的源 id（行内两步确认，同 pendingReset 模式；挂起期间同步按钮禁用） */
 const pendingRemove = ref<string | null>(null)
 
-/** 确认行文案用的源名（按 id 解析；行内确认挂起期间该源仍在列表） */
+/** 确认行文案用的源名（按 id 解析；行内确认挂起期间该源仍在列表）；迁移默认名按当前语言回落 */
 function sourceName(id: string): string {
-  return sources.value.find((x) => x.id === id)?.name ?? ''
+  const s = sources.value.find((x) => x.id === id)
+  return s !== undefined ? displaySourceName(s.name, t) : ''
 }
 
 /** 自动触发偏好（卡内编辑副本，挂载时读初值；每次变更整体回写） */
@@ -548,8 +550,8 @@ const hasDuplicateNames = computed(() => {
     <h2>{{ t('cloudCard.title') }}</h2>
     <div v-for="(s, i) in sources" :key="s.id" class="target">
       <div class="target-head">
-        <MdSwitch v-model="s.enabled" :aria-label="t('cloudCard.ariaEnabled', { name: s.name })" />
-        <strong>{{ s.name }}</strong>
+        <MdSwitch v-model="s.enabled" :aria-label="t('cloudCard.ariaEnabled', { name: displaySourceName(s.name, t) })" />
+        <strong>{{ displaySourceName(s.name, t) }}</strong>
         <MdButton variant="text" class="target-toggle" @click="expanded = expanded === i ? -1 : i">{{ expanded === i ? t('cloudCard.collapse') : t('cloudCard.configure') }}</MdButton>
         <MdButton variant="text" danger class="target-remove" :disabled="busy || pendingAdopt !== null" @click="askRemove(s.id)">{{ t('cloudCard.remove') }}</MdButton>
       </div>

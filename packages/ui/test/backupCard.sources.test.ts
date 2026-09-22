@@ -52,6 +52,20 @@ describe('BackupCard 本地源列表（plan16 T9）', () => {
     expect(w.text()).toContain('D:\\bk')
   })
 
+  it('L1c 迁移默认名显示回落：en 下「本地备份」显示 Local backup，自定义名不回落（i18n 修复）', async () => {
+    const p = makePlatform({
+      listLocalSources: vi.fn(async () => [
+        src({ id: 's1', name: '本地备份', dir: null }),
+        src({ id: 's2', name: 'my dir', dir: 'D:\\bk' }),
+      ]),
+      saveLocalSource: vi.fn(async () => {}),
+      removeLocalSource: vi.fn(async () => {}),
+    })
+    const w = mount(BackupCard, { global: { plugins: [createTestI18n('en')] }, props: { platform: p, vaultJson: '{}', sessionSecret: 'pw' } })
+    await flushPromises()
+    expect(w.findAll('.source-name').map((n) => n.text())).toEqual(['Local backup', 'my dir'])
+  })
+
   it('L1b 能力缺省：未提供 listLocalSources → 源区不渲染；提供但未提供 pickBackupDir → 无「添加目录」按钮', async () => {
     const w = await mountCard(makePlatform())
     expect(w.find('.sources-block').exists()).toBe(false)

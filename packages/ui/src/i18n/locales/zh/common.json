@@ -220,6 +220,7 @@
     "exported": "已导出",
     "exportedWithDropped": "已导出（{count} 个多余标签未导出：Aegis 条目仅支持单分组）",
     "localBackup": "本地备份",
+    "localDir": "本地目录",
     "passphraseMismatch": "口令不匹配，请重试",
     "passphraseRequired": "请输入口令",
     "restoreOk": "恢复成功"

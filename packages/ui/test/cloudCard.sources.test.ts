@@ -106,6 +106,18 @@ describe('CloudCard（源列表 plan16 T8）', () => {
     expect((w.find('input[placeholder="服务器地址（https://dav.example.com）"]').element as HTMLInputElement).value).toBe('')
   })
 
+  it('S1c 迁移默认名显示回落：en 下「本地目录」显示 Local directory，自定义名不回落（i18n 修复）', async () => {
+    const p = makePlatform({
+      loadSources: vi.fn().mockResolvedValue([
+        src({ id: 'a1', kind: 'local', name: '本地目录' }),
+        src({ id: 'a2', kind: 'local', name: 'D:\\bk' }),
+      ]),
+    })
+    const w = mount(CloudCard, { global: { plugins: [createTestI18n('en')] }, props: { platform: p, sessionSecret: 'pw' } })
+    await flushPromises()
+    expect(w.findAll('.target-head strong').map((n) => n.text())).toEqual(['Local directory', 'D:\\bk'])
+  })
+
   it('S1b 同名提示按 (kind, name) 归类查重：同 kind 同名才提示；同 kind 异名/不同 kind 同名均不提示', async () => {
     const hasHint = (t: string) => t.includes('同名源请用「名称」区分')
     const w1 = await mountCard(makePlatform({

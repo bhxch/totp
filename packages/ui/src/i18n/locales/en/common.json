@@ -220,6 +220,7 @@
     "exported": "Exported",
     "exportedWithDropped": "Exported ({count} extra tags not exported: Aegis entries support a single group only)",
     "localBackup": "Local backup",
+    "localDir": "Local directory",
     "passphraseMismatch": "Passphrase does not match, please retry",
     "passphraseRequired": "Please enter the passphrase",
     "restoreOk": "Restore succeeded"

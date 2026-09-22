@@ -5,6 +5,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { BackupAutoPrefs, BackupPlatform, LocalSourceView } from './backupPlatform'
 import { parseVaultJson } from './parseVaultJson'
+import { displaySourceName } from './sourceDisplayNames'
 import MdButton from './md/MdButton.vue'
 import MdCheckbox from './md/MdCheckbox.vue'
 import MdSegmentedButton from './md/MdSegmentedButton.vue'
@@ -307,9 +308,10 @@ async function onConfirmRemove(): Promise<void> {
   pendingRemove.value = null
 }
 
-/** 确认行文案用的源名（按 id 解析；挂起期间该源仍在列表） */
+/** 确认行文案用的源名（按 id 解析；挂起期间该源仍在列表）；迁移默认名按当前语言回落 */
 function sourceName(id: string): string {
-  return sources.value.find((x) => x.id === id)?.name ?? ''
+  const s = sources.value.find((x) => x.id === id)
+  return s !== undefined ? displaySourceName(s.name, t) : ''
 }
 
 onMounted(() => {
@@ -453,8 +455,8 @@ function onBackupProfileChange(v: string | number): void {
       <p v-if="sources.length === 0" class="hint">{{ t('backupCard.noSourcesHint') }}</p>
       <div v-for="s in sources" :key="s.id" class="source">
         <div class="source-head">
-          <MdSwitch :model-value="s.enabled" :aria-label="t('backupCard.ariaEnabled', { name: s.name })" @update:model-value="onEnabled(s, $event)" />
-          <strong class="source-name">{{ s.name }}</strong>
+          <MdSwitch :model-value="s.enabled" :aria-label="t('backupCard.ariaEnabled', { name: displaySourceName(s.name, t) })" @update:model-value="onEnabled(s, $event)" />
+          <strong class="source-name">{{ displaySourceName(s.name, t) }}</strong>
           <span class="source-dir">{{ s.dir ?? t('backupCard.defaultDir') }}</span>
           <MdButton variant="text" class="source-toggle" @click="expanded = expanded === s.id ? null : s.id">{{ expanded === s.id ? t('backupCard.collapse') : t('backupCard.configure') }}</MdButton>
           <MdButton variant="text" danger class="source-remove" :disabled="busy" @click="askRemove(s.id)">{{ t('backupCard.remove') }}</MdButton>
