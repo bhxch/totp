@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { connectionSnippet, MCP_MODE_OPTIONS, serverStatus, type McpConfigDto } from '../src/components/mcpCard'
+import { connectionSnippet, MCP_MODE_OPTIONS, randomDynamicPort, serverStatus, type McpConfigDto } from '../src/components/mcpCard'
 
 describe('connectionSnippet', () => {
   it('输出含本机 127.0.0.1 地址与端口（客户端粘贴用）', () => {
@@ -56,5 +56,26 @@ describe('serverStatus', () => {
       serverStatus({ enabled: false }, false, null),
     ].map((s) => s.key)
     for (const k of keys) expect(k.startsWith('mcpServer.')).toBe(true)
+  })
+})
+
+describe('randomDynamicPort', () => {
+  it('rng 恒 0：落在动态段下端点 49152（IANA 动态段下界）', () => {
+    expect(randomDynamicPort(() => 0)).toBe(49152)
+  })
+  it('rng 恒 1 / 0.999…：钳制在动态段上端点 65535，不越界', () => {
+    expect(randomDynamicPort(() => 1)).toBe(65535)
+    expect(randomDynamicPort(() => 0.99999999999999)).toBe(65535)
+  })
+  it('rng 0.5 落段中点附近（映射线性可达全段）', () => {
+    expect(randomDynamicPort(() => 0.5)).toBe(49152 + 8192)
+  })
+  it('默认 Math.random 多次采样均为 [49152, 65535] 内的整数', () => {
+    for (let i = 0; i < 500; i++) {
+      const p = randomDynamicPort()
+      expect(Number.isInteger(p)).toBe(true)
+      expect(p).toBeGreaterThanOrEqual(49152)
+      expect(p).toBeLessThanOrEqual(65535)
+    }
   })
 })

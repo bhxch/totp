@@ -220,19 +220,51 @@ fn devtools_set_config<R: Runtime>(
         return Err(format!("端口 {port} 不在允许范围 1024-65535"));
     }
     let path = settings_path(&app).ok_or("无法定位 settings.json".to_string())?;
+    // 审查 M6：CDP 与 MCP 同绑 127.0.0.1，端口相同时后启动者 bind 失败且 CDP 侧完全无提示，
+    // 保存时前置拒绝（Err 经 invoke 回传设置页展示）；MCP 未启用不拦截
+    let mcp = mcp_server::load_mcp_config_inner(&path);
+    ensure_devtools_port_free(&mcp, port)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     // 合并既有键：同 write_shortcut_to_settings——读全文解析后只改 devtools 键，不丢外来键
-    let mut root: serde_json::Value = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-    root["devtools"] = serde_json::json!({ "enabled": enabled, "port": port });
-    write_text_atomic(
-        &path,
-        &serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?,
-    )
+    let text = merge_devtools_config_text(
+        std::fs::read_to_string(&path).ok().as_deref(),
+        enabled,
+        port,
+    )?;
+    write_text_atomic(&path, &text)
+}
+
+/// 审查 M6：devtools 端口与 MCP 端口冲突判定（纯函数便于单测）。两者同绑 127.0.0.1，
+/// MCP 已启用且端口相同即拒绝（先启动者占位、后启动者静默失败）；MCP 关闭时同端口
+/// 不冲突（未监听），不拦截
+fn ensure_devtools_port_free(mcp: &mcp_server::McpConfig, port: u16) -> Result<(), String> {
+    if mcp.enabled && mcp.port == port {
+        return Err(format!(
+            "端口 {port} 已被 MCP 服务器占用（两者同绑 127.0.0.1），请为 WebView 调试另选端口"
+        ));
+    }
+    Ok(())
+}
+
+/// 审查 M3：读取既有 settings.json 文本合并 devtools 键，返回落盘文本。根为合法 JSON 但
+/// 非对象（[] / "x" 等）时不得走 serde_json IndexMut（root["devtools"]=… 对非对象根 panic），
+/// 与 write_shortcut_to_settings 同口径 as_object().cloned() 回落空对象重建，不丢外来键
+fn merge_devtools_config_text(
+    existing: Option<&str>,
+    enabled: bool,
+    port: u16,
+) -> Result<String, String> {
+    let mut obj: serde_json::Map<String, serde_json::Value> = existing
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(t).ok())
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+    obj.insert(
+        "devtools".into(),
+        serde_json::json!({ "enabled": enabled, "port": port }),
+    );
+    serde_json::to_string_pretty(&serde_json::Value::Object(obj)).map_err(|e| e.to_string())
 }
 
 /** 取消注册当前所有快捷键，按新 spec 重新注册并持久化到 settings.json */
@@ -1094,18 +1126,23 @@ fn os_auto_unprotect(
 }
 
 pub fn run() {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    // 审查 I-1：接管父控制台必须先于 parse_args——否则参数错误的 eprintln 写在未连接的
+    // 句柄上（windows_subsystem=windows 下 stderr 缺省无效），终端启动只见静默 exit(2)。
+    // 仅带参启动时附加：双击启动（无参）不触碰控制台，正常 GUI 路径行为不变；附加失败
+    // （无宿主控制台等）AttachConsole 返回值被忽略，静默无害（见 attach_parent_console 注释）
+    #[cfg(windows)]
+    if !args.is_empty() {
+        attach_parent_console();
+    }
     // 验收条目13：CLI 参数最先解析，失败 stderr + exit(2)（GUI 子系统下仅终端启动可见错误）
-    let cli = match cli::parse_args(&std::env::args().skip(1).collect::<Vec<_>>()) {
+    let cli = match cli::parse_args(&args) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("参数错误: {e}");
             std::process::exit(2);
         }
     };
-    #[cfg(windows)]
-    if cli.headless_mcp {
-        attach_parent_console(); // windows_subsystem=windows 下尽力接管父控制台，使 println 可见
-    }
     // 验收条目4：devtools 远程调试端口环境注入必须先于任何 WebView 创建（run 最早期）
     apply_devtools_env();
     // CLI 覆盖仅本次运行生效：内存传递给 setup，绝不落盘 settings.json；
@@ -1396,10 +1433,7 @@ mod tests {
         assert_eq!(g.resolve(&token).unwrap(), canonical);
         assert_eq!(g.token_for(&canonical).as_deref(), Some(token.as_str()));
         // 未登记目录无 token 可反查
-        assert_eq!(
-            g.token_for(&canonical.parent().unwrap().to_path_buf()),
-            None
-        );
+        assert_eq!(g.token_for(canonical.parent().unwrap()), None);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1776,5 +1810,52 @@ mod tests {
             read_devtools_from_settings_text(r#"{"devtools":"on"}"#),
             (false, 9222)
         );
+    }
+
+    // 审查 M3：settings.json 根为合法 JSON 但非对象（[] / "x" / 标量）时 set 不得 panic，
+    // devtools 键落到新对象（as_object 回落重建口径；旧实现 IndexMut 直写非对象根会 panic）
+    #[test]
+    fn devtools_merge_non_object_root_does_not_panic() {
+        for root in [r#"["legacy"]"#, r#""x""#, "42", "true", "null"] {
+            let text = merge_devtools_config_text(Some(root), true, 9333)
+                .unwrap_or_else(|e| panic!("根 {root} 合并不应失败: {e}"));
+            let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(v["devtools"]["enabled"], serde_json::json!(true));
+            assert_eq!(v["devtools"]["port"], serde_json::json!(9333));
+        }
+        // 无既有文件（None）：同口径落到新对象
+        let text = merge_devtools_config_text(None, false, 9222).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["devtools"]["port"], serde_json::json!(9222));
+    }
+
+    // 合并不丢外来键（write_shortcut_to_settings 同承诺）：shortcutToggleMini / mcp 原样保留
+    #[test]
+    fn devtools_merge_preserves_foreign_keys() {
+        let existing = r#"{"shortcutToggleMini":"alt+shift+t","mcp":{"enabled":true}}"#;
+        let text = merge_devtools_config_text(Some(existing), true, 9333).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["shortcutToggleMini"], "alt+shift+t");
+        assert_eq!(v["mcp"]["enabled"], serde_json::json!(true));
+        assert_eq!(v["devtools"]["port"], serde_json::json!(9333));
+    }
+
+    // 审查 M6：devtools 端口与已启用 MCP 端口相同被拒（同绑 127.0.0.1 后启动者静默失败）；
+    // 端口不同、或 MCP 未启用（未监听不冲突）时允许
+    #[test]
+    fn devtools_port_conflict_with_enabled_mcp() {
+        let mcp_on = mcp_server::McpConfig {
+            enabled: true,
+            port: 9222,
+            ..Default::default()
+        };
+        assert!(ensure_devtools_port_free(&mcp_on, 9222).is_err());
+        assert!(ensure_devtools_port_free(&mcp_on, 9223).is_ok());
+        let mcp_off = mcp_server::McpConfig {
+            enabled: false,
+            port: 9222,
+            ..Default::default()
+        };
+        assert!(ensure_devtools_port_free(&mcp_off, 9222).is_ok());
     }
 }

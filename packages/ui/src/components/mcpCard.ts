@@ -59,3 +59,14 @@ export function serverStatus(cfg: Pick<McpConfigDto, 'enabled'>, running: boolea
 export function connectionSnippet(cfg: Pick<McpConfigDto, 'port'>): string {
   return JSON.stringify({ mcpServers: { totp: { url: `http://127.0.0.1:${cfg.port}/mcp`, headers: { Authorization: 'Bearer <MCP token>' } } } }, null, 2)
 }
+
+/** IANA 动态端口段边界（49152-65535）：随机端口一键的取值范围 */
+export const DYNAMIC_PORT_MIN = 49152
+export const DYNAMIC_PORT_MAX = 65535
+
+/** 验收条目1：随机取 IANA 动态端口段内一个端口（rng 可注入便于测试，默认 Math.random）。
+ * rng 恰为 1（注入边界）时 floor 会落到段外右端点，钳制回上端点保证值域恒 [MIN, MAX] */
+export function randomDynamicPort(rng: () => number = Math.random): number {
+  const span = DYNAMIC_PORT_MAX - DYNAMIC_PORT_MIN + 1
+  return DYNAMIC_PORT_MIN + Math.min(Math.floor(rng() * span), span - 1)
+}

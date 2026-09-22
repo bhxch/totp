@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { McpConfigWithStatusDto, McpPlatform } from './mcpCard'
-import { connectionSnippet, MCP_MODE_OPTIONS, serverStatus } from './mcpCard'
+import { connectionSnippet, MCP_MODE_OPTIONS, randomDynamicPort, serverStatus } from './mcpCard'
 import MdButton from './md/MdButton.vue'
 import MdIconButton from './md/MdIconButton.vue'
 import MdSelect from './md/MdSelect.vue'
@@ -118,9 +118,9 @@ function onPortCommit(): void {
   void persist({ ...cur, port: n }, cur)
 }
 
-/** 验收条目1：随机到 IANA 动态端口段 49152-65535，走 onPortCommit 同路径校验+持久化 */
+/** 验收条目1：随机到 IANA 动态端口段 49152-65535（纯函数 randomDynamicPort），走 onPortCommit 同路径校验+持久化 */
 function onRandomPort(): void {
-  portText.value = String(49152 + Math.floor(Math.random() * (65535 - 49152 + 1)))
+  portText.value = String(randomDynamicPort())
   void onPortCommit()
 }
 
@@ -221,7 +221,7 @@ onBeforeUnmount(() => {
           :model-value="portText" :error="portError" :disabled="busy" min="1024" max="65535"
           @update:model-value="onPortInput" @change="onPortCommit"
         />
-        <MdIconButton class="random-port" :title="t('mcpServer.randomPort')" :aria-label="t('mcpServer.randomPort')" @click="onRandomPort">⟳</MdIconButton>
+        <MdIconButton class="random-port" :title="t('mcpServer.randomPort')" :aria-label="t('mcpServer.randomPort')" :disabled="busy" @click="onRandomPort">⟳</MdIconButton>
       </div>
       <div class="whitelist">
         <span class="opt-label">{{ t('mcpServer.whitelist') }}</span>

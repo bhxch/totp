@@ -98,6 +98,8 @@ const devtoolsEnabled = ref(false)
 const devtoolsPort = ref('9222')
 /** 最近一次成功提交（或后端返回）的配置：非法输入/写失败回显基准 */
 let devtoolsGood: { enabled: boolean; port: number } = { enabled: false, port: 9222 }
+/** 后端保存失败回显（审查 M6：端口与已启用 MCP 冲突被 Rust 拒绝等，须可见而非静默回滚） */
+const devtoolsError = ref('')
 
 onMounted(async () => {
   if (!props.devtoolsPlatform) return
@@ -124,7 +126,10 @@ async function commitDevtools(): Promise<void> {
   try {
     await platform.setConfig(devtoolsEnabled.value, n)
     devtoolsGood = { enabled: devtoolsEnabled.value, port: n }
-  } catch {
+    devtoolsError.value = ''
+  } catch (e) {
+    // Tauri invoke 以字符串 reject（Rust Err(String)），非 Error 实例
+    devtoolsError.value = `${t('settingsPage.devtoolsSaveFailed')}：${e instanceof Error ? e.message : String(e)}`
     devtoolsEnabled.value = devtoolsGood.enabled
     devtoolsPort.value = String(devtoolsGood.port)
   }
@@ -227,6 +232,7 @@ async function commitDevtools(): Promise<void> {
     <MdCard v-if="showDesktop && devtoolsPlatform" class="block">
       <div class="devtools-card">
         <h2>{{ t('settingsPage.devtoolsTitle') }}</h2>
+        <p v-if="devtoolsError" class="devtools-error" role="alert">{{ devtoolsError }}</p>
         <div class="row devtools-row">
           <p class="devtools-warn">{{ t('settingsPage.devtoolsWarn') }}</p>
           <MdSwitch
@@ -265,6 +271,7 @@ async function commitDevtools(): Promise<void> {
 /* 开发者卡（验收条目4）：标题排版同 McpServerCard；警示文案用 error 色（高危提示必须醒目） */
 .devtools-card { display: flex; flex-direction: column; gap: 8px; }
 .devtools-card h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
+.devtools-error { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); margin: 0; }
 .devtools-row { align-items: flex-start; }
 .devtools-warn { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); margin: 0; flex: 1; min-width: 0; }
 .devtools-port-row { align-items: center; }
