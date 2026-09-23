@@ -144,10 +144,26 @@ export function createDesktopAutoRunner(deps: AutoBackupDeps, opts?: { debounceM
     await deps.doCloudSync()
   }
 
+  // 通道级 single-flight（审查 Important 1 + M12 终审勘误）：bridge_call 5s 超时 + 慢备份 →
+  // 客户端收 "app busy" 重试 → 二次受理并发触发；且 MCP trigger_backup 与防抖调度的自动轮
+  // 是两条入口，若只串行化 runBackupNow 自身仍可并发执行同一备份通道。in-flight promise 链
+  // 收敛到通道级：调度轮与 trigger 轮排队依次执行不并发 doBackup——后轮在基线推进后照常执行，
+  // unchanged 自然跳过，不会冗余备份或双写基线（与 cloudRunner single-flight 同法）
+  let backupChain: Promise<void> = Promise.resolve()
+  function enqueueBackup(job: () => Promise<void>): Promise<void> {
+    const next = backupChain.then(job, job)
+    // 链不断：前轮失败（runBackup rethrow）不阻断后续轮次
+    backupChain = next.catch(() => {})
+    return next
+  }
+  function runBackupNow(): Promise<void> {
+    return enqueueBackup(() => runBackup('change', { skipPrefsGate: true }))
+  }
+
   const backup: AutoRunScheduler = createAutoRunScheduler({
     debounceMs,
     intervalMs: () => intervalMsOf(deps.backupPrefs()),
-    run: runBackup,
+    run: (reason) => enqueueBackup(() => runBackup(reason)),
     onError: (err) => report(err, 'backup'),
   })
   const cloud: AutoRunScheduler = createAutoRunScheduler({
@@ -157,17 +173,7 @@ export function createDesktopAutoRunner(deps: AutoBackupDeps, opts?: { debounceM
     onError: (err) => report(err, 'cloud'),
   })
 
-  // 实例级 single-flight（审查 Important 1）：bridge_call 5s 超时 + 慢备份 → 客户端收
-  // "app busy" 重试 → 二次受理并发触发；in-flight promise 链排队串行（与 cloudRunner
-  // 同法），并发轮次依次执行不并发 doBackup——后轮在基线推进后照常执行，unchanged
-  // 自然跳过，不会冗余备份或双写基线
-  let backupNowChain: Promise<void> = Promise.resolve()
-  function runBackupNow(): Promise<void> {
-    const next = backupNowChain.then(() => runBackup('change', { skipPrefsGate: true }))
-    // 链不断：前轮失败（runBackup rethrow）不阻断后续轮次
-    backupNowChain = next.catch(() => {})
-    return next
-  }
+  // 实例装配：备份通道 single-flight 见上方 enqueueBackup（调度轮与 trigger 轮共用一条链）
 
   return {
     notifyChanged() {

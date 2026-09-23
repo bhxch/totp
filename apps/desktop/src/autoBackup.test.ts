@@ -283,6 +283,35 @@ describe('createDesktopAutoRunner.runBackupNow（spec §6.1 trigger_backup 执�
     expect(doBackup).toHaveBeenCalledTimes(2)
     expect(setLastBackupHash).toHaveBeenCalledWith(HASH1)
   })
+
+  it('调度轮与 trigger 轮共用通道级链（审查 M12）：慢备份在跑时自动调度触发排队，不并发 doBackup', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    const events: string[] = []
+    const doBackup = vi.fn(async () => {
+      events.push('start')
+      await gate
+      events.push('end')
+      return { ...OK_RESULT }
+    })
+    const { deps } = makeDeps({ doBackup, backupPrefs: () => ({ onChange: true, onInterval: false, intervalMinutes: 15 }) })
+    const runner = createDesktopAutoRunner(deps)
+    runner.start()
+    const p1 = runner.runBackupNow() // trigger 轮先入链并占用
+    await vi.advanceTimersByTimeAsync(0)
+    expect(doBackup).toHaveBeenCalledTimes(1)
+    runner.notifyChanged() // 自动调度轮：防抖到期后经同一 enqueueBackup 排队
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(doBackup).toHaveBeenCalledTimes(1) // 仍在排队，未并发
+    expect(events).toEqual(['start'])
+    release()
+    await p1
+    await vi.advanceTimersByTimeAsync(0)
+    expect(doBackup).toHaveBeenCalledTimes(2)
+    expect(events).toEqual(['start', 'end', 'start', 'end']) // 严格串行：前轮 end 后轮才 start
+  })
 })
 
 describe('formatAutoStatusText（宿主状态行格式化，App.vue readAutoStatusText 委托）', () => {
