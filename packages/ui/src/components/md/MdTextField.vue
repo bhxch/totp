@@ -7,7 +7,7 @@ import { computed, useAttrs } from 'vue'
 // inheritAttrs:false + $attrs 透传内部 input：autocomplete/min/max/disabled/onKeydown/data-* 等直达原生 input；
 // class/style 例外——关闭自动继承后 Vue 不再落根，须显式绑回根元素（消费方布局 class 依赖根元素）
 defineOptions({ inheritAttrs: false })
-withDefaults(defineProps<{ modelValue: string; label: string; type?: string; error?: string; placeholder?: string; ariaLabel?: string }>(), { type: 'text', error: '', placeholder: '' })
+withDefaults(defineProps<{ modelValue: string; label: string; type?: string; error?: string; placeholder?: string; ariaLabel?: string; multiline?: boolean; rows?: number }>(), { type: 'text', error: '', placeholder: '', multiline: false, rows: 3 })
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 const errorId = `md-text-field-error-${++errorIdCounter}`
 const attrs = useAttrs()
@@ -27,10 +27,13 @@ const inputAttrs = computed(() => {
 <template>
   <div class="md-text-field" :class="[attrs.class, { 'md-text-field--error': !!error, 'md-text-field--disabled': isDisabled }]" :style="attrs.style">
     <label class="md-text-field__box">
-      <span class="md-text-field__label" :class="{ 'md-text-field__label--floated': !!modelValue || !!placeholder }">{{ label }}</span>
-      <input v-bind="inputAttrs" class="md-text-field__input" :type="type" :value="modelValue" :placeholder="placeholder"
+      <span class="md-text-field__label" :class="{ 'md-text-field__label--floated': multiline || !!modelValue || !!placeholder }">{{ label }}</span>
+      <input v-if="!multiline" v-bind="inputAttrs" class="md-text-field__input" :type="type" :value="modelValue" :placeholder="placeholder"
         :aria-label="ariaLabel" :aria-invalid="error ? 'true' : undefined" :aria-describedby="error ? errorId : undefined"
         @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)" />
+      <textarea v-else v-bind="inputAttrs" class="md-text-field__input md-text-field__textarea" :rows="rows" :value="modelValue" :placeholder="placeholder"
+        :aria-label="ariaLabel" :aria-invalid="error ? 'true' : undefined" :aria-describedby="error ? errorId : undefined"
+        @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)" />
     </label>
     <p v-if="error" :id="errorId" class="md-text-field__error">{{ error }}</p>
   </div>
@@ -55,4 +58,5 @@ const inputAttrs = computed(() => {
   padding: 22px 16px 6px; font: inherit; font-size: var(--md-sys-typescale-body-large); color: var(--md-sys-color-on-surface); }
 .md-text-field__input::placeholder { color: var(--md-sys-color-on-surface-variant); }
 .md-text-field__error { margin: 0; padding: 0 16px; font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-error); }
+.md-text-field__textarea { resize: vertical; min-height: 72px; line-height: 1.5; }
 </style>
