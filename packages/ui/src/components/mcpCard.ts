@@ -76,9 +76,12 @@ export function serverStatus(cfg: Pick<McpConfigDto, 'enabled'>, running: boolea
   return { key: 'mcpServer.statusStopped', tone: 'muted' }
 }
 
-/** 客户端连接片段：给 AI 客户端配置文件粘贴用（token 不内嵌——卡片上另行复制，永不落入片段） */
-export function connectionSnippet(cfg: Pick<McpConfigDto, 'port'>): string {
-  return JSON.stringify({ mcpServers: { totp: { url: `http://127.0.0.1:${cfg.port}/mcp`, headers: { Authorization: 'Bearer <MCP token>' } } } }, null, 2)
+/** 客户端连接片段（2026-09-23 用户决策反转旧策略）：token 非空时直接嵌入——复制片段即可用，
+ *  token 本就同卡片可见可复制，泄露面不变；token 为空（未启用未生成）时输出占位符引导，
+ *  与卡片空值提示（tokenEmptyHint）配合。 */
+export function connectionSnippet(cfg: Pick<McpConfigDto, 'port' | 'token'>): string {
+  const auth = `Bearer ${cfg.token || '<MCP token>'}`
+  return JSON.stringify({ mcpServers: { totp: { url: `http://127.0.0.1:${cfg.port}/mcp`, headers: { Authorization: auth } } } }, null, 2)
 }
 
 /** IANA 动态端口段边界（49152-65535）：随机端口一键的取值范围 */

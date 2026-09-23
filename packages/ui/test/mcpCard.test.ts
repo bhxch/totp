@@ -14,23 +14,24 @@ import {
 import { createTestI18n } from './helpers/i18n'
 
 describe('connectionSnippet', () => {
-  it('输出含本机 127.0.0.1 地址与端口（客户端粘贴用）', () => {
-    const s = connectionSnippet({ port: 47215 })
-    expect(s).toContain('http://127.0.0.1:47215/mcp')
-    expect(s).toContain('Bearer <MCP token>')
-  })
-  it('永不内嵌真实 token（安全断言：连接片段不含 token 字段与值）', () => {
+  it('token 非空：嵌入真实 token，复制片段即可直接使用（2026-09-23 用户决策：片段嵌真 token）', () => {
     const cfg: McpConfigDto = { enabled: true, mode: 'token', port: 47215, token: 'super-secret-token', whitelist: ['Claude*'], exposedTools: ['list_accounts'] }
     const s = connectionSnippet(cfg)
-    expect(s).not.toContain('super-secret-token')
-    expect(s).not.toContain('"token"')
+    expect(s).toContain('Bearer super-secret-token')
+    expect(s).not.toContain('<MCP token>')
   })
-  it('输出为合法 JSON：mcpServers.totp.url 指向 /mcp 且带 Bearer 头', () => {
-    const parsed = JSON.parse(connectionSnippet({ port: 47215 })) as {
+  it('token 为空（未启用/未生成）：输出占位符引导，不输出空 Bearer', () => {
+    const s = connectionSnippet({ port: 47215, token: '' })
+    expect(s).toContain('Bearer <MCP token>')
+    expect(s).not.toContain('Bearer "')
+    expect(s).not.toContain('Bearer "}"')
+  })
+  it('输出为合法 JSON：mcpServers.totp.url 指向 /mcp 且带 Authorization 头', () => {
+    const parsed = JSON.parse(connectionSnippet({ port: 47215, token: 'tok' })) as {
       mcpServers: { totp: { url: string; headers: Record<string, string> } }
     }
     expect(parsed.mcpServers.totp.url).toBe('http://127.0.0.1:47215/mcp')
-    expect(parsed.mcpServers.totp.headers.Authorization).toBe('Bearer <MCP token>')
+    expect(parsed.mcpServers.totp.headers.Authorization).toBe('Bearer tok')
   })
 })
 
