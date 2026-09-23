@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   clearSyncProgress, pendingMergeConfirm, requestMergeConfirm, setSyncProgress, settleMergeConfirm, syncProgressState,
 } from '../src/components/cloudSyncBridge'
@@ -36,6 +36,35 @@ describe('cloudSyncBridge 合并确认（pending resolver 模式）', () => {
 
   it('无挂起时 settle 幂等不抛', () => {
     expect(() => settleMergeConfirm(false)).not.toThrow()
+  })
+
+  it('60s 无裁定按取消自动结清（fail-closed）：runner 侧收 false、挂起清空，链不自悬挂死', async () => {
+    vi.useFakeTimers()
+    try {
+      let settled: boolean | undefined
+      const p = requestMergeConfirm(PREVIEW)
+      void p.then((v) => { settled = v })
+      await vi.advanceTimersByTimeAsync(59_999)
+      expect(settled).toBeUndefined()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(settled).toBe(false)
+      expect(pendingMergeConfirm().value).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('settle 正常结清即取消超时 timer：越过阈值不误伤后续状态', async () => {
+    vi.useFakeTimers()
+    try {
+      const p = requestMergeConfirm(PREVIEW)
+      settleMergeConfirm(true)
+      await expect(p).resolves.toBe(true)
+      await vi.advanceTimersByTimeAsync(120_000)
+      expect(pendingMergeConfirm().value).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
