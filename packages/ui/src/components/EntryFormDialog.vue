@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { applyImport, dedupeWithinFile, getBuiltinIcons, type BuiltinIcon, type OtpEntry, type Tag } from '@totp/core'
+import { applyImport, dedupeWithinFile, getBuiltinIcons, planImport, type BuiltinIcon, type OtpEntry, type Tag } from '@totp/core'
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toParsedEntry } from '../clipboardImport'
@@ -28,13 +28,22 @@ const props = defineProps<{
   store: VueStore
 }>()
 
-/** 剪贴板多条批量入库（spec 批⑧ §6）：批内先去重（同 URI 粘两遍不双写），全部按新增落库
- *  （applyImport 'skip' 策略 + 空冲突集）；与粘贴 Tab 不同点：无预览确认，直接入库并上抛条数 */
+/** 剪贴板多条批量入库（spec 批⑧ §6）：批内先去重（同 URI 粘两遍不双写），再过库级去重
+ *  （planImport 判 identical=与库内条目全字段相同 → 剔除，防重复粘贴同一段文本全量翻倍），
+ *  剩余条目（new/suspect/conflict）全部按新增落库（applyImport 'skip' 策略 + 空冲突集，既有语义）；
+ *  与粘贴 Tab 不同点：无预览确认，直接入库并上抛实际落库条数（全 identical 返回 0，宿主照常提示） */
 async function importBatchEntries(entries: OtpEntry[]): Promise<number> {
   const parsed = entries.map(toParsedEntry)
   const { kept } = dedupeWithinFile(parsed)
-  await props.store.commit((v) => applyImport(v, kept, 'skip', new Set<number>()))
-  return kept.length
+  let added = 0
+  await props.store.commit((v) => {
+    // planImport 返回 { kinds, ... }，kinds 下标与 kept 对齐（BatchPastePanel 同款用法）
+    const plan = planImport(v, kept)
+    const toAdd = kept.filter((_, i) => plan.kinds[i] !== 'identical')
+    added = toAdd.length
+    return applyImport(v, toAdd, 'skip', new Set<number>())
+  })
+  return added
 }
 
 // save 只透传表单数据并由父组件关弹；新建默认值分支（algorithm/digits/period/counter/order/createdAt）留在父组件 onSave。

@@ -2,6 +2,13 @@ import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createMemoryStorage, getBuiltinIcons, type OtpEntry } from '@totp/core'
 import { createVueStore } from '../src/store'
+// 只覆盖剪贴板读取（真实按钮路径触发 importBatch），其余导出（toParsedEntry 等）保留原实现
+vi.mock('../src/clipboardImport', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/clipboardImport')>()),
+  readClipboardSnapshot: vi.fn(),
+}))
+import { readClipboardSnapshot } from '../src/clipboardImport'
+import { parseUriToEntryData } from '../src/otpauthFlow'
 import EntryFormDialog from '../src/components/EntryFormDialog.vue'
 import { createTestI18n } from './helpers/i18n'
 
@@ -13,6 +20,7 @@ const entry: OtpEntry = {
 const icons = { builtin: getBuiltinIcons(), stored: {} }
 
 const URI_A = 'otpauth://totp/GitHub:alice?secret=JBSWY3DPEHPK3PXP&issuer=GitHub'
+const URI_B = 'otpauth://totp/GitLab:bob?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=GitLab'
 
 /** 智能粘贴 Tab 数据源：内存 storage mock（BatchPastePanel.test 同口径），须 initStore 后 vault 可写 */
 async function mkStore() {
@@ -123,6 +131,39 @@ describe('EntryFormDialog', () => {
     await w.find('[data-test="paste-commit"]').trigger('click')
     // added 在 commit 落盘 await 完成后才发出（BatchPastePanel.test 同口径）
     await vi.waitFor(() => expect(w.emitted('batch-added')?.[0]).toEqual([1]))
+    expect(store.vault.entries).toHaveLength(1)
+  })
+
+  /** 剪贴板批量入库（importBatchEntries）：mock 剪贴板快照走 EntryForm「从剪贴板导入」真实路径 */
+  async function mountWithClipboard(store: ReturnType<typeof createVueStore>, text: string) {
+    vi.mocked(readClipboardSnapshot).mockResolvedValue({ image: null, text })
+    const w = mount(EntryFormDialog, { global: { plugins: [createTestI18n()] }, props: { open: true, editing: null, tags: [], icons, store } })
+    await w.find('[data-test="clipboard-pick"]').trigger('click')
+    return w
+  }
+
+  it('批量入库库级去重：库内已有同条目剔除 identical 不双写，返回剩余实际落库数', async () => {
+    const store = await mkStore()
+    // 库内预置与 URI_A 解析产物全字段相同的条目（identical 判定键含 label，故按解析结果构造）
+    const r = parseUriToEntryData(URI_A)
+    if ('error' in r) throw new Error(r.error)
+    await store.addEntryOp({ ...entry, ...r.data, uuid: 'exist', order: 0, createdAt: 0 })
+    // 重复粘贴同一段：URI_A（库内已有）+ URI_B（新条目）
+    const w = await mountWithClipboard(store, `${URI_A}\n${URI_B}`)
+    // 仅 URI_B 落库：count=1（修复前空冲突集全量新增，虚报 2）
+    await vi.waitFor(() => expect(w.emitted('batch-added')?.[0]).toEqual([1]))
+    expect(store.vault.entries).toHaveLength(2)
+    expect(store.vault.entries.filter((e) => e.secret === 'JBSWY3DPEHPK3PXP')).toHaveLength(1)
+  })
+
+  it('批量入库全 identical：不落库返回 0 仍 emit，vault 不翻倍', async () => {
+    const store = await mkStore()
+    const r = parseUriToEntryData(URI_A)
+    if ('error' in r) throw new Error(r.error)
+    await store.addEntryOp({ ...entry, ...r.data, uuid: 'exist', order: 0, createdAt: 0 })
+    // 同一条粘两遍：批内去重后剩 1 条且 identical → 实际落库 0
+    const w = await mountWithClipboard(store, `${URI_A}\n${URI_A}`)
+    await vi.waitFor(() => expect(w.emitted('batch-added')?.[0]).toEqual([0]))
     expect(store.vault.entries).toHaveLength(1)
   })
 })

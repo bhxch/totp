@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { OtpListItem, createAppI18n, createClipboardClearer, createIconStore, createVueStore, iconView, useOtpCodes, useTheme, type IconStore, type VueStore } from '@totp/ui'
-import { computed, getCurrentInstance, onMounted, ref, shallowRef } from 'vue'
+import { computed, getCurrentInstance, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createTauriFs } from './tauriFs'
 import { createCopyAutoHide } from './miniAutoHide'
 
@@ -52,8 +53,16 @@ async function load() {
   }
 }
 
+// 释放策略联动（spec 批⑧ §7.4）：force-lock=暂停/销毁锁库。只注册一次，回调动态解引用
+// store（mini 聚焦即重建 store 实例）；不监听 stash-dek-request（mini 只读无回注路径，backlog）
+let unlistenForceLock: (() => void) | null = null
+
 onMounted(async () => {
   await load()
+  // store 就绪后再挂监听（App.vue 同款，App.vue L742）；容错注册，失败仅该联动降级
+  unlistenForceLock = await listen('force-lock', () => {
+    store.value?.lock()
+  }).catch(() => null)
   // mini 常驻隐藏，重新显示时从盘重载（initStore 幂等不刷新内存，故重建 store）。
   // 修复真实 bug：@tauri-apps/api v2 Window 无 onVisibleChanged（仅 focus/resized/scale 等 7 个
   // 事件），原调用运行时 TypeError，「重显重载」从未生效——改用 onFocusChanged 近似（payload=是否
@@ -61,6 +70,10 @@ onMounted(async () => {
   await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
     if (focused) void load()
   })
+})
+
+onScopeDispose(() => {
+  unlistenForceLock?.()
 })
 
 const sorted = computed(() => (store.value ? [...store.value.vault.entries].sort((a, b) => a.order - b.order) : []))

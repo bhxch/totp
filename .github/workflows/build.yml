@@ -145,7 +145,7 @@ jobs:
             const m = JSON.parse(fs.readFileSync('.output/${{ matrix.browser }}-mv3/manifest.json', 'utf8'));
             if (m.manifest_version !== 3) throw new Error('manifest_version != 3: ' + m.manifest_version);
             const bg = m.background || {};
-            const bgOk = (bg.service_worker && fs.existsSync('.output/${{ matrix.browser }}-mv3/' + bg.service_worker)) || (bg.scripts || []).every((s) => fs.existsSync('.output/${{ matrix.browser }}-mv3/' + s));
+            const bgOk = (bg.service_worker && fs.existsSync('.output/${{ matrix.browser }}-mv3/' + bg.service_worker)) || (Array.isArray(bg.scripts) && bg.scripts.length > 0 && bg.scripts.every((s) => fs.existsSync('.output/${{ matrix.browser }}-mv3/' + s)));
             if (!bgOk) throw new Error('background entry missing: ' + JSON.stringify(bg));
             if ('${{ matrix.browser }}' === 'firefox') {
               if (m.permissions.includes('offscreen')) throw new Error('firefox must not declare offscreen');
