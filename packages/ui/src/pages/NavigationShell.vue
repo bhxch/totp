@@ -9,6 +9,7 @@ import type { CloudPlatform } from '../components/cloudPlatform'
 import type { DevtoolsPlatform } from '../components/devtoolsPlatform'
 import type { ImportSchemesApi } from '../components/importPlatform'
 import type { McpPlatform } from '../components/mcpCard'
+import type { ReleasePlatform } from '../components/releasePlatform'
 import type { SecurityPlatform } from '../components/securityPlatform'
 import type { SyncPlatform } from '../components/syncPlatform'
 import type { IconStore } from '../iconStore'
@@ -43,7 +44,9 @@ const props = withDefaults(defineProps<{
   mcpPlatform?: McpPlatform | null
   /** 开发者平台实现(桌面端 devtools_* 命令);null/缺省 settings 页开发者卡不渲染 */
   devtoolsPlatform?: DevtoolsPlatform | null
-}>(), { store: null, platform: null, securityPlatform: null, syncPlatform: null, cloudPlatform: null, cloudAuthFailed: false, icons: null, schemesApi: null, mcpPlatform: null, devtoolsPlatform: null })
+  /** 释放策略平台实现(桌面端 release_policy_* 命令);null/缺省 settings 页释放卡不渲染 */
+  releasePlatform?: ReleasePlatform | null
+}>(), { store: null, platform: null, securityPlatform: null, syncPlatform: null, cloudPlatform: null, cloudAuthFailed: false, icons: null, schemesApi: null, mcpPlatform: null, devtoolsPlatform: null, releasePlatform: null })
 
 const route = useRoute()
 const router = useRouter()
@@ -95,7 +98,7 @@ const pageProps = computed<Record<string, unknown>>(() => {
     case 'import': return { store: p.store, platform: p.platform, schemesApi: p.schemesApi }
     case 'sync': return { store: p.store, platform: p.platform, cloudPlatform: p.cloudPlatform, syncPlatform: p.syncPlatform, cloudAuthFailed: p.cloudAuthFailed }
     case 'security': return { securityPlatform: p.securityPlatform }
-    case 'settings': return { store: p.store, securityPlatform: p.securityPlatform, showDesktop: (p.railActions?.length ?? 0) > 0, showExtension: p.syncPlatform != null, mcpPlatform: p.mcpPlatform ?? null, devtoolsPlatform: p.devtoolsPlatform ?? null }
+    case 'settings': return { store: p.store, securityPlatform: p.securityPlatform, showDesktop: (p.railActions?.length ?? 0) > 0, showExtension: p.syncPlatform != null, mcpPlatform: p.mcpPlatform ?? null, devtoolsPlatform: p.devtoolsPlatform ?? null, releasePlatform: p.releasePlatform ?? null }
     default: return {}
   }
 })

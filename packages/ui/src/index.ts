@@ -56,5 +56,7 @@ export type { ImportPlatform, ImportSchemesApi } from './components/importPlatfo
 export type { McpConfigDto, McpConfigWithStatusDto, McpPlatform, ServerStatus, ServerStatusTone } from './components/mcpCard'
 export { serverStatus } from './components/mcpCard'
 export type { DevtoolsConfigDto, DevtoolsPlatform } from './components/devtoolsPlatform'
+export type { ReleasePolicyDto, ReleasePlatform } from './components/releasePlatform'
+export { validateReleaseMinutes } from './components/releasePlatform'
 export type { DpapiUnlockOps, LockPrefs, PasskeyUnlockOps, SecurityOps, SecurityPlatform } from './components/securityPlatform'
 export type { SyncPlatform, SyncStatus } from './components/syncPlatform'

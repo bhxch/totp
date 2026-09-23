@@ -30,6 +30,9 @@ static RELEASE_TRACK: Mutex<release_policy::ReleaseTrack> =
 // 剪贴板读取只在 Rust 侧进行：不向 webview JS 授予剪贴板读取能力（CSP null 下 read 权限=持续监听原语）。
 static CLIPBOARD_STAGE: Mutex<Option<String>> = Mutex::new(None);
 
+/// 释放销毁档「不锁库」路径的 DEK 暂存槽（仅进程内存，不落盘）：destroy 前前端 stash，重建后前端 take 回注；锁库/退出时清除
+static STASHED_DEK: Mutex<Option<String>> = Mutex::new(None);
+
 /// 托盘退出兜底与 clipboard_clear_if_staged 命令共用：仅当剪贴板内容仍为本应用最近一次复制的值时清空。
 /// 读取失败按 fail-safe 处理（宁误清不残留种子）；无暂存/内容已换则不动剪贴板。返回是否实际清空。
 fn clear_clipboard_if_staged<R: Runtime>(app: &AppHandle<R>) -> bool {
@@ -63,6 +66,20 @@ fn stage_clipboard_write(value: String, app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn clipboard_clear_if_staged(app: AppHandle) -> bool {
     clear_clipboard_if_staged(&app)
+}
+
+/// 前端在 stash-dek-request 事件后上报当前会话 DEK（base64）；只进内存槽
+#[tauri::command]
+fn stash_dek(dek: String) {
+    if let Ok(mut s) = STASHED_DEK.lock() {
+        *s = Some(dek);
+    }
+}
+
+/// 重建后前端启动期取回暂存 DEK（取即清）；无暂存返回 null
+#[tauri::command]
+fn take_stashed_dek() -> Option<String> {
+    STASHED_DEK.lock().ok().and_then(|mut s| s.take())
 }
 
 // 桌面应用 settings.json：存于 app_data_dir（与前端 createTauriFs 的 baseDir 对齐）。
@@ -388,6 +405,10 @@ fn release_tick(app: &AppHandle) {
         release_policy::ReleaseAction::Pause => {
             if cfg.lock_on_pause {
                 let _ = app.emit("force-lock", ());
+                // 锁库即清 DEK 暂存槽（Task 14）：锁库路径绝不留跨重建的免解锁通道
+                if let Ok(mut s) = STASHED_DEK.lock() {
+                    *s = None;
+                }
             }
             for label in ["main", "mini"] {
                 try_suspend_window(app, label);
@@ -437,6 +458,10 @@ fn try_suspend_window(_app: &AppHandle, _label: &str) {}
 fn destroy_releasable_windows(app: &AppHandle, cfg: &release_policy::ReleasePolicyConfig) -> bool {
     if cfg.lock_on_destroy {
         let _ = app.emit("force-lock", ());
+        // 锁库即清 DEK 暂存槽（Task 14）：同 release_tick Pause 分支，销毁锁库不留免解锁残留
+        if let Ok(mut s) = STASHED_DEK.lock() {
+            *s = None;
+        }
     } else {
         // 不锁库：给前端 1s 窗口执行 stash_dek（Task 14 的监听器），再销毁
         let _ = app.emit("stash-dek-request", ());
@@ -1466,6 +1491,10 @@ pub fn run() {
                         // F16：托盘退出兜底——剪贴板仍持有本应用复制内容时清空（读回比对在 Rust 侧，
                         // 不会误清用户后续复制的外部内容；无暂存/内容已换则不动）
                         clear_clipboard_if_staged(app);
+                        // 退出清 DEK 暂存槽（Task 14）：进程内存槽随退出失效，显式清空防语义歧义
+                        if let Ok(mut s) = STASHED_DEK.lock() {
+                            *s = None;
+                        }
                         app.exit(0)
                     }
                     _ => {}
@@ -1524,6 +1553,8 @@ pub fn run() {
             devtools_set_config,
             release_policy_get,
             release_policy_set,
+            stash_dek,
+            take_stashed_dek,
             stage_clipboard_write,
             clipboard_clear_if_staged,
             mcp_server::mcp_get_config,

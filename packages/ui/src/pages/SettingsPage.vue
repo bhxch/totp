@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import type { AppSettings } from '@totp/core'
 import { useI18n } from 'vue-i18n'
 import type { DevtoolsPlatform } from '../components/devtoolsPlatform'
 import type { McpPlatform } from '../components/mcpCard'
+import type { ReleasePolicyDto, ReleasePlatform } from '../components/releasePlatform'
+import { validateReleaseMinutes } from '../components/releasePlatform'
 import type { SecurityPlatform } from '../components/securityPlatform'
 import McpServerCard from '../components/McpServerCard.vue'
 import MdCard from '../components/md/MdCard.vue'
@@ -27,7 +29,9 @@ const props = withDefaults(defineProps<{
   mcpPlatform?: McpPlatform | null
   /** 开发者平台实现（桌面宿主桥接 devtools_* 命令）；null 时开发者卡不渲染（桌面专属） */
   devtoolsPlatform?: DevtoolsPlatform | null
-}>(), { securityPlatform: null, showDesktop: false, showExtension: false, mcpPlatform: null, devtoolsPlatform: null })
+  /** 释放策略平台实现（桌面宿主桥接 release_policy_* 命令）；null 时释放卡不渲染（桌面专属） */
+  releasePlatform?: ReleasePlatform | null
+}>(), { securityPlatform: null, showDesktop: false, showExtension: false, mcpPlatform: null, devtoolsPlatform: null, releasePlatform: null })
 
 // 解构出顶层 writable computed：模板自动解包，v-model/赋值直达 useTheme 的 set
 // （set 内部已写 settings + localStorage 镜像 + commitSettings，无需页面重复处理）
@@ -102,14 +106,27 @@ let devtoolsGood: { enabled: boolean; port: number } = { enabled: false, port: 9
 const devtoolsError = ref('')
 
 onMounted(async () => {
-  if (!props.devtoolsPlatform) return
-  try {
-    const cfg = await props.devtoolsPlatform.getConfig()
-    devtoolsEnabled.value = cfg.enabled
-    devtoolsPort.value = String(cfg.port)
-    devtoolsGood = cfg
-  } catch {
-    // 预填失败保持默认关（与后端缺省一致），不阻断设置页其余部分
+  if (props.devtoolsPlatform) {
+    try {
+      const cfg = await props.devtoolsPlatform.getConfig()
+      devtoolsEnabled.value = cfg.enabled
+      devtoolsPort.value = String(cfg.port)
+      devtoolsGood = cfg
+    } catch {
+      // 预填失败保持默认关（与后端缺省一致），不阻断设置页其余部分
+    }
+  }
+  // 释放策略预填（Task 14）：失败保持缺省 5/30/false/true，不阻断设置页其余部分
+  if (props.releasePlatform) {
+    try {
+      const cfg = await props.releasePlatform.getConfig()
+      releaseGood = cfg
+      Object.assign(releaseCfg, cfg)
+      releasePauseInput.value = String(cfg.pauseMinutes)
+      releaseDestroyInput.value = String(cfg.destroyMinutes)
+    } catch {
+      // 预填失败保持缺省，不阻断设置页其余部分
+    }
   }
 })
 
@@ -133,6 +150,56 @@ async function commitDevtools(): Promise<void> {
     devtoolsEnabled.value = devtoolsGood.enabled
     devtoolsPort.value = String(devtoolsGood.port)
   }
+}
+
+// ---------- 窗口资源释放（spec 批⑧ §7.4-7.5，桌面专属）：两档分钟数（0=禁用）+ 各自锁库开关 ----------
+// Rust release_tick 每轮现读配置，改设置即时生效；提交模式仿开发者卡（getConfig→ref→change 提交 + 基线回显）
+const releaseCfg = reactive<ReleasePolicyDto>({ pauseMinutes: 5, destroyMinutes: 30, lockOnPause: false, lockOnDestroy: true })
+/** 分钟输入框字符串态（change 提交模式，同 devtools 端口）：输入中不提交，失焦/回车校验后提交 */
+const releasePauseInput = ref('5')
+const releaseDestroyInput = ref('30')
+/** 最近一次成功提交（或后端返回）的配置：非法输入/写失败回显基准 */
+let releaseGood: ReleasePolicyDto = { ...releaseCfg }
+/** 后端保存失败回显（同 devtools 卡口径：写失败须可见而非静默回滚） */
+const releaseError = ref('')
+
+/** 非法输入/写失败统一回显基线（devtoolsGood 同款兜底） */
+function rollbackReleaseInputs(): void {
+  releasePauseInput.value = String(releaseGood.pauseMinutes)
+  releaseDestroyInput.value = String(releaseGood.destroyMinutes)
+  Object.assign(releaseCfg, releaseGood)
+}
+
+/** 整卡唯一提交出口：成功前进基线并清错误，失败回显基线并展示错误 */
+async function commitReleaseConfig(next: ReleasePolicyDto): Promise<void> {
+  const platform = props.releasePlatform
+  if (!platform) return
+  try {
+    await platform.setConfig(next)
+    releaseGood = next
+    Object.assign(releaseCfg, next)
+    releaseError.value = ''
+  } catch (e) {
+    // Tauri invoke 以字符串 reject（Rust Err(String)），非 Error 实例
+    releaseError.value = `${t('settingsPage.releaseSaveFailed')}：${e instanceof Error ? e.message : String(e)}`
+    rollbackReleaseInputs()
+  }
+}
+
+/** 分钟数 change 提交（失焦/回车）：0-1440 整数合法；非法回显当前值不提交 */
+async function onReleaseMinutes(field: 'pauseMinutes' | 'destroyMinutes'): Promise<void> {
+  const raw = field === 'pauseMinutes' ? releasePauseInput.value : releaseDestroyInput.value
+  const n = Number(raw)
+  if (!validateReleaseMinutes(n)) {
+    rollbackReleaseInputs()
+    return
+  }
+  await commitReleaseConfig({ ...releaseGood, [field]: n })
+}
+
+/** 锁库开关（spec §7.5）：即点即提交 */
+async function onReleaseFlag(field: 'lockOnPause' | 'lockOnDestroy', v: boolean): Promise<void> {
+  await commitReleaseConfig({ ...releaseGood, [field]: v })
 }
 </script>
 
@@ -223,6 +290,41 @@ async function commitDevtools(): Promise<void> {
       </div>
     </MdCard>
 
+    <!-- 窗口资源释放（桌面专属，spec 批⑧ §7.4-7.5）：两档分钟数（0=禁用）+ 各自锁库开关；Rust tick 每轮现读，改设置即时生效 -->
+    <MdCard v-if="showDesktop && releasePlatform" class="block">
+      <div class="release-card">
+        <h2>{{ t('settingsPage.releaseTitle') }}</h2>
+        <p v-if="releaseError" class="release-error" role="alert">{{ releaseError }}</p>
+        <div class="row release-row">
+          <span class="row-label">{{ t('settingsPage.releasePause') }}</span>
+          <MdTextField
+            v-model="releasePauseInput" class="release-min" type="number" min="0" max="1440"
+            :label="t('settingsPage.releaseMinutes')" :aria-label="t('settingsPage.releaseMinutes')"
+            @change="onReleaseMinutes('pauseMinutes')"
+          />
+          <MdSwitch
+            class="set-release-lock-pause" :model-value="releaseCfg.lockOnPause"
+            :aria-label="t('settingsPage.releaseLockOnPause')" @update:model-value="onReleaseFlag('lockOnPause', $event)"
+          />
+          <span class="row-label">{{ t('settingsPage.releaseLockOnPause') }}</span>
+        </div>
+        <div class="row release-row">
+          <span class="row-label">{{ t('settingsPage.releaseDestroy') }}</span>
+          <MdTextField
+            v-model="releaseDestroyInput" class="release-min" type="number" min="0" max="1440"
+            :label="t('settingsPage.releaseMinutes')" :aria-label="t('settingsPage.releaseMinutes')"
+            @change="onReleaseMinutes('destroyMinutes')"
+          />
+          <MdSwitch
+            class="set-release-lock-destroy" :model-value="releaseCfg.lockOnDestroy"
+            :aria-label="t('settingsPage.releaseLockOnDestroy')" @update:model-value="onReleaseFlag('lockOnDestroy', $event)"
+          />
+          <span class="row-label">{{ t('settingsPage.releaseLockOnDestroy') }}</span>
+        </div>
+        <p class="release-hint">{{ t('settingsPage.releaseHint') }}</p>
+      </div>
+    </MdCard>
+
     <!-- MCP 服务器（桌面专属）：卡自带 h2 标题（同 SecurityPage F2 去重惯例），边界由 MdCard outlined 统一 -->
     <MdCard v-if="showDesktop && mcpPlatform" class="block">
       <McpServerCard :platform="mcpPlatform" />
@@ -277,4 +379,11 @@ async function commitDevtools(): Promise<void> {
 .devtools-port-row { align-items: center; }
 .devtools-port { width: 140px; }
 .devtools-restart { font-size: var(--md-sys-typescale-body-small); opacity: .65; }
+/* 释放策略卡（Task 14）：标题排版同 devtools/MCP 卡；行内左对齐布局（label+输入+开关+说明一行，不做两端散开） */
+.release-card { display: flex; flex-direction: column; gap: 8px; }
+.release-card h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
+.release-error { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); margin: 0; }
+.release-row { justify-content: flex-start; gap: 12px; }
+.release-min { width: 140px; }
+.release-hint { font-size: var(--md-sys-typescale-body-small); opacity: .65; margin: 0; }
 </style>

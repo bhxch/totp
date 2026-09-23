@@ -692,7 +692,15 @@
     "devtoolsWarn": "While enabled, any process on this machine can read plaintext keys shown in the window via this port. For local diagnostics only — turn it off when done. Note: the CDP remote port is Windows-only; this toggle has no effect on other platforms.",
     "devtoolsPort": "Debug port (default 9222)",
     "devtoolsRestart": "Takes effect after app restart",
-    "devtoolsSaveFailed": "Save failed"
+    "devtoolsSaveFailed": "Save failed",
+    "releaseTitle": "Window resource release",
+    "releasePause": "Pause after hiding (minutes)",
+    "releaseDestroy": "Destroy window after pause (minutes)",
+    "releaseMinutes": "minutes (0 = disabled)",
+    "releaseLockOnPause": "Lock on pause",
+    "releaseLockOnDestroy": "Lock on destroy",
+    "releaseHint": "After closing the window, rendering is paused to save resources; after the timeout the window is destroyed leaving only the tray process — click the tray or use the shortcut to rebuild. Idle lock does not fire while paused. With \"Lock on destroy\" off, the unlocked state is restored after rebuild (the key is held only in local process memory).",
+    "releaseSaveFailed": "Save failed"
   },
   "popup": {
     "title": "TOTP Codes",

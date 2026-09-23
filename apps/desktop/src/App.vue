@@ -2,8 +2,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { backupFileName, base64ToBytes, createBackupEnvelope, loadDeviceId, loadSources, loadSyncState, normalizeSchemes, openBackupEnvelope, randomBytes, saveSources, saveSyncState, SCHEMES_KEY, sha256Hex, type BackupSource, type CloudCred, type ImportScheme, type KdfProfile, type Retention, type Seal, type StorageAdapter, type Vault } from '@totp/core'
-import { createAppI18n, createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, requestMergeConfirm, setSyncProgress, useTheme, type BackupAutoPrefs, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type DevtoolsConfigDto, type DevtoolsPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type LocalSourceView, type McpConfigWithStatusDto, type McpPlatform, type SecurityPlatform, type VueStore } from '@totp/ui'
+import { backupFileName, base64ToBytes, bytesToBase64, createBackupEnvelope, loadDeviceId, loadSources, loadSyncState, normalizeSchemes, openBackupEnvelope, randomBytes, saveSources, saveSyncState, SCHEMES_KEY, sha256Hex, type BackupSource, type CloudCred, type ImportScheme, type KdfProfile, type Retention, type Seal, type StorageAdapter, type Vault } from '@totp/core'
+import { createAppI18n, createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, requestMergeConfirm, setSyncProgress, useTheme, type BackupAutoPrefs, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type DevtoolsConfigDto, type DevtoolsPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type LocalSourceView, type McpConfigWithStatusDto, type McpPlatform, type ReleasePolicyDto, type ReleasePlatform, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, getCurrentInstance, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createDesktopAutoRunner, formatAutoStatusText } from './autoBackup'
 import { createBackupToSources, listBackupsFromSources, pickBackupDirOs, pickBackupOpenOs, pickBackupSaveOs, readBackupByName, readBackupFileOs, saveConflictBackupToDir, saveCloudSourcesPreservingLocal, writeBackupFileOs, writeBytesFileOs, writeTextFileOs, type DialogFilterSpec, type PickedOsFile } from './backupService'
@@ -28,6 +28,9 @@ const locked = computed(() => store.value?.locked.value ?? false)
 const icons = ref<IconStore | null>(null)
 const loadError = ref('')
 let unlistenFocus: (() => void) | null = null
+// 释放策略联动监听（Task 14）：force-lock=暂停/销毁锁库；stash-dek-request=销毁不锁库路径先上报 DEK
+let unlistenForceLock: (() => void) | null = null
+let unlistenStashDek: (() => void) | null = null
 // D1 i18n 挂载（store 就绪后装入，见 onMounted 内 mountI18n）：app 引用必须在 setup 同步段获取
 // （onMounted await 之后 instance 上下文已失效）；本组件 store 仅在挂载时创建一次
 const appForI18n = getCurrentInstance()?.appContext.app
@@ -666,6 +669,15 @@ const devtoolsPlatform: DevtoolsPlatform = {
   setConfig: (enabled, port) => invoke('devtools_set_config', { enabled, port }) as Promise<void>,
 }
 
+// 释放策略平台适配器（spec 批⑧ §7.5）：桥接 release_policy_get/set（Rust 侧 snake_case 参数 +
+// rename_all="camelCase"，invoke 键即 pauseMinutes/destroyMinutes/lockOnPause/lockOnDestroy）
+const releasePlatform: ReleasePlatform = {
+  getConfig: () => invoke('release_policy_get') as Promise<ReleasePolicyDto>,
+  setConfig: (cfg) => invoke('release_policy_set', {
+    pauseMinutes: cfg.pauseMinutes, destroyMinutes: cfg.destroyMinutes, lockOnPause: cfg.lockOnPause, lockOnDestroy: cfg.lockOnDestroy,
+  }) as Promise<void>,
+}
+
 let mcpStop: (() => void) | null = null
 // 首连审批队列（原单槽位 approval 的并发根修：对话框打开期间不同 ident 事件互相覆盖、
 // 弹窗乒乓，见 mcpApprovalQueue.ts）。审批窗独立于锁定态（锁定时取码在桥内报 vault locked，属预期）
@@ -725,6 +737,27 @@ onMounted(async () => {
     // onCommitted：任何经队列的写 op 成功后触发自动备份变更检测（锁定态由 runner 内 decideAutoRun 挡下）
     const s = createVueStore(adapter, { windowId: 'main', onCommitted: () => auto.notifyChanged() })
     await s.initStore()
+    // 释放策略联动（spec 批⑧ §7.4-7.5，Task 14）：锁库事件 + 不锁库路径的 DEK 暂存回注。
+    // 监听容错注册（失败仅该联动降级，不放大为整屏 loadError）
+    unlistenForceLock = await listen('force-lock', () => {
+      store.value?.lock()
+    }).catch(() => null)
+    unlistenStashDek = await listen('stash-dek-request', () => {
+      // getCurrentDek：解锁态返回本窗口 DEK，锁定/未启用返回 null（锁库路径自然不上报）
+      const dek = store.value?.getCurrentDek()
+      if (dek) void invoke('stash_dek', { dek: bytesToBase64(dek) }).catch(() => {})
+    }).catch(() => null)
+    // 重建/冷启动回注（store 初始化后、首个页面渲染前）：有暂存 DEK 则恢复解锁态
+    // （store.unlockWithDek 等价解锁后状态：写 dekByWin/dekPersist + 刷新 vault + 退出锁定 + 重装载保管区）；
+    // 锁库路径无暂存（锁库时 Rust 侧清槽），DEK 失效（换库/损坏）抛错保持锁定页，自然兜底
+    const stashed = await invoke<string | null>('take_stashed_dek').catch(() => null)
+    if (stashed) {
+      try {
+        await s.unlockWithDek(base64ToBytes(stashed))
+      } catch (e) {
+        console.warn('[release] 暂存 DEK 回注失败，保持锁定', e)
+      }
+    }
     store.value = s
     // D1 i18n 挂载：设置已从盘载入（含 locale），装入 i18n 供组件树 useI18n/$t
     mountI18n(s)
@@ -807,6 +840,8 @@ onScopeDispose(() => {
   unlistenToolApproval?.()
   unlistenFocus?.()
   unlistenSystemLock?.()
+  unlistenForceLock?.()
+  unlistenStashDek?.()
   idleLock.stop()
   // 卸载清算（T7）：未决工具确认立即回 result:false（Rust oneshot 不悬挂等 60s 超时兜底）
   approvalQueue.dispose()
@@ -849,7 +884,7 @@ const railActions = [{ get label() { return tr('desktop.hideToTray') }, onClick:
   <div v-if="loadError && !store" class="error">{{ tr('desktop.loadFailed', { message: loadError }) }}</div>
   <!-- 解锁成功回调补跑迁移（plan16 T14，幂等）：口令/PRF 解锁各路径在 LockScreen 内 emit unlocked -->
   <LockScreen v-else-if="store && locked" :store="store" :dpapi="dpapiOps" @unlocked="runLegacyMigrations" />
-  <NavigationShell v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :cloud-platform="cloudPlatform" :icons="icons" :schemes-api="schemesApi" :rail-actions="railActions" :mcp-platform="mcpPlatform" :devtools-platform="devtoolsPlatform" @copy="copyToClipboard" />
+  <NavigationShell v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :cloud-platform="cloudPlatform" :icons="icons" :schemes-api="schemesApi" :rail-actions="railActions" :mcp-platform="mcpPlatform" :devtools-platform="devtoolsPlatform" :release-platform="releasePlatform" @copy="copyToClipboard" />
   <!-- MCP 首连审批/工具确认独立于上方 v-if 链：锁定态也要能弹（plan17 T10）；t 走壳层 tr（desktop 无 useI18n 注入） -->
   <!-- 关闭（Esc/遮罩/工具 Deny）按通道分流 deny：首连回执进 60s 冷却，工具确认回 result:false（逐次即焚）——
        否则 "approval pending" 诱导 AI 每 10s 重试、对话框反复重开抢焦点 -->
