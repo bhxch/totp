@@ -143,6 +143,8 @@ function onRandomPort(): void {
 
 // ---------- Token：掩码显示 + 复制 + 重新生成（行内两步确认，沿 BackupCard removeConfirm 模式） ----------
 const tokenVisible = ref(false)
+/** 空 token 防护：未启用时 Rust 侧未生成 token（空串），复制只能得到空值——置灰复制按钮 */
+const hasToken = computed(() => !!cfg.value?.token)
 const copied = ref<'none' | 'token' | 'snippet' | 'revoke'>('none')
 let copiedTimer: ReturnType<typeof setTimeout> | null = null
 function flashCopied(kind: 'token' | 'snippet' | 'revoke'): void {
@@ -152,7 +154,7 @@ function flashCopied(kind: 'token' | 'snippet' | 'revoke'): void {
 }
 async function copyToken(): Promise<void> {
   const cur = cfg.value
-  if (!cur) return
+  if (!cur || !cur.token) return
   try {
     // Task 9 审查：复制走宿主 copyText（桌面=暂存通道 + 自动清空），卡片不直接碰 navigator.clipboard
     await props.platform.copyText(cur.token)
@@ -281,11 +283,11 @@ onBeforeUnmount(() => {
       <div class="token-block">
         <div class="token-row">
           <span class="opt-label">{{ t('mcpServer.token') }}</span>
-          <code class="token-value">{{ tokenVisible ? cfg.token : '••••' }}</code>
+          <code class="token-value">{{ cfg.token ? (tokenVisible ? cfg.token : '••••') : t('mcpServer.tokenEmptyHint') }}</code>
           <MdButton variant="text" :disabled="busy" @click="tokenVisible = !tokenVisible">
             {{ tokenVisible ? t('mcpServer.tokenHide') : t('mcpServer.tokenShow') }}
           </MdButton>
-          <MdButton variant="text" :disabled="busy" @click="copyToken">{{ t('mcpServer.tokenCopy') }}</MdButton>
+          <MdButton variant="text" :disabled="busy || !hasToken" @click="copyToken">{{ t('mcpServer.tokenCopy') }}</MdButton>
           <span v-if="copied === 'token'" class="copied">{{ t('mcpServer.copied') }}</span>
           <MdButton variant="text" danger :disabled="busy" @click="pendingRegen = true">{{ t('mcpServer.regenerate') }}</MdButton>
         </div>

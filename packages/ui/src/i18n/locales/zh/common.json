@@ -563,6 +563,7 @@
     "portInvalid": "端口须为 1024–65535 的整数",
     "randomPort": "随机端口",
     "token": "连接 Token",
+    "tokenEmptyHint": "（启用后自动生成）",
     "tokenShow": "显示",
     "tokenHide": "隐藏",
     "tokenCopy": "复制 Token",

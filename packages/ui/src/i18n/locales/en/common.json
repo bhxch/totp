@@ -563,6 +563,7 @@
     "portInvalid": "Port must be an integer between 1024 and 65535",
     "randomPort": "Random port",
     "token": "Connection token",
+    "tokenEmptyHint": "(auto-generated when enabled)",
     "tokenShow": "Show",
     "tokenHide": "Hide",
     "tokenCopy": "Copy token",

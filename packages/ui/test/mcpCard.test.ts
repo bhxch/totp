@@ -174,3 +174,26 @@ describe('McpServerCard 暴露工具勾选组（DTO 往返）', () => {
     expect(payload?.exposedTools).toEqual(['list_accounts', 'get_code', 'trigger_sync'])
   })
 })
+
+describe('McpServerCard 空 token 防护', () => {
+  const base = { enabled: false, mode: 'token', port: 47215, token: '', whitelist: [], running: false, lastError: null }
+  function mkPlatform() {
+    return {
+      getConfig: vi.fn().mockResolvedValue({ ...base, exposedTools: ['list_accounts', 'get_code'] }),
+      setConfig: vi.fn().mockResolvedValue(undefined),
+      regenerateToken: vi.fn().mockResolvedValue('new-token'),
+      revokeApprovals: vi.fn().mockResolvedValue(0),
+      copyText: vi.fn().mockResolvedValue(undefined),
+    }
+  }
+  it('token 为空：显示占位提示、复制按钮置灰、不调用 copyText', async () => {
+    const platform = mkPlatform()
+    const w = mount(McpServerCard, { global: { plugins: [createTestI18n()] }, props: { platform } })
+    await vi.waitFor(() => expect(w.find('.token-block').exists()).toBe(true))
+    expect(w.text()).toContain('（启用后自动生成）')
+    const copyBtn = w.findAll('.token-block button').find((b) => b.text().includes('复制'))!
+    expect((copyBtn.element as HTMLButtonElement).disabled).toBe(true)
+    await copyBtn.trigger('click')
+    expect(platform.copyText).not.toHaveBeenCalled()
+  })
+})
