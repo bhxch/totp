@@ -699,7 +699,7 @@
     "releaseMinutes": "minutes (0 = disabled)",
     "releaseLockOnPause": "Lock on pause",
     "releaseLockOnDestroy": "Lock on destroy",
-    "releaseHint": "After closing the window, rendering is paused to save resources; after the timeout the window is destroyed leaving only the tray process — click the tray or use the shortcut to rebuild. Idle lock does not fire while paused. With \"Lock on destroy\" off, the unlocked state is restored after rebuild (the key is held only in local process memory).",
+    "releaseHint": "After closing the window, rendering is paused to save resources; after the timeout the window is destroyed leaving only the tray process — click the tray or use the shortcut to rebuild. Idle lock does not fire while paused. With \"Lock on destroy\" off, the unlocked state is restored after rebuild (the key is held only in local process memory). Note: with \"Pause after hiding\" enabled, the suspended window cannot stash its key on Windows and unlocking is still required after rebuild; set \"Pause after hiding\" to 0 to guarantee unlock-free restoration.",
     "releaseSaveFailed": "Save failed"
   },
   "popup": {

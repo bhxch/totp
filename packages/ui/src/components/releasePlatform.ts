@@ -12,7 +12,7 @@ export interface ReleasePlatform {
   setConfig: (cfg: ReleasePolicyDto) => Promise<void>
 }
 
-/** 分钟数校验：0-1440 整数（0=禁用该档）；返回 null 合法，否则为错误 i18n key 参数 */
+/** 分钟数校验：0-1440 整数（0=禁用该档）；返回 true 合法，false 非法（调用方负责回显基线值） */
 export function validateReleaseMinutes(v: number): boolean {
   return Number.isInteger(v) && v >= 0 && v <= 1440
 }

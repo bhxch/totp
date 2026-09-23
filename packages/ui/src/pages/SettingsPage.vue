@@ -186,10 +186,15 @@ async function commitReleaseConfig(next: ReleasePolicyDto): Promise<void> {
   }
 }
 
-/** 分钟数 change 提交（失焦/回车）：0-1440 整数合法；非法回显当前值不提交 */
+/** 分钟数 change 提交（失焦/回车）：0-1440 整数合法；空串/非法回显当前值不提交 */
 async function onReleaseMinutes(field: 'pauseMinutes' | 'destroyMinutes'): Promise<void> {
-  const raw = field === 'pauseMinutes' ? releasePauseInput.value : releaseDestroyInput.value
-  const n = Number(raw)
+  const input = field === 'pauseMinutes' ? releasePauseInput : releaseDestroyInput
+  // 空串守卫（审查 I1）：Number('') === 0 且 0 通过校验，不拦会静默提交 0=禁用该档；拒绝口径同 devtools 卡
+  if (input.value.trim() === '') {
+    input.value = String(releaseGood[field])
+    return
+  }
+  const n = Number(input.value)
   if (!validateReleaseMinutes(n)) {
     rollbackReleaseInputs()
     return
