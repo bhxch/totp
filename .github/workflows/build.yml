@@ -137,6 +137,25 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec wxt build -b ${{ matrix.browser }}
         working-directory: apps/extension
+      - name: Assert MV3 artifacts
+        working-directory: apps/extension
+        run: |
+          node -e "
+            const fs = require('fs');
+            const m = JSON.parse(fs.readFileSync('.output/${{ matrix.browser }}-mv3/manifest.json', 'utf8'));
+            if (m.manifest_version !== 3) throw new Error('manifest_version != 3: ' + m.manifest_version);
+            const bg = m.background || {};
+            const bgOk = (bg.service_worker && fs.existsSync('.output/${{ matrix.browser }}-mv3/' + bg.service_worker)) || (bg.scripts || []).every((s) => fs.existsSync('.output/${{ matrix.browser }}-mv3/' + s));
+            if (!bgOk) throw new Error('background entry missing: ' + JSON.stringify(bg));
+            if ('${{ matrix.browser }}' === 'firefox') {
+              if (m.permissions.includes('offscreen')) throw new Error('firefox must not declare offscreen');
+              const g = m.browser_specific_settings && m.browser_specific_settings.gecko || {};
+              if (g.id !== 'totp@bhxch.github.io') throw new Error('bad gecko id: ' + g.id);
+              if (g.strict_min_version !== '140.0') throw new Error('bad strict_min_version: ' + g.strict_min_version);
+            } else if (!m.permissions.includes('offscreen')) {
+              throw new Error('chrome must declare offscreen');
+            }
+          "
       # working-directory 固定在 apps/extension：zip 落到 $OLDPWD（apps/extension），
       # 与下方 upload path 的 glob 对齐（workspace 根会错位）。
       # zip 名注入 package.json 版本，契约名 totp-extension-<os>-<ver>.zip（nightly 追加 .日期.sha）。
