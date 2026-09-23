@@ -14,6 +14,8 @@ mod cli;
 mod lock_events;
 // plan17：内嵌 MCP 服务器（配置/门控/事件桥/Streamable HTTP，接线见 setup 与 invoke_handler）
 mod mcp_server;
+// 批⑧ §7：窗口资源释放策略（配置读写 + 状态机纯函数；接线层副作用在 lib.rs/Task 13）
+mod release_policy;
 
 // mini 最近一次因失焦而隐藏的时刻，用于缓解「托盘点击收起」与「失焦自动隐藏」的竞态
 static LAST_FOCUS_HIDE: Mutex<Option<Instant>> = Mutex::new(None);
@@ -265,6 +267,45 @@ fn merge_devtools_config_text(
         serde_json::json!({ "enabled": enabled, "port": port }),
     );
     serde_json::to_string_pretty(&serde_json::Value::Object(obj)).map_err(|e| e.to_string())
+}
+
+/// 释放策略读/写（spec 批⑧ §7.5；settings.json `releasePolicy` 键，合并写保留外来键）。
+/// 参数名 Rust 侧 snake_case + rename_all="camelCase"：前端 invoke 键仍为 pauseMinutes 等（与
+/// brief 契约一致），同时满足非 snake_case lint
+#[tauri::command(rename_all = "camelCase")]
+fn release_policy_get<R: Runtime>(app: AppHandle<R>) -> Result<serde_json::Value, String> {
+    let text = settings_path(&app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_else(|| "{}".into());
+    let cfg = release_policy::from_settings_text(&text);
+    Ok(serde_json::json!({
+        "pauseMinutes": cfg.pause_minutes,
+        "destroyMinutes": cfg.destroy_minutes,
+        "lockOnPause": cfg.lock_on_pause,
+        "lockOnDestroy": cfg.lock_on_destroy,
+    }))
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn release_policy_set<R: Runtime>(
+    app: AppHandle<R>,
+    pause_minutes: u32,
+    destroy_minutes: u32,
+    lock_on_pause: bool,
+    lock_on_destroy: bool,
+) -> Result<(), String> {
+    let path = settings_path(&app).ok_or("无法定位 settings.json".to_string())?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let cfg = release_policy::ReleasePolicyConfig {
+        pause_minutes,
+        destroy_minutes,
+        lock_on_pause,
+        lock_on_destroy,
+    };
+    let text = release_policy::merge_into_settings_text(std::fs::read_to_string(&path).ok().as_deref(), &cfg)?;
+    write_text_atomic(&path, &text)
 }
 
 /** 取消注册当前所有快捷键，按新 spec 重新注册并持久化到 settings.json */
@@ -1343,6 +1384,8 @@ pub fn run() {
             set_global_shortcut,
             devtools_get_config,
             devtools_set_config,
+            release_policy_get,
+            release_policy_set,
             stage_clipboard_write,
             clipboard_clear_if_staged,
             mcp_server::mcp_get_config,
