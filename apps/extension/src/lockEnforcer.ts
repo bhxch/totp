@@ -1,5 +1,5 @@
 /** idle/锁屏自动锁定执行器（plan16 设计 §1 锁定策略·extension 端）：
- *  options 页存活期 30s 轮询 chrome.idle，按 lockPrefs 偏好执行锁定。
+ *  options 页存活期 30s 轮询 idle API（ext.idle），按 lockPrefs 偏好执行锁定。
  *
  *  勘误（审查 2026-09-18 C3，推翻计划 Task 12 原裁定）：setDetectionInterval 的
  *  阈值只作用于 onStateChanged 事件路径；queryState 只认本次调用的入参——故「空闲
@@ -7,12 +7,14 @@
  *  'locked' 态表示系统锁屏（screensaver/OS lock），对应 lockOnSystemLock 触发器。
  *
  *  注意：watcher 只调 deps.lock()（store.lock() 已同步清 dekPersist——T7 语义
- *  「锁=丢弃 DEK 含宿主会话存储」），不自清 chrome.storage.session。
- *  chrome API 异常经 onError 上报、不向上抛（轮询失败静默到下个 tick）。
- *  chrome.idle 不存在（如 Firefox 未获得 idle 权限）时 start() 上报一次并不启用。 */
+ *  「锁=丢弃 DEK 含宿主会话存储」），不自清 ext.storage.session。
+ *  idle API 异常经 onError 上报、不向上抛（轮询失败静默到下个 tick）。
+ *  idle API 不存在（如 Firefox 未获得 idle 权限）时 start() 上报一次并不启用。 */
+
+import { canIdle, ext } from './extApi'
 
 const TICK_MS = 30_000
-/** chrome.idle 硬下限 15s；上限 4h（Chromium 对超限阈值静默钳到 14400s） */
+/** idle API 硬下限 15s；上限 4h（Chromium 对超限阈值静默钳到 14400s） */
 const MIN_DETECTION_S = 15
 const MAX_DETECTION_S = 14_400
 
@@ -43,10 +45,10 @@ export function createIdleLockWatcher(deps: {
       if (!prefs) return
       const threshold = clampDetection(prefs.idleMinutes * 60)
       if (prefs.idleMinutes >= 1 && threshold !== lastDetectionInterval) {
-        chrome.idle.setDetectionInterval(threshold)
+        ext!.idle!.setDetectionInterval(threshold)
         lastDetectionInterval = threshold // 成功下发才更新缓存（抛错则下 tick 重试）
       }
-      chrome.idle.queryState(threshold, (s) => {
+      ext!.idle!.queryState(threshold, (s) => {
         if (s === 'locked' && prefs.lockOnSystemLock) deps.lock()
         else if (s === 'idle' && prefs.idleMinutes >= 1) deps.lock()
       })
@@ -59,10 +61,10 @@ export function createIdleLockWatcher(deps: {
     start() {
       if (timer !== null) return // 幂等：重复 start 不叠定时器
       // globalThis 取值而非裸 typeof：测试（node 环境）与无 chrome 宿主下不产生 ReferenceError，
-      // 也避免打包器对 chrome 标识符的编译期替换掩盖运行时真实可用性（Firefox 无 idle 权限，N1）
-      const idleApi = (globalThis as { chrome?: { idle?: { queryState?: unknown } } }).chrome?.idle
-      if (!idleApi || typeof idleApi.queryState !== 'function') {
-        deps.onError?.(new Error('chrome.idle 不可用（缺少 idle 权限或宿主不支持），空闲/锁屏自动锁定未启用'))
+      // 也避免打包器对 chrome 标识符的编译期替换掩盖运行时真实可用性（Firefox 无 idle 权限，N1）。
+      // 探测已收拢至 extApi（canIdle/ext 同一 globalThis 通道，口径见 extApi.ts 头注释）
+      if (!canIdle()) {
+        deps.onError?.(new Error('idle API 不可用（缺少 idle 权限或宿主不支持），空闲/锁屏自动锁定未启用'))
         return
       }
       timer = setInterval(() => {

@@ -4,9 +4,11 @@
  * 存在性守卫：测试环境（jsdom 无 chrome）、旧内核缺 action API、setBadgeText 拒绝（扩展上下文
  * 失效）一律静默跳过——badge 非关键路径，绝不影响同步主流程。
  */
+import { canSetBadge, ext } from './extApi'
+
 export function setConflictBadge(count: number): void {
   try {
-    if (typeof chrome === 'undefined' || !chrome.action?.setBadgeText) return
-    void Promise.resolve(chrome.action.setBadgeText({ text: count > 0 ? '!' : '' })).catch(() => {})
+    if (!canSetBadge()) return
+    void Promise.resolve(ext!.action!.setBadgeText({ text: count > 0 ? '!' : '' })).catch(() => {})
   } catch { /* 上下文失效等：守卫兜底 */ }
 }

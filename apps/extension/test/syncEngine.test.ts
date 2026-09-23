@@ -5,11 +5,14 @@
  * - pull 未成功应用（分片缺失/损坏）时放弃推送，宁缺勿以陈旧覆盖
  * - rev 已最新 / 远端从未推送 / 同步关闭时的既有语义保持
  */
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   base64ToBytes, bytesToBase64, chunkKey, chunksToMeta, splitIntoChunks, type SyncChunk,
 } from '@totp/core'
 import { needsPullBeforePush, pullSyncIfNewer, pushSync, SYNC_STATUS_KEY } from '../src/syncEngine'
+
+// ext 是模块导入期快照，逐用例 globalThis.chrome 注入需经惰性桥透传（批⑧ Task 10，见 helper 注释）
+vi.mock('../src/extApi', async () => (await import('./helpers/extApiMock')).extApiMock())
 
 const VAULT_KEY = 'vault'
 const SECURITY_KEY = 'security'

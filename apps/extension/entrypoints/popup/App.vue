@@ -4,6 +4,7 @@ import { BatchPastePanel, CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, 
 import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
+import { canOffscreen, ext } from '../../src/extApi'
 import { createExtensionCloudRunner } from '../../src/cloudRunnerFactory'
 import { createSyncScheduler } from '../../src/syncScheduler'
 import { storageAdapter } from '../../src/store'
@@ -45,7 +46,7 @@ onScopeDispose(() => syncFollow.stop())
 /** 设置深链:直达 options 的 /settings 页(hash 路由);openOptionsPage 不支持 hash 故用 tabs.create */
 const SETTINGS_ICON_PATH = NAV_ICONS.settings
 function openSettings(): void {
-  void chrome.tabs.create({ url: chrome.runtime.getURL('options.html#/settings') })
+  void ext!.tabs.create({ url: ext!.runtime.getURL('options.html#/settings') })
 }
 
 const loaded = ref(false)
@@ -81,7 +82,7 @@ onMounted(async () => {
   // 协议回调（?uri=）/右键菜单（pendingOtpauth）导入预填，不阻塞后续标签页 URL 读取
   void consumePendingOtpauth()
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+    const [tab] = await ext!.tabs.query({ active: true, currentWindow: true })
     if (tab?.url?.startsWith('http')) tabUrl.value = tab.url
   } catch (e) {
     console.warn('[popup] 无法读取当前标签页 URL:', e)
@@ -228,9 +229,9 @@ async function consumePendingOtpauth(): Promise<void> {
   } catch { /* 无 location 场景忽略 */ }
   if (!uri) {
     try {
-      const got = await chrome.storage.local.get(PENDING_OTPAUTH_KEY)
+      const got = await ext!.storage.local.get(PENDING_OTPAUTH_KEY)
       uri = typeof got[PENDING_OTPAUTH_KEY] === 'string' ? got[PENDING_OTPAUTH_KEY].trim() : ''
-      if (uri) await chrome.storage.local.remove(PENDING_OTPAUTH_KEY)
+      if (uri) await ext!.storage.local.remove(PENDING_OTPAUTH_KEY)
     } catch { /* 扩展上下文不可用（如纯浏览器调试）忽略 */ }
   }
   if (!uri) return
@@ -313,8 +314,8 @@ function askRemove(uuid: string) {
  */
 function scheduleClipboardClear(): void {
   if (!settings.clipboardClearEnabled) return
-  if (typeof chrome === 'undefined' || !chrome.offscreen) return
-  void chrome.runtime.sendMessage({ type: 'schedule-clipboard-clear', delayMs: CLIPBOARD_CLEAR_DELAY_MS }).catch(() => {})
+  if (!canOffscreen()) return
+  void ext!.runtime.sendMessage({ type: 'schedule-clipboard-clear', delayMs: CLIPBOARD_CLEAR_DELAY_MS }).catch(() => {})
 }
 const copied = ref(false) // 「已复制」横幅显隐
 const copyFailed = ref(false) // 复制失败横幅（真机发现：剪贴板被第三方进程独占时 writeText 拒绝，原实现静默无提示）

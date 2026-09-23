@@ -1,7 +1,7 @@
 /**
  * 冲突副本 storage.local 列表（spec §4 冲突强提示，extension 端）：废除「同步冲突时后台自动触发
  * 浏览器下载」（旧 cloudRunnerFactory.downloadConflictBackup 的 a.click() 已随本模块删除），副本改为
- * 写入 chrome.storage.local 键 'conflictCopies'（加密 envelope 原样 base64 存储，非明文），限保留最近
+ * 写入 ext.storage.local 键 'conflictCopies'（加密 envelope 原样 base64 存储，非明文），限保留最近
  * CONFLICT_COPIES_MAX=5 份、超出滚动删除最旧；.totpbackup 文件下载（导出）仅由 UI 显式调用
  * exportConflictCopy 触发。
  * 全函数首参注入 StorageAdapter（与 cloudCredStore 同口径；生产调用侧传 store.storageAdapter，

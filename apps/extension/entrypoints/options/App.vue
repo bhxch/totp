@@ -11,9 +11,10 @@ import { createDekSession } from '../../src/dekSession'
 import { createIdleLockWatcher } from '../../src/lockEnforcer'
 import { createExtensionStore, storageAdapter } from '../../src/store'
 import { markSyncOff, SYNC_STATUS_KEY } from '../../src/syncEngine'
+import { canOffscreen, ext } from '../../src/extApi'
 
 // spec §7 末尾：options 窗口独立解锁——windowId='options' 与 popup 隔离，各持各的 DEK。
-// plan16 T12：dekPersist 接 chrome.storage.session——解锁态 DEK 入会话存储，popup 经共享
+// plan16 T12：dekPersist 接 ext.storage.session——解锁态 DEK 入会话存储，popup 经共享
 // session 区自动恢复解锁；本页 initStore 时同样从 session DEK 自动解锁（重启浏览器即清）。
 // onCommittedExtra：写提交 → 存活期自动云同步的变更通知（scheduler 在下方定义；写提交只会
 // 发生在挂载后的异步时点，闭包引用无 TDZ 问题）
@@ -129,8 +130,8 @@ onUnmounted(() => {
  */
 function scheduleClipboardClear(): void {
   if (!settings.clipboardClearEnabled) return
-  if (typeof chrome === 'undefined' || !chrome.offscreen) return
-  void chrome.runtime.sendMessage({ type: 'schedule-clipboard-clear', delayMs: CLIPBOARD_CLEAR_DELAY_MS }).catch(() => {})
+  if (!canOffscreen()) return
+  void ext!.runtime.sendMessage({ type: 'schedule-clipboard-clear', delayMs: CLIPBOARD_CLEAR_DELAY_MS }).catch(() => {})
 }
 
 async function copyToClipboard(code: string) {
@@ -245,7 +246,7 @@ const securityPlatform: SecurityPlatform = {
     await commitSettings()
   },
   // 锁定策略（plan16 T11）：三字段整体覆写进 settings 后持久化（core loadSettings 已归一化）。
-  // 审查 Minor：lockOnRestart 在 ext 无效果（DEK 存 chrome.storage.session，浏览器退出必清，
+  // 审查 Minor：lockOnRestart 在 ext 无效果（DEK 存 ext.storage.session，浏览器退出必清，
   // 两取值行为一致）——显式声明不支持，SecurityCard 隐藏「重启后保持锁定」控件防无效设置
   lockPrefs: {
     get: () => ({ lockOnRestart: settings.lockOnRestart, lockIdleMinutes: settings.lockIdleMinutes, lockOnSystemLock: settings.lockOnSystemLock }),
@@ -276,12 +277,12 @@ const syncPlatform: SyncPlatform = {
     // 开启同步：主动调度一次拉取（开启开关只写 local settings，不触发 background 的 onChanged('sync')；
     // 缺这次拉取，新设备开启后若不写盘将永不应用远端较新数据）。SW 未就绪/上下文失效时忽略。
     try {
-      void chrome.runtime.sendMessage({ type: 'sync-pull' }).catch(() => {})
+      void ext!.runtime.sendMessage({ type: 'sync-pull' }).catch(() => {})
     } catch { /* 扩展上下文失效（重载中）：忽略 */ }
   },
   async readStatus() {
     try {
-      const raw = (await chrome.storage.local.get(SYNC_STATUS_KEY))[SYNC_STATUS_KEY]
+      const raw = (await ext!.storage.local.get(SYNC_STATUS_KEY))[SYNC_STATUS_KEY]
       if (typeof raw !== 'object' || raw === null) return null
       const s = raw as { state?: unknown; at?: unknown }
       return typeof s.state === 'string' && typeof s.at === 'number' ? { state: s.state, at: s.at } : null
@@ -289,7 +290,7 @@ const syncPlatform: SyncPlatform = {
       return null
     }
   },
-  canSync: typeof chrome !== 'undefined' && !!chrome.storage?.sync,
+  canSync: !!ext?.storage.sync,
 }
 
 const backupPlatform: BackupPlatform = {
@@ -429,7 +430,7 @@ watch(() => settings.syncPrefs.autoFollow, () => {
   cloudAuthFailed.value = followScheduler.authFailed()
 })
 
-/** core 调度器（勘误 §4.1：不用 chrome.alarms——SW 后台无解锁 DEK、读不到会话备份口令，
+/** core 调度器（勘误 §4.1：不用 ext.alarms——SW 后台无解锁 DEK、读不到会话备份口令，
  *  alarms 触发的同步无法加密；改为 options 页存活期运行，页面卸载即停）。
  *  guard 按 reason 双开关过滤；开关与间隔读进程内缓存（异步读进不了同步回调，滞后见上注释） */
 const scheduler = createAutoRunScheduler({

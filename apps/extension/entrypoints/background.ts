@@ -2,8 +2,9 @@ import { parseOtpUri } from '@totp/core'
 import { PENDING_OTPAUTH_KEY } from '../src/pendingOtpauth'
 import { decodeImageBytesToUri } from '../src/qrDecode'
 import { pullSyncIfNewer, pushSync } from '../src/syncEngine'
+import { canOpenPopup, ext } from '../src/extApi'
 
-/** 清剪贴板 alarm 名（chrome.alarms 同名 create 即覆盖 = 重复复制重置计时） */
+/** 清剪贴板 alarm 名（同名 create 即覆盖 = 重复复制重置计时） */
 const CLIPBOARD_CLEAR_ALARM = 'clipboard-clear'
 /** offscreen document URL（WXT entrypoints/offscreen → 输出根目录 offscreen.html） */
 const OFFSCREEN_URL = 'offscreen.html'
@@ -19,7 +20,7 @@ const QR_IMAGE_MENU_ID = 'qr-decode-image'
 /** 确保 offscreen document 存在：每扩展仅允许一个，重复 createDocument 会抛错，捕获即「已存在」 */
 async function ensureOffscreenDocument(): Promise<void> {
   try {
-    await chrome.offscreen.createDocument({
+    await ext!.offscreen.createDocument({
       url: OFFSCREEN_URL,
       reasons: ['CLIPBOARD'],
       justification: '清空剪贴板（验证码复制 30s 后自动清空，popup 已关闭需后台承载）',
@@ -48,15 +49,15 @@ async function clearClipboardWithRetry(): Promise<void> {
         if (settled) return
         settled = true
         clearTimeout(t)
-        chrome.runtime.onMessage.removeListener(listener)
+        ext!.runtime.onMessage.removeListener(listener)
         resolve(v)
       }
       const t = setTimeout(() => finish(false), 1000)
       const listener = (m: { type?: string }): void => {
         if (m?.type === 'clear-clipboard-ack') finish(true)
       }
-      chrome.runtime.onMessage.addListener(listener)
-      chrome.runtime.sendMessage({ type: 'clear-clipboard' }).catch(() => finish(false))
+      ext!.runtime.onMessage.addListener(listener)
+      ext!.runtime.sendMessage({ type: 'clear-clipboard' }).catch(() => finish(false))
     })
     if (ok) return
   }
@@ -65,17 +66,17 @@ async function clearClipboardWithRetry(): Promise<void> {
 export default defineBackground(() => {
   // C11：右键菜单在 SW 每次启动时注册，幂等：create 同 id 会抛错（lastError），吞掉即视为成功。
   // 原 onInstalled 注册在浏览器 SW 已被本扩展事件唤醒的场景下不触发，导致菜单偶发缺失。
-  chrome.contextMenus.create(
+  ext!.contextMenus.create(
     { id: OTPAUTH_MENU_ID, title: '将选中的 otpauth 链接添加为条目', contexts: ['selection'] },
-    () => void chrome.runtime.lastError,
+    () => void ext!.runtime.lastError,
   )
-  chrome.contextMenus.create(
+  ext!.contextMenus.create(
     { id: QR_IMAGE_MENU_ID, title: '识别图中的验证码二维码', contexts: ['image'] },
-    () => void chrome.runtime.lastError,
+    () => void ext!.runtime.lastError,
   )
   // 点击：listener 改 async（MV3 只要求 addListener 本身同步注册；事件回调返回的 promise 被
   // Chrome 忽略，无副作用），async 化使 QR 分支可直接 await fetch/storage，分支复用三件套
-  chrome.contextMenus.onClicked.addListener(async (info) => {
+  ext!.contextMenus.onClicked.addListener(async (info) => {
     // C4 图片识别：activeTab 权限随本次右键点击授予该 tab 的源访问权，fetch 图片字节后本地解码。
     // fetch 被权限/CORS 拒绝（Failed to fetch）、解码失败、内容非 otpauth → 统一失败通知
     if (info.menuItemId === QR_IMAGE_MENU_ID) {
@@ -86,7 +87,7 @@ export default defineBackground(() => {
         uri = await decodeImageBytesToUri(new Uint8Array(await res.arrayBuffer()))
       } catch { uri = null }
       if (uri === null) {
-        void chrome.notifications.create({
+        void ext!.notifications.create({
           type: 'basic',
           iconUrl: '/icon/128.png',
           title: 'TOTP 验证码工具',
@@ -94,8 +95,8 @@ export default defineBackground(() => {
         })
         return
       }
-      await chrome.storage.local.set({ [PENDING_OTPAUTH_KEY]: uri })
-      void chrome.notifications.create({
+      await ext!.storage.local.set({ [PENDING_OTPAUTH_KEY]: uri })
+      void ext!.notifications.create({
         type: 'basic',
         iconUrl: '/icon/128.png',
         title: 'TOTP 验证码工具',
@@ -113,7 +114,7 @@ export default defineBackground(() => {
       } catch { /* 落入下方提示 */ }
     }
     if (!valid) {
-      void chrome.notifications.create({
+      void ext!.notifications.create({
         type: 'basic',
         iconUrl: '/icon/128.png',
         title: 'TOTP 验证码工具',
@@ -121,15 +122,14 @@ export default defineBackground(() => {
       })
       return
     }
-    void chrome.storage.local
+    void ext!.storage.local
       .set({ [PENDING_OTPAUTH_KEY]: text })
       .then(() => {
         // openPopup 仅部分 Chromium 版本开放（需用户手势）；不可用时静默——用户点扩展图标即见预填。
-        // M22：直接访问 chrome.action.openPopup（现代 chrome-types 已收录），删除原 `as unknown as {...}.openPopup?.()` 类型断言。
+        // M22：canOpenPopup 探测后直调 action.openPopup（现代 chrome-types 已收录），删除原 `as unknown as {...}.openPopup?.()` 类型断言。
         try {
-          const fn = (chrome.action as { openPopup?: () => unknown }).openPopup
-          if (fn) {
-            const result = fn.call(chrome.action)
+          if (canOpenPopup()) {
+            const result = (ext!.action as { openPopup: () => unknown }).openPopup()
             if (result instanceof Promise) void result.catch(() => {})
           }
         } catch { /* API 不存在/调用失败：静默降级 */ }
@@ -140,11 +140,11 @@ export default defineBackground(() => {
   // 页面端写路径成功后立即发 {type:'sync-push'}（popup 发完即可能销毁，页面端不做 debounce）：
   // SW 内 1s 合并窗口把连写合并为一次推送；SW 被杀时消息本身会唤醒 SW 重新计时，推送不丢
   let syncPushTimer: ReturnType<typeof setTimeout> | undefined
-  chrome.runtime.onMessage.addListener((msg) => {
+  ext!.runtime.onMessage.addListener((msg) => {
     // popup/options 复制后发 {type:'schedule-clipboard-clear', delayMs}——popup 即将关闭，30s 清空须由后台承载
     if (msg?.type === 'schedule-clipboard-clear') {
       // when 绝对时间触发；delayMs 为 30s 满足 Chrome 120+ 的 alarms 最小间隔 30s
-      void chrome.alarms.create(CLIPBOARD_CLEAR_ALARM, { when: Date.now() + (typeof msg.delayMs === 'number' ? msg.delayMs : DEFAULT_CLEAR_DELAY_MS) })
+      void ext!.alarms.create(CLIPBOARD_CLEAR_ALARM, { when: Date.now() + (typeof msg.delayMs === 'number' ? msg.delayMs : DEFAULT_CLEAR_DELAY_MS) })
     }
     if (msg?.type === 'sync-push') {
       if (syncPushTimer !== undefined) clearTimeout(syncPushTimer)
@@ -156,12 +156,12 @@ export default defineBackground(() => {
     // options 开启同步后主动调度一次拉取（开启开关只写 local settings，不触发 onChanged('sync')）
     if (msg?.type === 'sync-pull') void pullSyncIfNewer()
   })
-  chrome.alarms.onAlarm.addListener((alarm) => {
+  ext!.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name !== CLIPBOARD_CLEAR_ALARM) return
     void clearClipboardWithRetry()
   })
   // 浏览器同步：sync 区任一键变化（本端 push 或他端经 Chrome 账号同步落库）→ 尝试拉取更新
-  chrome.storage.onChanged.addListener((_changes, area) => {
+  ext!.storage.onChanged.addListener((_changes, area) => {
     if (area === 'sync') void pullSyncIfNewer()
   })
   // SW 冷启动兜底：浏览器关闭期间他端推送已随账号云落库，重放时不会再触发 onChanged，

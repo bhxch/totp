@@ -11,6 +11,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { sealSecretBag, SECRET_BAG_KEY, type CloudCred, type EntryConflict, type OtpEntry } from '@totp/core'
 import { createExtensionStore } from '../src/store'
 
+// ext 是模块导入期快照，逐用例 globalThis.chrome 注入需经惰性桥透传（批⑧ Task 10，见 helper 注释）
+vi.mock('../src/extApi', async () => (await import('./helpers/extApiMock')).extApiMock())
+
 type Store = Record<string, unknown>
 type Listener = (changes: Record<string, { newValue?: unknown }>, area: string) => void
 

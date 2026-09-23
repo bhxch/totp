@@ -11,6 +11,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createIdleLockWatcher, type IdleLockPrefs } from '../src/lockEnforcer'
 
+// ext 是模块导入期快照，逐用例 globalThis.chrome 注入需经惰性桥透传（批⑧ Task 10，见 helper 注释）
+vi.mock('../src/extApi', async () => (await import('./helpers/extApiMock')).extApiMock())
+
 type IdleState = 'active' | 'idle' | 'locked'
 
 function installChromeIdle(overrides: { setDetectionInterval?: () => void; queryState?: (cb: (s: IdleState) => void) => void } = {}) {

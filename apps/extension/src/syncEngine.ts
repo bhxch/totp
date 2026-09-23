@@ -2,8 +2,8 @@
  * 浏览器同步引擎（由 background SW 执行；页面端只经 sendMessage 调度）。
  *
  * 存储布局：
- * - 数据源：chrome.storage.local 的 vault/security/settings 三个 JSON 字符串键（与页面 store 同源）
- * - 同步区：chrome.storage.sync——分片 `sync:v1:<part>/<total>`（对象）+ `sync:meta`（对象）
+ * - 数据源：ext.storage.local 的 vault/security/settings 三个 JSON 字符串键（与页面 store 同源）
+ * - 同步区：ext.storage.sync——分片 `sync:v1:<part>/<total>`（对象）+ `sync:meta`（对象）
  *   + `sync:settings` / `sync:security`（直读 local 的 JSON 字符串整体一份）。
  *   选 sync 区的依据：core 分片 5500B（base64 + JSON 包装后约 7.4KB）< sync.QUOTA_BYTES_PER_ITEM(8192)；配额检测对应
  *   sync.QUOTA_BYTES(102400)（local 区有 unlimitedStorage，无配额语义）；借 Chrome 账号跨设备同步
@@ -22,6 +22,7 @@ import {
   validateVaultObject,
   type SyncChunk, type SyncMeta,
 } from '@totp/core'
+import { ext } from './extApi'
 
 const META_KEY = 'sync:meta'
 const SETTINGS_SYNC_KEY = 'sync:settings'
@@ -48,19 +49,19 @@ async function setSyncStatus(state: SyncStatusState): Promise<void> {
   let pct: number | undefined
   if (state === 'ok' || state === 'quota') {
     try {
-      const inUse = await chrome.storage.sync.getBytesInUse(null)
-      pct = Math.round((inUse / chrome.storage.sync.QUOTA_BYTES) * 100)
+      const inUse = await ext!.storage.sync.getBytesInUse(null)
+      pct = Math.round((inUse / ext!.storage.sync.QUOTA_BYTES) * 100)
     } catch {
       pct = undefined
     }
   }
   const status: SyncStatus = { state, at: Date.now(), ...(pct !== undefined ? { pct } : {}) }
-  await chrome.storage.local.set({ [STATUS_KEY]: status })
+  await ext!.storage.local.set({ [STATUS_KEY]: status })
 }
 
 /** settings 直读 local 判定同步开关：缺省/损坏/false → 不同步（默认关闭，显式开启） */
 async function readSyncEnabled(): Promise<boolean> {
-  const o = await chrome.storage.local.get([SETTINGS_KEY])
+  const o = await ext!.storage.local.get([SETTINGS_KEY])
   const raw = o[SETTINGS_KEY]
   if (typeof raw !== 'string') return false
   try {
@@ -96,7 +97,7 @@ function readChunks(area: Record<string, unknown>): SyncChunk[] {
 /** 远端 settings 整体采用，但 syncEnabled 位保留本端值（缺失/损坏时保留语义等价于 false） */
 async function mergeRemoteSettingsKeepingLocalSyncEnabled(remoteRaw: string): Promise<string> {
   try {
-    const localRaw = (await chrome.storage.local.get([SETTINGS_KEY]))[SETTINGS_KEY]
+    const localRaw = (await ext!.storage.local.get([SETTINGS_KEY]))[SETTINGS_KEY]
     const remote = JSON.parse(remoteRaw) as Record<string, unknown>
     const localEnabled = typeof localRaw === 'string' && (JSON.parse(localRaw) as Record<string, unknown>).syncEnabled === true
     return JSON.stringify({ ...remote, syncEnabled: localEnabled })
@@ -112,9 +113,9 @@ export function needsPullBeforePush(meta: SyncMeta | null, appliedRev: number): 
 
 /** 读 sync:meta 与本端 appliedRev，判定是否仍有未应用的远端更新（pull 失败后复检用） */
 async function remoteHasNewer(): Promise<boolean> {
-  const meta = readMeta((await chrome.storage.sync.get(null))[META_KEY])
+  const meta = readMeta((await ext!.storage.sync.get(null))[META_KEY])
   if (!meta) return false
-  const book = await chrome.storage.local.get([APPLIED_REV_KEY])
+  const book = await ext!.storage.local.get([APPLIED_REV_KEY])
   const applied = typeof book[APPLIED_REV_KEY] === 'number' ? book[APPLIED_REV_KEY] : 0
   return needsPullBeforePush(meta, applied)
 }
@@ -130,7 +131,7 @@ async function pushOnce(): Promise<void> {
       // pull 未成功应用（分片缺失/损坏，已置 error 状态）：放弃本次推送，宁缺勿以陈旧覆盖
       if (await remoteHasNewer()) return
     }
-    const local = await chrome.storage.local.get([VAULT_KEY, SECURITY_KEY, SETTINGS_KEY])
+    const local = await ext!.storage.local.get([VAULT_KEY, SECURITY_KEY, SETTINGS_KEY])
     const vaultRaw = local[VAULT_KEY]
     if (typeof vaultRaw !== 'string') return // 尚无 vault（首次写入前）：无 payload 可推
     // 密文 vault 缺 SECURITY_KEY：拒绝推送，避免密文 vault 落入 sync 区后无人可解
@@ -144,7 +145,7 @@ async function pushOnce(): Promise<void> {
       } catch { /* 非 JSON 即明文路径：放行 */
       }
     }
-    const syncAll = await chrome.storage.sync.get(null)
+    const syncAll = await ext!.storage.sync.get(null)
     const prevMeta = readMeta(syncAll[META_KEY])
     const rev = (prevMeta?.rev ?? 0) + 1
     const updatedAt = Date.now()
@@ -155,13 +156,13 @@ async function pushOnce(): Promise<void> {
     // settings 直读 local 整体一份；security 存在才同步（明文态由 pull 端同态移除）
     if (typeof local[SETTINGS_KEY] === 'string') batch[SETTINGS_SYNC_KEY] = local[SETTINGS_KEY]
     if (typeof local[SECURITY_KEY] === 'string') batch[SECURITY_SYNC_KEY] = local[SECURITY_KEY]
-    await chrome.storage.sync.set(batch)
+    await ext!.storage.sync.set(batch)
     const stale = staleChunkKeys(existing, fresh)
-    if (stale.length > 0) await chrome.storage.sync.remove(stale)
+    if (stale.length > 0) await ext!.storage.sync.remove(stale)
     // appliedRev 先行落盘：自身 push 触发的 onChanged(sync) 拉取会因 rev 已应用而无操作（防回环）
-    await chrome.storage.local.set({ [APPLIED_REV_KEY]: rev })
-    const inUse = await chrome.storage.sync.getBytesInUse(null)
-    await setSyncStatus(inUse > chrome.storage.sync.QUOTA_BYTES * 0.9 ? 'quota' : 'ok')
+    await ext!.storage.local.set({ [APPLIED_REV_KEY]: rev })
+    const inUse = await ext!.storage.sync.getBytesInUse(null)
+    await setSyncStatus(inUse > ext!.storage.sync.QUOTA_BYTES * 0.9 ? 'quota' : 'ok')
   } catch {
     // 全程异常（含 sync 配额写失败）→ error 状态；状态写入自身失败不再扩散
     await setSyncStatus('error').catch(() => {})
@@ -173,8 +174,8 @@ async function pullOnce(): Promise<void> {
     // 关闭同步的设备不拉取：显式退出（避免他端推送意外覆写未开启同步的本端数据）
     if (!(await readSyncEnabled())) return
     const [syncAll, book] = await Promise.all([
-      chrome.storage.sync.get(null),
-      chrome.storage.local.get([APPLIED_REV_KEY]),
+      ext!.storage.sync.get(null),
+      ext!.storage.local.get([APPLIED_REV_KEY]),
     ])
     const meta = readMeta(syncAll[META_KEY])
     if (!meta) return // 远端从未推送
@@ -213,10 +214,10 @@ async function pullOnce(): Promise<void> {
       // 不移除 SECURITY_KEY、不整体采用远端 settings，仅推进 appliedRev 记账本次拒绝（防同 rev 反复触发），
       // 并置 conflict 状态提示用户统一两端加密状态。此后两端数据有意分叉直至用户裁决（远端设备恢复加密
       // 或本端关闭加密）——这是保守方向：保完整性、不静默降级。设备间真实性认证属协议级改造，不在本补丁范围。
-      const localSecurity = (await chrome.storage.local.get([SECURITY_KEY]))[SECURITY_KEY]
+      const localSecurity = (await ext!.storage.local.get([SECURITY_KEY]))[SECURITY_KEY]
       if (typeof localSecurity === 'string') {
         batch[APPLIED_REV_KEY] = meta.rev
-        await chrome.storage.local.set(batch)
+        await ext!.storage.local.set(batch)
         await setSyncStatus('conflict')
         return
       }
@@ -230,7 +231,7 @@ async function pullOnce(): Promise<void> {
         validateVaultObject(parsed)
       } catch {
         batch[APPLIED_REV_KEY] = meta.rev
-        await chrome.storage.local.set(batch)
+        await ext!.storage.local.set(batch)
         await setSyncStatus('invalid')
         return
       }
@@ -243,8 +244,8 @@ async function pullOnce(): Promise<void> {
       batch[SETTINGS_KEY] = await mergeRemoteSettingsKeepingLocalSyncEnabled(syncAll[SETTINGS_SYNC_KEY])
     }
     batch[APPLIED_REV_KEY] = meta.rev
-    await chrome.storage.local.set(batch)
-    if (removes.length > 0) await chrome.storage.local.remove(removes)
+    await ext!.storage.local.set(batch)
+    if (removes.length > 0) await ext!.storage.local.remove(removes)
     await setSyncStatus('ok')
   } catch {
     await setSyncStatus('error').catch(() => {})

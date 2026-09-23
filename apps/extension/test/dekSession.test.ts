@@ -6,9 +6,12 @@
  * - set 长度校验：非 32B 抛错（编程错误立即暴露），32B 通过
  * - chrome API 抛错容错：get → null；set/clear 吞错（环境性失败不影响解锁/锁定主流程）
  */
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { bytesToBase64 } from '@totp/core'
 import { createDekSession } from '../src/dekSession'
+
+// ext 是模块导入期快照，逐用例 globalThis.chrome 注入需经惰性桥透传（批⑧ Task 10，见 helper 注释）
+vi.mock('../src/extApi', async () => (await import('./helpers/extApiMock')).extApiMock())
 
 type Store = Record<string, unknown>
 

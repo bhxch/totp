@@ -3,8 +3,9 @@ import { createVueStore, type VueStore } from '@totp/ui'
 import { createDekSession } from './dekSession'
 import { createChromeStorage } from './chromeStorage'
 import { setConflictBadge } from './conflictBadge'
+import { ext } from './extApi'
 
-/** 共享 chrome.storage.local 适配器：vault 与 icons 同源（popup/options 各自建 IconStore 用） */
+/** 共享 ext.storage.local 适配器：vault 与 icons 同源（popup/options 各自建 IconStore 用） */
 export const storageAdapter = createChromeStorage()
 
 /** 浏览器同步推送调度：syncEnabled=false 短路不发消息，否则立即 sendMessage。
@@ -12,7 +13,7 @@ export const storageAdapter = createChromeStorage()
 function scheduleSyncPush(s: VueStore): void {
   if (s.settings.syncEnabled !== true) return
   try {
-    void chrome.runtime.sendMessage({ type: 'sync-push' }).catch(() => {}) // background 未就绪等场景不打扰
+    void ext!.runtime.sendMessage({ type: 'sync-push' }).catch(() => {}) // background 未就绪等场景不打扰
   } catch {
     // 扩展上下文失效（重载中）：忽略
   }
@@ -23,7 +24,7 @@ function scheduleSyncPush(s: VueStore): void {
  *  onCommittedExtra（纯增量，Task 12）：经队列的全部写路径（commit/commitSettings/加解密 op 等）
  *  成功后在既有 sync-push 调度之后调用——options 页存活期自动云同步的变更通知由此接入；
  *  具名 commit/commitSettings 包装（下方）是 popup 单例路径，popup 无自动云同步 runner，不接 extra
- *  dekPersist（plan16 T12）：宿主会话级 DEK 存取（chrome.storage.session）——解锁必写、lock 必清；
+ *  dekPersist（plan16 T12）：宿主会话级 DEK 存取（ext.storage.session）——解锁必写、lock 必清；
  *  session 区跨扩展上下文共享，popup/options 各自传 createDekSession() 即达成共享解锁态
  *  （任一端解锁后另一端 initStore 自动恢复解锁；plan16 设计 §1 附带收益，取代原「窗口完全独立」语义） */
 export function createExtensionStore(
@@ -40,7 +41,7 @@ export function createExtensionStore(
     dekPersist: opts.dekPersist,
     selfWriteSuppressMs: opts.selfWriteSuppressMs,
     registerSync: (cb) =>
-      chrome.storage.onChanged.addListener((changes, area) => {
+      ext?.storage.onChanged.addListener((changes, area) => {
         if (area !== 'local') return
         // secretBag（审查 I7）：另一上下文（popup/options）写保管区 → 本上下文重读前进内存视图，
         // 否则两个 options 页并发写保管区可丢失先写者数据（键名取 core SECRET_BAG_KEY 常量防漂移）

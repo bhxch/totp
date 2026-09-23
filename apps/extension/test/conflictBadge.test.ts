@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { setConflictBadge } from '../src/conflictBadge'
 
+// ext 是模块导入期快照，逐用例 globalThis.chrome 注入需经惰性桥透传（批⑧ Task 10，见 helper 注释）
+vi.mock('../src/extApi', async () => (await import('./helpers/extApiMock')).extApiMock())
+
 /** spec §4 extension action badge：冲突>0 →「!」，=0 → 清空；无 chrome.action 环境守卫不抛 */
 
 afterEach(() => {
