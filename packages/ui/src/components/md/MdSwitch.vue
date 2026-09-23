@@ -16,7 +16,9 @@ function onChange(e: Event) {
   </label>
 </template>
 <style scoped>
-.md-switch { display: inline-flex; align-items: center; cursor: pointer; vertical-align: middle; }
+/* 根 relative：sr-only input(absolute) 的包含块收敛到组件根——否则逃逸到 ICB，
+ * 在壳层锁高(批⑧ §4)布局下撑出 document 级隐性滚动(真机 2026-09-24 实证) */
+.md-switch { position: relative; display: inline-flex; align-items: center; cursor: pointer; vertical-align: middle; }
 .md-switch--disabled { opacity: .38; cursor: default; }
 .md-switch__input { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }

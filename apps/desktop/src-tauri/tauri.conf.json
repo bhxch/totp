@@ -10,10 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [
-      { "label": "main", "title": "TOTP 验证码工具", "width": 760, "height": 560, "visible": false },
-      { "label": "mini", "title": "TOTP", "width": 320, "height": 420, "visible": false, "skipTaskbar": true, "url": "mini.html" }
-    ],
+    "windows": [],
     "security": { "csp": null },
     "withGlobalTauri": true
   },

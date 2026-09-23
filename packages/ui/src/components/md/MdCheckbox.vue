@@ -17,7 +17,9 @@ function onChange(e: Event) {
   </label>
 </template>
 <style scoped>
-.md-checkbox { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font: inherit;
+/* 根 relative：sr-only input(absolute) 的包含块收敛到组件根——否则逃逸到 ICB，
+ * 在壳层锁高(批⑧ §4)布局下撑出 document 级隐性滚动(真机 2026-09-24 实证) */
+.md-checkbox { position: relative; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font: inherit;
   font-size: var(--md-sys-typescale-body-medium); color: var(--md-sys-color-on-surface); vertical-align: middle; }
 .md-checkbox--disabled { cursor: default; opacity: .38; }
 .md-checkbox__input { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;

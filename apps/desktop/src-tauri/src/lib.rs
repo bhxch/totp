@@ -480,6 +480,12 @@ fn destroy_releasable_windows(app: &AppHandle, cfg: &release_policy::ReleasePoli
 
 /// 按需重建窗口（tauri.conf.json 同参）；返回是否发生了重建（重建后前端冷启动，自动走 DEK 回注）。
 /// 重建成功即 reset 释放轨迹：销毁档置位的 destroyed 由重建解除，隐藏计时从头起算
+/// 按需确保窗口存在。enable_clipboard_access（批⑧ 真机修复 2026-09-24）：
+/// navigator.clipboard.read 在 WebView2 需要 CLIPBOARD_READ 权限，wry 仅在
+/// attributes.clipboard（enable_clipboard_access）时对 PermissionRequested 自动 ALLOW，
+/// 默认权限请求永久挂起（promise 永不 settle、按钮无响应——真机实证）。
+/// 该开关仅 WebviewWindowBuilder 可配（tauri.conf.json 无对应键），故 main/mini
+/// 改由 setup 内经本函数创建（conf 不再声明窗口），销毁重建路径同样生效。
 fn ensure_window(app: &AppHandle, label: &str) -> bool {
     if app.get_webview_window(label).is_some() {
         return false;
@@ -489,12 +495,14 @@ fn ensure_window(app: &AppHandle, label: &str) -> bool {
             .title("TOTP 验证码工具")
             .inner_size(760.0, 560.0)
             .visible(false)
+            .enable_clipboard_access()
             .build(),
         "mini" => tauri::WebviewWindowBuilder::new(app, "mini", tauri::WebviewUrl::App("mini.html".into()))
             .title("TOTP")
             .inner_size(320.0, 420.0)
             .visible(false)
             .skip_taskbar(true)
+            .enable_clipboard_access()
             .build(),
         _ => return false,
     };
@@ -1378,6 +1386,11 @@ pub fn run() {
                 .build(),
         )
         .setup(move |app| {
+            // 批⑧ 真机修复：窗口改由 builder 创建（conf 不再声明）以启用页面剪贴板读取
+            // （enable_clipboard_access 仅 builder 可配，见 ensure_window 注释）。
+            // headless 同样创建：审批弹层/托盘依赖隐藏窗口存活
+            ensure_window(app.handle(), "main");
+            ensure_window(app.handle(), "mini");
             // plan17：MCP 服务器装配（manage McpState）+ 按配置自动拉起；返回含 CLI 覆盖的
             // 生效 cfg 与真实启动结果，供无头连接信息输出（stdout/托盘复制与实际监听同源）
             let (mcp_cfg, mcp_start) = mcp_server::init_state_and_autostart(app, &mcp_override)?;
@@ -1569,8 +1582,20 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|_app, event| {
-            if let tauri::RunEvent::Exit = event {
-                lock_events::shutdown();
+            match event {
+                // 批⑧ 真机修复：释放策略销毁档 destroy main+mini 后，Tauri 对「最后窗口
+                // 关闭」默认退出——与 spec「仅保留托盘进程」相悖（真机实证进程整体退出）。
+                // code=None 即窗口全关触发的退出请求，阻止之；托盘「退出」走 app.exit(0)
+                // （code=Some）不受影响。销毁窗口不触发 CloseRequested，prevent_close 拦不到
+                tauri::RunEvent::ExitRequested { code, api, .. } => {
+                    if code.is_none() {
+                        api.prevent_exit();
+                    }
+                }
+                tauri::RunEvent::Exit => {
+                    lock_events::shutdown();
+                }
+                _ => {}
             }
         });
 }

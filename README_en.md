@@ -141,7 +141,7 @@ Vault encryption supports multiple unlock sources (KEK sources) coexisting, mana
 - **Lock triggers** ("Lock policy" section on the Security page, preferences persisted):
   - "Keep locked after restart" (default on): the desktop has no session-level DEK storage so it is always locked after restart; on the extension the DEK session storage is necessarily cleared when the browser exits, so both values behave the same
   - "Lock on system lock" (default on): on desktop Windows this subscribes to system lock events (WTS); on mac/Linux the trigger is unavailable (backlog). On the extension it triggers via `chrome.idle`'s locked state
-  - "Lock after N minutes idle" (default 0 = disabled): on the extension it polls `chrome.idle` every 30 seconds while the options page is alive (threshold = configured minutes); on desktop an idle executor decides. On Firefox the idle API is unavailable at runtime — a degradation notice is shown on startup and auto-lock stays off
+  - "Lock after N minutes idle" (default 0 = disabled): on the extension it polls `chrome.idle` every 30 seconds while the options page is alive (threshold = configured minutes); on desktop an idle executor decides. Firefox supports the idle API (including the `locked` state) — available since the MV3 migration (min_version 140); if it is still unavailable at runtime, a degradation notice is shown on startup
 
 ### Clipboard auto-clear and secret masking
 
@@ -358,5 +358,5 @@ See the [plan13-16 full code review](docs/review/2026-09-18-plan13-16-full-code-
 - **Google Drive's "keep latest N" currently behaves as "overwrite"** (timestamped names do not apply to gdrive; only one remote object ever exists)
 - **Desktop auto backup advances the baseline on partial failure**: if any directory write fails the baseline still advances and the status line records "success"; no automatic retry follows — write a manual backup to catch up
 - **The desktop "keep locked after restart" toggle currently has no effect** (the desktop has no session-level DEK storage and is always locked after restart); the "lock on system lock" trigger is unavailable on mac/Linux (backlog)
-- **Firefox (degraded under MV3)**: idle/lock auto-lock unavailable (idle API missing at runtime; a degradation notice appears when the options page starts); clipboard auto-clear unavailable (no offscreen API, clearing degrades to foreground-only, unscheduled); Passkey (PRF) unlock is limited — the entry hides itself when probing fails
+- **Firefox (MV3)**: clipboard auto-clear unavailable (no offscreen API, clearing degrades to foreground-only, unscheduled); idle/lock auto-lock is supported per MDN compatibility (including the `locked` state, min_version 140) — if anything misbehaves on real hardware, rely on the runtime degradation notice; Passkey (PRF) unlock is limited — the entry hides itself when probing fails
 - **No pagination for cloud listings**: when objects under a single directory/prefix exceed the cloud API's page cap (e.g. 1000 for S3), rolling deletion may miss the oldest backups
