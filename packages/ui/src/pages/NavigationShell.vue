@@ -117,9 +117,10 @@ const pageProps = computed<Record<string, unknown>>(() => {
   </div>
 </template>
 <style scoped>
-.nav-shell { display: flex; min-height: 100dvh; }
-.nav-shell--narrow { flex-direction: column; }
-.nav-shell__main { flex: 1; min-width: 0; }
+/* 壳层锁高：rail 固定、内容区内部滚动（spec 批⑧ §4）；窄屏顶部 Tabs 布局维持文档流整页滚动 */
+.nav-shell { display: flex; height: 100dvh; overflow: hidden; }
+.nav-shell--narrow { flex-direction: column; height: auto; overflow: visible; }
+.nav-shell__main { flex: 1; min-width: 0; overflow-y: auto; }
 .nav-shell__rail-action { border: none; background: transparent; cursor: pointer; font: inherit;
   font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-on-surface-variant); padding: 8px 4px; border-radius: 8px;
   transition: background-color .15s; }
