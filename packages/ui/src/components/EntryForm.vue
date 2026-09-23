@@ -425,7 +425,7 @@ function submit() {
         :model-value="String(form.counter)" @update:model-value="form.counter = looseToNumber($event)"
       />
     </div>
-    <textarea v-model="form.note" :placeholder="t('entryForm.notePlaceholder')" rows="2" :aria-label="t('entryForm.noteAria')" />
+    <MdTextField v-model="form.note" multiline :rows="3" label="" :placeholder="t('entryForm.notePlaceholder')" :aria-label="t('entryForm.noteAria')" />
     <fieldset v-if="shownTags.length > 0 || createTag">
       <legend>{{ t('entryForm.tagsLegend') }}</legend>
       <MdCheckbox
@@ -499,9 +499,7 @@ function submit() {
 
 <style scoped>
 .entry-form { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: 8px; }
-/* 仅存的原生控件（textarea/file）保留紧凑样式；输入/按钮/下拉由 md 组件自带样式 */
-.entry-form textarea { padding: 6px 8px; box-sizing: border-box; }
-.entry-form textarea { resize: vertical; font-family: inherit; }
+/* 仅存的原生控件（file input）保留隐藏样式；输入/按钮/下拉由 md 组件自带样式 */
 .secret-row { display: flex; gap: 6px; align-items: center; }
 .secret-row .secret-field { flex: 1; }
 .secret-toggle { white-space: nowrap; }
