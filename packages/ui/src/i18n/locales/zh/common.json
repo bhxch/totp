@@ -744,7 +744,6 @@
   "cloudRunner": {
     "lockedVault": "库已锁定",
     "noSecret": "未设置备份口令",
-    "noChange": "内容无变化",
     "noSources": "未启用云源",
     "failed": "失败",
     "action": {

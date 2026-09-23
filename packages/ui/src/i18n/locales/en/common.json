@@ -744,7 +744,6 @@
   "cloudRunner": {
     "lockedVault": "Vault is locked",
     "noSecret": "No backup passphrase set",
-    "noChange": "Content unchanged",
     "noSources": "No cloud sources enabled",
     "failed": "Failed",
     "action": {

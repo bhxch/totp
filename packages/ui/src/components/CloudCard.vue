@@ -540,7 +540,12 @@ async function onSync(): Promise<void> {
         // 失败源 rev 基线不落盘（states=原样，回写幂等）——下轮按原基线重做
         continue
       }
-      statusMap.value[res.key] = ACTION_LABEL_KEY[res.outcome.action] ? t(ACTION_LABEL_KEY[res.outcome.action]!) : res.outcome.action
+      // 降级合并专用文案（S3）：与 runner 摘要「已合并（降级）」同键同文案，卡内状态行不再误显「已合并」
+      const actionKey =
+        res.outcome.action === 'merged' && res.outcome.mergeDegraded === true
+          ? 'cloudRunner.action.mergedDegraded'
+          : ACTION_LABEL_KEY[res.outcome.action]
+      statusMap.value[res.key] = actionKey ? t(actionKey) : res.outcome.action
       if (res.convergeError) statusMap.value[res.key] += t('cloudCard.convergeFailed', { message: trunc(res.convergeError) })
       // keep 源上传成功（含收敛改写后的 uploaded）→ 远端滚动删除超额旧份，结果附到状态行：
       // deleted>0 显示清理份数；-1=后端不支持自动清理，提示累积风险与替代选项；0=未超额不刷屏。
