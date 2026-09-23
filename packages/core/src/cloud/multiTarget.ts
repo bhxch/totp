@@ -36,8 +36,8 @@
  *   或 v2 无头，保持原值不写 0；in-sync / 失败 → 原 state 不变。
  * - replica：跳过（in-sync）→ 原 state 不变；推平/合并成功 → { lastKnownRemoteRev: newRev,
  *   baseSnapshot: final }；失败 → 原 state 不变。
- * - replica 已知 rev 汇总记录在 primary 的 `state.primaryRev[key]`（二选一裁定采用 primary 承载制，
- *   T9 装配按此约定：装配时把 primary state 装入 primary 目标、同步后持久化各 state 即完成记录维护）。
+ *   （spec §2 曾设计 replica 已知 rev 汇总记录在 primary 的 primaryRev[key]——实现中跳过/推平
+ *   判定完全由各 replica 自身 state 承担，更干净且无消费方，primaryRev 字段已删，见勘误回写。）
  *
  * conflicts = 各目标 outcome.conflicts 拼接（EntryConflict[]）；adopted = final ≠ 入参 vaultJson
  * （primary 采纳/合并与 replica 误配置并入都计入，宿主据此 persistAdopted）。
@@ -50,11 +50,13 @@ import { syncWithCloudRev, type ConflictBackupResult, type RevSyncOutcome } from
 import type { SourceSyncState } from './syncState'
 
 /** 单个云目标同步输入：key 为宿主侧稳定标识（源 id）；source 携带 role/enabled 裁定元数据；
- *  state 为该源本端持久 rev 基线（primary 的 primaryRev 字段承载各 replica 已知 rev）。 */
+ *  state 为该源本端持久 rev 基线；readPath 为读远端路径（缺省=path，keep 滚动保留源读最新份、
+ *  写新时间戳份分离，见 SyncWithCloudRevOpts.readPath）。 */
 export interface MultiTargetInput {
   key: string
   backend: CloudBackend
   path: string
+  readPath?: string
   source: BackupSource
   state: SourceSyncState
 }
@@ -111,7 +113,6 @@ export async function syncMultipleTargets(opts: {
   const results: TargetResult[] = []
   const states: Record<string, SourceSyncState> = {}
   const conflicts: EntryConflict[] = []
-  const replicaRevs: Record<string, number> = { ...(primary.state.primaryRev ?? {}) }
   let final = vaultJson
 
   // ---- primary 裁决：四出口推拉，产出 final ----
@@ -120,6 +121,7 @@ export async function syncMultipleTargets(opts: {
     primaryOutcome = await syncWithCloudRev({
       backend: primary.backend,
       path: primary.path,
+      readPath: primary.readPath,
       vaultJson,
       password,
       profile,
@@ -163,6 +165,7 @@ export async function syncMultipleTargets(opts: {
       let r = await syncWithCloudRev({
         backend: t.backend,
         path: t.path,
+        readPath: t.readPath,
         vaultJson: final,
         password,
         profile,
@@ -181,6 +184,7 @@ export async function syncMultipleTargets(opts: {
         r = await syncWithCloudRev({
           backend: t.backend,
           path: t.path,
+          readPath: t.readPath,
           vaultJson: mergedJson,
           password,
           profile,
@@ -204,9 +208,6 @@ export async function syncMultipleTargets(opts: {
           lastKnownRemoteRev: (r.newRev ?? r.remoteRev) ?? t.state.lastKnownRemoteRev,
           baseSnapshot: final,
         }
-        // primaryRev 记录推进（primary 承载制）：跳过=远端现值（与记录一致或刷新漂移），推平=newRev
-        if (r.newRev !== undefined) replicaRevs[t.key] = r.newRev
-        else if (r.remoteRev !== null) replicaRevs[t.key] = r.remoteRev
       } else {
         states[t.key] = t.state
       }
@@ -224,14 +225,9 @@ export async function syncMultipleTargets(opts: {
     results.push(result)
   }
 
-  // states 恒含所有参与目标：primary 键补齐（preview/失败/in-sync=原样），apply 模式挂 primaryRev
-  // 记录（承载制，replica 已知 rev 汇总）；preview 模式全键原样，宿主不得持久化
-  const primaryState = states[primary.key] ?? primary.state
-  if (mode === 'apply' && (replicas.length > 0 || primaryState.primaryRev !== undefined)) {
-    states[primary.key] = { ...primaryState, primaryRev: replicaRevs }
-  } else {
-    states[primary.key] = primaryState
-  }
+  // states 恒含所有参与目标：primary 键补齐（preview/失败/in-sync=原样）；
+  // preview 模式全键原样，宿主不得持久化
+  states[primary.key] = states[primary.key] ?? primary.state
 
   return { results, finalVaultJson: final, adopted: final !== vaultJson, conflicts, states }
 }

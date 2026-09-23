@@ -55,8 +55,8 @@ export interface CloudRunnerDeps {
   getVaultJson(): string
   /** 启用源与其凭据对（宿主装配：元数据自 backupSources、凭据自保管区 credsCache；锁定态凭据缺失自然为空） */
   loadSources(): Promise<Array<{ source: BackupSource; cred: CloudCred }>>
-  /** 该源 rev 基线（core loadSyncState；spec §1.2 SourceSyncState，primary 的 primaryRev 承载各
-   *  replica 已知 rev），无记录 → 空状态。seal 装配（baseSnapshot DEK 静态保护）为宿主职责 */
+  /** 该源 rev 基线（core loadSyncState；spec §1.2 SourceSyncState），无记录 → 空状态。
+   *  seal 装配（baseSnapshot DEK 静态保护）为宿主职责 */
   loadSyncState(sourceId: string): Promise<SourceSyncState>
   /** 该源 rev 基线持久化（core saveSyncState；编排返回 states 逐源回写，失败源=原样幂等） */
   saveSyncState(sourceId: string, state: SourceSyncState): Promise<void>
@@ -177,11 +177,17 @@ function instrumentBackend(b: CloudBackend, onFirst: () => void): CloudBackend {
 }
 
 /** keep 源远端最新份路径：listBackups 名单内时间戳备份的最新份（字典序=时间序，与滚动删除同口径）；
- *  后端不支持列名单/名单为空 → null（pull-only 无物可拉，零处理） */
+ *  后端不支持列名单/名单为空/listBackups 抛错 → null。抛错同按 null 走（该源按云端无对象首推，
+ *  收敛归后续轮；本地/远端内容零丢失）——读侧名单失败不得炸整轮 Promise.all（逐源隔离，同 ⑮ 裁定） */
 async function latestKeepPath(backend: CloudBackend): Promise<string | null> {
   if (!backend.listBackups) return null
   const basename = (p: string): string => p.split('/').filter((s) => s !== '').pop() ?? p
-  const names = (await backend.listBackups()).filter((p) => BACKUP_NAME_RE.test(basename(p))).sort()
+  let names: string[]
+  try {
+    names = (await backend.listBackups()).filter((p) => BACKUP_NAME_RE.test(basename(p))).sort()
+  } catch {
+    return null
+  }
   return names[names.length - 1] ?? null
 }
 
@@ -284,32 +290,47 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
     }
     const total = pairs.length
     const inputs = await Promise.all(
-      pairs.map(async ({ source, cred }) => ({
-        key: source.id,
-        backend: deps.makeBackend(cred),
-        // keep 源每次写新时间戳文件；overwrite 源写固定对象路径（均经 core 校验/缺省回落）
-        path: source.retention.type === 'keep' ? resolveTimestampPath(cred, new Date()) : resolveObjectPath(cred),
-        source,
-        state: await deps.loadSyncState(source.id),
-      })),
+      pairs.map(async ({ source, cred }) => {
+        const backend = deps.makeBackend(cred)
+        // keep 源「读最新份、写新时间戳份」分离（readPath）：读侧参与 rev 判定/下载/合并（审查
+        // Important-2——不分离则读恒落空、合并不可达，双设备并发编辑退化为 last-writer-wins 且
+        // 败者内容被滚动删除清除）；写侧每次新时间戳文件。overwrite 源固定路径读写同一对象。
+        // keep 读侧名单空/后端不支持列名单 → 无 readPath，按云端无对象首推，收敛归后续轮
+        const keep = source.retention.type === 'keep'
+        const readPath = keep ? ((await latestKeepPath(backend)) ?? undefined) : undefined
+        return {
+          key: source.id,
+          backend,
+          path: keep ? resolveTimestampPath(cred, new Date()) : resolveObjectPath(cred),
+          readPath,
+          source,
+          state: await deps.loadSyncState(source.id),
+        }
+      }),
     )
     // 逐源进度挂点（spec §6 ⑥）：首目标开始不发 0（无信息量），i≥1 的首个后端调用到来发 (i,total)
     const wrapped = inputs.map((input, i) =>
       i === 0 ? input : { ...input, backend: instrumentBackend(input.backend, () => deps.onProgress?.(i, total)) },
     )
-    const r = await syncMultipleTargets({
-      targets: wrapped,
-      vaultJson,
-      password: secret,
-      deviceId: await deps.deviceId(),
-      // 审查 I9：saveConflictBackup 的 Promise 原样交回 core（syncWithCloudRev await 该回调），
-      // 写盘拒绝 → 该目标同步失败（outcome=null + error），防止无本地副本时照常采纳远端并回推；
-      // preview 模式 core 恒不调用（只读）
-      onConflictBackup: (key, bytes) => deps.saveConflictBackup?.(key, bytes),
-      profile: deps.kdfProfile?.(),
-      mode,
-    })
-    deps.onProgress?.(total, total)
+    // 轮末进度经 finally 发（S2）：编排抛错（如 no primary target）也必须结清进度条，
+    // 否则 CloudCard spinner 滞留至下一成功轮
+    let r: MultiTargetRun
+    try {
+      r = await syncMultipleTargets({
+        targets: wrapped,
+        vaultJson,
+        password: secret,
+        deviceId: await deps.deviceId(),
+        // 审查 I9：saveConflictBackup 的 Promise 原样交回 core（syncWithCloudRev await 该回调），
+        // 写盘拒绝 → 该目标同步失败（outcome=null + error），防止无本地副本时照常采纳远端并回推；
+        // preview 模式 core 恒不调用（只读）
+        onConflictBackup: (key, bytes) => deps.saveConflictBackup?.(key, bytes),
+        profile: deps.kdfProfile?.(),
+        mode,
+      })
+    } finally {
+      deps.onProgress?.(total, total)
+    }
     if (mode === 'preview') return r
 
     // ---- 以下为 apply 专属落盘与通知（preview 的 states 为入参原样，宿主不得持久化）----

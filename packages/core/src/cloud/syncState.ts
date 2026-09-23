@@ -8,8 +8,6 @@ export interface SourceSyncState {
   lastKnownRemoteRev: number | null
   /** 上次与本端内容收敛一致的完整 vault JSON（共同祖先快照）；null=无祖先（两方合并降级） */
   baseSnapshot: string | null
-  /** replica 目标的 rev 记录（spec §2 收敛复制跳过判定） */
-  primaryRev?: Record<string, number>
 }
 
 export interface Seal {
@@ -43,7 +41,6 @@ export async function loadSyncState(adapter: StorageAdapter, sourceId: string, s
   return {
     lastKnownRemoteRev: typeof s.lastKnownRemoteRev === 'number' ? s.lastKnownRemoteRev : null,
     baseSnapshot: typeof s.baseSnapshot === 'string' ? s.baseSnapshot : null,
-    ...(s.primaryRev !== undefined && typeof s.primaryRev === 'object' ? { primaryRev: s.primaryRev as Record<string, number> } : {}),
   }
 }
 

@@ -229,8 +229,8 @@ describe('createCloudSyncRunner', () => {
       makeBackend: (cred) => (cred.backend === 'gist' ? bad : good),
     })
     await createCloudSyncRunner(deps).run()
-    // 失败源：自身基线不推进（原样回写，幂等），但 primaryRev 记录推进（s-good 推平成功 rev=1）
-    expect(saveSyncState).toHaveBeenCalledWith('s-bad', { ...stBad, primaryRev: { 's-good': 1 } })
+    // 失败源：自身基线原样回写（幂等），成功源正常推导
+    expect(saveSyncState).toHaveBeenCalledWith('s-bad', stBad)
     expect(saveSyncState).toHaveBeenCalledWith('s-good', expect.objectContaining({ lastKnownRemoteRev: 1 }))
     expect(deps.onError).not.toHaveBeenCalled() // 单源失败不视为整体失败
   })
@@ -386,20 +386,24 @@ describe('createCloudSyncRunner', () => {
     expect(recordStatus).toHaveBeenCalledWith(true, 'home: 已上传; office: 已上传')
   })
 
-  it('⑫keep 源：path=对象目录下时间戳名，uploaded 后滚动删除超额旧份并回调 onRetentionDeleted', async () => {
+  it('⑫keep 源：读侧=名单内最新份参与判定，写侧=新时间戳名，uploaded 后滚动删除超额旧份并回调', async () => {
     const b = fakeBackend()
-    b.store.set('dir/vault-20260101-000000.totpbackup', bytesOf('old1'))
-    b.store.set('dir/vault-20260202-000000.totpbackup', bytesOf('old2'))
-    b.store.set('dir/vault-20260303-000000.totpbackup', bytesOf('old3'))
+    // 旧份必须是真信封（读侧 readPath=最新份参与 rev 判定）：内容与本地基线自洽（rev3==known、
+    // 内容==baseSnapshot）、本地已改 → uploaded 写新份
+    b.store.set('dir/vault-20260101-000000.totpbackup', await sealedRemote(1, A))
+    b.store.set('dir/vault-20260202-000000.totpbackup', await sealedRemote(2, A))
+    b.store.set('dir/vault-20260303-000000.totpbackup', await sealedRemote(3, A))
     b.listBackups = async () => [...b.store.keys()]
     const { deps, onRetentionDeleted } = makeDeps({
+      getVaultJson: () => B, // 本地已改（≠基线 A）
       loadSources: vi.fn(async () => [
         { source: source('s-keep', { retention: { type: 'keep', n: 2 } }), cred: { ...WEBDAV_CRED, objectPath: 'dir/totp-backup.totpbackup' } },
       ]),
+      loadSyncState: vi.fn(async () => revState(3, A)),
       makeBackend: () => b,
     })
     await createCloudSyncRunner(deps).run()
-    // 上传的是新时间戳文件（非覆盖固定对象名）
+    // 上传的是新时间戳文件（非覆盖固定对象名；读侧命中 20260303 份不影响写侧另起新名）
     const uploaded = [...b.store.keys()].filter((k) => k !== 'dir/vault-20260101-000000.totpbackup' && k !== 'dir/vault-20260202-000000.totpbackup' && k !== 'dir/vault-20260303-000000.totpbackup')
     expect(uploaded).toHaveLength(1)
     expect(uploaded[0]).toMatch(/^dir\/vault-\d{8}-\d{6}\.totpbackup$/)
@@ -784,7 +788,7 @@ describe('auto 内容门持久化（spec §1.3；门命中=降级 pull-only 检�
     await runner.run()
     // core 编排不抛错：整体仍记成功 summary（失败源记「失败」），失败源基线原样不推进
     expect(recordStatus).toHaveBeenLastCalledWith(true, 's-bad: 失败; s-good: 已上传')
-    expect(saveSyncState).toHaveBeenCalledWith('s-bad', { lastKnownRemoteRev: null, baseSnapshot: null, primaryRev: { 's-good': 1 } })
+    expect(saveSyncState).toHaveBeenCalledWith('s-bad', { lastKnownRemoteRev: null, baseSnapshot: null })
     expect(deps.saveContentHash).toHaveBeenLastCalledWith(null) // 门基线置 null（部分失败）
     // → 下轮同内容不被门短路，重建 backend 全流程重试
     await runner.run()

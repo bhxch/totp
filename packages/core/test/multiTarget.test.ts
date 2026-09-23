@@ -114,15 +114,15 @@ describe('syncMultipleTargets（primary 裁决 + replica 收敛复制）', () =>
     expect(find(r, 'rep').outcome!.remoteRev).toBe(2)
     expect(rb.putCount).toBe(0) // 跳过零写
     // primary uploaded → { lastKnownRemoteRev: newRev, baseSnapshot: 实际上传内容 }
-    expect(r.states['pri']).toEqual({ lastKnownRemoteRev: 1, baseSnapshot: A, primaryRev: { rep: 2 } })
-    // replica 跳过 → 原 state 不变（内容等价）；primaryRev 记录承载 replica 已知 rev
+    expect(r.states['pri']).toEqual({ lastKnownRemoteRev: 1, baseSnapshot: A })
+    // replica 跳过 → 原 state 不变（内容等价）
     expect(r.states['rep']).toEqual({ lastKnownRemoteRev: 2, baseSnapshot: A })
     expect(r.adopted).toBe(false)
     expect(r.finalVaultJson).toBe(A)
     expect(r.conflicts).toEqual([])
   })
 
-  it('replica 内容落后 → 推平 final（newRev=replica remote+1），states 与 primaryRev 记录更新', async () => {
+  it('replica 内容落后 → 推平 final（newRev=replica remote+1），state 记 newRev+final', async () => {
     const pb = fakeBackend()
     const rb = fakeBackend(await sealedRemote(2, v([e('x')])))
     const r = await syncMultipleTargets({
@@ -139,7 +139,6 @@ describe('syncMultipleTargets（primary 裁决 + replica 收敛复制）', () =>
     // profile 缺省 balanced：推平信封按默认档位生成
     expect((JSON.parse(new TextDecoder().decode(rb.store.get(PATH)!)) as { kdf: { profile: string } }).kdf.profile).toBe('balanced')
     expect(r.states['rep']).toEqual({ lastKnownRemoteRev: 3, baseSnapshot: A })
-    expect(r.states['pri']!.primaryRev).toEqual({ rep: 3 })
   })
 
   it('profile 透传：推平信封按注入档位展开 KDF 参数', async () => {
@@ -171,7 +170,6 @@ describe('syncMultipleTargets（primary 裁决 + replica 收敛复制）', () =>
     expect(r.adopted).toBe(true)
     await expectOpensTo(rb.store.get(PATH)!, PW, r.finalVaultJson)
     expect(r.states['rep']).toEqual({ lastKnownRemoteRev: 6, baseSnapshot: r.finalVaultJson })
-    expect(r.states['pri']!.primaryRev).toEqual({ rep: 6 })
   })
 
   it('primary 失败 → 该源 outcome null + error，replica 仍按 final=本地内容推平（不阻断）', async () => {
@@ -191,8 +189,8 @@ describe('syncMultipleTargets（primary 裁决 + replica 收敛复制）', () =>
     expect(find(r, 'rep').outcome!.newRev).toBe(3)
     await expectOpensTo(rb.store.get(PATH)!, PW, A)
     expect(r.finalVaultJson).toBe(A)
-    // primary 失败：state 原样保留；replica 已知 rev 记录照常推进
-    expect(r.states['pri']).toEqual({ lastKnownRemoteRev: null, baseSnapshot: null, primaryRev: { rep: 3 } })
+    // primary 失败：state 原样保留
+    expect(r.states['pri']).toEqual({ lastKnownRemoteRev: null, baseSnapshot: null })
     expect(r.states['rep']).toEqual({ lastKnownRemoteRev: 3, baseSnapshot: A })
   })
 
@@ -280,7 +278,6 @@ describe('syncMultipleTargets（primary 裁决 + replica 收敛复制）', () =>
     expect(r.adopted).toBe(true)
     await expectOpensTo(rb.store.get(PATH)!, PW, r.finalVaultJson)
     expect(r.states['rep']).toEqual({ lastKnownRemoteRev: 6, baseSnapshot: r.finalVaultJson })
-    expect(r.states['pri']!.primaryRev).toEqual({ rep: 6 })
   })
 
   it('replica 云端为 final 超集且 final 未动 → 并入后与远端一致，in-sync 零写（推平无必要）', async () => {
@@ -350,7 +347,6 @@ describe('syncMultipleTargets（primary 裁决 + replica 收敛复制）', () =>
     expect(r.conflicts).toHaveLength(1)
     expect(r.conflicts[0]!.ours!.label).toBe('local')
     expect(r.conflicts[0]!.theirs!.label).toBe('remote')
-    expect(r.states['pri']!.primaryRev).toBeUndefined() // 无 replica → 不落 primaryRev 键
   })
 
   it('primary merged 后 state 记 newRev（非合并前 remoteRev）：下轮本地改动走纯上传，裁决不被降级合并回滚（T13 回归）', async () => {
@@ -398,7 +394,6 @@ describe('syncMultipleTargets（primary 裁决 + replica 收敛复制）', () =>
     expect(find(r, 'rep1').outcome!.action).toBe('in-sync')
     expect(find(r, 'rep2').outcome!.action).toBe('uploaded')
     await expectOpensTo(r2b.store.get(PATH)!, PW, r.finalVaultJson)
-    expect(r.states['pri']!.primaryRev).toEqual({ rep1: 5, rep2: 3 })
   })
 
   it('单 replica 失败不阻断其余 replica 与结果汇总', async () => {

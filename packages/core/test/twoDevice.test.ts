@@ -9,7 +9,10 @@
 // 场景2：同条目两设备改成不同内容 → 三方合并取 updatedAt 新者 + conflicts 非空；模拟裁决
 //        （按 pick 重写本地 vault）后二次同步 → 双侧收敛到裁决结果、conflicts 清空、无额外副本；
 // 场景3：v2 旧信封预置云端 → 首轮同步降级两方合并采纳 + 云端对象升级为 v3（readSyncHeader 非 null）。
+// 场景4：keep 滚动保留源双设备并发 → 读侧=名单内最新份参与合并（readPath 分离），不退化为
+//        last-writer-wins（审查 Important-2 回归钉）。
 import { describe, expect, it } from 'vitest'
+import { BACKUP_NAME_RE } from '../src/backup/policy'
 import {
   createBackupEnvelope,
   createSyncEnvelope,
@@ -63,25 +66,28 @@ function fakeCloud(): CloudBackend & { store: Map<string, Uint8Array>; putCount:
     async exists(path) {
       return store.has(path)
     },
+    async listBackups() {
+      return [...store.keys()]
+    },
     store,
   }
   return backend
 }
 
-/** 预置云端为 v3 信封（既有机群稳态：rev + base 声明与内容自洽） */
-async function seedCloudV3(backend: ReturnType<typeof fakeCloud>, rev: number, content: string): Promise<void> {
+/** 预置云端为 v3 信封（既有机群稳态：rev + base 声明与内容自洽）；keep 场景指定时间戳份名 */
+async function seedCloudV3(backend: ReturnType<typeof fakeCloud>, rev: number, content: string, path = PATH): Promise<void> {
   const env = await createSyncEnvelope(content, PW, 'balanced', {
     rev,
     deviceId: 'seed',
     baseRev: rev - 1,
     baseContentHash: await contentHash(content),
   })
-  backend.store.set(PATH, ENC.encode(JSON.stringify(env)))
+  backend.store.set(path, ENC.encode(JSON.stringify(env)))
 }
 
-/** 云端对象解密为 vault 明文 */
-async function cloudPlain(backend: ReturnType<typeof fakeCloud>): Promise<string> {
-  const bytes = backend.store.get(PATH)
+/** 云端对象解密为 vault 明文；keep 形态按名单名取份（缺省 overwrite 固定对象） */
+async function cloudPlain(backend: ReturnType<typeof fakeCloud>, path = PATH): Promise<string> {
+  const bytes = backend.store.get(path)
   expect(bytes).toBeDefined()
   return openBackupEnvelope(JSON.parse(DEC.decode(bytes!)), PW)
 }
@@ -108,15 +114,18 @@ interface Device {
   run(backend: CloudBackend): Promise<MultiTargetSyncResult>
 }
 
-/** 设备工厂：独立 memory adapter + deviceId + SourceSyncState 持久化（seedState 供既有机群稳态预置） */
-async function makeDevice(name: string, initialVaultJson: string, seedState?: SourceSyncState): Promise<Device> {
+/** 设备工厂：独立 memory adapter + deviceId + SourceSyncState 持久化（seedState 供既有机群稳态预置）。
+ *  keep=true 时模拟 keep 滚动保留源的宿主装配：读侧=名单内最新份（readPath）、写侧=新时间戳份
+ *  （与 ui cloudRunner 同口径），名单过滤复用 BACKUP_NAME_RE */
+async function makeDevice(name: string, initialVaultJson: string, seedState?: SourceSyncState, keep = false): Promise<Device> {
   const adapter = createMemoryStorage()
   const deviceId = await loadDeviceId(adapter)
   if (seedState) await saveSyncState(adapter, SOURCE_ID, seedState)
   let local = initialVaultJson
   const copies: Array<{ key: string; bytes: Uint8Array }> = []
   const source: BackupSource = {
-    id: SOURCE_ID, kind: 'webdav', name: '云同步', retention: { type: 'overwrite' }, enabled: true, role: 'primary',
+    id: SOURCE_ID, kind: 'webdav', name: '云同步',
+    retention: keep ? { type: 'keep', n: 5 } : { type: 'overwrite' }, enabled: true, role: 'primary',
   }
   return {
     name,
@@ -131,8 +140,15 @@ async function makeDevice(name: string, initialVaultJson: string, seedState?: So
     copies: () => copies,
     async run(backend) {
       const state = await loadSyncState(adapter, SOURCE_ID)
+      const readPath = keep
+        ? ((await backend.listBackups?.())
+            ?.filter((p) => BACKUP_NAME_RE.test(p.split('/').pop() ?? ''))
+            .sort()
+            .at(-1) ?? undefined)
+        : undefined
+      const path = keep ? `dir/${keepSeqName()}` : PATH
       const r = await syncMultipleTargets({
-        targets: [{ key: SOURCE_ID, backend, path: PATH, source, state }],
+        targets: [{ key: SOURCE_ID, backend, path, readPath, source, state }],
         vaultJson: local,
         password: PW,
         deviceId,
@@ -147,6 +163,16 @@ async function makeDevice(name: string, initialVaultJson: string, seedState?: So
       return r
     },
   }
+}
+
+/** keep 写侧时间戳份名生成器：单调递增（字典序=写入序，同 keep 源同目录滚动删除口径） */
+let keepSeq = 0
+function keepSeqName(): string {
+  const n = keepSeq++
+  const ss = String(n % 60).padStart(2, '0')
+  const mm = String(Math.floor(n / 60) % 60).padStart(2, '0')
+  const hh = String(Math.floor(n / 3600)).padStart(2, '0')
+  return `vault-20260101-${hh}${mm}${ss}.totpbackup`
 }
 
 /** 交替同步直至双侧 in-sync（单目标场景 primary action 即设备动作）；返回 '设备:动作' 轨迹 */
@@ -298,5 +324,44 @@ describe('双设备收敛（共享云对象，primary 单目标 + state 幂等�
     expect(devC.copies()).toHaveLength(1)
     const copyEntries = JSON.parse(await openBackupEnvelope(JSON.parse(DEC.decode(devC.copies()[0]!.bytes)), PW)) as Vault
     expect(entriesOf(JSON.stringify(copyEntries))).toEqual(['b:b'])
+  })
+
+  it('场景4：keep 滚动保留源双设备并发 → 读侧取名单内最新份参与合并（readPath 分离），不 last-writer-wins', { timeout: 30_000 }, async () => {
+    // keep 形态：云端多时间戳份共存；seed 份名必须匹配 BACKUP_NAME_RE（名单过滤口径）
+    const base = v([e('a', { label: 'base' })])
+    const cloud = fakeCloud()
+    await seedCloudV3(cloud, 1, base, 'dir/vault-20250101-000000.totpbackup')
+    const devA = await makeDevice('A', base, seedState(base), true)
+    const devB = await makeDevice('B', base, seedState(base), true)
+
+    // 双设备离线并发各加一条目（A 加 x / B 加 y）
+    devA.edit((vt) => { vt.entries = [...vt.entries, e('x', { label: 'added-by-a', updatedAt: 2 })] })
+    devB.edit((vt) => { vt.entries = [...vt.entries, e('y', { label: 'added-by-b', updatedAt: 3 })] })
+
+    // A 先推：readPath=seed 份（rev1==known、内容==base）→ 云端未动本地已改 → uploaded 写新份
+    const rA1 = await devA.run(cloud)
+    expect(rA1.results[0]!.outcome).toMatchObject({ action: 'uploaded', newRev: 2 })
+
+    // B 后推：readPath=名单最新份=A 的新份（rev2≠known1）→ 本地也改 → merged（读侧命中并发份，
+    // 修复前 readPath 恒缺省 → 判「云端无对象」→ uploaded 只写自己、A 的 x 被名单遮蔽）
+    const rB1 = await devB.run(cloud)
+    expect(rB1.results[0]!.outcome).toMatchObject({ action: 'merged', newRev: 3 })
+    expect(entriesOf(devB.local())).toEqual(['a:base', 'x:added-by-a', 'y:added-by-b'])
+
+    // 交替同步至收敛：云端最新份与双方本地都含 x+y（last-writer-wins 则只剩后写方条目）
+    await runUntilInSync([devA, devB], cloud)
+    const expected = ['a:base', 'x:added-by-a', 'y:added-by-b']
+    expect(entriesOf(devA.local())).toEqual(expected)
+    expect(entriesOf(devB.local())).toEqual(expected)
+
+    // 云端名单内最新份内容 == 收敛结果（读侧口径自洽）
+    const names = [...cloud.store.keys()].filter((p) => BACKUP_NAME_RE.test(p.split('/').pop() ?? '')).sort()
+    expect(names.length).toBeGreaterThanOrEqual(3) // seed + A份 + B份（keep 形态多份共存，core 层不清理）
+    expect(entriesOf(await cloudPlain(cloud, names[names.length - 1]!))).toEqual(expected)
+    expect(await contentHash(devA.local())).toBe(await contentHash(devB.local()))
+
+    // rev 单调：2（A 上传）→ 3（B 合并上传），全程 v3
+    expect(cloud.putRevs).toEqual([2, 3])
+    expectRevMonotonic(cloud)
   })
 })

@@ -104,6 +104,11 @@ export interface RevSyncOutcome {
 export interface SyncWithCloudRevOpts {
   backend: CloudBackend
   path: string
+  /** 读远端路径（缺省=path）：keep 滚动保留源「读最新份、写新时间戳份」分离——不设则 keep 源
+   *  恒判云端无对象整库重推，绕过合并（三方/两方都不可达），双设备并发编辑收敛退化为
+   *  last-writer-wins 且败者内容被滚动删除清除（审查 Important-2）。rev 判定/下载/合并全部以
+   *  readPath 读到的对象为「远端」；写入（uploaded/merged 推平）恒走 path */
+  readPath?: string
   /** 当前本地明文 vault */
   vaultJson: string
   /** envelope 口令（会话缓存由调用方持有） */
@@ -125,10 +130,11 @@ export interface SyncWithCloudRevOpts {
  *  口令不匹配或远端结构坏抛中文错误且零写；preview 模式零写零副本。 */
 export async function syncWithCloudRev(opts: SyncWithCloudRevOpts): Promise<RevSyncOutcome> {
   const { backend, path, vaultJson, password, profile, state, deviceId, onConflictBackup } = opts
+  const readPath = opts.readPath ?? path
   const mode = opts.mode ?? 'apply'
   const knownRev = state.lastKnownRemoteRev ?? 0
 
-  const remote = (await backend.exists(path)) ? await backend.get(path) : null
+  const remote = (await backend.exists(readPath)) ? await backend.get(readPath) : null
   if (remote === null) {
     // 云端无对象：rev 从本端已知时钟续起（对象被外部删除后重推不回退时钟），首推为 1
     if (mode === 'preview') return { action: 'uploaded', remoteRev: null }
