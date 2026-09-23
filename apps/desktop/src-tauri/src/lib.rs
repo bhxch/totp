@@ -375,9 +375,14 @@ fn release_tick(app: &AppHandle) {
             .map(|w| w.is_visible().unwrap_or(false))
             .unwrap_or(false)
     };
+    // is_visible 是阻塞 getter（dispatcher 请求需主线程事件循环回复），必须在持锁前取值：
+    // 持锁调用时若主线程恰在 ensure_window（build 后竞争 RELEASE_TRACK），会形成
+    // 「tick 持锁等 is_visible 回复、主线程等 tick 释放锁」的循环等待，应用整体冻结。
+    // 锁内只做纯 advance 计算并立刻释放，副作用统一在锁外执行
+    let (main_visible, mini_visible) = (visible("main"), visible("mini"));
     let action = {
         let mut track = RELEASE_TRACK.lock().expect("release track poisoned");
-        release_policy::advance(&mut track, &cfg, visible("main"), visible("mini"), Instant::now())
+        release_policy::advance(&mut track, &cfg, main_visible, mini_visible, Instant::now())
     };
     match action {
         release_policy::ReleaseAction::Pause => {
