@@ -62,6 +62,22 @@ describe('oauthRefresh：refreshAccessToken', () => {
     expect((err as Error).message).toContain('（HTTP 401）')
   })
 
+  it('刷新失败：token 端点 5xx（服务端瞬时故障）→ 抛普通 Error（isAuthError 判假，不触发凭据失效语义）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('upstream error', { status: 503 })))
+    const cred = { backend: 'gdrive' as const, accessToken: '', oauth: OAUTH }
+    const err = await refreshAccessToken(cred).then(() => null, (e: unknown) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect(err).not.toBeInstanceOf(CloudHttpError)
+    expect(isAuthError(err)).toBe(false)
+    expect((err as Error).message).toContain('HTTP 503')
+    expect((err as Error).message).not.toContain('（HTTP 401）')
+    // 失败不污染缓存：同凭据重刷会再次发起请求
+    const fetchMock = tokenStub('tok5xx')
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await refreshAccessToken(cred)).toBe('tok5xx')
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
   it('刷新失败：200 但响应无 access_token → 同 401 语义（不缓存空 token）', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ expires_in: 3600 }), { status: 200 })))
     const cred = { backend: 'gdrive' as const, accessToken: '', oauth: OAUTH }

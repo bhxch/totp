@@ -55,8 +55,11 @@ async function credKeyOf(oauth: { clientId: string; refreshToken: string }): Pro
 /**
  * 以 refresh_token 换新 access_token：命中未过期缓存直接返回；并发同凭据调用合并为单次刷新
  * （inflight 单飞行）；否则 POST token 端点（grant_type=refresh_token + 三参数）。
- * 刷新失败（HTTP 非 200 / 响应无 access_token）一律抛 CloudHttpError(status=401)——与既有
- * 「凭据失效」结构化判定（isAuthError）兼容：refresh_token 失效语义 = 凭据失效（spec §5⑦）。
+ * 刷新失败语义（审查 Minor 2：区分 HTTP 状态）：token 端点 4xx（400/401/403/invalid_grant 类，
+ * refresh_token 确实失效）抛 CloudHttpError(status=401)——与既有「凭据失效」结构化判定
+ * （isAuthError）兼容：refresh_token 失效语义 = 凭据失效（spec §5⑦）；5xx 及其他非 4xx 为
+ * token 服务端瞬时故障，抛普通 Error（无结构化 status、消息不含「（HTTP 401/403）」定界形态，
+ * isAuthError 判假）→ 调用方按暂时性失败重试，不误暂停自动跟随/不亮「凭据失效」警示。
  * 调用方约定 cred.oauth 已存在；缺省时抛普通 Error（编程错误防御，不发请求）。
  *
  * refresh_token 轮转（审查 Important 2，MS /common 端点可能在响应中下发新 refresh_token 并
@@ -96,7 +99,12 @@ export async function refreshAccessToken<C extends GDriveCred | OneDriveCred>(
       const reason = err instanceof Error ? err.message : String(err)
       throw new Error(`${label} OAuth 刷新请求网络失败：${reason}`)
     }
-    if (!res.ok) throw new CloudHttpError(label, 401)
+    if (!res.ok) {
+      // 审查 Minor 2：4xx = 凭据确实失效 → 保持既有 401 语义（isAuthError 判真）；5xx 及其他
+      // 非 4xx = 服务端瞬时故障 → 抛普通 Error（isAuthError 判假，上层按暂时性失败重试）
+      if (res.status >= 400 && res.status < 500) throw new CloudHttpError(label, 401)
+      throw new Error(`${label} OAuth 刷新服务暂时不可用（HTTP ${res.status}）：请稍后重试`)
+    }
     const json = (await res.json().catch(() => ({}))) as { access_token?: string; refresh_token?: string; expires_in?: number }
     if (!json.access_token) throw new CloudHttpError(label, 401)
 

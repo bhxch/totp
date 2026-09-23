@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { isAuthError } from '../src/cloud/backend'
+import { CloudHttpError, isAuthError } from '../src/cloud/backend'
 import { createGDriveBackend } from '../src/cloud/gdrive'
 import { createOneDriveBackend } from '../src/cloud/onedrive'
 import { __resetOAuthCacheForTest } from '../src/cloud/oauthRefresh'
@@ -627,6 +627,20 @@ describe('OAuth 401 自愈（spec §5⑦：cred.oauth 存在 → 刷新重试一
     const err = await backend.get(PATH).then(() => null, (e: unknown) => e)
     expect(isAuthError(err)).toBe(true)
     expect((err as Error).message).toContain('（HTTP 401）')
+    expect(fetchMock).toHaveBeenCalledTimes(2) // 1 API + 1 token，重试未发生
+  })
+
+  it('gdrive：刷新失败（token 端点 5xx）→ 抛普通服务错误（isAuthError 判假，不触发凭据失效语义），不发第二次 API', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url) === GDRIVE_TOKEN_URL) return new Response('upstream error', { status: 502 })
+      return new Response(null, { status: 401 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'stale', fileId: 'fid9', oauth: OAUTH })
+    const err = await backend.get(PATH).then(() => null, (e: unknown) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect(err).not.toBeInstanceOf(CloudHttpError)
+    expect(isAuthError(err)).toBe(false)
     expect(fetchMock).toHaveBeenCalledTimes(2) // 1 API + 1 token，重试未发生
   })
 
