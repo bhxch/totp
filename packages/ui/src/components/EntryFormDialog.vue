@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { getBuiltinIcons, type BuiltinIcon, type OtpEntry, type Tag } from '@totp/core'
+import { applyImport, dedupeWithinFile, getBuiltinIcons, type BuiltinIcon, type OtpEntry, type Tag } from '@totp/core'
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { toParsedEntry } from '../clipboardImport'
 import BatchPastePanel from './BatchPastePanel.vue'
 import EntryForm from './EntryForm.vue'
 import type { EntryFormData } from './entryForm'
@@ -12,7 +13,7 @@ import type { VueStore } from '../store'
 
 const { t } = useI18n()
 
-defineProps<{
+const props = defineProps<{
   open: boolean
   /** 编辑目标；null = 新建。EntryForm 以 uuid 为 key，切换目标时表单重建回填 */
   editing: OtpEntry | null
@@ -26,6 +27,15 @@ defineProps<{
   /** 智能粘贴 Tab 数据源（14b）：BatchPastePanel 解析落库直写 store */
   store: VueStore
 }>()
+
+/** 剪贴板多条批量入库（spec 批⑧ §6）：批内先去重（同 URI 粘两遍不双写），全部按新增落库
+ *  （applyImport 'skip' 策略 + 空冲突集）；与粘贴 Tab 不同点：无预览确认，直接入库并上抛条数 */
+async function importBatchEntries(entries: OtpEntry[]): Promise<number> {
+  const parsed = entries.map(toParsedEntry)
+  const { kept } = dedupeWithinFile(parsed)
+  await props.store.commit((v) => applyImport(v, kept, 'skip', new Set<number>()))
+  return kept.length
+}
 
 // save 只透传表单数据并由父组件关弹；新建默认值分支（algorithm/digits/period/counter/order/createdAt）留在父组件 onSave。
 // batch-added：粘贴 Tab 落库条数上抛，宿主收后关弹窗（同 close 口径）
@@ -52,8 +62,10 @@ const TAB_OPTIONS = [
       :create-tag="createTag"
       :icons="icons"
       :icon-store="iconStore"
+      :import-batch="importBatchEntries"
       @save="(data) => emit('save', data)"
       @cancel="emit('close')"
+      @batch-imported="(count) => emit('batch-added', count)"
     />
     <BatchPastePanel v-else :store="store" @added="(count) => emit('batch-added', count)" />
   </MdDialog>

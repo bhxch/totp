@@ -2,6 +2,7 @@
 import { base32Decode, getBuiltinIcons, recommendBuiltinIcon, type BuiltinIcon, type HashAlgorithm, type MatchRule, type MatchStrategy, type OtpEntry, type Tag } from '@totp/core'
 import { computed, onScopeDispose, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { readClipboardSnapshot, resolveTextIntent } from '../clipboardImport'
 import { MAX_ICON_PACK_ZIP_BYTES, fileToScaledDataUrl, importIconPackZip } from '../iconImport'
 import { blobToPixels } from '../qr/imageSource'
 import { decodeQrToUri } from '../qr/decodeQr'
@@ -39,8 +40,10 @@ const props = defineProps<{
   icons?: { builtin: Record<string, BuiltinIcon>; stored: Readonly<Record<string, string>> }
   /** 图标存储：上传/URL 拉取需要写能力；缺省时隐藏上传与 URL 拉取 */
   iconStore?: IconStore
+  /** 剪贴板多条批量入库（宿主实现：dedupe + applyImport 落库返回条数）；缺省时 batch 意图降级为错误提示 */
+  importBatch?: (entries: OtpEntry[]) => Promise<number>
 }>()
-const emit = defineEmits<{ save: [data: EntryFormData]; cancel: [] }>()
+const emit = defineEmits<{ save: [data: EntryFormData]; cancel: []; 'batch-imported': [count: number] }>()
 
 const form = reactive({
   type: (props.initial?.type ?? 'totp') as 'totp' | 'hotp' | 'steam' | 'yandex',
@@ -81,6 +84,15 @@ function cleanSecret(): string {
 // ---------- 从图片识别（批② C2）：单图二维码解码 → otpauth 解析 → 覆盖 OTP 字段预填 ----------
 const qrFile = ref<HTMLInputElement | null>(null)
 
+/** URI 预填共用（QR 识别与剪贴板导入同一通道）：覆盖 OTP 字段，保留已填 note/tagIds/icon */
+function applyPrefill(d: OtpEntry): void {
+  form.type = d.type; form.issuer = d.issuer; form.label = d.label
+  form.secret = d.secret; form.algorithm = d.algorithm; form.digits = d.digits
+  form.period = d.period; if (d.counter !== undefined) form.counter = d.counter
+  if (d.pin !== undefined) form.pin = d.pin
+  error.value = ''
+}
+
 async function onQrFile(ev: Event): Promise<void> {
   const file = (ev.target as HTMLInputElement).files?.[0]
   ;(ev.target as HTMLInputElement).value = '' // 允许重复选同一文件
@@ -91,15 +103,42 @@ async function onQrFile(ev: Event): Promise<void> {
     if ('error' in r) { error.value = r.error; return }
     const d = parseUriToEntryData(r.uri)
     if ('error' in d) { error.value = d.error; return }
-    // 预填（保留用户已填的 note/tagIds/icon，覆盖 OTP 字段）
-    form.type = d.data.type; form.issuer = d.data.issuer; form.label = d.data.label
-    form.secret = d.data.secret; form.algorithm = d.data.algorithm; form.digits = d.data.digits
-    form.period = d.data.period; if (d.data.counter !== undefined) form.counter = d.data.counter
-    // yandex（yaotp URI）的 PIN 回填（I1b）；成功即清除上次失败残留的错误提示（Task 15 遗留）
-    if (d.data.pin !== undefined) form.pin = d.data.pin
-    error.value = ''
+    // 预填（保留用户已填的 note/tagIds/icon，覆盖 OTP 字段）；yandex（yaotp URI）的 PIN 回填（I1b）
+    applyPrefill(d.data)
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('entryForm.imageReadFailed')
+  }
+}
+
+// ---------- 从剪贴板导入（spec 批⑧ §6）：图片走 QR；文本单条预填/多条批量入库 ----------
+const clipboardBusy = ref(false)
+async function onClipboardImport(): Promise<void> {
+  if (clipboardBusy.value) return
+  clipboardBusy.value = true
+  try {
+    const snap = await readClipboardSnapshot()
+    if (snap.image) {
+      const r = decodeQrToUri(await blobToPixels(snap.image))
+      if ('error' in r) { error.value = r.error; return }
+      const d = parseUriToEntryData(r.uri)
+      if ('error' in d) { error.value = d.error; return }
+      applyPrefill(d.data)
+      return
+    }
+    if (snap.text.trim() !== '') {
+      const intent = resolveTextIntent(snap.text)
+      if (intent.kind === 'error') { error.value = intent.message; return }
+      if (intent.kind === 'prefill') { applyPrefill(intent.entry); return }
+      if (!props.importBatch) { error.value = t('entryForm.clipboardReadFailed'); return }
+      const n = await props.importBatch(intent.entries)
+      emit('batch-imported', n)
+      return
+    }
+    error.value = t('entryForm.clipboardEmpty')
+  } catch {
+    error.value = t('entryForm.clipboardReadFailed')
+  } finally {
+    clipboardBusy.value = false
   }
 }
 
@@ -396,6 +435,7 @@ function submit() {
       />
       <MdButton variant="text" class="secret-toggle" @click="showSecret = !showSecret">{{ showSecret ? t('entryForm.hide') : t('entryForm.show') }}</MdButton>
       <MdButton variant="text" data-test="qr-pick" @click="qrFile?.click()">{{ t('entryForm.fromImage') }}</MdButton>
+      <MdButton variant="text" data-test="clipboard-pick" :disabled="clipboardBusy" @click="onClipboardImport">{{ t('entryForm.fromClipboard') }}</MdButton>
       <input ref="qrFile" type="file" accept="image/*" data-test="qr-file" class="visually-hidden" @change="onQrFile" />
     </div>
     <!-- I68：base32 实时校验的视觉反馈（不阻塞输入，submit 仍把关） -->
