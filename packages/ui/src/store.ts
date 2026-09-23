@@ -25,6 +25,10 @@ export function createVueStore(
     /** DEK 持久化（设计 §1 锁定策略·重启即锁）：宿主提供会话级存取（extension=chrome.storage.session base64）；
      *  缺省=不持久化（desktop 内存级，重启天然锁定）。lock() 必清；解锁/自动恢复必写。 */
     dekPersist?: { get(): Promise<string | null>; set(dek: Uint8Array): Promise<void>; clear(): Promise<void> }
+    /** 冲突裁决成功后的未裁决计数回调：extension 桥到持久计数键 + action badge 即时对账
+     *  （与 runner onConflicts 同口径，消除「自动同步关闭时 badge 等下轮同步才清」的滞后）；
+     *  desktop 不传则零行为 */
+    onConflictCountChanged?: (count: number) => void
   } = {},
 ) {
   const suppressMs = opts.selfWriteSuppressMs ?? 500
@@ -226,20 +230,26 @@ export function createVueStore(
     await saveMergeConflicts(adapter, mergeConflicts.value, mergeConflictSeal())
   }
 
-  /** 冲突裁决（spec §3/§4，T11 冲突列表消费）：pick='theirs' 以 conflict.theirs 替换/恢复条目
-   *  （theirs=null → 删除条目）；pick='ours' 取 conflict.ours（ours=null → 恢复 base，base 也无 →
-   *  删除条目）。写经 commit（自动推进 vault.rev 并触发常规同步），随后从列表移除并落盘。
-   *  无对应记录抛错（列表 UI 不会出现该入口，防御兜底） */
+  /** 冲突裁决（spec §3/§4，T11 冲突列表消费）：pick='theirs' 以 conflict.theirs 替换条目，
+   *  pick='ours' 取 conflict.ours。pick 侧为 null 即确认该侧删除 → chosen=null 删除条目（两侧
+   *  语义对称：本地方已删除点「取本地方」=确认删除，与云地方已删除点「取云地方」同——旧实现
+   *  的 ?? base 回退会让 base 旧版本复活，与本地方已删除标注矛盾，已移除）。写经 commit（自动
+   *  推进 vault.rev 并触发常规同步），随后从列表移除并落盘。无对应记录抛错（列表 UI 不会出现
+   *  该入口，防御兜底） */
   async function resolveMergeConflictOp(entryId: string, pick: 'ours' | 'theirs'): Promise<void> {
     const conflict = mergeConflicts.value.find((c) => c.entryId === entryId)
     if (!conflict) throw new Error('合并冲突记录不存在')
-    const chosen = pick === 'theirs' ? conflict.theirs : (conflict.ours ?? conflict.base)
+    // 不变量（vaultMerge 产出侧保证）：ours 与 theirs 永不同时为 null——删/改对撞记录恰一方 null
+    // （另一侧为保留的修改方，base 必非 null）；双改对撞两侧均非 null。故 pick 侧 null 即确认删除，
+    // base 仅作记录不做回退源
+    const chosen = pick === 'theirs' ? conflict.theirs : conflict.ours
     await commit((v) => {
       const rest = v.entries.filter((e) => e.uuid !== entryId)
       return { ...v, entries: chosen ? [...rest, chosen] : rest }
     })
     mergeConflicts.value = mergeConflicts.value.filter((c) => c.entryId !== entryId)
     await saveMergeConflictsOp()
+    opts.onConflictCountChanged?.(mergeConflicts.value.length)
   }
 
   function readRawVault(): Promise<unknown> {

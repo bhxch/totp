@@ -1,5 +1,5 @@
 // store 合并冲突记录面（Task 9/10 commit B）：DEK seal 助手、mergeConflicts 生命周期（解锁装载/锁定清空）、
-// addMergeConflictsOp 去重/上限、resolveMergeConflictOp 四分支裁决
+// addMergeConflictsOp 去重/上限、resolveMergeConflictOp 四分支裁决（pick 侧 null=确认该侧删除，两侧对称）
 import { describe, expect, it } from 'vitest'
 import { createMemoryStorage, loadSyncState, saveSyncState, VAULT_KEY, decryptVaultWithDek, type EntryConflict, type OtpEntry } from '@totp/core'
 import { createVueStore } from '../src/store'
@@ -120,22 +120,27 @@ describe('store resolveMergeConflictOp', () => {
     expect(disk.entries.map((e) => e.label)).toEqual(['theirs-e1']) // 落盘一致
   })
 
-  it("pick='theirs' 且 theirs=null：删除条目；pick='ours' 且 ours=null：恢复 base", async () => {
+  it("pick='theirs' 且 theirs=null：删除条目（确认云方删除）", async () => {
     const { s } = await unlockedStore()
     await s.addEntryOp(entry('e1', 'survivor'))
     await s.addMergeConflictsOp([conflict('e1', { theirs: null })])
     await s.resolveMergeConflictOp('e1', 'theirs') // theirs=null（对端删）→ 删除生效
     expect(s.vault.entries).toHaveLength(0)
+  })
+
+  it("pick='ours' 且 ours=null：删除条目（确认本方删除，与 theirs=null 侧对称；base 不复活）", async () => {
+    const { s } = await unlockedStore()
+    await s.addEntryOp(entry('e1', 'survivor'))
     await s.addMergeConflictsOp([conflict('e1', { ours: null })]) // ours=null（本端删、对端改，合并保留了对端）
-    await s.resolveMergeConflictOp('e1', 'ours') // 恢复 base
-    expect(s.vault.entries.map((e) => e.label)).toEqual(['base-e1'])
+    await s.resolveMergeConflictOp('e1', 'ours') // 确认本方删除（旧 ?? base 回退会复活 base 旧版本，回归钉）
+    expect(s.vault.entries).toHaveLength(0)
   })
 
   it("pick='ours' 且 ours=null、base=null：删除条目；不存在的 entryId 抛错", async () => {
     const { s } = await unlockedStore()
     await s.addEntryOp(entry('e1', 'survivor'))
     await s.addMergeConflictsOp([conflict('e1', { ours: null, base: null })])
-    await s.resolveMergeConflictOp('e1', 'ours') // base 也无 → 删除
+    await s.resolveMergeConflictOp('e1', 'ours') // pick 侧 null → 删除（base 有无不影响结果）
     expect(s.vault.entries).toHaveLength(0)
     await expect(s.resolveMergeConflictOp('missing', 'ours')).rejects.toThrow('合并冲突记录不存在')
   })

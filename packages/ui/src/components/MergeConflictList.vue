@@ -2,7 +2,8 @@
   条目冲突裁决列表（spec §3/§4 冲突强提示，T11）：渲染 store.mergeConflicts 的未裁决条目冲突。
   每行 = issuer/label 标识 + 一侧为 null 的形态标注（「云方已删除」等）+ 「取本地方/取云地方」
   裁决按钮（emit resolve(entryId, pick)，写回走宿主 store.resolveMergeConflictOp）。
-  null 侧按钮不禁用：pick 侧为 null 是合法裁决（如取云地方=确认云方删除），null 语义由 store op 落地。
+  null 侧按钮不禁用：pick 侧为 null 是合法裁决（取该侧=确认该侧删除，两侧语义对称——store op
+  将 chosen=null 即删除条目），null 语义由 store op 落地。
 -->
 <script setup lang="ts">
 import type { EntryConflict } from '@totp/core'

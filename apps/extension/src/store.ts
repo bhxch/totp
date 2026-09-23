@@ -2,6 +2,7 @@ import { SECRET_BAG_KEY } from '@totp/core'
 import { createVueStore, type VueStore } from '@totp/ui'
 import { createDekSession } from './dekSession'
 import { createChromeStorage } from './chromeStorage'
+import { setConflictBadge } from './conflictBadge'
 
 /** 共享 chrome.storage.local 适配器：vault 与 icons 同源（popup/options 各自建 IconStore 用） */
 export const storageAdapter = createChromeStorage()
@@ -48,6 +49,13 @@ export function createExtensionStore(
     onCommitted: () => {
       scheduleSyncPush(s)
       opts.onCommittedExtra?.()
+    },
+    // 冲突裁决即时对账（badge 滞后修复）：裁决成功 → 持久计数键 + action badge 立即按新计数更新
+    // （清零清 badge、非零保持/更新，setConflictBadge 数值驱动），与 cloudRunnerFactory onConflicts
+    // 每轮同步的对账同口径——自动同步关闭时裁决完最后一条冲突也无需等下轮同步/重开 options 才清 badge
+    onConflictCountChanged: (count) => {
+      void storageAdapter.set('cloudConflictCount', JSON.stringify(count)).catch(() => {})
+      setConflictBadge(count)
     },
   })
   return s
