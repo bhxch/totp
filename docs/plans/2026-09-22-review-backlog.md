@@ -78,3 +78,33 @@
 - 非 token 档(wildcard)勾选 trigger_sync → MCP 调用 → 桌面弹「允许执行 trigger_sync?」→ Allow 返回 {triggered:true}/Deny 返回 denial 错误;token 档免确认直达
 - 未勾选时 trigger_sync 返回 `tool disabled`;原两只读工具行为与升级前一致(存量 settings.json 兼容)
 - 无头模式(--headless-mcp)非 token 档 action 调用 60s 后 fail-closed 拒绝
+
+# 外部终审批次 triage(2026-09-23,范围 2fbff55..ec7cfc5,修复 431d7f1..a106d39)
+
+来源:对同步体验优化+MCP 触发器两批次(44 commit)的独立外部审查(1 Critical/4 Important/10 Minor)。
+**全部发现已当批处置完毕,无新增遗留**;修复与裁定留档如下。
+
+## 已修复(7 commit)
+
+| 发现 | 修复 | commit |
+|---|---|---|
+| C1 合并确认无超时,trigger_sync 页面外触发可静默卡死桌面云同步链 | requestMergeConfirm 60s 超时 fail-closed(与 action 工具确认同口径);槽位改 shallowRef(深度代理使清槽比较恒 false) | 431d7f1 |
+| I2 keep 源推送读侧恒落空新路径,合并不可达,last-writer-wins | core 编排增 readPath(读最新份/写新份分离),双设备 keep 并发集成测试钉死(场景4);listBackups 失败按 null 首推走逐源隔离 | 4fc59c4 |
+| I3 ours=null 点「取本地方」复活 base 而非确认删除 | 去 ??base fallback,pick 侧 null=确认删除,两侧对称 | 8e2d385 |
+| I5 primaryRev 只写不读死字段(spec §2 与实现偏离) | 字段删除,spec 勘误回写真实机制(replica 自身 state 承担) | 4fc59c4 |
+| M10 mergeVaults JSON.stringify 键序敏感误判双方改 | 改 canonicalJson(键序无关) | a29b095 |
+| M11 OAuth 刷新非 200 一律 401 语义,5xx 误判凭据失效 | 4xx 保持 401,5xx 抛普通错误(不暂停自动跟随) | a43dec6 |
+| M12 备份 single-flight 只覆盖 runBackupNow,调度轮可并发 | 提升为通道级链(调度轮+trigger 轮共用) | 6ab1025 |
+| M13 冲突 badge 依赖下轮对账清除滞后 | store opts onConflictCountChanged 桥,裁决成功直清 | 8e2d385 |
+| S2 runTargets 抛错 spinner 滞留 | 轮末进度改 finally 发 | 4fc59c4 |
+| S3 CloudCard 缺 mergedDegraded 文案 | 复用 cloudRunner.action.mergedDegraded 同键 | a106d39 |
+| S6 cloudRunner.noChange 死键 | zh/en 删除 | a106d39 |
+
+## 裁定/spec 回写(docs commit,本文档同批)
+
+- **I4 信封 v3 对旧客户端硬不兼容**:裁定不做混合机群过渡——开发阶段无存量用户,桌面与扩展
+  同版本发布、两端同步升级;spec §1.4 勘误回写(含「v2 同内容信封零写不升级 v3」精化:
+  该分支存在意义即消除冗余云写,内容分叉轮才升级,安全自限)。
+- spec 勘误 7 处:§1.2(SourceSyncState 实形态+内容门宿主级单键)、§1.3(keep 源 readPath
+  读写分离语义)、§1.4(见上)、§2(primaryRev 删除+replica 两方合并)、§3(pick 侧 null=确认
+  删除)、§6.2(5s/60s 双通道并存+挂起征询超时约束推广)、验收口径 3(动作文案映射)。

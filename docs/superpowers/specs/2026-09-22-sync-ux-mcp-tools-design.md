@@ -67,6 +67,12 @@ interface CloudSyncState {
 }
 ```
 
+> **勘误（2026-09-23 终审回写）**：落地形态与上文两处偏差——① 状态接口实为
+> `SourceSyncState { lastKnownRemoteRev, baseSnapshot }`，`lastContentHash` 不入状态对象：
+> 内容门针对全 vault 内容而非单源，改为**宿主级单键** `cloudContentHash`
+> （desktop 写 localStorage / extension 写 storage.local，`cloudRunnerDeps.loadContentHash/
+> saveContentHash` 注入）。② `primaryRev` 字段未落地即删除，见 §2 勘误。
+
 **静态保护**：`baseSnapshot` 是 vault 明文副本，启用库加密时必须以 DEK 加密落盘
 （与 vault 密文同保护级），未启用加密时随 vault 同为明文；读取需解锁态。§3 的
 `mergeConflicts` 记录含条目 secret，同样适用此规则。`deviceId` 同样持久本地（独立键，
@@ -91,6 +97,13 @@ remoteRev == state.lastKnownRemoteRev（云端未动）                   → �
 
 「本地较新 / 云端较新 / 已同步 / 需合并」四态返回给 UI，替代现在不可见的 hash 比对。
 
+> **勘误（2026-09-23 终审回写）**：keep 滚动保留源需「**读写路径分离**」（`readPath`）——
+> 上表「拉取远端 envelope」对 keep 源指**名单内时间戳最新份**（与 pull 通道 `latestKeepPath`
+> 同口径），写入恒为**新时间戳份**。若读侧也落新时间戳路径则恒判「云端无对象」、合并分支
+> 不可达，双设备并发编辑退化为 last-writer-wins 且败者内容终被滚动删除清除（终审 Important-2，
+> 已修复并以双设备 keep 并发集成测试钉死）；名单不可得（后端不支持列名单/listBackups 失败）
+> → 该源按云端无对象首推走，收敛归后续轮，逐源隔离不炸整轮。
+
 **内容门持久化**：auto 通道的 `lastAutoVaultHash`（`cloudRunner.ts:119-124` 实例内存级）改为
 持久化「解密后 vault JSON 规范化序列化再 sha256」的内容 hash；未变零网络，页面重开不再
 盲目全量推拉。规范化序列化 = 稳定键序 + 无空白，消除随机 IV/键序抖动。
@@ -110,6 +123,14 @@ remoteRev == state.lastKnownRemoteRev（云端未动）                   → �
 一致则仅刷基线（以 v3 回写）；不一致则本地内容存冲突副本（沿用现有 conflict 机制）后采纳，
 并立即以 v3 格式回写。全链路一次同步后自然完成 v3 升级，无迁移工具。
 
+> **勘误（2026-09-23 终审回写）**：两处精化——① 「内容一致仅刷基线」分支**零写**（不回写 v3）：
+> 该分支的存在意义就是消除对端重推同内容时的冗余云写（密文随机 IV 使字节必变、内容不变），
+> 若顺手升级 v3 反而每轮多一次 put；v2 存量信封在**内容出现分叉**（真实下载/合并轮）时才
+> 升级 v3，安全、自限。② 「一次同步自然完成 v3 升级」只描述单机视角：v3 信封对旧版客户端
+> 硬不兼容（旧版只认 v2），新版设备升级云对象后同源旧设备同步报错直至其升级。**裁定
+> （2026-09-23）：项目处于开发阶段、无存量用户，不做混合机群过渡——桌面与扩展同版本
+> 发布、两端同步升级**，真机验证清单已含双端同版项。
+
 ### §2 活动目标单选
 
 `BackupSource`（`packages/core/src/backup/sources.ts`）增加 `role: 'primary' | 'replica'`：
@@ -128,6 +149,13 @@ remoteRev == state.lastKnownRemoteRev（云端未动）                   → �
    - `rev` 比记录新（其他设备误把它当主目标写入）→ **先拉取该内容与本端做一次条目级
      三方合并，合并结果并入 final，再推平该目标**——任何误配置下不丢数据；
    - 推平 = 上传 final（`rev := 该目标 remoteRev + 1`），更新记录。
+
+> **勘误（2026-09-23 终审回写）**：落地实现与上文两处偏差，实现优于设计——① 跳过/推平
+> 判定**不使用** `primaryRev[replicaId]` 记录，完全由各 replica 自身 `SourceSyncState`
+> （lastKnownRemoteRev + baseSnapshot）承担：replica 状态本就逐源持久，primary 侧再汇总是
+> 冗余（终审删只写不读的死字段）；② replica 云端较新且 final 未动时走**两方合并**
+> （`mergeVaults(null, final, replica内容)`，base 未知防丢），而非三方合并——base 快照归属
+> replica 自身状态，primary 侧无从校验共同祖先。
 3. 失败语义不变：单目标失败不阻断其余目标（outcome + error），终局不刷新内容门基线。
 
 ### §3 条目级三方合并（core 纯函数，`packages/core/src/merge/`）
@@ -145,6 +173,11 @@ remoteRev == state.lastKnownRemoteRev（云端未动）                   → �
 - 条目冲突记录：`{ entryId, issuer, label, ours, theirs, base }`，持久化本地
   （StorageAdapter 新键 `mergeConflicts`），供 UI 裁决列表消费；裁决动作 = 取本地方/取云地方，
   产生一次正常变更走同步通道。
+
+  > **勘误（2026-09-23 终审回写）**：裁决语义补全——记录中被删侧为 `null`（删/改对撞时
+  > 删除方），**pick 侧为 null 即确认该侧删除**（该条目自 vault 移除），不得回退为恢复 base
+  > 旧版本；两侧语义对称（终审 Important-3，此前「取本地方」在 ours=null 时复活 base、与
+  > 裁决列表「本地方已删除」标注矛盾，已修复）。
 - 非条目字段（settings、tags 等）同表规则；settings 冲突取 `updatedAt` 新者。
 - **祖先校验与降级**：合并前校验远端 envelope `baseContentHash == hash(baseSnapshot)`；
   不匹配（新设备无快照等）→ 降级两方合并（双方条目并集、同 id 冲突取 `updatedAt` 新者），
@@ -226,6 +259,16 @@ remoteRev == state.lastKnownRemoteRev（云端未动）                   → �
    无头模式下确认事件发往隐藏窗口 = 无人确认恒拒绝，符合现有无头设计裁定
    （应配 token 档）。
 
+   > **勘误（2026-09-23 终审回写）**：「现有 5s 桥超时延长为 60s」与实现不符——客户端级
+   > 既有审批保持 5s 不变（向后兼容），action 工具确认新开 `mcp://tool-approval` 专用通道
+   > 载 60s 超时；两种通道并存、超时各自独立（M3 留档同口径）。
+
+   > **勘误（2026-09-23 终审回写，同类约束推广）**：manual 合并预览确认（`requestMergeConfirm`）
+   > 同受「挂起征询必须有超时」约束——对话框渲染在 CloudCard（仅 /sync 页挂载），
+   > `trigger_sync` 在页面外触发时挂起 Promise 无超时等待将永久阻塞 single-flight 链，
+   > 其后所有 auto/interval 云同步排队搁浅（终审 Critical-1，已修复）。实现与 action 工具
+   > 确认同口径：60s 无裁定按取消结清（fail-closed 记跳过态），链自愈。
+
 #### §6.3 暴露面配置与设置页
 
 - `McpConfig` 增加 `exposedTools: string[]`，默认 `["list_accounts", "get_code"]`——
@@ -262,6 +305,11 @@ remoteRev == state.lastKnownRemoteRev（云端未动）                   → �
 1. 两个设备同时改不同条目 → 下轮同步自动合并，双方条目都在，无整库覆盖。
 2. 同一条目两设备改成不同内容 → 合并取新者 + 冲突列表可一键改选，裁决后二次同步收敛。
 3. CloudCard 状态行可见「本地较新/云端较新/已同步」；同步中可见逐源进度。
+
+   > **勘误（2026-09-23 终审回写）**：状态行落地为**动作文案**「已上传/已下载/已合并
+  > （降级）/已是最新」（`cloudCard.action*` / `cloudRunner.action.*`），四态与设计三态
+   > 一一映射、语义等价；merged 且祖先校验失败时显「已合并（降级）」专用文案（卡内与
+   > runner 摘要同键）。
 4. 页面重开 + 内容未变 → 零云盘写请求（keep 源不再沉淀重复文件）。
 5. 冲突发生 → badge/横幅出现，无自动文件下载；副本可从列表手动导出。
 6. MCP 默认暴露面下 `trigger_sync` 返回 `tool disabled`；勾选后 wildcard 档逐次确认、
