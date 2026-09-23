@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, Runtime, WindowEvent,
+    AppHandle, Emitter, Manager, Runtime, WindowEvent,
 };
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
@@ -19,6 +19,11 @@ mod release_policy;
 
 // mini 最近一次因失焦而隐藏的时刻，用于缓解「托盘点击收起」与「失焦自动隐藏」的竞态
 static LAST_FOCUS_HIDE: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// 释放策略状态轨迹（spec 批⑧ §7.2；tick 线程独占读写；任一窗口可见由 advance 内 reset，
+/// 窗口重建成功由 ensure_window reset）
+static RELEASE_TRACK: Mutex<release_policy::ReleaseTrack> =
+    Mutex::new(release_policy::ReleaseTrack::new());
 
 // F16 剪贴板暂存（托盘退出兜底清除的唯一事实源）：JS 复制路径经 stage_clipboard_write 写入并登记，
 // clipboard_clear_if_staged / 托盘退出时读回比对——内容仍为本应用最近一次复制的值才清空（不误清外部内容）。
@@ -326,6 +331,8 @@ fn set_global_shortcut(app: AppHandle, shortcut: String) -> Result<(), String> {
 }
 
 fn toggle_mini(app: &AppHandle) {
+    // 释放策略销毁档可能已销毁 webview（仅留托盘进程）：入口先按需重建（brief Task 13）
+    ensure_window(app, "mini");
     if let Some(mini) = app.get_webview_window("mini") {
         if mini.is_visible().unwrap_or(false) {
             let _ = mini.hide();
@@ -345,10 +352,129 @@ fn toggle_mini(app: &AppHandle) {
 }
 
 fn show_main(app: &AppHandle) {
+    // 同 toggle_mini：销毁档后先重建再显示（重建窗口 visible:false，此处 show 即恢复可见）
+    ensure_window(app, "main");
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.show();
         let _ = main.unminimize();
         let _ = main.set_focus();
+    }
+}
+
+// ---------- 释放策略接线（spec 批⑧ §7.2-7.3；纯逻辑在 release_policy.rs） ----------
+
+/// 释放 tick 单步：读配置→窗口可见性→advance→执行副作用。30s 轮询由 setup 启动的线程驱动
+fn release_tick(app: &AppHandle) {
+    let cfg = release_policy::from_settings_text(
+        &settings_path(app)
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .unwrap_or_else(|| "{}".into()),
+    );
+    let visible = |label: &str| {
+        app.get_webview_window(label)
+            .map(|w| w.is_visible().unwrap_or(false))
+            .unwrap_or(false)
+    };
+    let action = {
+        let mut track = RELEASE_TRACK.lock().expect("release track poisoned");
+        release_policy::advance(&mut track, &cfg, visible("main"), visible("mini"), Instant::now())
+    };
+    match action {
+        release_policy::ReleaseAction::Pause => {
+            if cfg.lock_on_pause {
+                let _ = app.emit("force-lock", ());
+            }
+            for label in ["main", "mini"] {
+                try_suspend_window(app, label);
+            }
+        }
+        release_policy::ReleaseAction::Destroy => {
+            if !destroy_releasable_windows(app, &cfg) {
+                // 任一 destroy 失败：回滚销毁标记（advance 内已提前置位），下一 tick 重试，
+                // 防止「轨迹已销毁而窗口仍在」的状态与事实脱节（审查 Task 12 交接项）
+                if let Ok(mut track) = RELEASE_TRACK.lock() {
+                    track.destroyed = false;
+                }
+            }
+        }
+        release_policy::ReleaseAction::None => {}
+    }
+}
+
+/// 暂停档：WebView2 TrySuspend（要求窗口不可见）；失败/非 Windows 静默降级为维持隐藏
+#[cfg(windows)]
+fn try_suspend_window(app: &AppHandle, label: &str) {
+    let Some(w) = app.get_webview_window(label) else { return };
+    let _ = w.with_webview(move |webview| {
+        use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_3;
+        use windows::core::Interface;
+        unsafe {
+            let Ok(core) = webview.controller().CoreWebView2() else { return };
+            // brief 原拟 cast ICoreWebView2_6：webview2-com 0.38 绑定中 TrySuspend 实际声明在
+            // ICoreWebView2_3（_6 仅有 OpenTaskManagerWindow），以真实绑定为准
+            let Ok(wv3) = core.cast::<ICoreWebView2_3>() else { return };
+            // TrySuspend 为异步：completed handler 在挂起完成后于 UI 线程回调，no-op 即可不阻塞
+            //（webview2-com 的 callback 模块私有，TrySuspendCompletedHandler re-export 在 crate 根）
+            let handler =
+                webview2_com::TrySuspendCompletedHandler::create(Box::new(|_ec, _res| Ok(())));
+            // 失败（如已挂起/不可见条件不满足）返回 Err：静默，销毁档计时照常推进
+            let _ = wv3.TrySuspend(&handler);
+        }
+    });
+}
+
+/// 非 Windows 桩：暂停档降级为仅维持隐藏（销毁/重建档与平台无关，照常工作）
+#[cfg(not(windows))]
+fn try_suspend_window(_app: &AppHandle, _label: &str) {}
+
+/// 销毁档：锁库或请求 DEK 暂存 → destroy main+mini（进程与托盘保留）。
+/// 返回是否全部销毁成功（任一失败由调用方回滚 RELEASE_TRACK.destroyed 重试）
+fn destroy_releasable_windows(app: &AppHandle, cfg: &release_policy::ReleasePolicyConfig) -> bool {
+    if cfg.lock_on_destroy {
+        let _ = app.emit("force-lock", ());
+    } else {
+        // 不锁库：给前端 1s 窗口执行 stash_dek（Task 14 的监听器），再销毁
+        let _ = app.emit("stash-dek-request", ());
+        std::thread::sleep(Duration::from_secs(1));
+    }
+    let mut all_destroyed = true;
+    for label in ["main", "mini"] {
+        if let Some(w) = app.get_webview_window(label) {
+            if w.destroy().is_err() {
+                all_destroyed = false;
+            }
+        }
+    }
+    all_destroyed
+}
+
+/// 按需重建窗口（tauri.conf.json 同参）；返回是否发生了重建（重建后前端冷启动，自动走 DEK 回注）。
+/// 重建成功即 reset 释放轨迹：销毁档置位的 destroyed 由重建解除，隐藏计时从头起算
+fn ensure_window(app: &AppHandle, label: &str) -> bool {
+    if app.get_webview_window(label).is_some() {
+        return false;
+    }
+    let built = match label {
+        "main" => tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
+            .title("TOTP 验证码工具")
+            .inner_size(760.0, 560.0)
+            .visible(false)
+            .build(),
+        "mini" => tauri::WebviewWindowBuilder::new(app, "mini", tauri::WebviewUrl::App("mini.html".into()))
+            .title("TOTP")
+            .inner_size(320.0, 420.0)
+            .visible(false)
+            .skip_taskbar(true)
+            .build(),
+        _ => return false,
+    };
+    if built.is_ok() {
+        if let Ok(mut track) = RELEASE_TRACK.lock() {
+            track.reset();
+        }
+        true
+    } else {
+        false
     }
 }
 
@@ -1339,6 +1465,13 @@ pub fn run() {
                     }
                     _ => {}
                 }
+            });
+            // 释放策略 tick：30s 轮询窗口可见性驱动三段释放（spec 批⑧ §7.3——轮询覆盖所有隐藏路径：
+            // 关窗拦截/mini 失焦/前端「隐藏到托盘」，无事件盲区；配置每 tick 现读，改设置即时生效）
+            let release_handle = app.handle().clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(Duration::from_secs(30));
+                release_tick(&release_handle);
             });
             Ok(())
         })

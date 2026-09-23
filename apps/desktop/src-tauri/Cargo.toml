@@ -55,6 +55,10 @@ tower = { version = "0.5", features = ["util"] }
 # DPAPI 解密（WinAuth 导入）+ 系统锁屏事件（plan16 T15，WTS 会话通知与隐藏窗口）：
 # 仅 Windows 目标编译
 [target.'cfg(windows)'.dependencies]
+# 释放策略暂停档（批⑧ §7.3）：TrySuspend 暂停 WebView2 渲染进程活跃；版本与 tauri 2.11
+# 传递依赖树对齐（cargo tree -i webview2-com = 0.38.2，其内部 windows-core 0.61 与本表 windows 同源，
+# Interface::cast 跨 crate 可用），显式声明不新增编译产物
+webview2-com = "0.38"
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security_Cryptography",

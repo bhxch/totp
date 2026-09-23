@@ -65,9 +65,7 @@ pub fn merge_into_settings_text(existing: Option<&str>, cfg: &ReleasePolicyConfi
     serde_json::to_string_pretty(&serde_json::Value::Object(obj)).map_err(|e| e.to_string())
 }
 
-/// 状态机动作（接线层消费：Pause→TrySuspend；Destroy→锁库/暂存+destroy；None→无操作）。
-/// 本任务仅落纯函数底座，Task 13 轮询接线前 dead_code 允许（接线后移除）
-#[allow(dead_code)]
+/// 状态机动作（接线层消费：Pause→TrySuspend；Destroy→锁库/暂存+destroy；None→无操作）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReleaseAction {
     None,
@@ -76,7 +74,6 @@ pub enum ReleaseAction {
 }
 
 /// 释放状态轨迹（接线层持有；任一窗口可见或窗口重建时调用 reset）
-#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct ReleaseTrack {
     /// 全部窗口进入隐藏的时刻（可见时为 None）
@@ -87,7 +84,6 @@ pub struct ReleaseTrack {
     pub destroyed: bool,
 }
 
-#[allow(dead_code)]
 impl ReleaseTrack {
     /// const 构造器：Task 13 接线层以 `Mutex::new(ReleaseTrack::new)` 建 static
     ///（Mutex::new 是 const fn 但 Default::default 不是，Default 派生仅供测试/局部用）
@@ -102,7 +98,6 @@ impl ReleaseTrack {
     }
 }
 
-#[allow(dead_code)]
 fn minutes_to_secs(m: u32) -> u64 {
     m as u64 * 60
 }
@@ -110,7 +105,6 @@ fn minutes_to_secs(m: u32) -> u64 {
 /// 状态机单步推进（纯函数，单测覆盖）。
 /// 语义（spec §7.2）：暂停档从「全部隐藏」起算 pauseMinutes；销毁档从「暂停发生」起算 destroyMinutes，
 /// 暂停档禁用（pause_minutes=0）或 Pause 后从隐藏点起算。任一窗口可见即重置并返回 None。
-#[allow(dead_code)]
 pub fn advance(
     track: &mut ReleaseTrack,
     cfg: &ReleasePolicyConfig,

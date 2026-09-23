@@ -4497,6 +4497,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tower",
+ "webview2-com",
  "windows",
 ]
 
