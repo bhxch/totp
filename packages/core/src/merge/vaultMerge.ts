@@ -1,6 +1,7 @@
 /** 条目级三方合并（spec §3）：base=共同祖先（null=降级两方合并），ours=本地，theirs=云端。
  *  条目身份=uuid；裁决表见 spec；非条目域：tags 按 id 并集（同 id 不同名取 ours，确定性、低风险），
  *  vault.updatedAt 取两侧较大值（防回滚由既有水位键把守，此处不涉 rev）。 */
+import { canonicalJson } from '../cloud/canonical'
 import type { OtpEntry, Vault } from '../model'
 
 export interface EntryConflict {
@@ -21,6 +22,10 @@ export interface MergeResult {
 
 const updatedAtOf = (e: OtpEntry | null | undefined): number => e?.updatedAt ?? 0
 
+/** 条目相等比较（审查 Minor：键序无关）：canonicalJson 递归按键排序后再序列化，
+ *  跨设备/跨版本 JSON 序列化的键插入序差异不再把「未动」误判为「双方改」（冗余冲突记录）。 */
+const sameEntry = (a: OtpEntry | null, b: OtpEntry | null): boolean => canonicalJson(a) === canonicalJson(b)
+
 function mergeTags(ours: Vault, theirs: Vault): Vault['tags'] {
   const out = new Map(ours.tags.map((t) => [t.id, t]))
   for (const t of theirs.tags) if (!out.has(t.id)) out.set(t.id, t)
@@ -40,15 +45,15 @@ export function mergeVaults(base: Vault | null, ours: Vault, theirs: Vault): Mer
     const b = baseMap.get(id) ?? null
     const o = oursMap.get(id) ?? null
     const t = theirsMap.get(id) ?? null
-    if (JSON.stringify(o) === JSON.stringify(t)) {
+    if (sameEntry(o, t)) {
       if (o !== null) out.set(id, o) // 双方一致（含双方都删）
       continue
     }
-    if (JSON.stringify(o) === JSON.stringify(b)) {
+    if (sameEntry(o, b)) {
       if (t !== null) out.set(id, t) // 本方未动 → 取云方（含本方未动云方删=删除生效）
       continue
     }
-    if (JSON.stringify(t) === JSON.stringify(b)) {
+    if (sameEntry(t, b)) {
       if (o !== null) out.set(id, o) // 云方未动 → 取本方
       continue
     }

@@ -11,6 +11,12 @@ const legacy = (e: OtpEntry): OtpEntry => {
   const { updatedAt: _updatedAt, ...rest } = e
   return rest
 }
+/** 键插入序完全反转的同内容条目（审查 Minor：模拟跨设备/跨版本序列化键序差异） */
+function reversedEntry(e: OtpEntry): OtpEntry {
+  const out: Record<string, unknown> = {}
+  for (const k of (Object.keys(e) as (keyof OtpEntry)[]).reverse()) out[k] = e[k]
+  return out as unknown as OtpEntry
+}
 function vault(entries: OtpEntry[], updatedAt = 1): Vault {
   return { version: 2, entries, tags: [], updatedAt }
 }
@@ -30,6 +36,19 @@ describe('mergeVaults', () => {
     const r = mergeVaults(base, vault([entry({ uuid: 'a', label: 'same' })]), vault([entry({ uuid: 'a', label: 'same' })]))
     expect(r.conflicts).toEqual([])
     expect(r.vault.entries[0]!.label).toBe('same')
+  })
+  it('条目相等比较键序无关（审查 Minor）：同内容不同键插入序不误判冲突/双方修改', () => {
+    const base = vault([entry({ uuid: 'a', label: 'old', updatedAt: 1 })])
+    // 双方一致但键序不同：不得产生冲突记录
+    const same = entry({ uuid: 'a', label: 'same', updatedAt: 5 })
+    const r = mergeVaults(base, vault([same]), vault([reversedEntry(same)]))
+    expect(r.conflicts).toEqual([])
+    expect(r.vault.entries[0]!.label).toBe('same')
+    // 本方未动但键序与 base 不同、云方改：取云方，不得误判「双方修改」
+    const untouched = reversedEntry(entry({ uuid: 'a', label: 'old', updatedAt: 1 }))
+    const r2 = mergeVaults(base, vault([untouched]), vault([entry({ uuid: 'a', label: 'renamed', updatedAt: 9 })]))
+    expect(r2.conflicts).toEqual([])
+    expect(r2.vault.entries[0]!.label).toBe('renamed')
   })
   it('一方删另一方未动 → 删除生效', () => {
     const base = vault([entry({ uuid: 'a' }), entry({ uuid: 'b' })])
