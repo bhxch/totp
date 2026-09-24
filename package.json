@@ -1,5 +1,6 @@
 {
   "name": "totp-workspace",
+  "license": "MIT",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "scripts": {

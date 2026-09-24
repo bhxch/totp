@@ -20,7 +20,7 @@
 - 从 [GitHub Releases](https://github.com/bhxch/totp/releases) 下载扩展 zip：`totp-extension-chromium-<版本>.zip` / `totp-extension-firefox-<版本>.zip`（Release 附 `sha256sums.txt` 校验）
   - Chrome/Edge：解压后进入 `chrome://extensions` 开启「开发者模式」→「加载已解压的扩展程序」选中解压目录
   - Firefox：要求 Firefox 140+（`strict_min_version: 140.0`）；未签名 zip 可经 `about:debugging` →「此 Firefox」→「临时载入附加组件」加载，商店（AMO）上架包以 zip 人工上传
-- 自建：`pnpm --filter @totp/extension build`，产物为 `.output/chrome-mv3` 与 `.output/firefox-mv3`（CI 会断言双目标 manifest 均为 MV3，见 [Assert MV3 artifacts 步](.github/workflows/build.yml)）
+- 自建：Chrome 目标 `pnpm --filter @totp/extension build` 产出 `.output/chrome-mv3`；Firefox 目标另跑 `pnpm --filter @totp/extension exec wxt build -b firefox` 产出 `.output/firefox-mv3`（CI 对双目标分别构建并断言 manifest 均为 MV3，见 [Assert MV3 artifacts 步](.github/workflows/build.yml)）
 
 ### 桌面（Tauri 2）
 
@@ -34,7 +34,7 @@
 四个入口，均把内容解析后**预填进录入表单**（批量导入除外），确认后才落库：
 
 - **手动录入**：账户名 + base32 密钥（带校验），支持 TOTP/HOTP/Steam（SHA1/256/512，位数 5/6/7/8）
-- **otpauth 链接**：支持 `otpauth://totp|hotp|steam`，三个入口：
+- **otpauth 链接**：支持 `otpauth://totp|hotp|steam|yaotp`（Yandex），三个入口：
   - 粘贴导入（全端）：popup 表单区上方「粘贴 otpauth 链接导入」折叠入口，粘贴 URI 后点「导入」
   - Firefox 协议注册（`ext+otpauth`）：安装后首次触发询问处理器，选择「TOTP 验证码工具」后，地址栏输入或点击 `ext+otpauth:...` 链接即打开 popup 并预填。平台限制：Firefox 扩展无法注册原生 `otpauth://` scheme（manifest 协议白名单仅接受 `web+`/`ext+` 前缀），故网页中的真实 `otpauth://` 链接无法接管
   - 右键菜单导入：网页中选中一段 `otpauth://` 文本 → 右键「将选中的 otpauth 链接添加为条目」→ 校验通过后暂存并尝试自动打开扩展弹窗（Chrome 127+ 支持；不可用时手动点扩展图标即见预填表单）；选中文本非法时发系统通知提示
@@ -48,8 +48,8 @@
 
 ### 日常使用（扩展端）
 
-- 列表：实时验证码 + 倒计时、关键字搜索（可选搜 secret）、按当前站点 URL 过滤（五种匹配策略，条目编辑中配置）、置顶、右键菜单（编辑 / 复制 URI / 置顶）、🔑 揭示（前 4 + 后 4 字符）
-- 管理：编辑/删除（二次确认）、分组管理（验证码页）、HOTP 复制后自动递增
+- 列表：实时验证码 + 倒计时、关键字搜索（可选搜 secret）、按当前站点 URL 过滤（五种匹配策略，条目编辑中配置）、置顶、右键菜单（编辑 / 复制 URI / 置顶）、双击条目显示明文 8 秒后自动打回（默认打码）
+- 管理：编辑/删除（二次确认）、标签管理（验证码页）、HOTP 复制后自动递增
 - options 页：浏览器扩展详情 → 扩展选项，与主窗口同构五页导航；popup 右上「打开设置」深链直达 `options.html#/settings`
 - 主题：设置页「外观」区切换主题模式（自动/浅色/深色）与 10 种主题色，四入口（popup/options/桌面主窗/mini）一致生效
 
@@ -146,7 +146,7 @@ vault 加密支持多种解锁来源（KEK 来源）并存，在「安全」页�
 ### 剪贴板自动清空与密钥遮蔽
 
 - 复制验证码后 30 秒自动清空剪贴板，可在「安全」页关闭；插件端在 Chrome/Edge 上经 background（alarms + offscreen）执行，popup 提前关闭也能清空；Firefox 无 offscreen API，不支持自动清空，开关保留但无效果
-- 录入/编辑表单中 secret 输入框默认以密码形态遮蔽，点右侧按钮可临时明文查看；列表条目点 🔑 弹窗显示前 4 + 后 4 字符
+- 录入/编辑表单中 secret 输入框默认以密码形态遮蔽，点右侧按钮可临时明文查看；列表条目双击显示明文 8 秒后自动打回
 
 ## 备份与云同步
 
@@ -265,7 +265,7 @@ vault 加密支持多种解锁来源（KEK 来源）并存，在「安全」页�
 - **Battle.net**（shared_prefs XML）：XOR 掩码还原，单文件单条目（8 位 TOTP）
 - **Duo**（files/duokit/accounts.json）：JSON 数组，含 counter 的条目按 HOTP 导入
 - **Microsoft Authenticator**（SQLite db）：`accounts` 表，普通条目 6 位、Microsoft 型 8 位 TOTP
-- **Google Authenticator / otpauth URI 文本**：每行一条 `otpauth://totp/...|hotp/...|steam/...` URI（多数应用的 URI/迁移文本导出均走此入口）
+- **Google Authenticator / otpauth URI 文本**：每行一条 `otpauth://totp/...|hotp/...|steam/...|yaotp/...` URI（多数应用的 URI/迁移文本导出均走此入口，含 Ente Auth 明文导出）
 - **Authenticator Plus**：口令加密 ZIP 备份支持导入，需输入备份口令（AES 加密 ZIP，对齐官方加密布局）
 - **通用 JSON / JSON array / JSONL**：逐字段配置点路径映射（如 `otp.params.secret`）将行对象映射为条目，secret 字段必填；单个 JSON 对象会自动探测其嵌套的行数组。secret 自动去空白并大写，非法 algorithm/digits/period 回落默认值（SHA1/6/30），Steam 条目固定 5 位。映射方案可命名保存、复用与删除：再次导入同结构文件时按列名匹配自动推荐，也可手动套用
 
@@ -285,7 +285,7 @@ vault 加密支持多种解锁来源（KEK 来源）并存，在「安全」页�
 
 - **完全相同**（全部关键字段一致）：自动跳过，不重复落库
 - **疑似同账户**（secret + 算法相同，其余字段不同）：逐条三选——跳过（默认）/ 新增 / 覆盖现有条目
-- **冲突**（issuer + label 相同但 secret 不同，忽略大小写与首尾空白）：按冲突策略处理——跳过冲突条目（默认）/ 覆盖现有条目（保留其分组与排序位置）/ 保留两者（并存）
+- **冲突**（issuer + label 相同但 secret 不同，忽略大小写与首尾空白）：按冲突策略处理——跳过冲突条目（默认）/ 覆盖现有条目（保留其标签与排序位置）/ 保留两者（并存）
 - **新增**：其余条目直接落库
 
 文件内完全重复的行自动合并（保留首条），避免预览计数虚高。确认导入后报告逐类计数与逐条失败原因（含行号/条目号）；单条解析失败不阻断整体导入，整体解密类失败（如 Aegis 口令错误）明确报错且不写入部分数据。
@@ -312,7 +312,7 @@ vault 加密支持多种解锁来源（KEK 来源）并存，在「安全」页�
 
 ### URL 引用
 
-- 填入图片 URL 后立即拉取并缓存为本地副本（缓存键 `url:<id>`）
+- 填入图片 URL 后立即拉取并缓存为本地副本（缓存键 `urlcache:<id>`）
 - URL 拉取上限 200KB，超限视为失败；拉取失败（网络不通、非 2xx、站点不允许跨域 CORS）会明确报错，修正 URL 后可重试；缓存丢失（如清空存储、换设备）时列表回退首字母占位，可在编辑表单重新拉取
 
 ### 存储位置
@@ -325,10 +325,12 @@ vault 加密支持多种解锁来源（KEK 来源）并存，在「安全」页�
 
 ```bash
 pnpm install
-pnpm test          # 全部单测（core 734 / ui 821 / extension 108 / desktop 128，四包 vitest）
+pnpm test          # 全部前端单测（core / ui / extension / desktop 四包 vitest，各包实跑数见输出）
+cargo test         # Rust 侧单测（apps/desktop/src-tauri，CI 门禁运行；cargo clippy -- -D warnings 同）
 # 注意：extension 的类型检查依赖 WXT 生成的 .wxt/ 目录（已被 git ignore），
-# 需先构建（或先跑 pnpm --filter @totp/extension dev），再执行 pnpm typecheck。
-pnpm --filter @totp/extension build   # 插件产物 .output/chrome-mv3 与 .output/firefox-mv3（双目标均 MV3）
+# 需先 pnpm --filter @totp/extension exec wxt prepare 生成类型，再执行 pnpm typecheck。
+pnpm --filter @totp/extension build                        # Chrome 目标产物 .output/chrome-mv3
+pnpm --filter @totp/extension exec wxt build -b firefox    # Firefox 目标产物 .output/firefox-mv3
 pnpm typecheck     # 类型检查：core 为纯 tsc；ui/extension/desktop 为 vue-tsc（含 .vue 单文件组件）
 ```
 
@@ -354,9 +356,13 @@ pnpm typecheck     # 类型检查：core 为纯 tsc；ui/extension/desktop 为 v
 
 详见 [plan13-16 全量代码审查](docs/review/2026-09-18-plan13-16-full-code-review.md)与[批⑧六规格审查与验证](docs/review/2026-09-22-six-specs-review-and-verification.md)。
 
-- **云同步无变化跳过当前不可达**：自动云同步每次触发都会重新上传全部启用源；两台设备同时开启自动同步时会互踢产生冲突副本并逐渐累积（手动同步的「已是最新」提示同理可能不出现）
+- **手动云同步不设内容门**：manual 轮始终完整推拉（内容无变化也会重写云端）；自动轮经持久内容门降级 pull-only，内容无变化时零上传，两端均闲置不再互踢
 - **Google Drive 源的「保留最近 N 份」当前等价「覆盖」**（时间戳文件名对 gdrive 不生效，远端始终只有一份对象）
 - **桌面自动备份部分失败仍会推进基线**：任一目录写入失败时基线照常前进且状态行记「成功」，后续不再自动重试，需手动备份补写
 - **桌面「重启后保持锁定」开关当前无效果**（桌面无会话级 DEK 存储，重启后必为锁定态）；mac/Linux 的「系统锁屏时锁定」触发器不可用（挂账）
 - **Firefox（MV3）**：剪贴板自动清空不可用（无 offscreen API，清空降级为仅前台不调度）；空闲/锁屏自动锁定按 MDN 兼容性 idle API 已支持（含 `locked` 态，min_version 140），真机如有异常以运行时降级提示为准；Passkey（PRF）解锁支持有限，探测不支持时入口自动隐藏
 - **云端列表无分页**：单目录/前缀下对象数超过云接口单页上限时（如 S3 1000 条），滚动删除可能漏删最旧份
+
+## License
+
+[MIT](LICENSE)

@@ -7,7 +7,7 @@
 
 | # | 项 | 说明 | 来源 |
 |---|---|---|---|
-| B1 | firefox gecko id 占位符 | `apps/extension/wxt.config.ts` 仍为 `totp-tools@example.local`;AMO 的 ID 一经上架不可更改,**首次正式发布前必须定稿**(发布阻断项,非代码缺陷) | CI 审查 I2 |
+| B1 | ~~firefox gecko id 占位符~~ | **已解决（2026-09-23 批⑧）**：定稿 `totp@bhxch.github.io` + `strict_min_version: 140.0`，CI「Assert MV3 artifacts」步断言（[裁定与勘误记录](../review/2026-09-24-full-audit-fixes.md)） | CI 审查 I2 |
 | B2 | foxauth 口令输入 UX | 口令以 Base64 存于备份文件 `encryptPassword`(可还原),用户输入口令仅做比对、不参与解密,有"伪安全"误导;后续可评估直接采用文件内口令免输入(对齐官方体验)。取消比对需同步补 GCM 层错误口令用例 | foxauth 审查 M-1 |
 
 ## 功能增强类

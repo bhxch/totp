@@ -20,7 +20,7 @@ Design doc: [docs/plans/2026-09-13-totp-tool-design.md](docs/plans/2026-09-13-to
 - Download the extension zips from [GitHub Releases](https://github.com/bhxch/totp/releases): `totp-extension-chromium-<version>.zip` / `totp-extension-firefox-<version>.zip` (releases include a `sha256sums.txt`)
   - Chrome/Edge: unzip, open `chrome://extensions`, enable "Developer mode" → "Load unpacked" and pick the unzipped folder
   - Firefox: requires Firefox 140+ (`strict_min_version: 140.0`); the unsigned zip can be loaded via `about:debugging` → "This Firefox" → "Load Temporary Add-on"; the store (AMO) package is uploaded manually from the zip
-- Build from source: `pnpm --filter @totp/extension build` produces `.output/chrome-mv3` and `.output/firefox-mv3` (CI asserts both targets are MV3, see the [Assert MV3 artifacts step](.github/workflows/build.yml))
+- Build from source: the Chrome target `pnpm --filter @totp/extension build` produces `.output/chrome-mv3`; the Firefox target is built separately with `pnpm --filter @totp/extension exec wxt build -b firefox`, producing `.output/firefox-mv3` (CI builds the two targets separately and asserts each manifest is MV3, see the [Assert MV3 artifacts step](.github/workflows/build.yml))
 
 ### Desktop (Tauri 2)
 
@@ -34,7 +34,7 @@ Design doc: [docs/plans/2026-09-13-totp-tool-design.md](docs/plans/2026-09-13-to
 Four entry points; all of them **prefill the entry form** (except batch import) and only persist after you confirm:
 
 - **Manual entry**: account label + base32 secret (validated), TOTP/HOTP/Steam supported (SHA1/256/512, 5/6/7/8 digits)
-- **otpauth link**: supports `otpauth://totp|hotp|steam`, three entry points:
+- **otpauth link**: supports `otpauth://totp|hotp|steam|yaotp` (Yandex), three entry points:
   - Paste import (all platforms): the collapsible "Paste otpauth link to import" area above the popup form — paste the URI and click "Import"
   - Firefox protocol registration (`ext+otpauth`): the first invocation asks you to pick a handler; choose "TOTP Code Tool" and afterwards typing or clicking an `ext+otpauth:...` link opens the popup with the form prefilled. Platform limit: Firefox extensions cannot register the native `otpauth://` scheme (the manifest protocol allowlist only accepts `web+`/`ext+` prefixes), so real `otpauth://` links on web pages cannot be taken over
   - Context-menu import: select an `otpauth://` snippet on a page → right-click "Add the selected otpauth link as an entry" → after validation it is staged and the extension popup opens automatically when possible (Chrome 127+; otherwise click the extension icon to see the prefilled form); invalid selections raise a system notification
@@ -48,8 +48,8 @@ Enable vault encryption with a passphrase on the Security page and the lock scre
 
 ### Daily use (extension)
 
-- List: live codes + countdown, keyword search (optionally search secrets), filter by current site URL (five match strategies, configured per entry), pinning, context menu (edit / copy URI / pin), 🔑 reveal (first 4 + last 4 characters)
-- Management: edit/delete (double confirmation), group management (Codes page), HOTP counter auto-increments after copy
+- List: live codes + countdown, keyword search (optionally search secrets), filter by current site URL (five match strategies, configured per entry), pinning, context menu (edit / copy URI / pin), double-click an entry to show the plaintext code for 8 seconds before it is masked again automatically (masked by default)
+- Management: edit/delete (double confirmation), tag management (Codes page), HOTP counter auto-increments after copy
 - Options page: extension details → Extension options, mirroring the same five-page navigation; the "Open settings" button at the popup's top right deep-links to `options.html#/settings`
 - Theme: switch theme mode (auto/light/dark) and 10 theme colors in the "Appearance" section of Settings; consistent across all four surfaces (popup/options/desktop main window/mini)
 
@@ -146,7 +146,7 @@ Vault encryption supports multiple unlock sources (KEK sources) coexisting, mana
 ### Clipboard auto-clear and secret masking
 
 - The clipboard is auto-cleared 30 seconds after copying a code (can be disabled on the Security page); on the extension this runs via the background worker (alarms + offscreen) on Chrome/Edge so it still clears after the popup closes; Firefox has no offscreen API, so auto-clear is unavailable — the toggle remains but has no effect
-- In entry/edit forms the secret input is masked by default; the button on its right reveals it temporarily; the 🔑 action on list entries shows the first 4 + last 4 characters in a dialog
+- In entry/edit forms the secret input is masked by default; the button on its right reveals it temporarily; double-clicking a list entry shows the plaintext for 8 seconds before it is masked again automatically
 
 ## Backup and cloud sync
 
@@ -265,7 +265,7 @@ Imports start on the Import page. After picking a file the format is auto-sniffe
 - **Battle.net** (shared_prefs XML): XOR-mask restore, one entry per file (8-digit TOTP)
 - **Duo** (files/duokit/accounts.json): JSON array; entries with a counter import as HOTP
 - **Microsoft Authenticator** (SQLite db): `accounts` table; regular entries are 6-digit, Microsoft-style 8-digit TOTP
-- **Google Authenticator / otpauth URI text**: one `otpauth://totp/...|hotp/...|steam/...` URI per line (most apps' URI/migration text exports land here)
+- **Google Authenticator / otpauth URI text**: one `otpauth://totp/...|hotp/...|steam/...|yaotp/...` URI per line (most apps' URI/migration text exports land here, including Ente Auth plaintext exports)
 - **Authenticator Plus**: passphrase-encrypted ZIP backups supported, needs the backup passphrase (AES-encrypted ZIP, aligned with the official layout)
 - **Generic JSON / JSON array / JSONL**: configure dotted-path field mappings (e.g. `otp.params.secret`) to map row objects into entries; secret is required; a single JSON object auto-detects its nested row array. Secrets are trimmed and uppercased; invalid algorithm/digits/period fall back to defaults (SHA1/6/30); Steam entries are fixed at 5 digits. Mapping schemes can be named, saved, reused and deleted: re-importing a same-shaped file auto-recommends a scheme by column names, and schemes can be applied manually
 
@@ -285,7 +285,7 @@ The preview annotates each entry (mutually exclusive and exhaustive; secret take
 
 - **Identical** (all key fields match): skipped automatically, no duplicate stored
 - **Suspected same account** (same secret + algorithm, other fields differ): choose per entry — skip (default) / add / overwrite existing
-- **Conflict** (same issuer + label, different secret, case/whitespace-insensitive): handled per the conflict policy — skip conflicted entries (default) / overwrite existing (keeping its group and sort position) / keep both
+- **Conflict** (same issuer + label, different secret, case/whitespace-insensitive): handled per the conflict policy — skip conflicted entries (default) / overwrite existing (keeping its tags and sort position) / keep both
 - **New**: everything else is stored
 
 Fully duplicated lines within a file are merged (first kept) to avoid inflated preview counts. After confirming, the report shows per-category counts and per-entry failure reasons (with line/entry numbers); single-entry parse failures do not block the import, and whole-file decryption failures (e.g. a wrong Aegis passphrase) error out explicitly without writing partial data.
@@ -312,7 +312,7 @@ Entries can carry brand icons shown as list avatars and in the entry form; four 
 
 ### URL reference
 
-- Entering an image URL fetches it immediately and caches a local copy (cache key `url:<id>`)
+- Entering an image URL fetches it immediately and caches a local copy (cache key `urlcache:<id>`)
 - Fetches are capped at 200KB — larger fails; failures (network down, non-2xx, CORS blocked) error explicitly and can be retried after fixing the URL; when the cache is lost (storage cleared, new device) the list falls back to an initial-letter placeholder and can be re-fetched in the edit form
 
 ### Storage location
@@ -325,10 +325,12 @@ Entries can carry brand icons shown as list avatars and in the entry form; four 
 
 ```bash
 pnpm install
-pnpm test          # all unit tests (core 734 / ui 821 / extension 108 / desktop 128, four vitest packages)
+pnpm test          # all frontend unit tests (core / ui / extension / desktop, four vitest packages; per-package counts shown in the output)
+cargo test         # Rust-side unit tests (apps/desktop/src-tauri, CI gate; cargo clippy -- -D warnings likewise)
 # Note: the extension's typecheck depends on the WXT-generated .wxt/ directory (git-ignored);
-# build first (or run pnpm --filter @totp/extension dev), then pnpm typecheck.
-pnpm --filter @totp/extension build   # extension artifacts .output/chrome-mv3 and .output/firefox-mv3 (both MV3)
+# run pnpm --filter @totp/extension exec wxt prepare first to generate the types, then pnpm typecheck.
+pnpm --filter @totp/extension build                        # Chrome target artifacts .output/chrome-mv3
+pnpm --filter @totp/extension exec wxt build -b firefox    # Firefox target artifacts .output/firefox-mv3
 pnpm typecheck     # typecheck: core is plain tsc; ui/extension/desktop use vue-tsc (including .vue single-file components)
 ```
 
@@ -354,9 +356,13 @@ Docs index:
 
 See the [plan13-16 full code review](docs/review/2026-09-18-plan13-16-full-code-review.md) and the [batch-8 six-spec review and verification](docs/review/2026-09-22-six-specs-review-and-verification.md).
 
-- **Cloud sync "skip when unchanged" is currently unreachable**: automatic cloud sync re-uploads every enabled source on each trigger; two devices with auto sync enabled will kick each other into conflict copies that accumulate over time (the manual "already up to date" note may likewise not appear)
+- **Manual cloud sync has no content gate**: a manual run always pushes and pulls in full (the cloud object is rewritten even when nothing changed); automatic runs go through a persistent content gate and degrade to pull-only — nothing is uploaded when the content is unchanged, and two devices both sitting idle no longer kick each other into conflict copies
 - **Google Drive's "keep latest N" currently behaves as "overwrite"** (timestamped names do not apply to gdrive; only one remote object ever exists)
 - **Desktop auto backup advances the baseline on partial failure**: if any directory write fails the baseline still advances and the status line records "success"; no automatic retry follows — write a manual backup to catch up
 - **The desktop "keep locked after restart" toggle currently has no effect** (the desktop has no session-level DEK storage and is always locked after restart); the "lock on system lock" trigger is unavailable on mac/Linux (backlog)
 - **Firefox (MV3)**: clipboard auto-clear unavailable (no offscreen API, clearing degrades to foreground-only, unscheduled); idle/lock auto-lock is supported per MDN compatibility (including the `locked` state, min_version 140) — if anything misbehaves on real hardware, rely on the runtime degradation notice; Passkey (PRF) unlock is limited — the entry hides itself when probing fails
 - **No pagination for cloud listings**: when objects under a single directory/prefix exceed the cloud API's page cap (e.g. 1000 for S3), rolling deletion may miss the oldest backups
+
+## License
+
+[MIT](LICENSE)
