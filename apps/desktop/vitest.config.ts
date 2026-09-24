@@ -5,5 +5,5 @@ import { defineConfig } from 'vitest/config'
 // 仅编译不挂载，node 环境安全
 export default defineConfig({
   plugins: [vue()],
-  test: { environment: 'node', include: ['src/**/*.test.ts'] },
+  test: { environment: 'node', include: ['src/**/*.test.ts', 'test/**/*.test.ts'] },
 })
