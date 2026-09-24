@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest'
-import { importFoxauth, importFoxauthPlaintext } from './jsonApps'
+import { importFoxauth, importFoxauthPlaintext } from '../src/import/jsonApps'
 
 const plaintext = JSON.stringify({
   accountInfos: [

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canonicalJson, contentHash } from './canonical'
+import { canonicalJson, contentHash } from '../src/cloud/canonical'
 
 describe('canonicalJson', () => {
   it('键序无关：相同对象不同插入序产出同一字符串', () => {

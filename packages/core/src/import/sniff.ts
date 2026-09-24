@@ -22,11 +22,12 @@ export * from './uriBatch'
  * - JSON 数组且存在条目 base 为整数 + key 为字符串 → 'totpAuthenticator'
  *   （TotpAuthenticatorImporter.java 条目 {base:16|32|64, key, ...}）
  * - JSON 数组 / JSONL / 其余单 JSON 对象 → 'generic'
- * - 文本含 winauth（大小写不敏感，XML 用正则判定，M1 不引入 XML 解析器）→ 'winauth'
+ * - 文本含 winauth（大小写不敏感；嗅探层用正则判定即可，XML 结构解析由 winauth.ts 内置 mini parser 承担）→ 'winauth'
  * - XML 含 tokenOrder 或 issuerExt → 'freeOtpLegacy'（FreeOtpImporter.java readV1：tokens.xml）
  * - 含 otpauth:// → 'uriBatch'
  * 注：Ente 明文导出即 otpauth URI 行（EnteAuthImporter 委托 GoogleAuthUriImporter），落入
- * uriBatch，不设独立判定；Ente 加密导出与未知 JSON 无可靠特征，留给手动选择（generic/uriBatch）。
+ * uriBatch，不设独立判定；Ente 加密导出与未知 JSON 无可靠嗅探特征，留给手动选择
+ * （手动选 uriBatch 时由其内建特征检测给出明确加密报错）。
  * TOTP Authenticator 外部分享为纯 base64 密文，与任意文本无可靠区分特征，不强判（手动选择）。
  * Authenticator Plus 导出为 WinZip AES 加密 zip（二进制），文本嗅探不适用——入口为
  * ImportCard 手动选择「Authenticator Plus」+ readImportFileBytes 字节通道，不加入 sniffFormat。

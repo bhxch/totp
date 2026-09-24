@@ -137,7 +137,8 @@ function mapString(fm: FieldMap | undefined, row: unknown, fallback: string): st
  * 单行映射为 ParsedEntry：
  * - 点路径取值，取不到 → 用 defaults
  * - secret 缺失 → { error: '缺少 secret 字段' }
- * - secret 默认过 uppercaseSecret（trim+去空白+大写）
+ * - secret 按 secret.transform 规整（plan5 契约）：'uppercaseSecret'（默认，含缺省）
+ *   走 normalizeSecret（trim+去空白+大写）；'none' 仅去空白、保留原大小写（hex 小写等习惯）
  * - algorithm 非法→'SHA1'；digits/period 非法→6/30；type=steam 时 digits 强制 5
  */
 export function mapRowToEntry(row: unknown, mapping: RowMapping): ParsedEntry | { error: string } {
@@ -145,7 +146,10 @@ export function mapRowToEntry(row: unknown, mapping: RowMapping): ParsedEntry | 
 
   const rawSecret = mapping.secret ? getByPath(row, mapping.secret.path) : undefined
   if (typeof rawSecret !== 'string' || rawSecret.trim() === '') return { error: '缺少 secret 字段' }
-  const secret = normalizeSecret(rawSecret)
+  const secret =
+    mapping.secret?.transform === 'none'
+      ? rawSecret.replace(/\s+/g, '')
+      : normalizeSecret(rawSecret)
 
   const rawType = mapping.type ? getByPath(row, mapping.type.path) : undefined
   const type = normalizeType(typeof rawType === 'string' && rawType.trim() !== '' ? rawType : (defaults.type ?? 'totp'))

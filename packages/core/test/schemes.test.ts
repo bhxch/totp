@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { mapRowToEntry } from '../src/import/generic'
 import {
   matchSchemes, normalizeSchemes, removeScheme, SCHEMES_KEY, upsertScheme,
   type ImportScheme,
@@ -26,13 +27,15 @@ describe('schemes', () => {
       { id: 'b', name: 'x', mapping: { secret: { path: '' } }, createdAt: 1 }, // secret.path 空
       { id: 'c', name: 'x', mapping: { secret: 'nope' }, createdAt: 1 }, // secret 非 FieldMap
       { id: 'd', name: 'x', createdAt: 1 }, // 缺 mapping
-      // 合法： issuer 非法剔除、rowsPath 非法剔除、transform 非法剔除
+      // 合法： issuer 非法剔除、rowsPath 非法剔除、transform 非法剔除；已知值 none/uppercaseSecret 保留
       { id: 'ok', name: '好', rowsPath: 'data.items', createdAt: 5, mapping: { secret: { path: 's' }, issuer: 'x', label: { path: 'l', transform: 'bogus' } } },
       { id: 'ok2', name: '无时间', mapping: { secret: { path: 's2', transform: 'uppercaseSecret' } } }, // 缺 createdAt
+      { id: 'ok3', name: '小写', mapping: { secret: { path: 's3', transform: 'none' } } },
     ]
     expect(normalizeSchemes(raw)).toEqual([
       { id: 'ok', name: '好', rowsPath: 'data.items', mapping: { secret: { path: 's' }, label: { path: 'l' } }, createdAt: 5 },
       { id: 'ok2', name: '无时间', mapping: { secret: { path: 's2', transform: 'uppercaseSecret' } }, createdAt: 0 },
+      { id: 'ok3', name: '小写', mapping: { secret: { path: 's3', transform: 'none' } }, createdAt: 0 },
     ])
     expect(SCHEMES_KEY).toBe('importSchemes')
   })
@@ -94,5 +97,12 @@ describe('schemes', () => {
       { id: 'a', name: '方案一', rowsPath: 'data.items', mapping: a.mapping, createdAt: 1000 },
       { id: 'b', name: '方案一', mapping: a.mapping, createdAt: 1000 },
     ])
+  })
+
+  it('transform 契约端到端：方案保存→normalizeSchemes 读取→mapRowToEntry 按已存 transform 生效', () => {
+    const [none] = normalizeSchemes([{ id: 'n', name: 'N', mapping: { secret: { path: 's', transform: 'none' } }, createdAt: 1 }])
+    expect(mapRowToEntry({ s: ' jbsw y3dp ' }, none!.mapping)).toMatchObject({ secret: 'jbswy3dp' })
+    const [upper] = normalizeSchemes([{ id: 'u', name: 'U', mapping: { secret: { path: 's' } }, createdAt: 1 }])
+    expect(mapRowToEntry({ s: ' jbsw y3dp ' }, upper!.mapping)).toMatchObject({ secret: 'JBSWY3DP' })
   })
 })

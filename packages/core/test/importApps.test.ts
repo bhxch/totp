@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   importBitwarden,
-  importEnte,
   importProton,
   importStratum,
   importTwoFas,
 } from '../src/import/jsonApps'
+import { importUriBatch } from '../src/import/uriBatch'
 import { sniffFormat } from '../src/import/sniff'
 
 const SECRET = 'JBSWY3DPEHPK3PXP'
@@ -149,10 +149,10 @@ describe('importBitwarden', () => {
   })
 })
 
-// ---------- Ente（EnteAuthImporter.java 委托 GoogleAuthUriImporter：明文导出即 otpauth URI 行） ----------
-describe('importEnte', () => {
+// ---------- Ente（EnteAuthImporter.java 委托 GoogleAuthUriImporter：明文导出即 otpauth URI 行，由 uriBatch 覆盖） ----------
+describe('importUriBatch（Ente 明文/加密导出）', () => {
   it('URI 行文本逐条解析，空行跳过', () => {
-    const r = importEnte(
+    const r = importUriBatch(
       `otpauth://totp/GitHub:me@x.com?secret=${SECRET}\n\notpauth://hotp/Api:u?secret=${SECRET}&counter=3`,
     )
     expect(r.failures).toEqual([])
@@ -160,22 +160,22 @@ describe('importEnte', () => {
     expect(r.entries[1]).toMatchObject({ type: 'hotp', counter: 3 })
   })
 
-  it('坏行不阻断；加密导出 JSON 抛结构级错误', () => {
-    const r = importEnte(`otpauth://totp/a?secret=${SECRET}\nnot a uri`)
+  it('坏行不阻断；Ente 加密导出 JSON（encryptedData+kdfParams 特征键）抛结构级错误', () => {
+    const r = importUriBatch(`otpauth://totp/a?secret=${SECRET}\nnot a uri`)
     expect(r.entries).toHaveLength(1)
     expect(r.failures).toHaveLength(1)
     expect(() =>
-      importEnte(JSON.stringify({ version: 1, kdfParams: {}, encryptedData: 'x', encryptionNonce: 'y' })),
+      importUriBatch(JSON.stringify({ version: 1, kdfParams: {}, encryptedData: 'x', encryptionNonce: 'y' })),
     ).toThrow(/加密/)
   })
 
   it('截断的加密 JSON（含 kdfParams 字面量但解析失败）→ 明确报加密不支持，不再静默落入 URI 行解析', () => {
     // 模拟用户复制粘贴半截加密导出、或二进制密文被文本管道读入导致的非完整 JSON
     const truncated = '{"version":1,"kdfParams":{"mem":67108864},"encryptedData":"AAAA==","encryptionNonce"'
-    expect(() => importEnte(truncated)).toThrow(/加密/)
+    expect(() => importUriBatch(truncated)).toThrow(/加密/)
     // 不带加密特征字段的截断 JSON（普通坏文本）→ 落入 URI 行解析，无 entries 全 failures
     const broken = '{this is not valid json at all'
-    const r = importEnte(broken)
+    const r = importUriBatch(broken)
     expect(r.entries).toHaveLength(0)
     expect(r.failures.length).toBeGreaterThanOrEqual(1)
   })

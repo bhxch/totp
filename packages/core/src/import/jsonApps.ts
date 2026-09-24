@@ -6,14 +6,15 @@ import {
 } from './normalize'
 import type { ImportResult, ParsedEntry } from './types'
 
-// JSON 类 App 导出格式导入（2FAS / Bitwarden / Ente / Proton / Stratum）。
+// JSON 类 App 导出格式导入（2FAS / Bitwarden / Proton / Stratum）。
 // 每个格式的字段口径以 Aegis 官方 Importer 源码为准（beemdevelopment/Aegis master）：
 // - importers/TwoFasImporter.java
 // - importers/BitwardenImporter.java
-// - importers/EnteAuthImporter.java（委托 importers/GoogleAuthUriImporter.java）
 // - importers/ProtonAuthenticatorImporter.java
 // - importers/StratumImporter.java
 // 错误契约与 aegis.ts 一致：结构级错误（缺顶层数组等）throw；单条损坏进 failures 不阻断。
+// （Ente Auth 不在此处：明文导出即 otpauth URI 行，由 uriBatch 覆盖；加密导出检测亦内建于
+// uriBatch——原 importEnte 已并入，见 uriBatch.ts。）
 
 // ---------- 共享辅助（与 generic.ts/aegis.ts 口径一致 — 多数已迁出至 ./normalize） ----------
 
@@ -200,49 +201,6 @@ export function importBitwarden(text: string): ImportResult {
     }
     return { error: `条目 ${index} totp 非法（非 URI 且非 base32）` }
   })
-}
-
-// ---------- Ente Auth（importers/EnteAuthImporter.java → importers/GoogleAuthUriImporter.java） ----------
-// 源码口径：Aegis 的 EnteAuthImporter 自引入起即把输入整体委托 GoogleAuthUriImporter——
-// Ente 明文导出就是每行一条 otpauth:// URI 的纯文本（ente 仓库 export_widget.dart
-// _getAuthDataForExport：code.rawData 按行拼接），并非 JSON。
-// 简报猜测的 { enc: false, data: { assets: [...] } } JSON 结构在 Aegis 源码与 Ente 官方
-// 源码/文档（docs/docs/auth/migration/export.md、models/export/ente.dart）中均不存在，不实现。
-// Ente 加密导出（{version, kdfParams, encryptedData, encryptionNonce}，Argon2id+XChaCha20-Poly1305）
-// WebCrypto 无法解密 → 结构级报错提示改用明文导出（URI 行由 uriBatch/sniff 覆盖）。
-
-/** Ente Auth 明文导出导入：otpauth URI 每行一条，坏行进 failures */
-export function importEnte(text: string): ImportResult {
-  const trimmed = text.trim()
-  if (trimmed.startsWith('{')) {
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(trimmed)
-    } catch {
-      // 非完整 JSON：若文本含 Ente 加密导出特征字段（kdfParams 或 encryptedData）→ 视为截断的加密导出
-      if (/\bkdfParams\b|\bencryptedData\b/.test(trimmed)) {
-        throw new Error('Ente 加密导出不支持：请在 Ente Auth 中使用明文导出（otpauth URI 行文本）')
-      }
-      // 否则落入 URI 行解析兜底
-    }
-    const obj = parsed !== undefined ? asObject(parsed) : null
-    if (obj && 'encryptedData' in obj && 'kdfParams' in obj) {
-      throw new Error('Ente 加密导出不支持：请在 Ente Auth 中使用明文导出（otpauth URI 行文本）')
-    }
-  }
-
-  const entries: ParsedEntry[] = []
-  const failures: ImportResult['failures'] = []
-  text.split(/\r?\n/).forEach((rawLine, index) => {
-    const line = rawLine.trim()
-    if (!line) return
-    try {
-      entries.push(parseOtpUri(line))
-    } catch (e) {
-      failures.push({ index, message: e instanceof Error ? e.message : String(e) })
-    }
-  })
-  return { entries, failures }
 }
 
 // ---------- Proton Authenticator（importers/ProtonAuthenticatorImporter.java） ----------

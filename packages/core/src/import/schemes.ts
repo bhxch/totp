@@ -25,13 +25,13 @@ function isRecord(x: unknown): x is Record<string, unknown> {
   return typeof x === 'object' && x !== null && !Array.isArray(x)
 }
 
-/** FieldMap 容错：path 必须非空字符串；transform 仅接受已知值 */
+/** FieldMap 容错：path 必须非空字符串；transform 仅接受已知值（缺省=uppercaseSecret 语义） */
 function normFieldMap(x: unknown): FieldMap | undefined {
   if (!isRecord(x)) return undefined
   const p = x['path']
   if (typeof p !== 'string' || p.trim() === '') return undefined
   const fm: FieldMap = { path: p }
-  if (x['transform'] === 'uppercaseSecret') fm.transform = 'uppercaseSecret'
+  if (x['transform'] === 'uppercaseSecret' || x['transform'] === 'none') fm.transform = x['transform']
   return fm
 }
 

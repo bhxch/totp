@@ -101,8 +101,8 @@ export function importFreeOtp(text: string): ImportResult {
 // 源码口径：XML <map> 下每条 <string name="..."> 值为 Gson token JSON（元素文本中引号转义为 &quot;），
 // 跳过 name="tokenOrder"（!entry.Name.equals("tokenOrder")），其余 string 条目逐条 JSON 解析。
 // V2（freeotp_v2_*.xml，Java 序列化二进制 + AES-GCM 加密）非文本格式，不支持。
-// Android SharedPreferences XML 为机器生成（属性恒 name="..."），正则提取即可，无需完整 XML 解析器
-// （与 winauth.ts 的 M1 决策一致）。
+// Android SharedPreferences XML 为机器生成（属性恒 name="..."），正则提取即可（winauth.ts 的
+// 嵌套加密结构需其内置 mini XML parser，此处扁平 <map> 格式用正则足够）。
 
 /** Android shared_prefs XML 实体反转义（导出供 sqlite.ts 的 Authy/BattleNet XML 入口复用） */
 export function xmlUnescape(s: string): string {

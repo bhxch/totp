@@ -1,4 +1,4 @@
-import { base32Decode, STEAM_ALPHABET } from '../encoding/base32'
+import { base32Decode } from '../encoding/base32'
 import type { HashAlgorithm } from './hotp'
 
 export interface OtpUriParams {
@@ -81,16 +81,12 @@ export function parseOtpUri(uri: string): OtpUriParams {
   // M6：pin 仅 yandex host 读取产出（YAOTP 规范参数）；其余 host 不读不写，避免 totp 条目 pin 污染
   const pinRaw = typeFinal === 'yandex' ? q.get('pin') : null
 
-  // C2：按类型解码 secret——原实现只返回 base32 字符串，调用方统一用 RFC4648 解码。
-  // Steam 字母表是 RFC4648 的字符子集（去除视觉混淆字符 0/1/8/I/L/O）；
-  // 实际 Steam 库（steam-totp guard.py）即用标准 base64.b32decode 解 secret——
-  // 因此 Steam URI 也按 RFC4648 解码，与 totp/hotp 一致。C2 的修复点是让 parseOtpUri
-  // 主动按对应字母表解码，避免调用方遗漏/误用。
+  // C2：按类型解码 secret——全部类型统一走 RFC4648 解码路径（STEAM_ALPHABET 是 RFC4648 的
+  // 字符子集，去除视觉混淆字符 0/1/L/O 等；实际 Steam 库 steam-totp guard.py 即用标准
+  // base64.b32decode 解 secret）。parseOtpUri 主动解码，避免调用方遗漏/误用。
   const secretBytes = ((): Uint8Array | undefined => {
     try {
-      const alphabet = typeFinal === 'steam' ? undefined : undefined
-      void STEAM_ALPHABET // 保留导入避免 lint 报错
-      return base32Decode(secret, alphabet)
+      return base32Decode(secret)
     } catch {
       return undefined
     }

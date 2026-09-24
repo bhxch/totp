@@ -375,6 +375,28 @@ describe('syncMultipleTargets（primary 裁决 + replica 收敛复制）', () =>
     await expectOpensTo(pb.store.get(PATH)!, PW, adjudicated)
   })
 
+  it('primary in-sync（对端重推同内容 rev 前进）→ state 跟进 lastKnownRemoteRev，下轮走 rev 快路径', async () => {
+    // 对端 dev-b 以 rev 5 重推与本地一致的内容：远端时钟前进但内容相等 → in-sync 零写；
+    // state 必须跟进到 5（否则本端 lastKnownRemoteRev 恒滞后，每轮都要走内容比对慢路径）
+    const pb = fakeBackend(await sealedRemote(5, A))
+    const r1 = await syncMultipleTargets({
+      targets: [pri({ backend: pb, state: revState(2, A) })],
+      vaultJson: A, password: PW, deviceId: DEV,
+    })
+    expect(find(r1, 'pri').outcome).toMatchObject({ action: 'in-sync', remoteRev: 5 })
+    expect(pb.putCount).toBe(0)
+    // 仅跟进时钟，baseSnapshot 保持原值（两 in-sync 分支均以本地未动为前提）
+    expect(r1.states['pri']).toEqual({ lastKnownRemoteRev: 5, baseSnapshot: A })
+    // 下轮：remoteRev==已知 且 本地==baseSnapshot → rev 快路径 in-sync，仍零写
+    const r2 = await syncMultipleTargets({
+      targets: [pri({ backend: pb, state: r1.states['pri']! })],
+      vaultJson: A, password: PW, deviceId: DEV,
+    })
+    expect(find(r2, 'pri').outcome).toMatchObject({ action: 'in-sync', remoteRev: 5 })
+    expect(pb.putCount).toBe(0)
+    expect(r2.states['pri']).toEqual({ lastKnownRemoteRev: 5, baseSnapshot: A })
+  })
+
   it('多 replica：首个 replica 并入的内容随 final 推给后续 replica', async () => {
     const ad = v([e('a'), e('d')])
     const pb = fakeBackend()

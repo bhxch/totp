@@ -1,8 +1,8 @@
-// packages/core/src/cloud/syncState.test.ts
+// packages/core/test/syncState.test.ts
 // 注：内存适配器实际导出名为 createMemoryStorage（storage/memory.ts），语义与任务书 createMemoryAdapter 一致
 import { describe, expect, it } from 'vitest'
-import { createMemoryStorage } from '../storage/memory'
-import { loadDeviceId, loadSyncState, saveSyncState } from './syncState'
+import { createMemoryStorage } from '../src/storage/memory'
+import { loadDeviceId, loadSyncState, saveSyncState } from '../src/cloud/syncState'
 
 describe('syncState', () => {
   it('无 seal：明文往返；缺省状态 lastKnownRemoteRev=null', async () => {

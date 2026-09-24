@@ -162,4 +162,21 @@ describe('mapRowToEntry/importGeneric', () => {
   it('type=steam 时 digits 强制 5', () => {
     expect(mapRowToEntry({ ...row, kind: 'steam' }, mapping)).toMatchObject({ type: 'steam', digits: 5 })
   })
+  it('transform 契约：缺省/uppercaseSecret 去空白+大写；none 仅去空白保留原大小写', () => {
+    const spaced = { ...row, otp: { secret: ' jbsw y3dp ehpk 3pxp ' } }
+    // 缺省（undefined）= uppercaseSecret 语义
+    expect(mapRowToEntry(spaced, mapping)).toMatchObject({ secret: 'JBSWY3DPEHPK3PXP' })
+    expect(
+      mapRowToEntry(spaced, { ...mapping, secret: { path: 'otp.secret', transform: 'uppercaseSecret' } }),
+    ).toMatchObject({ secret: 'JBSWY3DPEHPK3PXP' })
+    // none：保留小写/混合大小写 secret（hex 小写习惯），仅去除空白
+    expect(
+      mapRowToEntry(spaced, { ...mapping, secret: { path: 'otp.secret', transform: 'none' } }),
+    ).toMatchObject({ secret: 'jbswy3dpehpk3pxp' })
+  })
+  it('importGeneric 透传 mapping.secret.transform（与 mapRowToEntry 同口径）', () => {
+    const r = importGeneric(JSON.stringify([{ ...row }]), { ...mapping, secret: { path: 'otp.secret', transform: 'none' } })
+    expect(r.failures).toEqual([])
+    expect(r.entries[0]).toMatchObject({ secret: 'jbswy3dpehpk3pxp' })
+  })
 })

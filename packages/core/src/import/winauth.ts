@@ -491,13 +491,6 @@ function child(node: MiniXmlNode, name: string): MiniXmlNode | undefined {
 
 // ---------- 条目映射（WinAuth JSON/secretdata → ParsedEntry） ----------
 
-/** 简报约定的单条输入形状：raw=authenticatordata 原始内容，encrypted 标记保护层 */
-export interface WinauthEntryInput {
-  raw: string
-  encrypted?: 'dpapi' | 'password' | null
-  password?: string
-}
-
 function normalizeTypeAttr(typeAttr: string | undefined): ParsedEntry['type'] {
   const t = typeAttr ?? ''
   if (t.includes('SteamAuthenticator')) return 'steam'

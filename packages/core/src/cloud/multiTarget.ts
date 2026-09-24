@@ -32,8 +32,10 @@
  *   downloaded → { lastKnownRemoteRev: remoteRev, baseSnapshot: 采纳内容(final) }；merged →
  *   { lastKnownRemoteRev: newRev, baseSnapshot: 合并结果(final) }（采纳内容是以上传 newRev 写入云端
  *   的，state 两字段必须描述同一云版本——T13 缺陷修复：merged 原记 remoteRev 滞后一轮，下轮本地
- *   改动被误判为双方都动，降级两方合并把裁决结果回滚成合并默认主体）；remoteRev null=云端无对象
- *   或 v2 无头，保持原值不写 0；in-sync / 失败 → 原 state 不变。
+ *   改动被误判为双方都动，降级两方合并把裁决结果回滚成合并默认主体）；in-sync → 仅跟进
+ *   lastKnownRemoteRev=remoteRev（对端重推同内容 rev 前进时本端时钟跟进，下轮可走 rev 快路径；
+ *   两 in-sync 分支均以本地未动为前提，baseSnapshot 保持原值）；remoteRev null=云端无对象
+ *   或 v2 无头，保持原值不写 0；失败 → 原 state 不变。
  * - replica：跳过（in-sync）→ 原 state 不变；推平/合并成功 → { lastKnownRemoteRev: newRev,
  *   baseSnapshot: final }；失败 → 原 state 不变。
  *   （spec §2 曾设计 replica 已知 rev 汇总记录在 primary 的 primaryRev[key]——实现中跳过/推平
@@ -146,15 +148,18 @@ export async function syncMultipleTargets(opts: {
     }
     // state 推导（裁定 5 + T13 缺陷修复）：newRev 优先（uploaded 上传内容、merged 合并结果都以
     // newRev 落云，baseSnapshot 与时钟必须同版本，与下方 replica 推导 newRev ?? remoteRev 同口径）；
-    // downloaded 无 newRev → remoteRev（采纳内容=远端现值）；remoteRev null 保持原值不写 0；
-    // in-sync → 原 state 不变
-    if (mode === 'apply' && primaryOutcome.action !== 'in-sync') {
-      states[primary.key] = {
+    // downloaded 无 newRev → remoteRev（采纳内容=远端现值）；remoteRev null 保持原值不写 0。
+    // in-sync 也回写 lastKnownRemoteRev（与 replica 同口径）：对端重推同内容使 rev 前进时，
+    // 本端时钟必须跟进，否则恒滞后、每轮都要走内容比对慢路径；syncOrchestrator 两个 in-sync
+    // 分支均以 localUnchanged 为前提，baseSnapshot 仍与本地内容一致 → 保持原值仅跟进时钟
+    if (mode === 'apply') {
+      const next: SourceSyncState = {
         ...primary.state,
         lastKnownRemoteRev:
           (primaryOutcome.newRev ?? primaryOutcome.remoteRev) ?? primary.state.lastKnownRemoteRev,
-        baseSnapshot: final,
       }
+      if (primaryOutcome.action !== 'in-sync') next.baseSnapshot = final
+      states[primary.key] = next
     }
   }
 
