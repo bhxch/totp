@@ -20,13 +20,24 @@ pub struct ReleasePolicyConfig {
     pub lock_on_destroy: bool,
 }
 
-fn default_pause_minutes() -> u32 { 5 }
-fn default_destroy_minutes() -> u32 { 30 }
-fn default_true() -> bool { true }
+fn default_pause_minutes() -> u32 {
+    5
+}
+fn default_destroy_minutes() -> u32 {
+    30
+}
+fn default_true() -> bool {
+    true
+}
 
 impl Default for ReleasePolicyConfig {
     fn default() -> Self {
-        Self { pause_minutes: 5, destroy_minutes: 30, lock_on_pause: false, lock_on_destroy: true }
+        Self {
+            pause_minutes: 5,
+            destroy_minutes: 30,
+            lock_on_pause: false,
+            lock_on_destroy: true,
+        }
     }
 }
 
@@ -40,15 +51,32 @@ pub fn from_settings_text(text: &str) -> ReleasePolicyConfig {
     };
     let d = ReleasePolicyConfig::default();
     ReleasePolicyConfig {
-        pause_minutes: r.get("pauseMinutes").and_then(|x| x.as_u64()).map(|n| n as u32).unwrap_or(d.pause_minutes),
-        destroy_minutes: r.get("destroyMinutes").and_then(|x| x.as_u64()).map(|n| n as u32).unwrap_or(d.destroy_minutes),
-        lock_on_pause: r.get("lockOnPause").and_then(|x| x.as_bool()).unwrap_or(d.lock_on_pause),
-        lock_on_destroy: r.get("lockOnDestroy").and_then(|x| x.as_bool()).unwrap_or(d.lock_on_destroy),
+        pause_minutes: r
+            .get("pauseMinutes")
+            .and_then(|x| x.as_u64())
+            .map(|n| n as u32)
+            .unwrap_or(d.pause_minutes),
+        destroy_minutes: r
+            .get("destroyMinutes")
+            .and_then(|x| x.as_u64())
+            .map(|n| n as u32)
+            .unwrap_or(d.destroy_minutes),
+        lock_on_pause: r
+            .get("lockOnPause")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(d.lock_on_pause),
+        lock_on_destroy: r
+            .get("lockOnDestroy")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(d.lock_on_destroy),
     }
 }
 
 /// 合并既有 settings.json 文本，只改 releasePolicy 键（根非对象时重建，与 devtools 合并同口径，不丢外来键）
-pub fn merge_into_settings_text(existing: Option<&str>, cfg: &ReleasePolicyConfig) -> Result<String, String> {
+pub fn merge_into_settings_text(
+    existing: Option<&str>,
+    cfg: &ReleasePolicyConfig,
+) -> Result<String, String> {
     let mut obj: serde_json::Map<String, serde_json::Value> = existing
         .and_then(|t| serde_json::from_str::<serde_json::Value>(t).ok())
         .and_then(|v| v.as_object().cloned())
@@ -88,7 +116,11 @@ impl ReleaseTrack {
     /// const 构造器：Task 13 接线层以 `Mutex::new(ReleaseTrack::new)` 建 static
     ///（Mutex::new 是 const fn 但 Default::default 不是，Default 派生仅供测试/局部用）
     pub const fn new() -> Self {
-        Self { hidden_since: None, paused_at: None, destroyed: false }
+        Self {
+            hidden_since: None,
+            paused_at: None,
+            destroyed: false,
+        }
     }
 
     pub fn reset(&mut self) {
@@ -128,7 +160,8 @@ pub fn advance(
     };
     if let Some(paused_at) = track.paused_at {
         return if cfg.destroy_minutes > 0
-            && now.duration_since(paused_at) >= std::time::Duration::from_secs(minutes_to_secs(cfg.destroy_minutes))
+            && now.duration_since(paused_at)
+                >= std::time::Duration::from_secs(minutes_to_secs(cfg.destroy_minutes))
         {
             track.destroyed = true; // Destroy 由接线层落实（本调用后窗口将消失）
             ReleaseAction::Destroy
@@ -142,7 +175,10 @@ pub fn advance(
         return ReleaseAction::Pause;
     }
     // 暂停档禁用时销毁从隐藏点起算（spec §7.5：pauseMinutes=0 时销毁计时从 hide 起算）
-    if cfg.pause_minutes == 0 && cfg.destroy_minutes > 0 && hidden_secs >= minutes_to_secs(cfg.destroy_minutes) {
+    if cfg.pause_minutes == 0
+        && cfg.destroy_minutes > 0
+        && hidden_secs >= minutes_to_secs(cfg.destroy_minutes)
+    {
         track.destroyed = true;
         return ReleaseAction::Destroy;
     }
@@ -154,16 +190,27 @@ mod tests {
     use super::*;
 
     fn cfg(pause: u32, destroy: u32) -> ReleasePolicyConfig {
-        ReleasePolicyConfig { pause_minutes: pause, destroy_minutes: destroy, lock_on_pause: false, lock_on_destroy: true }
+        ReleasePolicyConfig {
+            pause_minutes: pause,
+            destroy_minutes: destroy,
+            lock_on_pause: false,
+            lock_on_destroy: true,
+        }
     }
 
     #[test]
     fn visible_window_resets_track() {
         let mut t = ReleaseTrack::default();
         let t0 = std::time::Instant::now();
-        assert_eq!(advance(&mut t, &cfg(5, 30), false, false, t0), ReleaseAction::None);
+        assert_eq!(
+            advance(&mut t, &cfg(5, 30), false, false, t0),
+            ReleaseAction::None
+        );
         assert!(t.hidden_since.is_some());
-        assert_eq!(advance(&mut t, &cfg(5, 30), true, false, t0), ReleaseAction::None);
+        assert_eq!(
+            advance(&mut t, &cfg(5, 30), true, false, t0),
+            ReleaseAction::None
+        );
         assert!(t.hidden_since.is_none());
     }
 
@@ -173,15 +220,33 @@ mod tests {
         let t0 = std::time::Instant::now();
         let at = |secs: u64| t0 + std::time::Duration::from_secs(secs);
         // 隐藏瞬间 tick：播种 hidden_since=t0（首次 advance 只记时刻不产动作）
-        assert_eq!(advance(&mut t, &cfg(5, 30), false, false, t0), ReleaseAction::None);
-        assert_eq!(advance(&mut t, &cfg(5, 30), false, false, at(299)), ReleaseAction::None);
-        assert_eq!(advance(&mut t, &cfg(5, 30), false, false, at(300)), ReleaseAction::Pause);
+        assert_eq!(
+            advance(&mut t, &cfg(5, 30), false, false, t0),
+            ReleaseAction::None
+        );
+        assert_eq!(
+            advance(&mut t, &cfg(5, 30), false, false, at(299)),
+            ReleaseAction::None
+        );
+        assert_eq!(
+            advance(&mut t, &cfg(5, 30), false, false, at(300)),
+            ReleaseAction::Pause
+        );
         assert!(t.paused_at.is_some());
-        assert_eq!(advance(&mut t, &cfg(5, 30), false, false, at(300 + 1799)), ReleaseAction::None);
-        assert_eq!(advance(&mut t, &cfg(5, 30), false, false, at(300 + 1800)), ReleaseAction::Destroy);
+        assert_eq!(
+            advance(&mut t, &cfg(5, 30), false, false, at(300 + 1799)),
+            ReleaseAction::None
+        );
+        assert_eq!(
+            advance(&mut t, &cfg(5, 30), false, false, at(300 + 1800)),
+            ReleaseAction::Destroy
+        );
         assert!(t.destroyed);
         // 已销毁后恒 None，直到 reset（重建/show 路径）
-        assert_eq!(advance(&mut t, &cfg(5, 30), false, false, at(99999)), ReleaseAction::None);
+        assert_eq!(
+            advance(&mut t, &cfg(5, 30), false, false, at(99999)),
+            ReleaseAction::None
+        );
     }
 
     #[test]
@@ -190,9 +255,18 @@ mod tests {
         let t0 = std::time::Instant::now();
         let at = |secs: u64| t0 + std::time::Duration::from_secs(secs);
         // 隐藏瞬间 tick：播种 hidden_since=t0
-        assert_eq!(advance(&mut t, &cfg(0, 30), false, false, t0), ReleaseAction::None);
-        assert_eq!(advance(&mut t, &cfg(0, 30), false, false, at(1799)), ReleaseAction::None);
-        assert_eq!(advance(&mut t, &cfg(0, 30), false, false, at(1800)), ReleaseAction::Destroy);
+        assert_eq!(
+            advance(&mut t, &cfg(0, 30), false, false, t0),
+            ReleaseAction::None
+        );
+        assert_eq!(
+            advance(&mut t, &cfg(0, 30), false, false, at(1799)),
+            ReleaseAction::None
+        );
+        assert_eq!(
+            advance(&mut t, &cfg(0, 30), false, false, at(1800)),
+            ReleaseAction::Destroy
+        );
     }
 
     #[test]
@@ -201,21 +275,46 @@ mod tests {
         let t0 = std::time::Instant::now();
         let far = t0 + std::time::Duration::from_secs(86_400);
         // 各轨道先在隐藏瞬间 t0 播种 hidden_since，far 为其后一天的轮询 tick
-        assert_eq!(advance(&mut t, &cfg(0, 0), false, false, t0), ReleaseAction::None);
-        assert_eq!(advance(&mut t, &cfg(0, 0), false, false, far), ReleaseAction::None);
+        assert_eq!(
+            advance(&mut t, &cfg(0, 0), false, false, t0),
+            ReleaseAction::None
+        );
+        assert_eq!(
+            advance(&mut t, &cfg(0, 0), false, false, far),
+            ReleaseAction::None
+        );
         let mut t2 = ReleaseTrack::default();
-        assert_eq!(advance(&mut t2, &cfg(5, 0), false, false, t0), ReleaseAction::None);
-        assert_eq!(advance(&mut t2, &cfg(5, 0), false, false, far), ReleaseAction::Pause); // 仅暂停档仍生效
+        assert_eq!(
+            advance(&mut t2, &cfg(5, 0), false, false, t0),
+            ReleaseAction::None
+        );
+        assert_eq!(
+            advance(&mut t2, &cfg(5, 0), false, false, far),
+            ReleaseAction::Pause
+        ); // 仅暂停档仍生效
         let mut t3 = ReleaseTrack::default();
-        assert_eq!(advance(&mut t3, &cfg(0, 30), false, false, t0), ReleaseAction::None);
-        assert_eq!(advance(&mut t3, &cfg(0, 30), false, false, far), ReleaseAction::Destroy);
+        assert_eq!(
+            advance(&mut t3, &cfg(0, 30), false, false, t0),
+            ReleaseAction::None
+        );
+        assert_eq!(
+            advance(&mut t3, &cfg(0, 30), false, false, far),
+            ReleaseAction::Destroy
+        );
     }
 
     #[test]
     fn settings_roundtrip_defaults_and_merge_preserves_foreign_keys() {
         assert_eq!(from_settings_text("{}"), ReleasePolicyConfig::default());
-        assert_eq!(from_settings_text("not json"), ReleasePolicyConfig::default());
-        let merged = merge_into_settings_text(Some(r#"{"mcp":{"enabled":true},"devtools":{"enabled":false,"port":9222}}"#), &cfg(1, 2)).unwrap();
+        assert_eq!(
+            from_settings_text("not json"),
+            ReleasePolicyConfig::default()
+        );
+        let merged = merge_into_settings_text(
+            Some(r#"{"mcp":{"enabled":true},"devtools":{"enabled":false,"port":9222}}"#),
+            &cfg(1, 2),
+        )
+        .unwrap();
         let v: serde_json::Value = serde_json::from_str(&merged).unwrap();
         assert_eq!(v["mcp"]["enabled"], serde_json::json!(true));
         assert_eq!(v["releasePolicy"]["pauseMinutes"], serde_json::json!(1));

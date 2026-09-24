@@ -82,6 +82,17 @@ fn take_stashed_dek() -> Option<String> {
     STASHED_DEK.lock().ok().and_then(|mut s| s.take())
 }
 
+/// 锁库即清 DEK 暂存槽（Task 14 补口）：前端手动锁/空闲锁/系统锁走纯前端 store.lock()
+/// 不通知 Rust，若此前销毁档「不锁库」路径已 stash 而 destroy 失败回滚，暂存 DEK 仍在槽内，
+/// 下次销毁重建会被回注、绕过刚发生的锁定。store.lock() 末尾经 onLocked 回调 invoke 本命令，
+/// 与 Rust force-lock（release_tick/destroy_releasable_windows）及托盘退出的清槽口径对齐
+#[tauri::command]
+fn clear_stashed_dek() {
+    if let Ok(mut s) = STASHED_DEK.lock() {
+        *s = None;
+    }
+}
+
 // 桌面应用 settings.json：存于 app_data_dir（与前端 createTauriFs 的 baseDir 对齐）。
 // 当前唯一可配项为 shortcutToggleMini（toggle mini 的全局快捷键），默认 alt+shift+t；
 // 解析失败/字段缺失一律回落到默认值，保证老版本 settings.json 不破坏启动。
@@ -129,30 +140,6 @@ pub(crate) fn write_text_atomic(path: &std::path::Path, contents: &str) -> Resul
             Err(e.to_string())
         }
     }
-}
-
-fn write_shortcut_to_settings<R: Runtime>(
-    app: &AppHandle<R>,
-    shortcut: &str,
-) -> Result<(), String> {
-    let p = settings_path(app).ok_or_else(|| "settings path unavailable".to_string())?;
-    if let Some(parent) = p.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    // 合并既有键：避免读到 settings.json 后只写快捷键覆盖其他字段
-    let mut obj: serde_json::Map<String, serde_json::Value> = std::fs::read_to_string(&p)
-        .ok()
-        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-        .and_then(|v| v.as_object().cloned())
-        .unwrap_or_default();
-    obj.insert(
-        "shortcutToggleMini".into(),
-        serde_json::Value::String(shortcut.into()),
-    );
-    write_text_atomic(
-        &p,
-        &serde_json::to_string_pretty(&obj).map_err(|e| e.to_string())?,
-    )
 }
 
 /// 验收条目4：WebView 远程调试配置（settings.json `devtools` 键；明文区——须在无解锁态可读）。
@@ -223,8 +210,8 @@ fn apply_devtools_env() {
 }
 
 /// devtools 设置读/写（明文 settings.json；读经 settings_path + 文本解析，写走
-/// read-modify-write 合并既有键——同 write_shortcut_to_settings(lib.rs:99) 的合并口径，
-/// 落盘复用其内部的 write_text_atomic（审查 I-5 原子写），不得整文件覆盖丢外来键）
+/// read-modify-write 合并既有键——settings.json 为 Rust 四组配置 + 前端 AppSettings 共写文件，
+/// 任何写侧均不得整文件覆盖丢外来键；落盘复用 write_text_atomic（审查 I-5 原子写））
 #[tauri::command]
 fn devtools_get_config<R: Runtime>(app: AppHandle<R>) -> Result<serde_json::Value, String> {
     let text = settings_path(&app)
@@ -251,7 +238,7 @@ fn devtools_set_config<R: Runtime>(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    // 合并既有键：同 write_shortcut_to_settings——读全文解析后只改 devtools 键，不丢外来键
+    // 合并既有键：读全文解析后只改 devtools 键，不丢外来键（shortcutToggleMini/mcp 等）
     let text = merge_devtools_config_text(
         std::fs::read_to_string(&path).ok().as_deref(),
         enabled,
@@ -274,7 +261,7 @@ fn ensure_devtools_port_free(mcp: &mcp_server::McpConfig, port: u16) -> Result<(
 
 /// 审查 M3：读取既有 settings.json 文本合并 devtools 键，返回落盘文本。根为合法 JSON 但
 /// 非对象（[] / "x" 等）时不得走 serde_json IndexMut（root["devtools"]=… 对非对象根 panic），
-/// 与 write_shortcut_to_settings 同口径 as_object().cloned() 回落空对象重建，不丢外来键
+/// 统一口径 as_object().cloned() 回落空对象重建，不丢外来键
 fn merge_devtools_config_text(
     existing: Option<&str>,
     enabled: bool,
@@ -326,25 +313,11 @@ fn release_policy_set<R: Runtime>(
         lock_on_pause,
         lock_on_destroy,
     };
-    let text = release_policy::merge_into_settings_text(std::fs::read_to_string(&path).ok().as_deref(), &cfg)?;
+    let text = release_policy::merge_into_settings_text(
+        std::fs::read_to_string(&path).ok().as_deref(),
+        &cfg,
+    )?;
     write_text_atomic(&path, &text)
-}
-
-/** 取消注册当前所有快捷键，按新 spec 重新注册并持久化到 settings.json */
-#[tauri::command]
-fn set_global_shortcut(app: AppHandle, shortcut: String) -> Result<(), String> {
-    if shortcut.trim().is_empty() {
-        return Err("empty shortcut".into());
-    }
-    let gs = app.global_shortcut();
-    gs.unregister_all().map_err(|e| e.to_string())?;
-    gs.on_shortcut(shortcut.as_str(), |app, _shortcut, event| {
-        if event.state == ShortcutState::Pressed {
-            toggle_mini(app);
-        }
-    })
-    .map_err(|e| e.to_string())?;
-    write_shortcut_to_settings(&app, &shortcut)
 }
 
 fn toggle_mini(app: &AppHandle) {
@@ -430,15 +403,21 @@ fn release_tick(app: &AppHandle) {
 /// 暂停档：WebView2 TrySuspend（要求窗口不可见）；失败/非 Windows 静默降级为维持隐藏
 #[cfg(windows)]
 fn try_suspend_window(app: &AppHandle, label: &str) {
-    let Some(w) = app.get_webview_window(label) else { return };
+    let Some(w) = app.get_webview_window(label) else {
+        return;
+    };
     let _ = w.with_webview(move |webview| {
         use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_3;
         use windows::core::Interface;
         unsafe {
-            let Ok(core) = webview.controller().CoreWebView2() else { return };
+            let Ok(core) = webview.controller().CoreWebView2() else {
+                return;
+            };
             // brief 原拟 cast ICoreWebView2_6：webview2-com 0.38 绑定中 TrySuspend 实际声明在
             // ICoreWebView2_3（_6 仅有 OpenTaskManagerWindow），以真实绑定为准
-            let Ok(wv3) = core.cast::<ICoreWebView2_3>() else { return };
+            let Ok(wv3) = core.cast::<ICoreWebView2_3>() else {
+                return;
+            };
             // TrySuspend 为异步：completed handler 在挂起完成后于 UI 线程回调，no-op 即可不阻塞
             //（webview2-com 的 callback 模块私有，TrySuspendCompletedHandler re-export 在 crate 根）
             let handler =
@@ -478,8 +457,9 @@ fn destroy_releasable_windows(app: &AppHandle, cfg: &release_policy::ReleasePoli
     all_destroyed
 }
 
-/// 按需重建窗口（tauri.conf.json 同参）；返回是否发生了重建（重建后前端冷启动，自动走 DEK 回注）。
-/// 重建成功即 reset 释放轨迹：销毁档置位的 destroyed 由重建解除，隐藏计时从头起算
+/// 按需重建窗口（参数在本函数 builder 内硬编码，非 tauri.conf.json——conf 的 windows 已为 []，
+/// 窗口改由代码创建以启用 enable_clipboard_access，见下）；返回是否发生了重建（重建后前端冷启动，
+/// 自动走 DEK 回注）。重建成功即 reset 释放轨迹：销毁档置位的 destroyed 由重建解除，隐藏计时从头起算
 /// 按需确保窗口存在。enable_clipboard_access（批⑧ 真机修复 2026-09-24）：
 /// navigator.clipboard.read 在 WebView2 需要 CLIPBOARD_READ 权限，wry 仅在
 /// attributes.clipboard（enable_clipboard_access）时对 PermissionRequested 自动 ALLOW，
@@ -491,19 +471,27 @@ fn ensure_window(app: &AppHandle, label: &str) -> bool {
         return false;
     }
     let built = match label {
-        "main" => tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
-            .title("TOTP 验证码工具")
-            .inner_size(760.0, 560.0)
-            .visible(false)
-            .enable_clipboard_access()
-            .build(),
-        "mini" => tauri::WebviewWindowBuilder::new(app, "mini", tauri::WebviewUrl::App("mini.html".into()))
-            .title("TOTP")
-            .inner_size(320.0, 420.0)
-            .visible(false)
-            .skip_taskbar(true)
-            .enable_clipboard_access()
-            .build(),
+        "main" => tauri::WebviewWindowBuilder::new(
+            app,
+            "main",
+            tauri::WebviewUrl::App("index.html".into()),
+        )
+        .title("TOTP 验证码工具")
+        .inner_size(760.0, 560.0)
+        .visible(false)
+        .enable_clipboard_access()
+        .build(),
+        "mini" => tauri::WebviewWindowBuilder::new(
+            app,
+            "mini",
+            tauri::WebviewUrl::App("mini.html".into()),
+        )
+        .title("TOTP")
+        .inner_size(320.0, 420.0)
+        .visible(false)
+        .skip_taskbar(true)
+        .enable_clipboard_access()
+        .build(),
         _ => return false,
     };
     if built.is_ok() {
@@ -625,7 +613,8 @@ fn persist_grants(app: &tauri::AppHandle) {
         return;
     };
     if let Ok(json) = serde_json::to_string_pretty(&app.state::<DialogGrants>().canonical_dirs()) {
-        let _ = std::fs::write(p, json);
+        // 原子写（同审查 I-5 口径）：grants 文件与 settings.json 同级，写一半崩溃不再留半截 JSON
+        let _ = write_text_atomic(&p, &json);
     }
 }
 
@@ -861,7 +850,8 @@ fn write_text_file_granted(
         return Err("path is a directory".into());
     }
     ensure_within(p, &grants.resolve(dir_token)?)?;
-    std::fs::write(path, contents).map_err(|e| e.to_string())
+    // 原子写（同审查 I-5 口径）：备份/文本导出写一半崩溃不再留半截文件
+    write_text_atomic(std::path::Path::new(&path), &contents).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1229,29 +1219,9 @@ fn dek_unprotect_inner(window_label: &str, wrapped_b64: &str) -> Result<String, 
     Ok(base64_encode(&plain))
 }
 
-#[cfg(windows)]
-#[tauri::command]
-fn dpapi_protect(window: tauri::WebviewWindow, data_b64: String) -> Result<String, String> {
-    dek_protect_inner(window.label(), &data_b64)
-}
-
-#[cfg(windows)]
-#[tauri::command]
-fn dpapi_unprotect(window: tauri::WebviewWindow, wrapped_b64: String) -> Result<String, String> {
-    dek_unprotect_inner(window.label(), &wrapped_b64)
-}
-
-#[cfg(not(windows))]
-#[tauri::command]
-fn dpapi_protect(_window: tauri::WebviewWindow, _data_b64: String) -> Result<String, String> {
-    Err("仅 Windows 支持 DPAPI".into())
-}
-
-#[cfg(not(windows))]
-#[tauri::command]
-fn dpapi_unprotect(_window: tauri::WebviewWindow, _wrapped_b64: String) -> Result<String, String> {
-    Err("仅 Windows 支持 DPAPI".into())
-}
+// （原 dpapi_protect/dpapi_unprotect 命令已删除：前端唯一调用方 tauriSecurity.ts 的
+// dpapiProtectOs/dpapiUnprotectOs 零引用，os_auto_* 与其同一实现且为 SecurityCard/LockScreen
+// 实际通道。dek_* inner 与 base64/dpapi_*_bytes 工具仍被 os_auto_* 与 decrypt_dpapi 使用，保留）
 
 // osAutoUnlock 三平台统一通道（计划 15 T14）：Windows 委托 DPAPI；macOS Keychain / Linux
 // Secret Service 经 keyring。语义与 DPAPI 对齐：OS 保护 DEK 本体（base64 进出），解锁时静默取回。
@@ -1401,10 +1371,21 @@ pub fn run() {
             // eprintln+运行态记录，不拦启动
             if headless {
                 match mcp_start {
-                    Ok(()) => println!(
-                        "MCP: http://127.0.0.1:{}  token: {}  gate: {:?}",
-                        mcp_cfg.port, mcp_cfg.token, mcp_cfg.mode
-                    ),
+                    Ok(()) => {
+                        // gate 用 serde 线格式（token/wildcard/exact/alwaysAsk，serde camelCase）
+                        // 而非 {:?} 调试形式（Wildcard）：脚本消费方按线格式解析；手写 match
+                        // 不带通配分支，GateMode 新增变体时编译期强制同步本映射，不会漂移
+                        let gate = match mcp_cfg.mode {
+                            mcp_server::GateMode::Token => "token",
+                            mcp_server::GateMode::Wildcard => "wildcard",
+                            mcp_server::GateMode::Exact => "exact",
+                            mcp_server::GateMode::AlwaysAsk => "alwaysAsk",
+                        };
+                        println!(
+                            "MCP: http://127.0.0.1:{}  token: {}  gate: {}",
+                            mcp_cfg.port, mcp_cfg.token, gate
+                        );
+                    }
                     Err(e) => {
                         eprintln!("[mcp] headless 启动失败: {e}");
                         std::process::exit(2);
@@ -1556,18 +1537,16 @@ pub fn run() {
             pick_save_file_os,
             dir_token_os,
             decrypt_dpapi,
-            dpapi_protect,
-            dpapi_unprotect,
             os_auto_protect,
             os_auto_unprotect,
             os_auto_forget,
-            set_global_shortcut,
             devtools_get_config,
             devtools_set_config,
             release_policy_get,
             release_policy_set,
             stash_dek,
             take_stashed_dek,
+            clear_stashed_dek,
             stage_clipboard_write,
             clipboard_clear_if_staged,
             mcp_server::mcp_get_config,
@@ -2066,7 +2045,7 @@ mod tests {
         assert_eq!(v["devtools"]["port"], serde_json::json!(9222));
     }
 
-    // 合并不丢外来键（write_shortcut_to_settings 同承诺）：shortcutToggleMini / mcp 原样保留
+    // 合并不丢外来键（settings.json 各写侧共同承诺）：shortcutToggleMini / mcp 原样保留
     #[test]
     fn devtools_merge_preserves_foreign_keys() {
         let existing = r#"{"shortcutToggleMini":"alt+shift+t","mcp":{"enabled":true}}"#;

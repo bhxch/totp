@@ -118,8 +118,7 @@ pub fn save_mcp_config_inner(
         "mcp".into(),
         serde_json::to_value(cfg).map_err(|e| e.to_string())?,
     );
-    // 原子写（审查 I-5）：与 lib.rs 的 write_shortcut_to_settings 共用同一临时文件+rename 通道，
-    // 崩溃中途不损坏 settings.json
+    // 原子写（审查 I-5）：lib.rs 的 write_text_atomic 临时文件+rename 通道，崩溃中途不损坏 settings.json
     crate::write_text_atomic(
         settings_file,
         &serde_json::to_string_pretty(&obj).map_err(|e| e.to_string())?,
@@ -562,8 +561,7 @@ impl TotpMcp {
         }
         // 暴露面门控（spec §6.2）：不在 exposedTools 的工具直接拒绝；
         // 同一每请求重读通道，设置页勾选改动即时生效
-        exposure_check(&cfg, tool)
-            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        exposure_check(&cfg, tool).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
         let ident = identity_of(context);
         match decide_gate(&cfg, Some(&ident)) {
             GateDecision::Allow => {}
@@ -668,7 +666,9 @@ impl TotpMcp {
         )]))
     }
 
-    #[tool(description = "Trigger a backup to all enabled local directory sources. Returns {triggered, reason?}. Never returns vault data.")]
+    #[tool(
+        description = "Trigger a backup to all enabled local directory sources. Returns {triggered, reason?}. Never returns vault data."
+    )]
     async fn trigger_backup(
         &self,
         Parameters(_p): Parameters<TriggerParams>,
@@ -682,7 +682,9 @@ impl TotpMcp {
         )]))
     }
 
-    #[tool(description = "Trigger a manual cloud sync across enabled targets. Returns {triggered, reason?}. Never returns vault data.")]
+    #[tool(
+        description = "Trigger a manual cloud sync across enabled targets. Returns {triggered, reason?}. Never returns vault data."
+    )]
     async fn trigger_sync(
         &self,
         Parameters(_p): Parameters<TriggerParams>,
@@ -1339,14 +1341,20 @@ mod tests {
         // token 档：action 免确认（持有 token 即主人）
         assert!(!action_confirm_required(ToolKind::Action, GateMode::Token));
         // 其余档：逐次确认（无 TTL 无 trust，每次都问）
-        assert!(action_confirm_required(ToolKind::Action, GateMode::Wildcard));
+        assert!(action_confirm_required(
+            ToolKind::Action,
+            GateMode::Wildcard
+        ));
         assert!(action_confirm_required(ToolKind::Action, GateMode::Exact));
         assert!(action_confirm_required(
             ToolKind::Action,
             GateMode::AlwaysAsk
         ));
         // read：任何档都不加确认（向后兼容）
-        assert!(!action_confirm_required(ToolKind::Read, GateMode::AlwaysAsk));
+        assert!(!action_confirm_required(
+            ToolKind::Read,
+            GateMode::AlwaysAsk
+        ));
         assert!(!action_confirm_required(ToolKind::Read, GateMode::Token));
     }
 
@@ -1397,9 +1405,7 @@ mod tests {
         let id = bridge.alloc_id();
         let (tx, rx) = tokio::sync::oneshot::channel();
         bridge.insert(id, tx);
-        bridge
-            .respond(id, Err("frontend error".into()))
-            .unwrap();
+        bridge.respond(id, Err("frontend error".into())).unwrap();
         assert_eq!(
             await_confirm_response(&bridge, id, rx, Duration::from_secs(1)).await,
             Err("frontend error".to_string()),
