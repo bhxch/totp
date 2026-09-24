@@ -3,11 +3,6 @@ import {
   type BackupSource, type CloudBackend, type CloudCred, type KdfProfile, type SourceSyncState,
 } from '@totp/core'
 
-/** 云端对象固定路径（内容=加密 envelope JSON，见计划 10 Global Constraints）
- *  @deprecated 仅作兼容导出，云对象路径改用 core resolveObjectPath(cred)（cred.objectPath 可自定义，缺省 DEFAULT_OBJECT_PATH）；keep 源改用 resolveTimestampPath
- */
-export const CLOUD_BACKUP_PATH = 'totp-backup.totpbackup'
-
 /**
  * cred → backend 实例工厂（ui 侧 switch 五个 core create*Backend——core 无统一工厂，
  * 取 ui 侧 switch：不加 core API 面，与简报「backend 由 cred 工厂创建（switch backend id）」一致）。

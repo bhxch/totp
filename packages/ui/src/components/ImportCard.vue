@@ -269,6 +269,12 @@ function onSuspectSelect(idx: number, v: string): void {
   suspectChoices.value.set(idx, v as SuspectChoice)
 }
 
+// ---------- 导入预览（前 3 条，只读无交互）：总体设计「导入预览前 3 条」的落地 ----------
+/** 解析结果前 3 条快照（confirm 区展示；result 仅在进 confirm 时写入，预览期间不跟随 vault 变化） */
+const previewEntries = computed<ParsedEntry[]>(() => (result.value?.entries ?? []).slice(0, 3))
+/** 类型展示用 OTP 类型名（不用 ImportFormat 名：uriBatch 等格式名对单条目无意义且需 i18n，类型名自明） */
+const TYPE_LABEL: Record<ParsedEntry['type'], string> = { totp: 'TOTP', hotp: 'HOTP', steam: 'Steam', yandex: 'Yandex' }
+
 // report 命名沿用 core ImportStats 口径（plan16 T10）：identical/suspect*/conflict*/inFileMerged 逐项展示，
 // imported = 新增落库（new + suspect add）+ 冲突并存（merge 条目也实际入库）
 const report = ref<{
@@ -768,6 +774,17 @@ function failureLabel(f: { index: number; message: string }): string {
           conflict: importPlan?.counts.conflict ?? 0,
         }) }}
       </p>
+      <!-- 导入预览（前 3 条）：issuer/label + 类型，只读展示；超过 3 条标注解析总数 -->
+      <div v-if="previewEntries.length > 0" class="preview" data-test="import-preview">
+        <p class="meta">
+          {{ t('importCard.previewTitle') }}
+          <span v-if="(result?.entries.length ?? 0) > 3" class="preview-total">{{ t('importCard.previewTotal', { count: result?.entries.length ?? 0 }) }}</span>
+        </p>
+        <div v-for="(e, i) in previewEntries" :key="i" class="preview-row" data-test="import-preview-row">
+          <span class="preview-line">{{ (e.issuer || t('importCard.noIssuer')) + '/' + (e.label || t('importCard.noLabel')) }}</span>
+          <span class="preview-type">{{ TYPE_LABEL[e.type] }}</span>
+        </div>
+      </div>
       <div v-if="suspectItems.length" class="suspects">
         <p class="meta">{{ t('importCard.suspectIntro') }}</p>
         <div v-for="s in suspectItems" :key="s.idx" class="suspect-row">
@@ -841,6 +858,13 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .policies :deep(.md-seg__item), .suspect-row :deep(.md-seg__item) { padding: 0 12px; }
 /* suspect 逐条确认区：一行「导入 X → 现有 Y」+ 三选分段按钮，行内换行防窄卡溢出 */
 .suspects { display: flex; flex-direction: column; gap: 6px; border-top: 1px dashed var(--md-sys-color-outline-variant); padding-top: 8px; }
+/* 导入预览（前 3 条）：只读小节，行样式与粘贴 Tab 解析行同语言（surface 容器底 + 小字号） */
+.preview { display: flex; flex-direction: column; gap: 4px; }
+.preview-total { opacity: .65; }
+.preview-row { display: flex; align-items: center; gap: 8px; padding: 4px 12px; border-radius: 8px;
+  background: var(--md-sys-color-surface-container); font-size: var(--md-sys-typescale-body-small); }
+.preview-line { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview-type { flex: none; opacity: .65; }
 .suspect-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--md-sys-typescale-body-small); }
 .suspect-line { flex: 1; min-width: 200px; }
 .failures { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 160px; overflow: auto; font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-error); }

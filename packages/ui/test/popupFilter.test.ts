@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { addTag, createVault, addEntry } from '@totp/core'
 import { resolvePopupVisible, HINT_SITE_TAGGED, HINT_TAG_RELAXED, HINT_SITE_PLAIN, HINT_SITE_ALL } from '../src/popupFilter'
+import zhMessages from '../src/i18n/locales/zh/common.json'
+import enMessages from '../src/i18n/locales/en/common.json'
 import type { OtpEntry } from '@totp/core'
 
 const e = (uuid: string, tagIds: string[], rules: unknown[] = []): OtpEntry => ({
@@ -54,6 +56,24 @@ describe('resolvePopupVisible 四级回退（spec §3）', () => {
     const r = resolvePopupVisible({ ...base, selectedTagIds: new Set(['t2']), urlFilterActive: false })
     expect(r.visible).toEqual([])
     expect(r.hint).toBe('')
+  })
+})
+
+describe('回退提示 i18n 化（HINT_* 返回 key，渲染端 t() 插值）', () => {
+  it('四个常量即 popupFilter.* 命名空间 key，zh/en 两份 locale 均有对应文案', () => {
+    const keys = [HINT_SITE_TAGGED, HINT_TAG_RELAXED, HINT_SITE_PLAIN, HINT_SITE_ALL]
+    expect(new Set(keys).size).toBe(4)
+    for (const k of keys) {
+      const name = k.slice('popupFilter.'.length)
+      expect(k.startsWith('popupFilter.hint')).toBe(true)
+      expect((zhMessages.popupFilter as Record<string, string>)[name]).toBeTruthy()
+      expect((enMessages.popupFilter as Record<string, string>)[name]).toBeTruthy()
+    }
+  })
+  it('回退路径返回 key 而非硬编码文案（zh 文案收敛在 locale，纯函数不依赖 i18n 实例）', () => {
+    const r = resolvePopupVisible({ ...base, urlFilterActive: true, tabUrl: 'https://other.com' })
+    expect(r.hint).toBe('popupFilter.hintSiteTagged')
+    expect(r.hint).not.toContain('当前站点')
   })
 })
 

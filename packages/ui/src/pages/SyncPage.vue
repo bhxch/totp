@@ -27,7 +27,7 @@ const props = withDefaults(defineProps<{
 
 const { t } = useI18n()
 
-/** 备份内容快照（saveVault 同款 JSON）：序列化 reactive 代理以保持 computed 依赖追踪（与 旧单页 一致） */
+/** 备份内容快照（saveVault 同款 JSON）：序列化 reactive 代理以保持 computed 依赖追踪；经 BackupCard :vault-json 消费 */
 const vaultJson = computed(() => JSON.stringify(props.store.vault))
 /** 会话备份口令（D1）：store.backupSecret 是 ComputedRef，在 setup computed 内 .value 解包保持依赖追踪 */
 const sessionSecret = computed(() => props.store.backupSecret.value)

@@ -16,7 +16,7 @@ export function applyThemeAttributes(mode: string, color: string, contrast: stri
   document.documentElement.dataset.contrast = contrast
 }
 
-export function readThemeMirror(): { mode?: string; color?: string } {
+export function readThemeMirror(): { mode?: string; color?: string; contrast?: string } {
   try { return JSON.parse(localStorage.getItem(THEME_PREF_KEY) ?? '{}') } catch { return {} }
 }
 
@@ -66,13 +66,20 @@ export function useTheme(store: VueStore): { mode: WritableComputedRef<ThemeMode
   watchEffect(() => {
     const m = mode.value
     const c = color.value
+    const k = contrastValue()
     ensurePalettes(c) // fire-and-forget:覆盖「设置加载即为非默认种子」的首载路径
-    applyThemeAttributes(m, c, store.settings.themeContrast === 'amoled' ? 'amoled' : 'standard')
+    applyThemeAttributes(m, c, k)
     const mirror = readThemeMirror()
-    if (mirror.mode !== m || mirror.color !== c) writeMirror(m, c)
+    if (mirror.mode !== m || mirror.color !== c || mirror.contrast !== k) writeMirror(m, c)
   })
+  /** AMOLED 对比档取值（settings 未装载/缺省按 standard，与 applyThemeAttributes 缺省一致） */
+  function contrastValue(): string {
+    return store.settings.themeContrast === 'amoled' ? 'amoled' : 'standard'
+  }
+  /** 首帧镜像（入口 html 内联脚本据 themePref 还原 mode/color/contrast）：contrast 缺失会让 AMOLED
+   *  用户首帧回落标准对比度再跳变（FOUC 同源问题），故三字段一并镜像；contrast 取值在写入时统一收敛 */
   function writeMirror(m: string, c: string) {
-    try { localStorage.setItem(THEME_PREF_KEY, JSON.stringify({ mode: m, color: c })) } catch { /* 镜像失败不影响功能 */ }
+    try { localStorage.setItem(THEME_PREF_KEY, JSON.stringify({ mode: m, color: c, contrast: contrastValue() })) } catch { /* 镜像失败不影响功能 */ }
   }
   return { mode, color, resolvedMode }
 }

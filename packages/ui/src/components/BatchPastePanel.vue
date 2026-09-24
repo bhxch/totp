@@ -8,6 +8,7 @@ import { blobToPixels, imagesFromClipboard } from '../qr/imageSource'
 import type { VueStore } from '../store'
 import MdButton from './md/MdButton.vue'
 import MdSelect from './md/MdSelect.vue'
+import MdTextField from './md/MdTextField.vue'
 
 const { t } = useI18n()
 
@@ -171,8 +172,10 @@ function onChoiceSelect(r: RowDecision, v: string | number): void {
 </script>
 <template>
   <div class="batch-paste" data-test="paste-zone" @paste="onPasteImages" @dragover.prevent @drop="onDropImages">
-    <textarea v-model="text" rows="6" :aria-label="t('batchPastePanel.pasteAria')"
-      :placeholder="t('batchPastePanel.pastePlaceholder')"></textarea>
+    <!-- MdTextField multiline 替代裸 textarea（无障碍焦点环/浮标标签与全库输入框一致）：
+         v-model/placeholder/aria-label 语义平移（props 直传），rows=6 保持原高度；paste 事件由根 div 捕获不受影响 -->
+    <MdTextField v-model="text" multiline :rows="6" label="" data-test="paste-input"
+      :placeholder="t('batchPastePanel.pastePlaceholder')" :aria-label="t('batchPastePanel.pasteAria')" />
     <p v-if="pendingImages > 0" class="pending" data-test="paste-decoding">{{ t('batchPastePanel.decoding') }}</p>
     <div class="actions">
       <MdButton data-test="paste-parse" :disabled="text.trim() === ''" @click="parse">{{ t('batchPastePanel.parse') }}</MdButton>
@@ -197,10 +200,6 @@ function onChoiceSelect(r: RowDecision, v: string | number): void {
 </template>
 <style scoped>
 .batch-paste { display: flex; flex-direction: column; gap: 12px; }
-.batch-paste textarea { box-sizing: border-box; width: 100%; resize: vertical; font: inherit;
-  padding: 12px 16px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline-variant);
-  background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface); }
-.batch-paste textarea:focus-visible { outline: 3px solid var(--md-sys-color-primary); outline-offset: 2px; }
 .actions { display: flex; gap: 8px; align-items: center; }
 .err { margin: 0; color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); }
 .pending { margin: 0; color: var(--md-sys-color-on-surface-variant); font-size: var(--md-sys-typescale-body-small); }

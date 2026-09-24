@@ -477,7 +477,9 @@
     "passphraseRequired": "请输入口令",
     "apUnsupported": "当前端不支持 Authenticator Plus 导入",
     "noFilePicked": "未选择文件",
-    "pwPageUnused": "当前格式不使用口令页，请取消后重新选择"
+    "pwPageUnused": "当前格式不使用口令页，请取消后重新选择",
+    "previewTitle": "导入预览（前 3 条）",
+    "previewTotal": "等共 {count} 条"
   },
   "securityCard": {
     "title": "安全",
@@ -650,7 +652,8 @@
     "showQr": "显示二维码",
     "copyUri": "复制 URI",
     "pin": "置顶",
-    "unpin": "取消置顶"
+    "unpin": "取消置顶",
+    "batchImported": "已入库 {n} 条"
   },
   "settingsPage": {
     "appearance": "外观",
@@ -787,5 +790,11 @@
     "browserQuota": "空间已满",
     "browserConflict": "已拒同步",
     "browserInvalid": "数据无效"
+  },
+  "popupFilter": {
+    "hintSiteTagged": "当前站点无匹配，显示标签内结果",
+    "hintTagRelaxed": "当前标签下无匹配，已放宽标签过滤",
+    "hintSitePlain": "当前站点无匹配，显示全部",
+    "hintSiteAll": "当前站点与标签均无匹配，显示全部"
   }
 }

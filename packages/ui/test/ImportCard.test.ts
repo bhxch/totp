@@ -59,6 +59,31 @@ describe('ImportCard', () => {
     })
     expect(store.vault.entries).toHaveLength(2) // 原有 GitHub + NewServ
   })
+  it('confirm 区导入预览（前 3 条，只读）：展示 issuer/label 与类型，超 3 条标注总数', async () => {
+    const store = await readyStore()
+    const four = [
+      `otpauth://totp/A:a?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=A`,
+      `otpauth://totp/B:b?secret=JBSWY3DPEHPK3PXQ&issuer=B`,
+      `otpauth://totp/C:c?secret=MFRGGZDFMZTWQ2LK&issuer=C`,
+      `otpauth://totp/D:d?secret=NBSWY3DPFQQFO3SN&issuer=D`,
+    ].join('\n')
+    const w = mount(ImportCard, { global: { plugins: [createTestI18n()] }, props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text: four, name: 'u.txt' }), store } } })
+    await w.find('button.import-start').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('uriBatch'))
+    await w.find('button.import-next').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('导入预览'))
+    // 只读小节：恰好 3 行预览（第 4 条不展开），行内容为 issuer/label + OTP 类型
+    const rows = w.findAll('[data-test="import-preview-row"]')
+    expect(rows).toHaveLength(3)
+    expect(rows[0]!.text()).toContain('A/a')
+    expect(rows[2]!.text()).toContain('C/c')
+    expect(w.find('[data-test="import-preview"]').text()).toContain('TOTP')
+    expect(w.text()).not.toContain('D/d')
+    // 超过 3 条：标注解析总数
+    expect(w.text()).toContain('等共 4 条')
+    await w.find('button.import-commit').trigger('click')
+    await vi.waitFor(() => expect(w.text()).toContain('成功落库 4 条'))
+  })
   it('无法识别格式：picked 页手动指定；自动下一步报错；手选 sqlite 无字节能力提示不支持', async () => {
     const store = await readyStore()
     const w = mount(ImportCard, { global: { plugins: [createTestI18n()] }, props: { platform: { readImportFile: vi.fn().mockResolvedValue({ text: 'hello', name: 'x' }), store } } })

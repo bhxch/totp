@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { buildOtpUri, filterByTags, getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useOtpCodes } from '../composables/useOtpCodes'
 import { iconView, type IconStore } from '../iconStore'
@@ -78,6 +78,19 @@ const tagsOpen = ref(false)
  *  tabindex=0 可聚焦，回焦有效） */
 const contextMenu = ref<{ x: number; y: number; entry: OtpEntry; trigger: HTMLElement | null } | null>(null)
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 批量入库成功提示（全仓无 toast 体系下的页面级轻提示）：EntryFormDialog batch-added 上抛实际落库
+ *  条数（剪贴板批量与粘贴 Tab 共用同一通道），此处展示自动消失提示条（约 4s，aria-live polite 播报，
+ *  不抢焦点） */
+const batchToast = ref('')
+let batchToastTimer: ReturnType<typeof setTimeout> | null = null
+function onBatchAdded(count: number) {
+  creating.value = false; editing.value = null
+  batchToast.value = t('codesPage.batchImported', { n: count })
+  if (batchToastTimer) clearTimeout(batchToastTimer)
+  batchToastTimer = setTimeout(() => (batchToast.value = ''), 4000)
+}
+onUnmounted(() => { if (batchToastTimer) clearTimeout(batchToastTimer) })
 
 /** 排序：pinned 优先，然后按 order。
  *  pinned 用 truthy 检查（缺省 false），向后兼容无 pinned 字段的旧 vault */
@@ -220,6 +233,8 @@ function openSheet() {
 
 <template>
   <section class="page">
+    <!-- 批量入库成功提示条（顶部居中悬浮，与底部选择条同设计语言）：自动消失，polite 播报 -->
+    <div v-if="batchToast" class="batch-toast" data-test="batch-toast" role="status" aria-live="polite">{{ batchToast }}</div>
     <!-- 条目卡走 MdCard outlined(审查 F3:独立 .card 的 outline-variant/10px 与 M3 标尺双标) -->
     <MdCard class="codes-card">
       <div class="card-head">
@@ -288,7 +303,7 @@ function openSheet() {
       :store="store"
       @save="onSave"
       @close="creating = false; editing = null"
-      @batch-added="creating = false; editing = null"
+      @batch-added="onBatchAdded"
     />
 
     <!-- 标签管理对话框：chips「管理标签」触发 -->
@@ -327,6 +342,11 @@ h2 { margin: 0; font-size: var(--md-sys-typescale-title-medium); }
 .empty { text-align: center; opacity: .6; padding: 16px 0; }
 /* 新建 FAB：悬浮于页面右下 */
 .page-fab { position: fixed; right: 24px; bottom: 24px; }
+/* 批量入库成功提示条：顶部居中悬浮（z 高于右键菜单遮罩层，4s 自动消失） */
+.batch-toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 30;
+  padding: 10px 20px; border-radius: 100px; background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface); box-shadow: 0 4px 12px var(--md-sys-color-shadow);
+  font-size: var(--md-sys-typescale-body-medium); }
 /* 选择模式底部浮动操作条（悬浮于列表上方，FAB 左侧留位） */
 .select-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: 24px; z-index: 20;
   display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 100px;

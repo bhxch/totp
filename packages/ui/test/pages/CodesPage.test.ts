@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createMemoryStorage, newEntryFromUri, type OtpEntry } from '@totp/core'
 import { createVueStore } from '../../src/store'
 import CodesPage from '../../src/pages/CodesPage.vue'
+import EntryFormDialog from '../../src/components/EntryFormDialog.vue'
 import { createTestI18n } from '../helpers/i18n'
 
 async function readyStore() {
@@ -112,8 +113,8 @@ describe('CodesPage 标签筛选（spec §3 管理页）', () => {
     expect(w.text()).toContain('GitHub') // 条目带「工作」，any 命中 → 显示
     await chips.find((c) => c.text() === '个人')!.trigger('click')
     expect(w.text()).toContain('GitHub') // any 语义：命中任一选中标签即仍显示
-    // 选中 ≥2 后模式切换自动可用：切「全部」（all）→ 条目仅带「工作」→ 隐藏
-    await w.find('button.mode-toggle').trigger('click')
+    // 选中 ≥2 后模式切换自动可用：点分段「全部」（all）→ 条目仅带「工作」→ 隐藏
+    await w.findAll('button.md-seg__item')[1]!.trigger('click')
     expect(w.text()).not.toContain('GitHub')
   })
 
@@ -214,6 +215,50 @@ describe('CodesPage 标签筛选（spec §3 管理页）', () => {
     await vi.waitFor(() => expect(w.text()).toContain('工作')) // chip 渲染（tags 已装载）
     const c = w.findAll('button.md-chip').find((x) => x.text() === '工作')!
     expect(c.classes()).not.toContain('md-chip--selected')
+  })
+})
+
+describe('CodesPage 批量入库成功提示条（EntryFormDialog batch-added 上抛落库条数）', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  it('batch-added 后出现「已入库 {n} 条」提示，约 4 秒后自动消失（fake timers）', async () => {
+    vi.useFakeTimers()
+    const s = await readyStore()
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    expect(w.find('[data-test="batch-toast"]').exists()).toBe(false)
+    // 直接触发 EntryFormDialog 的 batch-added（剪贴板批量与粘贴 Tab 共用通道，条数经 EntryForm/Panel 冒泡）
+    w.findComponent(EntryFormDialog)!.vm.$emit('batch-added', 3)
+    await nextTick()
+    const toast = w.find('[data-test="batch-toast"]')
+    expect(toast.exists()).toBe(true)
+    expect(toast.text()).toBe('已入库 3 条')
+    expect(toast.attributes('aria-live')).toBe('polite')
+    vi.advanceTimersByTime(3999)
+    await nextTick()
+    expect(w.find('[data-test="batch-toast"]').exists()).toBe(true)
+    vi.advanceTimersByTime(1)
+    await nextTick()
+    expect(w.find('[data-test="batch-toast"]').exists()).toBe(false)
+  })
+
+  it('连续批量入库：提示文案刷新且消失计时重置', async () => {
+    vi.useFakeTimers()
+    const s = await readyStore()
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    const dialog = w.findComponent(EntryFormDialog)!
+    dialog.vm.$emit('batch-added', 2)
+    await nextTick()
+    vi.advanceTimersByTime(3000)
+    dialog.vm.$emit('batch-added', 5)
+    await nextTick()
+    expect(w.find('[data-test="batch-toast"]').text()).toBe('已入库 5 条')
+    // 距第一次展示已超 4s，但第二次计时刚重置 → 仍在展示
+    vi.advanceTimersByTime(1500)
+    await nextTick()
+    expect(w.find('[data-test="batch-toast"]').exists()).toBe(true)
+    vi.advanceTimersByTime(2500)
+    await nextTick()
+    expect(w.find('[data-test="batch-toast"]').exists()).toBe(false)
   })
 })
 

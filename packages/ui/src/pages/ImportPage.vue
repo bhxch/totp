@@ -16,7 +16,7 @@ const props = withDefaults(defineProps<{
 }>(), { platform: null, schemesApi: null })
 
 /** 导入平台：宿主 platform 提供了 readImportFile 才渲染导入卡
- *  （自 旧单页 的 importPlatform computed 迁移；popup 端 platform 无该能力时零渲染） */
+ *  （importPlatform computed 由本页从 platform props 收敛；popup 端 platform 无该能力时零渲染） */
 const importPlatform = computed<ImportPlatform | null>(() => {
   const p = props.platform
   if (!p?.readImportFile) return null

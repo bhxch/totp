@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { reactive } from 'vue'
 import type { VueStore } from '../src/store'
@@ -49,7 +51,7 @@ describe('useTheme', () => {
     await Promise.resolve()
     expect(document.documentElement.dataset.mode).toBe('dark')
     expect(document.documentElement.dataset.color).toBe('teal')
-    expect(JSON.parse(localStorage.getItem('themePref')!)).toEqual({ mode: 'dark', color: 'teal' })
+    expect(JSON.parse(localStorage.getItem('themePref')!)).toEqual({ mode: 'dark', color: 'teal', contrast: 'standard' })
     expect(s.commitSettings).toHaveBeenCalled()
   })
   it('非法 color 读侧回退 blue', () => {
@@ -66,7 +68,22 @@ describe('useTheme', () => {
     s.settings.themeMode = 'dark'
     s.settings.themeColor = 'teal'
     useTheme(s)
-    expect(JSON.parse(localStorage.getItem('themePref')!)).toEqual({ mode: 'dark', color: 'teal' })
+    expect(JSON.parse(localStorage.getItem('themePref')!)).toEqual({ mode: 'dark', color: 'teal', contrast: 'standard' })
+  })
+  it('AMOLED 对比档写入镜像 contrast 字段（FOUC 镜像补 contrast）', () => {
+    const s = store()
+    s.settings.themeMode = 'dark'
+    s.settings.themeContrast = 'amoled'
+    const t = useTheme(s)
+    t.mode.value = 'dark'
+    expect(JSON.parse(localStorage.getItem('themePref')!)).toEqual({ mode: 'dark', color: 'blue', contrast: 'amoled' })
+    expect(document.documentElement.dataset.contrast).toBe('amoled')
+  })
+  it('四入口 html 内联脚本据镜像还原 data-contrast（无 contrast 值不设置）', () => {
+    for (const f of ['apps/desktop/index.html', 'apps/desktop/mini.html', 'apps/extension/entrypoints/popup/index.html', 'apps/extension/entrypoints/options/index.html']) {
+      const html = readFileSync(join(__dirname, '../../../', f), 'utf8')
+      expect(html).toContain("if(p.contrast)d.contrast=p.contrast")
+    }
   })
 })
 

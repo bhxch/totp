@@ -14,6 +14,20 @@ function mkStore() {
 }
 
 describe('BatchPastePanel', () => {
+  it('输入区为 MdTextField multiline（6 行）：v-model/placeholder/aria-label 语义平移', async () => {
+    const store = await mkStore()
+    const w = mount(BatchPastePanel, { global: { plugins: [createTestI18n()] }, props: { store } })
+    // 裸 textarea 已收口为 MdTextField（结构断言）；paste-zone 容器保持不变
+    const ta = w.find('[data-test="paste-input"]')
+    expect(ta.exists()).toBe(true)
+    expect(ta.element.tagName).toBe('TEXTAREA')
+    expect(ta.attributes('rows')).toBe('6')
+    expect(ta.attributes('placeholder')).toContain('otpauth')
+    expect(ta.attributes('aria-label')).toBe('粘贴文本')
+    await ta.setValue(URI_A)
+    await w.find('[data-test="paste-parse"]').trigger('click')
+    expect(w.findAll('[data-test="paste-row"]')).toHaveLength(1)
+  })
   it('粘贴两条 URI：显示 2 行解析结果且可添加', async () => {
     const store = await mkStore()
     const w = mount(BatchPastePanel, { global: { plugins: [createTestI18n()] }, props: { store } })

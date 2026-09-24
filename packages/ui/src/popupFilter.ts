@@ -1,12 +1,13 @@
 import { entryMatchesUrl, filterByTags, type OtpEntry, type TagFilterMode } from '@totp/core'
 
 // popup 四级回退（spec §3 Popup）：搜索 → tag → URL 分级放宽；快速取码场景不让空结果挡路，
-// 纯 tag 浏览零命中如实反馈。提示常量与 spec 回退表逐字一致。
+// 纯 tag 浏览零命中如实反馈。本函数为纯函数不依赖 i18n 实例：hint 返回 i18n key
+// （popupFilter.* 命名空间，zh 文案沿用 spec 回退表原文，en 见 locales），渲染端（popup App.vue）t() 插值。
 
-export const HINT_SITE_TAGGED = '当前站点无匹配，显示标签内结果'
-export const HINT_TAG_RELAXED = '当前标签下无匹配，已放宽标签过滤'
-export const HINT_SITE_PLAIN = '当前站点无匹配，显示全部'
-export const HINT_SITE_ALL = '当前站点与标签均无匹配，显示全部'
+export const HINT_SITE_TAGGED = 'popupFilter.hintSiteTagged'
+export const HINT_TAG_RELAXED = 'popupFilter.hintTagRelaxed'
+export const HINT_SITE_PLAIN = 'popupFilter.hintSitePlain'
+export const HINT_SITE_ALL = 'popupFilter.hintSiteAll'
 
 export interface PopupFilterInput {
   entries: OtpEntry[]
@@ -20,7 +21,7 @@ export interface PopupFilterInput {
 
 export interface PopupFilterResult {
   visible: OtpEntry[]
-  /** 回退提示；正常命中为空串 */
+  /** 回退提示 i18n key（popupFilter.*）；正常命中为空串 */
   hint: string
   /** tag 后集合的 URL 命中数（popup「匹配 N 条」展示用） */
   urlMatchCount: number

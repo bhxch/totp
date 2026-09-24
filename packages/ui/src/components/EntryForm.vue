@@ -36,7 +36,7 @@ const props = defineProps<{
   tags?: Tag[]
   /** 内联快速建 tag：宿主侧创建并回传新 tag id；缺省不渲染内联建行 */
   createTag?: (name: string) => Promise<string>
-  /** 图标数据源：builtin 内置集 + stored（含 'url:' 前缀缓存键）dataUrl 映射；缺省不渲染推荐气泡与图标选择区 */
+  /** 图标数据源：builtin 内置集 + stored（含 urlcache: 前缀缓存键）dataUrl 映射；缺省不渲染推荐气泡与图标选择区 */
   icons?: { builtin: Record<string, BuiltinIcon>; stored: Readonly<Record<string, string>> }
   /** 图标存储：上传/URL 拉取需要写能力；缺省时隐藏上传与 URL 拉取 */
   iconStore?: IconStore

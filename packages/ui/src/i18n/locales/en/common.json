@@ -477,7 +477,9 @@
     "passphraseRequired": "Please enter the passphrase",
     "apUnsupported": "Authenticator Plus import is not supported on this platform",
     "noFilePicked": "No file selected",
-    "pwPageUnused": "This format does not use the passphrase page; cancel and pick again"
+    "pwPageUnused": "This format does not use the passphrase page; cancel and pick again",
+    "previewTitle": "Import preview (first 3)",
+    "previewTotal": "{count} entries in total"
   },
   "securityCard": {
     "title": "Security",
@@ -650,7 +652,8 @@
     "showQr": "Show QR code",
     "copyUri": "Copy URI",
     "pin": "Pin",
-    "unpin": "Unpin"
+    "unpin": "Unpin",
+    "batchImported": "{n} entries imported"
   },
   "settingsPage": {
     "appearance": "Appearance",
@@ -787,5 +790,11 @@
     "browserQuota": "Storage full",
     "browserConflict": "Sync rejected",
     "browserInvalid": "Invalid data"
+  },
+  "popupFilter": {
+    "hintSiteTagged": "No match on the current site — showing results within your tags",
+    "hintTagRelaxed": "No match under the current tag — tag filter has been relaxed",
+    "hintSitePlain": "No match on the current site — showing all entries",
+    "hintSiteAll": "No match on the current site or tags — showing all entries"
   }
 }
