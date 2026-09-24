@@ -980,8 +980,10 @@ fn ensure_main_window_label(label: &str) -> Result<(), String> {
 // （WinAuth DPAPI 层格式恒如此，非 hex 明文的密文即使可解也无法完成导入，提前在此拒绝）；
 // ③ 仅主窗口可调用。残余风险：主窗口 webview 内的恶意脚本仍可解「明文恰为 hex ASCII」的
 // 用户态 DPAPI blob——这是 WinAuth 第三方格式导入所需的固有能力。
+#[cfg(windows)] // 仅 Windows 版 decrypt_dpapi 消费；Linux runner 的 clippy 门禁编译不到消费方
 const WINAUTH_IMPORT_PURPOSE: &str = "winauth-import";
 
+#[cfg(windows)]
 fn ensure_winauth_purpose(purpose: &str) -> Result<(), String> {
     if purpose == WINAUTH_IMPORT_PURPOSE {
         Ok(())
@@ -990,11 +992,13 @@ fn ensure_winauth_purpose(purpose: &str) -> Result<(), String> {
     }
 }
 
+#[cfg(windows)]
 fn is_hex_ascii(text: &str) -> bool {
     !text.is_empty() && text.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 // 最小 base64 解码：仅接受标准字母表（前端 bytesToBase64 输出带 padding），避免为此引第三方依赖。
+#[cfg(windows)]
 fn base64_decode(input: &str) -> Option<Vec<u8>> {
     fn val(c: u8) -> Option<u32> {
         match c {
@@ -1068,6 +1072,7 @@ fn decrypt_dpapi(
 // （T1 裁定 wrappedDekD=base64(DPAPI(DEK))），CRYPTPROTECT_UI_FORBIDDEN 禁 UI，base64 进出。
 // 与 decrypt_dpapi（WinAuth 导入，明文须 hex ASCII）分开：DEK 是任意字节，走独立命令避免语义混淆。
 // 最小 base64 编码：与上方 base64_decode 同理念，标准字母表 + padding，不引第三方依赖。
+#[cfg(windows)]
 fn base64_encode(data: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);

@@ -211,15 +211,18 @@ describe('startMcpBridge', () => {
     )
     return { stop, listeners, calls, unlisten }
   }
-  /** flush 微任务：handleMcpRequest → invoke 的 then 链落地 */
-  const flush = () => new Promise((r) => setTimeout(r, 0))
+  /** flush 确定化（落实 2026-09-22 backlog 观察项）：原单次 setTimeout(0) 在负载下（CI 并发）
+   *  偶发等不完整条 handleMcpRequest → invoke 的 then 链，calls 为空即断言崩——改轮询等待
+   *  mcp_respond 调用数达期望值（vi.waitFor 内 expect 抛错即重试，超时 fail） */
+  const waitForResponses = (calls: { cmd: string }[], n: number) =>
+    vi.waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(n), { timeout: 5_000, interval: 10 })
 
   it('事件触发 → invoke("mcp_respond", ...) 回传结果；锁定 → ok:false；返回 unlisten', async () => {
     const { stop, listeners, calls, unlisten } = await bridgeHarness({ locked: false })
     expect(listeners).toHaveLength(1)
 
     listeners[0]!({ payload: { id: 9, tool: 'list_accounts', args: {} } })
-    await flush()
+    await waitForResponses(calls, 1)
     expect(calls[0]).toEqual({
       cmd: 'mcp_respond',
       args: {
@@ -231,7 +234,7 @@ describe('startMcpBridge', () => {
     })
 
     listeners[0]!({ payload: { id: 10, tool: 'get_code', args: { account_id: 'nope' } } })
-    await flush()
+    await waitForResponses(calls, 2)
     expect(calls[1]!.cmd).toBe('mcp_respond')
     expect(calls[1]!.args.id).toBe(10)
     expect(calls[1]!.args.ok).toBe(false)
@@ -242,7 +245,7 @@ describe('startMcpBridge', () => {
   it('锁定态触发 → ok:false + vault locked 错误回传', async () => {
     const { listeners, calls } = await bridgeHarness({ locked: true })
     listeners[0]!({ payload: { id: 11, tool: 'list_accounts', args: {} } })
-    await flush()
+    await waitForResponses(calls, 1)
     expect(calls[0]).toEqual({ cmd: 'mcp_respond', args: { id: 11, ok: false, result: null, error: 'vault locked' } })
   })
 
@@ -250,7 +253,7 @@ describe('startMcpBridge', () => {
     // mkEntry 默认 totp：digits 6 / period 30；经 startMcpBridge 事件链路驱动
     const { listeners, calls } = await bridgeHarness({ locked: false })
     listeners[0]!({ payload: { id: 12, tool: 'get_code', args: { account_id: '1' } } })
-    await flush()
+    await waitForResponses(calls, 1)
     expect(calls[0]!.cmd).toBe('mcp_respond')
     expect(calls[0]!.args.ok).toBe(true)
     const out = calls[0]!.args.result as Record<string, unknown>
