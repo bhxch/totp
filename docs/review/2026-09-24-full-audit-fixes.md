@@ -61,3 +61,18 @@
 ## 四、License
 
 仓库采用 **MIT**（LICENSE 文件 + 各 package.json `license` 字段 + README License 节）。依据：全部运行时依赖为宽松许可（vue/vue-i18n/wxt/fflate/hash-wasm/sql.js/@tauri-apps = MIT；tauri 及 Rust 生态 = MIT OR Apache-2.0；simple-icons = CC0-1.0），无 copyleft 传染项，MIT 可用。
+
+## 五、e2e 验证记录（2026-09-25，修复完成后补做）
+
+**桌面真机（tauri dev + driver-session，debug 构建）**——P0 与锁库链路：
+1. settings 互踩修复正向：UI 切「失焦自动隐藏」触发前端保存链 → `%APPDATA%` settings.json 中 `mcp.token`/`releasePolicy` 键完整保留（修复前此处整文件覆盖即抹掉）。
+2. 反向：UI 驱动释放卡改 `pauseMinutes` 5→3（Rust 轨落盘）→ 再次前端保存 → `pauseMinutes=3` 与 `mcp.token` 均保留（Rust 新值不被前端合并写覆盖回）。
+3. `clear_stashed_dek` 命令经 driver IPC 调用 `success:true`（注册与可调性证实）。
+4. 验证码页 8 条目渲染、QR 按钮齐全、`aria-haspopup=menu` 在位（OtpListItem 布尔 prop 修复后默认行为正确）；双击揭示打码→明文正常。
+5. 测试后环境恢复：blurHide=false、`releasePolicy {5,30,false,true}`、`mcp` 键原值，无进程驻留。
+
+**扩展端（chrome-mv3 构建产物 + inject-test-shim + playwright，9/9 通过）**：
+列表渲染与 copy/QR 按钮（布尔 prop 修复生效）、双击揭示 8s 打回（码值与 WebCrypto 独立重算一致）、复制反馈（MdButton 链路）、**右键菜单 MdMenu 化整链路**（弹出/Esc/置顶移位加星）、搜索过滤、URL 过滤与回退提示 i18n（zh/en 均显示文案而非 key 原文）、options 五页与标签筛选 MdSegmentedButton（any/all 语义与禁用态）、**导入预览前 3 条 + 「已入库 N 条」提示条两项新增特性**（5 条 URI 向导 + 批量粘贴链路，提示条 4s 自动消失）、控制台零组件错误。
+截图与测试数据：`.temp/e2e-ext/`（13 png + seed/URL 数据）。
+
+**留真机手动项**：mini 窗（托盘/快捷键呼出不可自动化；mini 侧 onLocked 已由单测盖）、释放策略销毁档托盘重建（批⑧已真机验证，本轮未动状态机逻辑）、Firefox 真机加载、popup `window.close()`（http 页面受浏览器限制无法观察）。
