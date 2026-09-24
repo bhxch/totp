@@ -7,7 +7,7 @@ import { avatarStyleOf } from './avatarColor'
 
 const { t } = useI18n()
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   entry: OtpEntry
   code: string
   remaining: number
@@ -20,7 +20,11 @@ const props = defineProps<{
   contextMenu?: boolean
   /** 是否渲染行内 QR 按钮（默认 true）；未接 QR 面板的宿主（mini）传 false 移除死入口 */
   showQr?: boolean
-}>()
+}>(), {
+  // 注意：Boolean prop 有 Vue 运行时 casting（未传即 false），默认开启的两项必须显式给默认值
+  contextMenu: true,
+  showQr: true,
+})
 const emit = defineEmits<{ copy: []; qr: []; context: [event: MouseEvent] }>()
 
 const hasContextMenu = computed(() => props.contextMenu !== false)

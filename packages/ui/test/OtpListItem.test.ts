@@ -89,6 +89,29 @@ describe('OtpListItem 右键菜单 / qr / INVALID（C16）', () => {
   })
 })
 
+describe('OtpListItem 宿主适配 prop（contextMenu/showQr，mini 等未接宿主传 false）', () => {
+  it('默认（未传）保留 aria-haspopup、QR 按钮与 context emit（Vue Boolean casting 下显式 withDefaults 兜底）', async () => {
+    const w = mount(OtpListItem, { global: { plugins: [createTestI18n()] }, props: { entry, ...base } })
+    expect(w.find('.otp-item').attributes('aria-haspopup')).toBe('menu')
+    expect(w.find('.show-qr').exists()).toBe(true)
+    await w.find('.otp-item').trigger('contextmenu', { clientX: 5, clientY: 6 })
+    expect(w.emitted('context')).toHaveLength(1)
+  })
+
+  it('contextMenu=false（mini）：不声明 aria-haspopup、右键不 preventDefault 也不 emit', async () => {
+    const w = mount(OtpListItem, { global: { plugins: [createTestI18n()] }, props: { entry, ...base, contextMenu: false } })
+    expect(w.find('.otp-item').attributes('aria-haspopup')).toBeUndefined()
+    await w.find('.otp-item').trigger('contextmenu', { clientX: 5, clientY: 6 })
+    expect(w.emitted('context')).toBeUndefined()
+  })
+
+  it('showQr=false（mini）：不渲染 QR 按钮（copy 按钮不受影响）', () => {
+    const w = mount(OtpListItem, { global: { plugins: [createTestI18n()] }, props: { entry, ...base, showQr: false } })
+    expect(w.find('.show-qr').exists()).toBe(false)
+    expect(w.find('button.copy').exists()).toBe(true)
+  })
+})
+
 describe('OtpListItem ring 几何（I52 + I61）', () => {
   it('stroke-dasharray = 2πr（r=16），stroke-dashoffset = circumference * (1 - progress) 平滑过渡', () => {
     const w = mount(OtpListItem, { global: { plugins: [createTestI18n()] }, props: { entry, code: '123456', remaining: 12, progress: 0.4 } })
