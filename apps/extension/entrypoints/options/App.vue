@@ -141,7 +141,9 @@ async function copyToClipboard(code: string) {
 
 // ---------- 备份平台实现 ----------
 // 文件命名偏好存扩展页 localStorage（非同步内容）：keep=时间戳文件名下载；overwrite=固定名下载。
-// T9 后 BackupCard 已无模式切换（本地源归 desktop），本值仅决定 createBackup 的下载文件名（只读不再写）
+// 【只读兼容化石】无设置入口（T9 后 BackupCard 已无模式切换，本地源归 desktop；扩展端全仓无写入方，
+// 仅老版本用户的 localStorage 残留值仍生效）；且残留值中仅 overwrite 影响下载名（keep 分支的 n
+// 在 createBackup 恒走时间戳名，实际不被消费），保留读取只为不丢 overwrite 兼容
 const BACKUP_MODE_KEY = 'backupMode'
 const BACKUP_KEEP_N_KEY = 'backupKeepN'
 const DEFAULT_KEEP_N = 3

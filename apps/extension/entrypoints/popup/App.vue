@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { buildOtpUri, getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
-import { BatchPastePanel, CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, MdCheckbox, MdIconButton, MdSegmentedButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, OtpQrDialog, parseUriToEntryData, resolvePopupVisible, SearchBar, TagFilterRow, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
+import { BatchPastePanel, CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, MdButton, MdCheckbox, MdIconButton, MdMenu, MdSegmentedButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, OtpQrDialog, parseUriToEntryData, resolvePopupVisible, SearchBar, TagFilterRow, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
@@ -148,11 +148,13 @@ let confirmTimer: ReturnType<typeof setTimeout> | null = null
 // ---------- 右键菜单（spec §10：编辑 / 复制 URI / 置顶） ----------
 /** qr：单条目 otpauth 二维码（行内按钮 / 右键菜单「显示二维码」共用） */
 const qrEntry = ref<OtpEntry | null>(null)
-/** 右键菜单：菜单位置与目标条目 */
-const contextMenu = ref<{ x: number; y: number; entry: OtpEntry } | null>(null)
+/** 右键菜单：菜单位置、目标条目与右键所在元素（trigger 传 MdMenu 供 Esc 关闭回焦；OtpListItem 根
+ *  tabindex=0 可聚焦，回焦有效——同 CodesPage.vue 右键菜单口径） */
+const contextMenu = ref<{ x: number; y: number; entry: OtpEntry; trigger: HTMLElement | null } | null>(null)
 
 function onContextMenu(entry: OtpEntry, e: MouseEvent) {
-  contextMenu.value = { x: e.clientX, y: e.clientY, entry }
+  // currentTarget = 事件载体（OtpListItem 根），仅事件派发期可读，此处同步存元素引用
+  contextMenu.value = { x: e.clientX, y: e.clientY, entry, trigger: (e.currentTarget as HTMLElement) ?? null }
 }
 function closeContextMenu() {
   contextMenu.value = null
@@ -366,7 +368,7 @@ function cancelAutoClose(): void {
     <header>
       <h1>{{ t('popup.title') }}</h1>
       <div class="header-ops">
-        <button v-if="!creating && !editing" @click="startCreate">{{ t('popup.add') }}</button>
+        <MdButton v-if="!creating && !editing" variant="text" @click="startCreate">{{ t('popup.add') }}</MdButton>
         <MdIconButton :title="t('popup.settings')" :aria-label="t('popup.openSettings')" @click="openSettings">
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path :d="SETTINGS_ICON_PATH" fill="currentColor" /></svg>
         </MdIconButton>
@@ -391,7 +393,7 @@ function cancelAutoClose(): void {
       <span v-if="!filterResult.hint && filterOn && filterResult.urlMatchCount > 0" class="hint">{{ t('popup.matchCount', { count: filterResult.urlMatchCount }) }}</span>
     </div>
     <!-- hint 不受 tabUrl 门控：无标签页 URL（新标签页等）时放宽提示仍可达（spec §3 回退提示） -->
-    <span v-if="filterResult.hint" class="hint hint-row">{{ filterResult.hint }}</span>
+    <span v-if="filterResult.hint" class="hint hint-row">{{ t(filterResult.hint) }}</span>
 
     <!-- 错误提示置于 details 外常显：?uri= 回调报错时 details 默认折叠，放内部会静默不可见 -->
     <div v-if="importError" class="error">{{ importError }}</div>
@@ -399,7 +401,7 @@ function cancelAutoClose(): void {
       <summary>{{ t('popup.importSummary') }}</summary>
       <textarea v-model="otpauthUri" rows="2" placeholder="otpauth://totp/GitHub:me?secret=..." />
       <div class="import-row">
-        <button type="button" @click="importOtpauth">{{ t('popup.importBtn') }}</button>
+        <MdButton @click="importOtpauth">{{ t('popup.importBtn') }}</MdButton>
       </div>
     </details>
 
@@ -419,27 +421,25 @@ function cancelAutoClose(): void {
       <OtpListItem :entry="e" :icon="iconView(e.icon, icons)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" @qr="qrEntry = e" @context="(ev) => onContextMenu(e, ev)" @dblclick="cancelAutoClose" />
       <div class="ops">
         <template v-if="confirmingDelete === e.uuid">
-          <button class="danger" @click.stop="askRemove(e.uuid)">{{ t('popup.confirmDelete') }}</button>
+          <MdButton danger @click.stop="askRemove(e.uuid)">{{ t('popup.confirmDelete') }}</MdButton>
         </template>
         <template v-else>
-          <button class="icon" @click.stop="editing = e">✎</button>
-          <button class="icon" @click.stop="askRemove(e.uuid)">🗑</button>
+          <MdIconButton :title="t('codesPage.editEntry', { label: e.label })" :aria-label="t('codesPage.editEntry', { label: e.label })" @click.stop="editing = e">✎</MdIconButton>
+          <MdIconButton :title="t('codesPage.deleteEntry', { label: e.label })" :aria-label="t('codesPage.deleteEntry', { label: e.label })" @click.stop="askRemove(e.uuid)">🗑</MdIconButton>
         </template>
       </div>
     </div>
 
-    <!-- F1：右键菜单（编辑 / 复制 URI / 置顶，spec §10） -->
-    <ul
-      v-if="contextMenu"
-      class="ctx-menu"
-      :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
-      @click.stop
-    >
-      <li><button @click="contextEdit(contextMenu.entry)">{{ t('popup.edit') }}</button></li>
-      <li><button @click="qrEntry = contextMenu.entry; contextMenu = null">{{ t('popup.showQr') }}</button></li>
-      <li><button @click="contextCopyUri(contextMenu.entry)">{{ t('popup.copyUri') }}</button></li>
-      <li><button @click="contextTogglePin(contextMenu.entry)">{{ contextMenu.entry.pinned ? t('popup.unpin') : t('popup.pin') }}</button></li>
-    </ul>
+    <!-- F1：右键菜单（编辑 / 复制 URI / 置顶，spec §10）。MdMenu 负责定位/越界钳制/Esc 关闭/键盘导航/
+         点外关闭（用法同 CodesPage.vue 右键菜单）；trigger=右键所在条目，Esc 关闭后焦点回该条目 -->
+    <MdMenu :x="contextMenu?.x ?? 0" :y="contextMenu?.y ?? 0" :open="contextMenu !== null" :trigger-el="contextMenu?.trigger ?? null" @close="closeContextMenu">
+      <template v-if="contextMenu">
+        <MdButton variant="text" class="ctx-item" @click="contextEdit(contextMenu.entry)">{{ t('popup.edit') }}</MdButton>
+        <MdButton variant="text" class="ctx-item" @click="qrEntry = contextMenu.entry; closeContextMenu()">{{ t('popup.showQr') }}</MdButton>
+        <MdButton variant="text" class="ctx-item" @click="contextCopyUri(contextMenu.entry)">{{ t('popup.copyUri') }}</MdButton>
+        <MdButton variant="text" class="ctx-item" @click="contextTogglePin(contextMenu.entry)">{{ contextMenu.entry.pinned ? t('popup.unpin') : t('popup.pin') }}</MdButton>
+      </template>
+    </MdMenu>
 
     <!-- 单条目 otpauth 二维码（Esc/遮罩/「关闭」按钮关闭） -->
     <OtpQrDialog :open="qrEntry !== null" :entry="qrEntry" @close="qrEntry = null" />
@@ -469,10 +469,6 @@ h1 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .item-wrap { position: relative; }
 .ops { position: absolute; top: 4px; right: 4px; display: flex; gap: 4px; opacity: 0; transition: opacity .15s; }
 .item-wrap:hover .ops, .ops:focus-within { opacity: 1; }
-.ops .icon { border: none; background: none; cursor: pointer; font-size: var(--md-sys-typescale-body-medium); padding: 2px 4px; }
-.ops .danger { border: none; background: none; cursor: pointer; color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); font-weight: 600; }
-/* 右键菜单（类名与样式同 旧单页，保证跨宿主一致观感） */
-.ctx-menu { position: fixed; z-index: 1001; list-style: none; margin: 0; padding: 4px 0; background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); border: 1px solid var(--md-sys-color-outline-variant); border-radius: 6px; box-shadow: 0 2px 12px color-mix(in srgb, var(--md-sys-color-shadow) 18%, transparent); min-width: 120px; }
-.ctx-menu li button { display: block; width: 100%; padding: 6px 14px; border: none; background: none; text-align: left; cursor: pointer; font-size: var(--md-sys-typescale-body-medium); }
-.ctx-menu li button:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
+/* 右键菜单项（MdMenu 容器自带定位与外观；MdButton text 形收紧为菜单项排版，槽内容归本组件作用域，同 CodesPage） */
+.ctx-item { display: block; width: 100%; height: 36px; justify-content: flex-start; border-radius: 0; font-size: var(--md-sys-typescale-body-medium); text-align: left; padding: 0 14px; }
 </style>

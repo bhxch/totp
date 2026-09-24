@@ -1,7 +1,7 @@
 import { SECRET_BAG_KEY } from '@totp/core'
 import { createVueStore, type VueStore } from '@totp/ui'
 import { createDekSession } from './dekSession'
-import { createChromeStorage } from './chromeStorage'
+import { createChromeStorage } from './storage'
 import { setConflictBadge } from './conflictBadge'
 import { ext } from './extApi'
 
@@ -23,7 +23,7 @@ function scheduleSyncPush(s: VueStore): void {
  *  windowId 决定闭包内的 Map 索引——同进程多 store 实例互不泄漏。
  *  onCommittedExtra（纯增量，Task 12）：经队列的全部写路径（commit/commitSettings/加解密 op 等）
  *  成功后在既有 sync-push 调度之后调用——options 页存活期自动云同步的变更通知由此接入；
- *  具名 commit/commitSettings 包装（下方）是 popup 单例路径，popup 无自动云同步 runner，不接 extra
+ *  具名 commitSettings 包装（下方）是 popup 单例路径，popup 无自动云同步 runner，不接 extra
  *  dekPersist（plan16 T12）：宿主会话级 DEK 存取（ext.storage.session）——解锁必写、lock 必清；
  *  session 区跨扩展上下文共享，popup/options 各自传 createDekSession() 即达成共享解锁态
  *  （任一端解锁后另一端 initStore 自动恢复解锁；plan16 设计 §1 附带收益，取代原「窗口完全独立」语义） */
@@ -62,13 +62,7 @@ export function createExtensionStore(
   return s
 }
 
-/** 失败不调度：commit reject（如锁定）时盘上未变更，推送无意义 */
-export async function commit(fn: Parameters<NonNullable<ReturnType<typeof createVueStore>['commit']>>[0]): Promise<void> {
-  if (!store) throw new Error('store not initialized')
-  await store.commit(fn)
-  scheduleSyncPush(store)
-}
-
+/** 失败不调度：commitSettings reject（如锁定）时盘上未变更，推送无意义 */
 export async function commitSettings(): Promise<void> {
   if (!store) throw new Error('store not initialized')
   await store.commitSettings()
@@ -86,7 +80,6 @@ export const {
   locked, hasEncryption, unlock, lock, enableEncryption, disableEncryption, changePassphrase,
   prfSources, addPrfSourceOp, removePrfSourceOp, settings,
 } = store
-export const { commit: storeCommit, commitSettings: storeCommitSettings } = store
 
 export const addEntryOp = store.addEntryOp
 export const updateEntryOp = store.updateEntryOp

@@ -2,6 +2,10 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
+    <!-- manifest.include（WXT HTML entrypoint 元数据，构建期消费）：仅 Chrome 目标产出本入口——
+         Firefox 无 offscreen API，产物含无引用的 offscreen.html 反成死文件（background 经 canOffscreen
+         门控，运行时从不引用该页） -->
+    <meta name="manifest.include" content='["chrome"]' />
     <title>offscreen</title>
   </head>
   <body>

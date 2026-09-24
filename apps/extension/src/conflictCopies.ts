@@ -59,11 +59,6 @@ export async function addConflictCopy(adapter: StorageAdapter, bytes: Uint8Array
   return name
 }
 
-export async function removeConflictCopy(adapter: StorageAdapter, name: string): Promise<void> {
-  const list = await listConflictCopies(adapter)
-  await adapter.set(CONFLICT_COPIES_KEY, JSON.stringify(list.filter((c) => c.name !== name)))
-}
-
 /** 导出（UI 显式调用才触发下载；废除后台自动下载的裁定出口）：按名取副本字节 → Blob 下载。
  *  无该名（已被滚动删除/已裁决清理）→ false 交 UI 提示。 */
 export async function exportConflictCopy(adapter: StorageAdapter, name: string): Promise<boolean> {

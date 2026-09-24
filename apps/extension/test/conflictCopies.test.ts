@@ -1,10 +1,12 @@
 /** @vitest-environment jsdom */
-// 冲突副本 storage.local 列表（Task 10）：add/list/remove/export，上限 5 滚动删，坏数据回落
-// （jsdom 仅为 exportConflictCopy 的 Blob/URL/a.click 提供宿主对象）
+// 冲突副本 storage.local 列表（Task 10）：add/list/export，上限 5 滚动删，坏数据回落
+// （jsdom 仅为 exportConflictCopy 的 Blob/URL/a.click 提供宿主对象）。
+// 注：滚动删除由 addConflictCopy 内部 slice 裁剪实现，无独立 remove 出口（原 removeConflictCopy
+// 仅测试引用，已删除）；CloudCard 副本区仅列表+导出，无单条删除入口
 import { describe, expect, it, vi } from 'vitest'
 import { base64ToBytes, createMemoryStorage } from '@totp/core'
 import {
-  CONFLICT_COPIES_KEY, CONFLICT_COPIES_MAX, addConflictCopy, exportConflictCopy, listConflictCopies, removeConflictCopy,
+  CONFLICT_COPIES_KEY, CONFLICT_COPIES_MAX, addConflictCopy, exportConflictCopy, listConflictCopies,
 } from '../src/conflictCopies'
 
 const bytesOf = (s: string) => new TextEncoder().encode(s)
@@ -37,15 +39,10 @@ describe('conflictCopies', () => {
     expect(list[list.length - 1]!.name).toContain('-s6-') // 最新在尾
   })
 
-  it('remove：按名移除；坏 JSON → 空列表不抛；空列表上移除不抛', async () => {
+  it('坏 JSON → 空列表不抛（副本属救灾数据，不阻断同步主流程）', async () => {
     const a = createMemoryStorage()
-    await addConflictCopy(a, bytesOf('x'), 's1')
-    const [copy] = await listConflictCopies(a)
-    await removeConflictCopy(a, copy!.name)
-    expect(await listConflictCopies(a)).toEqual([])
     await a.set(CONFLICT_COPIES_KEY, '{bad json')
     expect(await listConflictCopies(a)).toEqual([])
-    await removeConflictCopy(a, 'ghost')
   })
 
   it('export：按名触发下载（a.download=副本名）且字节一致；无名 → false 不下载', async () => {
