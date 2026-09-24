@@ -219,6 +219,23 @@ describe('createVueStore', () => {
     expect(onCommitted).toHaveBeenCalledTimes(2) // 失败的写不触发
   })
 
+  it('opts.onLocked：每次 lock() 末尾触发（desktop 清 Rust DEK 暂存槽联动）；不传则零行为', async () => {
+    const adapter = createMemoryStorage()
+    const onLocked = vi.fn()
+    const s = createVueStore(adapter, { onLocked })
+    await s.initStore()
+    expect(onLocked).not.toHaveBeenCalled()
+    s.lock()
+    expect(onLocked).toHaveBeenCalledTimes(1)
+    s.lock()
+    expect(onLocked).toHaveBeenCalledTimes(2) // 再次锁定再次触发
+    // 不传 onLocked 的 store：lock() 照常工作（可选回调缺省零行为，不抛错）
+    const plain = createVueStore(createMemoryStorage())
+    await plain.initStore()
+    expect(() => plain.lock()).not.toThrow()
+    expect(plain.locked.value).toBe(true)
+  })
+
   it('双端独立加密：本端 DEK 解不开远端密文→转锁定等远端口令，拒绝产生幽灵密文', async () => {
     const adapter = createMemoryStorage()
     let notify: ((p: { vault?: boolean; settings?: boolean }) => void) | null = null

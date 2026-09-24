@@ -7,7 +7,7 @@ import { base64ToBytes, bytesToBase64 } from '@totp/core'
 // Service 经 keyring（运行时行为 Windows 构建不可验证，登记 backlog 真机验证）。
 // SecurityCard（启用/移除）与 LockScreen（静默解锁）经 ui DpapiUnlockOps 通道使用。
 // F3：Windows DEK 通道升级 v2 格式 = base64( TOTPDEK1 ‖ DPAPI(DEK, 应用专属附加熵) )，
-// 并仅主窗口可调用——os_auto_unprotect/dpapi_unprotect 不再能解任意用户态 DPAPI 密文
+// 并仅主窗口可调用——os_auto_unprotect 不再能解任意用户态 DPAPI 密文
 // （异熵/无熵非 32B 一律拒绝）；历史无熵 wrappedDekD 由 Rust 端 32B 兜底解出（不 brick 存量），
 // 成功解锁后经 migrateDekWrapToEntropyBound（App.vue）重包为 v2。
 
@@ -32,20 +32,6 @@ export function isEntropyBoundDekWrap(wrappedB64: string): boolean {
     raw.length > DEK_WRAP_MARKER.length &&
     raw.subarray(0, DEK_WRAP_MARKER.length).every((b, i) => b === DEK_WRAP_MARKER[i])
   )
-}
-
-/** DEK 字节 → wrappedDekD（dpapi_protect；F3 起与 os_auto_protect 同为 v2 应用熵绑定通道，仅语义兼容保留） */
-export async function dpapiProtectOs(dek: Uint8Array): Promise<string> {
-  if (dek.length !== DEK_LENGTH) throw new Error('DEK must be 32 bytes')
-  return invoke<string>('dpapi_protect', { dataB64: bytesToBase64(dek) })
-}
-
-/** wrappedDekD → DEK 字节（dpapi_unprotect；F3 起与 os_auto_unprotect 同通道，仅接受本应用 DEK 包裹）；
- *  失败（跨机器/跨用户/损坏/非本应用包裹）由调用方静默处理 */
-export async function dpapiUnprotectOs(wrappedB64: string): Promise<Uint8Array> {
-  const bytes = base64ToBytes(await invoke<string>('dpapi_unprotect', { wrappedB64 }))
-  if (bytes.length !== DEK_LENGTH) throw new Error('DEK must be 32 bytes')
-  return bytes
 }
 
 /** DEK 字节 → base64(OS保护(DEK))（osAutoUnlock 统一通道：Windows=DPAPI / macOS=Keychain / Linux=Secret Service） */

@@ -16,8 +16,15 @@ const props = defineProps<{
   error?: string
   /** 图标视图：html=builtin path 包裹片段（svg innerHTML，fill currentColor）；src=dataUrl；均缺省回退首字母 avatar */
   icon?: { html?: string; src?: string }
+  /** 宿主是否接了条目右键菜单（CodesPage/popup 已接，默认 true）；未接宿主（mini）传 false：不声明 aria-haspopup，右键恢复浏览器默认 */
+  contextMenu?: boolean
+  /** 是否渲染行内 QR 按钮（默认 true）；未接 QR 面板的宿主（mini）传 false 移除死入口 */
+  showQr?: boolean
 }>()
 const emit = defineEmits<{ copy: []; qr: []; context: [event: MouseEvent] }>()
+
+const hasContextMenu = computed(() => props.contextMenu !== false)
+const showQrButton = computed(() => props.showQr !== false)
 
 /** 验收条目3：6 位码默认打码；双击显示 8 秒后自动打回（spec §6 固定时长，不可配置） */
 const MASK_CODE = '••• •••'
@@ -57,8 +64,10 @@ function grouped(code: string): string {
 
 /** 右键菜单：阻止默认浏览器菜单，上抛 event 给父组件在 (x,y) 渲染自定义菜单。
  *  键盘可达性：根元素 tabindex=0 可聚焦，Context Menu 键 / Shift+F10 会在焦点元素上派发
- *  contextmenu 事件 → 键盘用户可触达右键菜单，根上的 aria-haspopup="menu" 向 AT 声明该入口 */
+ *  contextmenu 事件 → 键盘用户可触达右键菜单；仅当宿主接入菜单（contextMenu≠false）时
+ *  阻止默认并上抛，根上的 aria-haspopup="menu" 同步向 AT 声明该入口（B6：mini 未接不声明） */
 function onContextMenu(e: MouseEvent): void {
+  if (!hasContextMenu.value) return
   e.preventDefault()
   emit('context', e)
 }
@@ -69,7 +78,7 @@ function onContextMenu(e: MouseEvent): void {
     class="otp-item"
     role="button"
     tabindex="0"
-    aria-haspopup="menu"
+    :aria-haspopup="hasContextMenu ? 'menu' : undefined"
     @click="emit('copy')"
     @dblclick="onDblclick"
     @keydown.enter="emit('copy')"
@@ -95,7 +104,7 @@ function onContextMenu(e: MouseEvent): void {
       <!-- M-3：内嵌按钮只 stop click 不够——快速双击按钮的 dblclick 会冒泡到根元素触发揭示
            （QR 弹窗打开瞬间底层码明文），按钮层须一并 stop dblclick -->
       <MdIconButton class="copy" :title="t('otpListItem.copyTitle')" :aria-label="t('otpListItem.copyTitle')" @click.stop="emit('copy')" @dblclick.stop>⧉</MdIconButton>
-      <MdIconButton class="show-qr" :title="t('otpListItem.qrTitle')" :aria-label="t('otpListItem.qrTitle')" @click.stop="emit('qr')" @dblclick.stop>▣</MdIconButton>
+      <MdIconButton v-if="showQrButton" class="show-qr" :title="t('otpListItem.qrTitle')" :aria-label="t('otpListItem.qrTitle')" @click.stop="emit('qr')" @dblclick.stop>▣</MdIconButton>
       <svg viewBox="0 0 36 36" class="ring" aria-hidden="true">
         <circle cx="18" cy="18" r="16" class="ring-bg" />
         <circle

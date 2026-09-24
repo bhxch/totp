@@ -6,6 +6,7 @@ import { OtpListItem, createAppI18n, createClipboardClearer, createIconStore, cr
 import { computed, getCurrentInstance, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createTauriFs } from './tauriFs'
 import { createCopyAutoHide } from './miniAutoHide'
+import { sortMiniEntries } from './miniSort'
 
 // store 浅包装（T14 审查根修，与 App.vue 同款）：深 ref 会对嵌套 ref/computed 成员自动解包，
 // 模板 `store.locked` 的布尔判断在深 ref 下靠「解包后恰为 boolean」侥幸正确，shallowRef 下
@@ -30,8 +31,14 @@ async function load() {
   try {
     const adapter = await createTauriFs()
     // spec §7 末尾：mini 窗口独立保持锁定（即使主窗口已解锁）——windowId='mini' 与 'main' 隔离 DEK，
-    // locked=true 初值使其无法解锁；store.commit 拒绝 locked 态写，spec 要求 mini 与 App 交互一致但读不到密文
-    const s = createVueStore(adapter, { windowId: 'mini' })
+    // 双方互不可见对方的会话密钥。store 初值 locked=false（未加密库 mini 直接可读）；加密库由 initStore
+    // 按密文置 locked=true，而 mini 无解锁 UI 也拿不到主窗会话 DEK → 加密库在 mini 恒锁定（store.commit
+    // 拒绝 locked 态写，spec 要求 mini 与 App 交互一致但读不到密文）。
+    // onLocked：mini 的锁库路径（force-lock 联动）同样清 Rust DEK 暂存槽，保证「锁库后不再回注」语义闭环
+    const s = createVueStore(adapter, {
+      windowId: 'mini',
+      onLocked: () => { void invoke('clear_stashed_dek').catch(() => {}) },
+    })
     await s.initStore()
     store.value = s
     // D1 i18n 挂载：设置已从盘载入（含 locale）；仅首次生效，重载不再装入
@@ -54,7 +61,8 @@ async function load() {
 }
 
 // 释放策略联动（spec 批⑧ §7.4）：force-lock=暂停/销毁锁库。只注册一次，回调动态解引用
-// store（mini 聚焦即重建 store 实例）；不监听 stash-dek-request（mini 只读无回注路径，backlog）
+// store（mini 聚焦即重建 store 实例）；不监听 stash-dek-request（mini 只读无回注路径，backlog），
+// 但锁库本身经 onLocked 清 Rust 暂存槽（见 load 内注入）
 let unlistenForceLock: (() => void) | null = null
 
 onMounted(async () => {
@@ -76,7 +84,8 @@ onScopeDispose(() => {
   unlistenForceLock?.()
 })
 
-const sorted = computed(() => (store.value ? [...store.value.vault.entries].sort((a, b) => a.order - b.order) : []))
+/** 列表排序：pinned 优先 → order 升序（sortMiniEntries 纯函数，与 CodesPage.vue 同口径，跨宿主顺序一致） */
+const sorted = computed(() => (store.value ? sortMiniEntries(store.value.vault.entries) : []))
 const { codes } = useOtpCodes(sorted)
 
 /** 30s 清剪贴板：settings.clipboardClearEnabled 开启时复制后定时清空（重复复制重置计时；setup 作用域销毁自动 dispose；store 未就绪时读不到开关视为关闭）。
@@ -126,7 +135,7 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
     <!-- 终审 Important-1：@dblclick 未在 OtpListItem emits 声明，经 attrs fallthrough 合并到组件根元素，
          与组件内部揭示 onDblclick 合并共存（Vue 3 mergeProps 依次调用）——双击即揭示并取消 500ms 自动隐藏
          （审查 I-1：控制器内部递增揭示代次，使 await 期间在途的 copy 不再武装自动隐藏） -->
-    <OtpListItem v-for="e in sorted" :key="e.uuid" :entry="e" :icon="iconView(e.icon, icons ?? undefined)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" @dblclick="autoHide.onDblclick" />
+    <OtpListItem v-for="e in sorted" :key="e.uuid" :entry="e" :icon="iconView(e.icon, icons ?? undefined)" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" :context-menu="false" :show-qr="false" @copy="copy(e)" @dblclick="autoHide.onDblclick" />
   </main>
 </template>
 

@@ -29,6 +29,10 @@ export function createVueStore(
      *  （与 runner onConflicts 同口径，消除「自动同步关闭时 badge 等下轮同步才清」的滞后）；
      *  desktop 不传则零行为 */
     onConflictCountChanged?: (count: number) => void
+    /** lock() 完成后的宿主回调（与 onCommitted 同为可选宿主挂钩，不传零行为）：desktop 注入
+     *  invoke('clear_stashed_dek')——手动/空闲/系统锁库走纯前端 lock() 不通知 Rust，须同步清
+     *  Rust 侧 DEK 暂存槽，防「stash 后 destroy 失败回滚→锁库→销毁重建回注旧 DEK 绕过锁定」 */
+    onLocked?: () => void
   } = {},
 ) {
   const suppressMs = opts.selfWriteSuppressMs ?? 500
@@ -905,6 +909,7 @@ export function createVueStore(
     mergeConflicts.value = [] // 冲突记录含整条目秘密：与保管区同生命周期，锁定清空（盘上密文留待解锁重装载）
     void opts.dekPersist?.clear() // 持久化 DEK 必清（设计 §1：锁=丢弃 DEK，含宿主会话存储）
     replaceVault(createVault())
+    opts.onLocked?.() // 宿主锁定联动（desktop：清 Rust DEK 暂存槽；末尾调用=内存态已全部清毕）
   }
 
   /** 已绑定的 passkey(PRF) 解锁来源视图（LockScreen 渲染按钮 / SecurityCard 列表用） */
@@ -916,17 +921,14 @@ export function createVueStore(
       .map((src) => ({ credentialId: src.credentialId, salt: src.salt }))
   })
 
-  /** 已绑定的 DPAPI 解锁来源视图（至多一个；锁定态仍可见——LockScreen 静默解锁判定用） */
+  /** 已绑定的 DPAPI 解锁来源视图（至多一个；锁定态仍可见——LockScreen 静默解锁判定用；
+   *  App.vue dpapiOps.source 消费。曾有 boolean 别名 hasDpapiSource，全仓零引用已删除） */
   const dpapiSource = computed(() => {
     const s = security.value
     if (!s) return null
     const src = kekSourcesOf(s).find((x): x is Extract<KekSource, { kind: 'dpapi' }> => x.kind === 'dpapi')
     return src ? { wrappedDekD: src.wrappedDekD } : null
   })
-
-  // M5：boolean 视图（命名澄清"是否绑定 DPAPI 来源"）— 取代旧 computed.value === null 的易误读比较。
-  // 旧 dpapiSource 仍保留以兼容 SecurityCard/App.vue，调用方迁移后可下线。
-  const hasDpapiSource = computed(() => dpapiSource.value !== null)
 
   return {
     vault, settings, initStore, registerStorageSync, commit, commitSettings,
@@ -937,8 +939,6 @@ export function createVueStore(
     prfSources,
     /** 已绑定 dpapi 来源（wrappedDekD） */
     dpapiSource,
-    /** 是否已绑定 DPAPI 来源（boolean 视图，M5 提供以替代 dpapiSource.value !== null 比较） */
-    hasDpapiSource,
     /** 会话备份口令只读视图（随保管区密文落盘；锁定清空、解锁自动装载） */
     backupSecret,
     /** 保管区是否已存备份口令（bag.backupPassword 非空；与 backupSecret 组合出三态：未设置/会话内已启用/已存入保管区） */

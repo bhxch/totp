@@ -734,8 +734,13 @@ onMounted(async () => {
     const adapter = await createTauriFs()
     fsAdapter = adapter
     // spec §7 末尾：主窗口独立解锁——windowId='main' 与 mini 隔离 DEK；
-    // onCommitted：任何经队列的写 op 成功后触发自动备份变更检测（锁定态由 runner 内 decideAutoRun 挡下）
-    const s = createVueStore(adapter, { windowId: 'main', onCommitted: () => auto.notifyChanged() })
+    // onCommitted：任何经队列的写 op 成功后触发自动备份变更检测（锁定态由 runner 内 decideAutoRun 挡下）；
+    // onLocked：手动/空闲/系统锁库走纯前端 lock()，经此同步清 Rust DEK 暂存槽（best-effort，失败不阻断锁定）
+    const s = createVueStore(adapter, {
+      windowId: 'main',
+      onCommitted: () => auto.notifyChanged(),
+      onLocked: () => { void invoke('clear_stashed_dek').catch(() => {}) },
+    })
     await s.initStore()
     // 释放策略联动（spec 批⑧ §7.4-7.5，Task 14）：锁库事件 + 不锁库路径的 DEK 暂存回注。
     // 监听容错注册（失败仅该联动降级，不放大为整屏 loadError）
@@ -894,5 +899,5 @@ const railActions = [{ get label() { return tr('desktop.hideToTray') }, onClick:
 <style>
 body { font-family: system-ui, sans-serif; margin: 0; }
 .error { color: var(--md-sys-color-error); padding: 16px; }
-.copy-failed { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 1000; color: var(--md-sys-color-error); background: var(--md-sys-color-error-container); border-radius: 8px; padding: 8px 16px; font-size: var(--md-sys-typescale-body-medium); box-shadow: var(--md-sys-elevation-level2, 0 1px 3px rgba(0,0,0,.3)); }
+.copy-failed { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 1000; color: var(--md-sys-color-error); background: var(--md-sys-color-error-container); border-radius: 8px; padding: 8px 16px; font-size: var(--md-sys-typescale-body-medium); box-shadow: 0 1px 3px var(--md-sys-color-shadow); }
 </style>
