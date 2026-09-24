@@ -19,12 +19,12 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: "${{ inputs.ref }}"
           persist-credentials: false
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6（= v6.1.0）
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6（= v6.5.0）
         with: { node-version: 22, cache: pnpm }
       # dtolnay/rust-toolchain 的 stable 是浮动分支，pin 到 2026-09-22 的分支 HEAD
       #（来源 api.github.com/repos/dtolnay/rust-toolchain/commits/stable）
@@ -51,12 +51,12 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: "${{ inputs.ref }}"
           persist-credentials: false
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6（= v6.1.0）
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6（= v6.5.0）
         with: { node-version: 22, cache: pnpm }
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable HEAD @ 2026-09-22
         with: { targets: "aarch64-apple-darwin,x86_64-apple-darwin" }
@@ -83,15 +83,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: "${{ inputs.ref }}"
           persist-credentials: false
       # libayatana-appindicator3-dev：ubuntu-24.04（ubuntu-latest）已移除 libappindicator3-dev；
       # libxdo-dev 为 tauri v2 Linux 官方依赖清单项。
       - run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev libxdo-dev
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6（= v6.1.0）
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6（= v6.5.0）
         with: { node-version: 22, cache: pnpm }
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable HEAD @ 2026-09-22
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
@@ -127,12 +127,12 @@ jobs:
           - browser: firefox
             artifact_os: firefox
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: "${{ inputs.ref }}"
           persist-credentials: false
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6（= v6.1.0）
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6（= v6.5.0）
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec wxt build -b ${{ matrix.browser }}
