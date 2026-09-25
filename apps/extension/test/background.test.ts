@@ -19,7 +19,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { installChromeShim, type ChromeShim } from './helpers/chromeShim'
-import { stubDefineBackground, type DefineBackgroundStub } from './helpers/defineBackground'
+import { stubDefineBackground } from './helpers/defineBackground'
 
 const { pullSyncIfNewer, pushSync, decodeImageBytesToUri } = vi.hoisted(() => ({
   pullSyncIfNewer: vi.fn(async () => {}),
@@ -42,7 +42,7 @@ vi.mock('../src/qrDecode', () => ({ decodeImageBytesToUri }))
 const VALID_URI = 'otpauth://totp/GitHub:me?secret=JBSWY3DPEHPK3PXP'
 
 let shim: ChromeShim
-let stub: DefineBackgroundStub
+let stub: ReturnType<typeof stubDefineBackground>
 
 /** 每用例独立：重置模块注册表 → 注入 shim+stub → 动态 import（求值即执行注册回调）。
  *  background 模块内有可变闭包状态（syncPushTimer）且注册 listener 无法反挂，逐用例重载隔离。 */
@@ -286,7 +286,7 @@ describe('alarm clipboard-clear → 清剪贴板重试链（B1-7）', () => {
       }
       return undefined
     })
-    const sendSpy = vi.spyOn(shim.chrome.runtime, 'sendMessage')
+    const sendSpy = vi.spyOn(shim.chrome.runtime as { sendMessage: (msg: unknown) => Promise<unknown> }, 'sendMessage')
 
     shim.emitAlarm({ name: 'clipboard-clear' })
     await vi.advanceTimersByTimeAsync(10)
@@ -307,7 +307,7 @@ describe('alarm clipboard-clear → 清剪贴板重试链（B1-7）', () => {
     await loadBackground({ offscreen: {} })
     // background 自身消息路由 listener 存在 → sendMessage 按「已送达无应答」resolve（不 reject），
     // 只能等 1s 超时判定失败——与真实 Chrome 中 offscreen 未挂 listener 时的悬挂通道同型
-    const sendSpy = vi.spyOn(shim.chrome.runtime, 'sendMessage')
+    const sendSpy = vi.spyOn(shim.chrome.runtime as { sendMessage: (msg: unknown) => Promise<unknown> }, 'sendMessage')
 
     shim.emitAlarm({ name: 'clipboard-clear' })
     await vi.advanceTimersByTimeAsync(1_000) // 第 1 轮超时
@@ -332,7 +332,7 @@ describe('alarm clipboard-clear → 清剪贴板重试链（B1-7）', () => {
       }
       return undefined
     })
-    const sendSpy = vi.spyOn(shim.chrome.runtime, 'sendMessage')
+    const sendSpy = vi.spyOn(shim.chrome.runtime as { sendMessage: (msg: unknown) => Promise<unknown> }, 'sendMessage')
 
     shim.emitAlarm({ name: 'clipboard-clear' })
     await vi.advanceTimersByTimeAsync(10)
@@ -344,7 +344,7 @@ describe('alarm clipboard-clear → 清剪贴板重试链（B1-7）', () => {
   it('非 clipboard-clear 的 alarm：忽略', async () => {
     vi.useFakeTimers()
     await loadBackground({ offscreen: {} })
-    const sendSpy = vi.spyOn(shim.chrome.runtime, 'sendMessage')
+    const sendSpy = vi.spyOn(shim.chrome.runtime as { sendMessage: (msg: unknown) => Promise<unknown> }, 'sendMessage')
     shim.emitAlarm({ name: 'other-alarm' })
     await vi.advanceTimersByTimeAsync(5_000)
     expect(sendSpy).not.toHaveBeenCalled()

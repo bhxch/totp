@@ -50,7 +50,7 @@ describe('offscreen clear-clipboard 处理（B2-9/10）', () => {
     const writeText = vi.fn(async () => {})
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
     await loadOffscreen()
-    const sendSpy = vi.spyOn(shim.chrome.runtime, 'sendMessage')
+    const sendSpy = vi.spyOn(shim.chrome.runtime as { sendMessage: (msg: unknown) => Promise<unknown> }, 'sendMessage')
 
     // shim 双向通道：listener 返回 true 持开通道，sendResponse 应答即 resolve
     await expect(shim.runtime.receive({ type: 'clear-clipboard' })).resolves.toEqual({ ok: true })
@@ -76,7 +76,7 @@ describe('offscreen clear-clipboard 处理（B2-9/10）', () => {
     const writeText = vi.fn(async () => {})
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
     await loadOffscreen()
-    const sendSpy = vi.spyOn(shim.chrome.runtime, 'sendMessage')
+    const sendSpy = vi.spyOn(shim.chrome.runtime as { sendMessage: (msg: unknown) => Promise<unknown> }, 'sendMessage')
 
     // 直接派发并注入抛错的 sendResponse（模拟 SW 已销毁、响应端口关闭）
     const listener = offscreenListener()
@@ -92,7 +92,7 @@ describe('offscreen clear-clipboard 处理（B2-9/10）', () => {
 
   it('非 clear-clipboard 消息：不处理、不持通道（返回 undefined）', async () => {
     await loadOffscreen()
-    const sendSpy = vi.spyOn(shim.chrome.runtime, 'sendMessage')
+    const sendSpy = vi.spyOn(shim.chrome.runtime as { sendMessage: (msg: unknown) => Promise<unknown> }, 'sendMessage')
     const listener = offscreenListener()
 
     expect(listener({ type: 'sync-push' }, {}, () => {})).toBeUndefined()

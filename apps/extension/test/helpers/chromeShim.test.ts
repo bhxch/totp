@@ -84,13 +84,13 @@ describe('contextMenus 与 notifications（P3a background 测试面）', () => {
   it('create 记录 props+callback；同 id 重复创建在 callback 期间暴露 runtime.lastError（幂等吞）', () => {
     const shim = installChromeShim()
     shim.contextMenus.create({ id: 'm1', title: 't' }, () => {
-      expect(shim.chrome.runtime.lastError).toBeUndefined()
+      expect((shim.chrome.runtime as { lastError?: unknown }).lastError).toBeUndefined()
     })
     shim.contextMenus.create({ id: 'm1', title: 't' }, () => {
-      expect(shim.chrome.runtime.lastError).toMatchObject({ message: /duplicate id m1/ })
+      expect((shim.chrome.runtime as { lastError?: unknown }).lastError).toMatchObject({ message: /duplicate id m1/ })
     })
     expect(shim.contextMenus.created).toHaveLength(2)
-    expect(shim.chrome.runtime.lastError).toBeUndefined() // callback 结束后清除（Chrome 口径）
+    expect((shim.chrome.runtime as { lastError?: unknown }).lastError).toBeUndefined() // callback 结束后清除（Chrome 口径）
   })
 
   it('onClicked 经 emitContextMenuClick 派发，可移除', () => {
@@ -143,7 +143,7 @@ describe('offscreen / action.openPopup / tabs（按需安装）', () => {
 
   it('runtime.getURL 产出扩展内绝对 URL', () => {
     const shim = installChromeShim()
-    expect(shim.chrome.runtime.getURL('options.html#/settings')).toBe('chrome-extension://test-id/options.html#/settings')
+    expect((shim.chrome.runtime as { getURL: (p: string) => string }).getURL('options.html#/settings')).toBe('chrome-extension://test-id/options.html#/settings')
   })
 })
 
