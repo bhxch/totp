@@ -28,4 +28,25 @@ describe('createAppI18n', () => {
     store.settings.locale = 'en'
     expect(i18n.global.locale.value).toBe('en')
   })
+  it('非法 locale（如 fr）回退：按 navigator.language 判定（en-US → en）', () => {
+    const store = createVueStore(memAdapter())
+    store.settings.locale = 'fr' as typeof store.settings.locale
+    const i18n = createAppI18n(store)
+    expect(i18n.global.locale.value).toBe('en') // jsdom navigator.language='en-US'
+    // 运行时切到另一非法值：同样走 navigator 判定，不产生未知 locale
+    store.settings.locale = 'jp' as typeof store.settings.locale
+    expect(i18n.global.locale.value).toBe('en')
+  })
+  it('非法 locale + 中文环境 navigator：回退 zh（zh 为兜底）', () => {
+    const original = navigator.language
+    Object.defineProperty(navigator, 'language', { value: 'zh-CN', configurable: true, writable: true })
+    try {
+      const store = createVueStore(memAdapter())
+      store.settings.locale = 'de' as typeof store.settings.locale
+      const i18n = createAppI18n(store)
+      expect(i18n.global.locale.value).toBe('zh')
+    } finally {
+      Object.defineProperty(navigator, 'language', { value: original, configurable: true, writable: true })
+    }
+  })
 })

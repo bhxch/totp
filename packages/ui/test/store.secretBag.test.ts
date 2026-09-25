@@ -477,3 +477,20 @@ describe('store secretBag', () => {
     expect(s.credsCache.value['src-2']).toEqual(gistCred)
   })
 })
+
+describe('store 双窗口惰性 ref 缓存（currentXxxRef 分支）', () => {
+  it('同一 store 重复读取 locked/backupSecret：首访建缓存、再访命中同一 ref（!r 两向覆盖）', async () => {
+    const s = createVueStore(createMemoryStorage())
+    await s.initStore()
+    const locked0 = s.locked.value
+    const locked0Again = s.locked.value // 第二次读取命中缓存分支
+    expect(locked0Again).toBe(locked0)
+    const secret0 = s.backupSecret.value
+    const secret0Again = s.backupSecret.value
+    expect(secret0Again).toBe(secret0)
+    // 锁定后缓存 ref 被更新而非重建：视图自动跟随（响应式契约）
+    s.lock()
+    expect(s.locked.value).toBe(true)
+    expect(s.backupSecret.value).toBeNull()
+  })
+})

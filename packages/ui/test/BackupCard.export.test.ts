@@ -63,4 +63,43 @@ describe('BackupCard 导出格式（spec §2.3）', () => {
     await vi.waitFor(() => expect(saveTextFile).toHaveBeenCalledOnce())
     expect(saveTextFile.mock.calls[0]![0]).toBe('aegis-export.json')
   })
+
+  it('Aegis 明文：确认后落盘 aegis-export.json 并显示「已导出」', async () => {
+    const saveTextFile = vi.fn(async (_name: string, _content: string) => true)
+    const vault = JSON.stringify({
+      version: 2, updatedAt: 0,
+      tags: [{ id: 't1', name: 'Work' }, { id: 't2', name: 'Unused' }],
+      entries: [{
+        uuid: 'u1', type: 'totp', issuer: 'GitHub', label: 'me@x.com', secret: 'JBSWY3DPEHPK3PXP',
+        algorithm: 'SHA1', digits: 6, period: 30, tagIds: ['t1'], matchRules: [], order: 0, createdAt: 0,
+      }],
+    })
+    const w = mount(BackupCard, { global: { plugins: [createTestI18n()] }, props: { platform: basePlatform({ saveTextFile }), vaultJson: vault, sessionSecret: 'pw' } })
+    await pickFormat(w, 'Aegis 明文 JSON')
+    await w.find('[data-test="export-run"]').trigger('click')
+    expect(w.find('.export-confirm-row').text()).toContain(PLAINTEXT_CONFIRM)
+    await w.find('[data-test="export-confirm"]').trigger('click')
+    await vi.waitFor(() => expect(saveTextFile).toHaveBeenCalledOnce())
+    expect(saveTextFile.mock.calls[0]![0]).toBe('aegis-export.json')
+    expect(w.text()).toContain('已导出')
+    // 注：core exportAegisPlaintext 目前恒置 droppedTagCount=0，okWithDropped 的 >0 提示分支为防御保留
+  })
+
+  it('Aegis 明文：确认后用户取消（save=false）→ hint「已取消」', async () => {
+    const saveTextFile = vi.fn(async (_name: string, _content: string) => false)
+    const w = mountCard(basePlatform({ saveTextFile }))
+    await pickFormat(w, 'Aegis 明文 JSON')
+    await w.find('[data-test="export-run"]').trigger('click')
+    await w.find('[data-test="export-confirm"]').trigger('click')
+    await vi.waitFor(() => expect(saveTextFile).toHaveBeenCalledOnce())
+    expect(w.text()).toContain('已取消')
+  })
+
+  it('listBackups 拒绝：聚合列表按空处理不阻断（catch 回退空数组）', async () => {
+    const p = basePlatform({ listBackups: vi.fn(async () => { throw new Error('s3 down') }) })
+    const w = mountCard(p)
+    await vi.waitFor(() => expect(p.listBackups).toHaveBeenCalled())
+    expect(w.find('.backup-list li, [class*="backup"]').exists()).toBe(true)
+    expect(w.text()).not.toContain('s3 down') // 静默回退
+  })
 })

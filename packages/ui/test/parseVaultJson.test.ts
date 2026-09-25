@@ -176,3 +176,36 @@ describe('parseVaultJson matchRules 采纳校验（F13）', () => {
     expect(() => parseVaultJson(vaultJson([mkTotp({ matchRules: [{ strategy: 'startsWith', pattern: '(a+)+' }] })]))).not.toThrow()
   })
 })
+
+describe('parseVaultJson 拒绝面补全（盘点 B7-45 方向）', () => {
+  it('根非对象（字符串/数字）：抛「备份内容不是有效的 vault 数据」', () => {
+    expect(() => parseVaultJson('"just a string"')).toThrow('备份内容不是有效的 vault 数据')
+    expect(() => parseVaultJson('42')).toThrow('备份内容不是有效的 vault 数据')
+  })
+  it('根为 null 字面量：同样拒绝（typeof null === object 的语言陷阱防）', () => {
+    expect(() => parseVaultJson('null')).toThrow('备份内容不是有效的 vault 数据')
+  })
+  it('digits 类型白名单：steam 恰 5、yandex 恰 8 通过；steam 6 拒绝', () => {
+    expect(() => parseVaultJson(vaultJson([mkTotp({ type: 'steam', digits: 5 })]))).not.toThrow()
+    expect(() => parseVaultJson(vaultJson([mkTotp({ type: 'yandex', digits: 8 })]))).not.toThrow()
+    expect(() => parseVaultJson(vaultJson([mkTotp({ type: 'steam', digits: 6 })]))).toThrow(/digits/)
+  })
+  it('uuid 空/非串：抛 uuid 缺失', () => {
+    expect(() => parseVaultJson(vaultJson([mkTotp({ uuid: '' })]))).toThrow(/uuid 缺失/)
+    expect(() => parseVaultJson(vaultJson([mkTotp({ uuid: 42 })]))).toThrow(/uuid 缺失/)
+  })
+  it('issuer/label 非字符串：各自拒绝', () => {
+    expect(() => parseVaultJson(vaultJson([mkTotp({ issuer: 1 })]))).toThrow(/issuer 必须为字符串/)
+    expect(() => parseVaultJson(vaultJson([mkTotp({ label: null })]))).toThrow(/label 必须为字符串/)
+  })
+  it('tagIds 含非字符串元素：拒绝', () => {
+    expect(() => parseVaultJson(vaultJson([mkTotp({ tagIds: ['ok', 3] })]))).toThrow(/tagIds/)
+  })
+  it('pin 非字符串：拒绝', () => {
+    expect(() => parseVaultJson(vaultJson([mkTotp({ type: 'yandex', digits: 8, pin: 1234 })]))).toThrow(/pin/)
+  })
+  it('order/createdAt 非数字：各自拒绝', () => {
+    expect(() => parseVaultJson(vaultJson([mkTotp({ order: '0' })]))).toThrow(/order 必须为数字/)
+    expect(() => parseVaultJson(vaultJson([mkTotp({ createdAt: null })]))).toThrow(/createdAt 必须为数字/)
+  })
+})

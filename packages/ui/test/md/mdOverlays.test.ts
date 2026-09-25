@@ -205,4 +205,64 @@ describe('MdMenu', () => {
     w2.unmount()
     trigger.remove()
   })
+  it('位置越界夹取：x/y 超出视口时钳回视口内边距（EST 尺寸推算）', () => {
+    const w = mount(MdMenu, { props: { open: true, x: 5000, y: 5000 } })
+    const style = w.find('.md-menu').attributes('style')!
+    const left = Number(/left: (\d+)px/.exec(style)![1])
+    const top = Number(/top: (\d+)px/.exec(style)![1])
+    expect(left).toBeLessThanOrEqual(window.innerWidth)
+    expect(top).toBeLessThanOrEqual(window.innerHeight)
+    w.unmount()
+  })
+  it('menuItems 过滤 aria-disabled 与 hidden 项；焦点不在项上时 ArrowUp 落末项', async () => {
+    const w = mount(MdMenu, {
+      props: { open: true, x: 0, y: 0 },
+      slots: {
+        default:
+          '<button id="m-a2">A</button>' +
+          '<button id="m-aria" aria-disabled="true">ARIA</button>' +
+          '<button id="m-hidden" hidden>Hidden</button>' +
+          '<button id="m-z">Z</button>',
+      },
+      attachTo: document.body,
+    })
+    await nextTick()
+    item('m-a2').blur()
+    press('ArrowUp') // 焦点不在项上：ArrowUp 落末个可聚焦项（跳过 aria-disabled/hidden）
+    expect(document.activeElement).toBe(item('m-z'))
+    w.unmount()
+  })
+})
+
+describe('MdDialog 焦点陷阱边界', () => {
+  function pressOnDialog(key: string): KeyboardEvent {
+    const ev = new KeyboardEvent('keydown', { key, cancelable: true })
+    window.dispatchEvent(ev)
+    return ev
+  }
+  it('非 Tab/Escape 按键：不触发 close 也不 preventDefault', () => {
+    const w = mount(MdDialog, { props: { open: true }, slots: { default: '<button id="md-a">A</button>' }, attachTo: document.body })
+    const ev = pressOnDialog('Enter')
+    expect(ev.defaultPrevented).toBe(false)
+    expect(w.emitted('close')).toBeUndefined()
+    w.unmount()
+  })
+  it('无可聚焦内容：Tab 被 preventDefault（焦点守卫兜底）', () => {
+    const w = mount(MdDialog, { props: { open: true }, attachTo: document.body })
+    const ev = pressOnDialog('Tab')
+    expect(ev.defaultPrevented).toBe(true)
+    w.unmount()
+  })
+  it('焦点在容器外时 Tab：拉回容器内（preventDefault + root.focus）', async () => {
+    const outside = document.createElement('button')
+    document.body.appendChild(outside)
+    outside.focus()
+    const w = mount(MdDialog, { props: { open: true }, slots: { default: '<button id="md-b">B</button>' }, attachTo: document.body })
+    await nextTick()
+    outside.focus() // nextTick 后 dialog 抢焦，再显式移回外部
+    const ev = pressOnDialog('Tab')
+    expect(ev.defaultPrevented).toBe(true)
+    w.unmount()
+    outside.remove()
+  })
 })

@@ -46,4 +46,13 @@ describe('useOtpCodes', () => {
     // 边界：新周期第一秒 remaining==period → progress=1；最后一秒 remaining==1 → progress=0.1
     expect(c.remaining).toBeLessThanOrEqual(10)
   })
+
+  it('period 0/缺省回落 30（catch 分支兜底口径与成功分支一致）', async () => {
+    const { codes } = useOtpCodes(ref([{ ...entry, uuid: 'z', period: 0 }]))
+    await vi.waitFor(() => expect(codes.value.get('z')).toBeDefined())
+    const c = codes.value.get('z')!
+    expect(c.remaining).toBeGreaterThan(0)
+    expect(c.remaining).toBeLessThanOrEqual(30)
+    expect(c.progress).toBeCloseTo(c.remaining / 30, 5)
+  })
 })
