@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { aesGcmEncrypt, randomBytes } from '../src/crypto/aesgcm'
+import { scrypt } from 'hash-wasm'
 import { importAegisEncrypted, importAegisPlaintext } from '../src/import/aegis'
 import { base32Decode } from '../src/encoding/base32'
+
+const bytesToHex = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')
 
 const enc = () => readFileSync(fileURLToPath(new URL('./fixtures/aegis-encrypted.json', import.meta.url)), 'utf8')
 
@@ -146,5 +150,184 @@ describe('importAegisEncrypted', () => {
     const expected = base32Decode('JBSWY3DPEHPK3PXP')
     expect(expected.length).toBe(10) // SHA-1 长度 160bit = 20 字节（这里因 base32 padding 损失了尾部，正常 16B；仅 sanity check 非空）
     expect(expected.length).toBeGreaterThan(0)
+  })
+})
+
+// ---------- 程序化加密 fixture（盘点 B1 #8）：scrypt 降参数（n=16/r=1/p=1）保证毫秒级，
+// 布局与官方 VaultFile/PasswordSlot/CryptoUtils 一致（本文件头注释），避免新增大量真实 scrypt 用例。
+
+const DB_JSON = JSON.stringify({
+  entries: [{ type: 'totp', uuid: 'u1', name: 'GitHub:me@x.com', info: { secret: 'JBSWY3DPEHPK3PXP', algo: 'SHA1', digits: 6, period: 30 } }],
+})
+
+async function gcmSplit(key: Uint8Array, plain: Uint8Array): Promise<{ ct: Uint8Array; tag: Uint8Array; nonce: Uint8Array }> {
+  const nonce = randomBytes(12)
+  const out = new Uint8Array(await aesGcmEncrypt(key, plain, nonce))
+  return { ct: out.slice(0, out.length - 16), tag: out.slice(out.length - 16), nonce }
+}
+
+/** 构造 Aegis 加密 vault JSON；dbKey 缺省与 slot 口令派生 KEK 解出的 master key 一致 */
+async function buildAegisEncrypted(
+  password: string,
+  opts: {
+    dbPlain?: string
+    dbKey?: Uint8Array
+    params?: Record<string, unknown>
+    slots?: unknown[]
+    dbB64?: string
+  } = {},
+): Promise<string> {
+  const master = randomBytes(32)
+  const dbPlain = opts.dbPlain ?? DB_JSON
+  const db = await gcmSplit(opts.dbKey ?? master, new TextEncoder().encode(dbPlain))
+  const salt = randomBytes(16)
+  const kek = (await scrypt({ password, salt, costFactor: 16, blockSize: 1, parallelism: 1, hashLength: 32, outputType: 'binary' })) as Uint8Array
+  const slotWrap = await gcmSplit(kek, master)
+  const slot = {
+    type: 1,
+    uuid: crypto.randomUUID(),
+    key: bytesToHex(slotWrap.ct),
+    key_params: { nonce: bytesToHex(slotWrap.nonce), tag: bytesToHex(slotWrap.tag) },
+    salt: bytesToHex(salt),
+    n: 16, r: 1, p: 1,
+  }
+  const header = {
+    slots: opts.slots ?? [slot],
+    params: opts.params ?? { nonce: bytesToHex(db.nonce), tag: bytesToHex(db.tag) },
+  }
+  return JSON.stringify({ version: 1, header, db: opts.dbB64 ?? Buffer.from(db.ct).toString('base64') })
+}
+
+describe('importAegisEncrypted 加密结构分支（盘点 B1 #8）', () => {
+  it('降参数程序化 fixture 可解开（验证构造与实现互逆，供结构分支用例复用）', async () => {
+    const r = await importAegisEncrypted(await buildAegisEncrypted('pw123'), 'pw123')
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries[0]).toMatchObject({ issuer: 'GitHub', secret: 'JBSWY3DPEHPK3PXP' })
+  })
+
+  it('缺 header / header 非对象 / 缺 header.params / 缺 header.slots 数组 / db 非字符串 → 结构级报错', async () => {
+    const good = JSON.parse(await buildAegisEncrypted('pw')) as Record<string, unknown>
+    await expect(importAegisEncrypted(JSON.stringify({ version: 1, db: 'x' }), 'pw')).rejects.toThrow('缺少 header')
+    await expect(importAegisEncrypted(JSON.stringify({ version: 1, header: null, db: 'x' }), 'pw')).rejects.toThrow('缺少 header')
+    await expect(importAegisEncrypted(JSON.stringify({ ...good, header: { slots: [] } }), 'pw')).rejects.toThrow('缺少 header.params')
+    await expect(importAegisEncrypted(JSON.stringify({ ...good, header: { params: {} } }), 'pw')).rejects.toThrow('缺少 header.slots')
+    await expect(importAegisEncrypted(JSON.stringify({ ...good, db: 42 }), 'pw')).rejects.toThrow('缺少加密的 db 字符串')
+  })
+
+  it('params.nonce/tag 非法（非 hex、长度≠12/16 字节）→ 结构级报错', async () => {
+    const good = JSON.parse(await buildAegisEncrypted('pw')) as { header: { params: Record<string, string> } }
+    const withParams = async (params: Record<string, unknown>): Promise<string> =>
+      JSON.stringify({ ...good, header: { ...good.header, params } })
+    await expect(importAegisEncrypted(await withParams({ nonce: 'zz-non-hex'.repeat(3), tag: 'bb'.repeat(16) }), 'pw'))
+      .rejects.toThrow('nonce/tag 非法')
+    await expect(importAegisEncrypted(await withParams({ nonce: 'aa'.repeat(11), tag: 'bb'.repeat(16) }), 'pw'))
+      .rejects.toThrow('nonce/tag 非法')
+    await expect(importAegisEncrypted(await withParams({ nonce: 'aa'.repeat(12), tag: 'bb'.repeat(15) }), 'pw'))
+      .rejects.toThrow('nonce/tag 非法')
+    await expect(importAegisEncrypted(await withParams({ nonce: 42, tag: 'bb'.repeat(16) }), 'pw'))
+      .rejects.toThrow('nonce/tag 非法')
+  })
+
+  it('db 非合法 base64 → 结构级报错（区别于口令错误）', async () => {
+    const text = await buildAegisEncrypted('pw')
+    const good = JSON.parse(text) as { db: string }
+    await expect(importAegisEncrypted(JSON.stringify({ ...good, db: '!!!not-base64!!!' }), 'pw'))
+      .rejects.toThrow('db 不是合法 base64')
+  })
+
+  it('slots 含 null / 非 PasswordSlot（RawSlot type=0）→ 跳过，全部不可用时报口令错误', async () => {
+    const text = await buildAegisEncrypted('pw', { slots: [null, { type: 0, uuid: 'raw' }, 42] })
+    await expect(importAegisEncrypted(text, 'pw')).rejects.toThrow('口令错误或文件已损坏')
+  })
+
+  it('slot 结构残缺（缺 key 串 / n 非有限）→ 该 slot 失败换下一个，后续 slot 可解', async () => {
+    const good = await buildAegisEncrypted('pw')
+    const parsed = JSON.parse(good) as { header: { slots: unknown[] } }
+    const okSlot = parsed.header.slots[0]
+    const text = JSON.stringify({
+      ...parsed,
+      header: { ...parsed.header, slots: [{ ...okSlot, key: 123 }, { ...okSlot, n: 'abc' }, okSlot] },
+    })
+    const r = await importAegisEncrypted(text, 'pw')
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries[0]!.issuer).toBe('GitHub')
+  })
+
+  it('master key 解出但 db 用另一密钥加密（GCM 校验失败）→ 口令错误或文件已损坏', async () => {
+    const wrongKey = randomBytes(32)
+    const text = await buildAegisEncrypted('pw', { dbKey: wrongKey })
+    await expect(importAegisEncrypted(text, 'pw')).rejects.toThrow('口令错误或文件已损坏')
+  })
+
+  it('slot 口令不匹配（KEK 错 → GCM 失败）→ 换下一 slot 全失败 → 口令错误', async () => {
+    const text = await buildAegisEncrypted('pw')
+    await expect(importAegisEncrypted(text, 'wrong')).rejects.toThrow('口令错误或文件已损坏')
+  })
+
+  it('解出的 db 非合法 JSON → 结构级报错（master key 正确、db 明文损坏）', async () => {
+    const master = randomBytes(32)
+    const salt = randomBytes(16)
+    const kek = (await scrypt({ password: 'pw', salt, costFactor: 16, blockSize: 1, parallelism: 1, hashLength: 32, outputType: 'binary' })) as Uint8Array
+    const db = await gcmSplit(master, new TextEncoder().encode('{not-json'))
+    const slotWrap = await gcmSplit(kek, master)
+    const text = JSON.stringify({
+      version: 1,
+      header: {
+        slots: [{ type: 1, uuid: 's', key: bytesToHex(slotWrap.ct), key_params: { nonce: bytesToHex(slotWrap.nonce), tag: bytesToHex(slotWrap.tag) }, salt: bytesToHex(salt), n: 16, r: 1, p: 1 }],
+        params: { nonce: bytesToHex(db.nonce), tag: bytesToHex(db.tag) },
+      },
+      db: Buffer.from(db.ct).toString('base64'),
+    })
+    await expect(importAegisEncrypted(text, 'pw')).rejects.toThrow('结构非法')
+  })
+})
+
+describe('importAegisPlaintext 明文字段与 groups 边角（盘点 B1 #2-5）', () => {
+  it('db.groups 表项脏数据（null/缺 uuid/空白名）逐项跳过，合法项保留', () => {
+    const text = JSON.stringify({
+      db: {
+        groups: [null, { name: 'no-uuid' }, { uuid: 42, name: 'bad-uuid' }, { uuid: 'g1', name: '   ' }, { uuid: 'g2', name: '工作' }],
+        entries: [
+          { type: 'totp', name: 'GitHub:me', info: { secret: 'JBSWY3DPEHPK3PXP' }, groups: ['g1', 'g2'] },
+        ],
+      },
+    })
+    const r = importAegisPlaintext(text)
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries[0]!.tags).toEqual(['工作'])
+  })
+
+  it('新版独立 issuer 字段优先于 name 前缀；issuer 缺失/空串回退 name 冒号拆分', () => {
+    const text = JSON.stringify({
+      db: {
+        entries: [
+          { type: 'totp', uuid: 'u1', name: 'Prefix:label', issuer: 'RealIssuer', info: { secret: 'JBSWY3DPEHPK3PXP' } },
+          { type: 'totp', uuid: 'u2', name: 'Fallback:label', issuer: '', info: { secret: 'JBSWY3DPEHPK3PXP' } },
+          { type: 'totp', uuid: 'u3', name: 'Legacy:label', info: { secret: 'JBSWY3DPEHPK3PXP' } },
+        ],
+      },
+    })
+    const r = importAegisPlaintext(text)
+    expect(r.entries[0]).toMatchObject({ issuer: 'RealIssuer', label: 'label' })
+    expect(r.entries[1]).toMatchObject({ issuer: 'Fallback', label: 'label' })
+    expect(r.entries[2]).toMatchObject({ issuer: 'Legacy', label: 'label' })
+  })
+
+  it('note 非空采纳（空串不写）；counter≥0 采纳（负数不写）；type=steam 强制 digits=5', () => {
+    const text = JSON.stringify({
+      db: {
+        entries: [
+          { type: 'totp', uuid: 'u1', name: 'A:a', note: '用户笔记', info: { secret: 'JBSWY3DPEHPK3PXP', counter: -1 } },
+          { type: 'hotp', uuid: 'u2', name: 'B:b', note: '', info: { secret: 'JBSWY3DPEHPK3PXP', counter: 7 } },
+          { type: 'steam', uuid: 'u3', name: 'Steam:s', info: { secret: 'JBSWY3DPEHPK3PXP', digits: 8 } },
+        ],
+      },
+    })
+    const r = importAegisPlaintext(text)
+    expect(r.entries[0]).toMatchObject({ note: '用户笔记' })
+    expect(r.entries[0]!.counter).toBeUndefined() // 负 counter 不采纳
+    expect(r.entries[1]).toMatchObject({ counter: 7 })
+    expect('note' in r.entries[1]!).toBe(false)
+    expect(r.entries[2]).toMatchObject({ type: 'steam', digits: 5 })
   })
 })

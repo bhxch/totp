@@ -5,6 +5,7 @@ import {
   importFreeOtp,
   importFreeOtpLegacy,
   importTotpAuthenticator,
+  xmlUnescape,
 } from '../src/import/miscApps'
 import { sniffFormat } from '../src/import/sniff'
 
@@ -102,6 +103,16 @@ describe('importFreeOtpLegacy（旧版 FreeOTP tokens.xml）', () => {
     expect(r.failures).toHaveLength(1)
     expect(() => importFreeOtpLegacy('{"tokens": []}')).toThrow(/XML/)
   })
+
+  it('数字实体反转义：十六进制（&#x41;）与十进制（&#66;）形态（Battle.net/Authy XML 复用同一实现）', () => {
+    expect(xmlUnescape('&#x41;&#66;')).toBe('AB')
+    expect(xmlUnescape('a&amp;b&lt;c&gt;d&quot;e&apos;f')).toBe(`a&b<c>d"e'f`)
+    // FreeOTP legacy XML 内的数字实体在 JSON 解析前被还原
+    const xml = `<map><string name="X:&#x41;&#66;">{"issuerExt":"X:AB","label":"&#65;ok","secret":[74,66,83,87,89,51,68,80],"type":"TOTP"}</string></map>`
+    const r = importFreeOtpLegacy(xml)
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries[0]).toMatchObject({ issuer: 'X:AB', label: 'Aok' })
+  })
 })
 
 // ---------- TOTP Authenticator（TotpAuthenticatorImporter.java：
@@ -163,6 +174,38 @@ describe('importTotpAuthenticator', () => {
     await expect(importTotpAuthenticator(await buildBin(entries, 'Testtest1'), 'wrong')).rejects.toThrow(/口令错误/)
     // 非 base64 → 结构级错误
     await expect(importTotpAuthenticator('not base64!!!')).rejects.toThrow(/base64/)
+  })
+
+  // 解密后内容形态边角（盘点 B3 #17）：解密成功但外层结构各异的收敛口径。
+  // 复用 buildBin 的加密通道，仅替换外层 JSON 形态。
+  const buildBinRaw = async (outerJson: string, password: string): Promise<string> => {
+    const iv = new Uint8Array(16)
+    const keyBytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(password)))
+    const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-CBC', false, ['encrypt'])
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-CBC', iv }, key, new TextEncoder().encode(outerJson)))
+    let s = ''
+    for (const b of ct) s += String.fromCharCode(b)
+    return btoa(s)
+  }
+
+  it('解密后空对象 → 空结果（源码 keys 判空口径）', async () => {
+    const r = await importTotpAuthenticator(await buildBinRaw('{}', 'TotpAuthenticator'))
+    expect(r).toEqual({ entries: [], failures: [] })
+  })
+
+  it('解密后首键非 JSON → 结构级报错（App 序列化怪癖：首键即条目数组 JSON 串）', async () => {
+    await expect(importTotpAuthenticator(await buildBinRaw(JSON.stringify({ 'not-json': '' }), 'pw'), 'pw'))
+      .rejects.toThrow('TOTP Authenticator 文件结构非法：解密内容不含有效条目数组')
+  })
+
+  it('解密内容非对象（数组）→ 结构级报错', async () => {
+    await expect(importTotpAuthenticator(await buildBinRaw('[1,2]', 'pw'), 'pw'))
+      .rejects.toThrow('TOTP Authenticator 文件结构非法：解密内容不是 JSON 对象')
+  })
+
+  it('解密明文非 JSON（外层结构损坏但可解密）→ 口令错误或文件已损坏', async () => {
+    await expect(importTotpAuthenticator(await buildBinRaw('garbage not json', 'pw'), 'pw'))
+      .rejects.toThrow('TOTP Authenticator 口令错误或文件已损坏')
   })
 })
 

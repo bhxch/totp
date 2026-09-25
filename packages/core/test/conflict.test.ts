@@ -116,4 +116,43 @@ describe('导入 tags 落地（spec §4）', () => {
     expect(v.entries[0]!.tagIds).toEqual(['t9'])
     expect(v.tags).toHaveLength(0)
   })
+
+  it('空白 tag 名逐个跳过（spec §4：空白不入 tags 表）', () => {
+    let v = createVault()
+    v = applyImport(v, [mkParsed('A', 'a', ['  ', '', '工作'])], 'skip', new Set())
+    expect(v.tags.map((t) => t.name)).toEqual(['工作'])
+    expect(v.entries[0]!.tagIds).toHaveLength(1)
+  })
+
+  it('replace：conflictIdx 指向的下标已无匹配现有条目（悬空 idx）→ 跳过不新增', () => {
+    let v = createVault()
+    v = addEntry(v, newEntryFromUri('otpauth://totp/GitHub:me?secret=JBSWY3DPEHPK3PXP', 0))
+    // 手工传入与现有条目 issuer+label 均不匹配的悬空冲突位
+    v = applyImport(v, [p('Ghost', 'nowhere')], 'replace', new Set([0]))
+    expect(v.entries).toHaveLength(1)
+    expect(v.entries[0]!.issuer).toBe('GitHub')
+  })
+
+  it('新增路径携带 counter/note/pin（yandex）：newEntryFromParsed 全字段落地', () => {
+    const parsed: ParsedEntry = {
+      type: 'yandex', issuer: 'Yandex', label: 'user', secret: 'JBSWY3DPEHPK3PXP',
+      algorithm: 'SHA256', digits: 8, period: 30, counter: 3, note: '备注', pin: '1234',
+    }
+    const v = applyImport(createVault(), [parsed], 'skip', new Set())
+    expect(v.entries[0]).toMatchObject({ type: 'yandex', counter: 3, note: '备注', pin: '1234', digits: 8 })
+  })
+
+  it('replace：yandex 条目 pin 显式覆盖（新值替换旧值；无 pin 清除残留）', () => {
+    const mkYandex = (pin?: string): ParsedEntry => ({
+      type: 'yandex', issuer: 'Yandex', label: 'user', secret: 'JBSWY3DPEHPK3PXP',
+      algorithm: 'SHA1', digits: 8, period: 30, ...(pin !== undefined ? { pin } : {}),
+    })
+    let v = createVault()
+    v = addEntry(v, newEntryFromParsed(mkYandex('0000'), 'u1', 1))
+    v = applyImport(v, [mkYandex('9999')], 'replace', new Set([0]))
+    expect(v.entries[0]!.pin).toBe('9999')
+    // 导入结果无 pin → 清除（parsedPatch 显式写 undefined），避免旧 pin 残留导致算码错误
+    v = applyImport(v, [mkYandex()], 'replace', new Set([0]))
+    expect(v.entries[0]!.pin).toBeUndefined()
+  })
 })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractGenericRows, importGeneric, importUriBatch, mapRowToEntry, sniffAegis, sniffFormat } from '../src/import/sniff'
+import { extractGenericRows, importGeneric, importUriBatch, mapRowToEntry, sniffAegis, sniffFoxauthEncrypted, sniffFormat } from '../src/import/sniff'
 import type { RowMapping } from '../src/import/sniff'
 
 describe('sniffFormat', () => {
@@ -178,5 +178,61 @@ describe('mapRowToEntry/importGeneric', () => {
     const r = importGeneric(JSON.stringify([{ ...row }]), { ...mapping, secret: { path: 'otp.secret', transform: 'none' } })
     expect(r.failures).toEqual([])
     expect(r.entries[0]).toMatchObject({ secret: 'jbswy3dpehpk3pxp' })
+  })
+
+  it('显式 path 存在但值非数组 → rows=[]（jsonObjectArray 空行）', () => {
+    const r = extractGenericRows(JSON.stringify({ data: { otps: { a: 1 } } }), 'data.otps')
+    expect(r.kind).toBe('jsonObjectArray')
+    expect(r.rows).toEqual([])
+  })
+
+  it('importGeneric rowsOverride 透传：跳过文本探测，直接按行映射', () => {
+    const r = importGeneric('irrelevant text', mapping, [row, { name: 'bad' }])
+    expect(r.entries).toHaveLength(1)
+    expect(r.failures).toEqual([{ index: 1, message: '缺少 secret 字段' }])
+  })
+
+  it('counter 采纳与 defaults：行内 counter≥0 优先、非法回落 defaults.counter；note 同口径', () => {
+    const m: RowMapping = {
+      issuer: { path: 'name' },
+      secret: { path: 'secret' },
+      counter: { path: 'seq' },
+      note: { path: 'memo' },
+      defaults: { counter: 5, note: '默认备注' },
+    }
+    // 行内值合法 → 采纳
+    expect(mapRowToEntry({ secret: 'JBSWY3DPEHPK3PXP', name: 'A', seq: 9, memo: '行内备注' }, m))
+      .toMatchObject({ counter: 9, note: '行内备注' })
+    // 行内值非法（负数/缺失/非数值）→ defaults
+    expect(mapRowToEntry({ secret: 'JBSWY3DPEHPK3PXP', name: 'B', seq: -1 }, m)).toMatchObject({ counter: 5, note: '默认备注' })
+    expect(mapRowToEntry({ secret: 'JBSWY3DPEHPK3PXP', name: 'C' }, m)).toMatchObject({ counter: 5, note: '默认备注' })
+    // 无 defaults → 不写 counter/note
+    const bare = mapRowToEntry({ secret: 'JBSWY3DPEHPK3PXP', name: 'D' }, { issuer: { path: 'name' }, secret: { path: 'secret' } })
+    expect('counter' in bare).toBe(false)
+    expect('note' in bare).toBe(false)
+  })
+
+  it('JSONL 混坏行：坏行跳过不计 rows，好行保留', () => {
+    const r = extractGenericRows('{"a":1}\nthis is broken\n\n{"b":2}')
+    expect(r.kind).toBe('jsonl')
+    expect(r.rows).toEqual([{ a: 1 }, { b: 2 }])
+  })
+})
+
+describe('嗅探与批量导入边角（盘点 B6/B7 #27-28）', () => {
+  it('importUriBatch 空文本输入 → 空结果', () => {
+    expect(importUriBatch('')).toEqual({ entries: [], failures: [] })
+    expect(importUriBatch('   \n  ')).toEqual({ entries: [], failures: [] })
+  })
+
+  it('sniffAegis/sniffFoxauthEncrypted 对非对象 JSON 与解析失败收敛 false/null', () => {
+    expect(sniffAegis('{broken json')).toBeNull()
+    expect(sniffAegis('"just a string"')).toBeNull()
+    expect(sniffFoxauthEncrypted('[1,2]')).toBe(false)
+    expect(sniffFoxauthEncrypted('{broken json')).toBe(false)
+  })
+
+  it('整体非合法 JSON 的花括号文本不误判：落 JSONL 判定失败后返回 null', () => {
+    expect(sniffFormat('{"db":{"entries":[]},,}')).toBeNull()
   })
 })

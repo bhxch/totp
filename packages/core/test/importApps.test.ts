@@ -84,6 +84,17 @@ describe('importTwoFas', () => {
     expect(res.entries[0]!.tags).toEqual(['工作'])
     expect(res.entries[1]!.tags).toBeUndefined()
   })
+
+  it('groups 表脏项（null/缺 id/空白名/非串 id）逐项跳过，合法项仍生效', () => {
+    const text = JSON.stringify({
+      schemaVersion: 4,
+      groups: [null, { name: 'no-id' }, { id: 42, name: 'bad' }, { id: 'g1', name: '   ' }, { id: 'g2', name: '工作' }],
+      services: [{ name: 'GitHub', secret: SECRET, groupId: 'g2', otp: { account: 'me' } }],
+    })
+    const r = importTwoFas(text)
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries[0]!.tags).toEqual(['工作'])
+  })
 })
 
 // ---------- Bitwarden（BitwardenImporter.java：items[].login.totp 为 otpauth URI；本工具扩展裸 base32 secret） ----------
@@ -146,6 +157,17 @@ describe('importBitwarden', () => {
     expect(res.failures).toHaveLength(0)
     expect(res.entries[0]!.tags).toEqual(['工作'])
     expect(res.entries[1]!.tags).toBeUndefined()
+  })
+
+  it('login.totp 纯空白串（trim 后为空）按缺失单条失败，不误入裸 base32 分支', () => {
+    const r = importBitwarden(JSON.stringify({
+      items: [
+        { name: 'Blank', login: { username: 'u', totp: '   ' } },
+        { name: 'Ok', login: { username: 'u', totp: 'JBSWY3DPEHPK3PXP' } },
+      ],
+    }))
+    expect(r.entries).toHaveLength(1)
+    expect(r.failures).toEqual([{ index: 0, message: '条目 0 缺少 login.totp' }])
   })
 })
 

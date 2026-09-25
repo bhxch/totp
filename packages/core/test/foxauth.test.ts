@@ -26,6 +26,15 @@ describe('importFoxauth 明文', () => {
     await expect(importFoxauth(JSON.stringify({ accountInfos: [], isEncrypted: false }))).rejects.toThrow(/无条目/)
   })
 
+  it('accountInfos 既非数组也非串：明文分支与加密分支（已给口令）均结构级报错', async () => {
+    await expect(importFoxauth(JSON.stringify({ accountInfos: 42, isEncrypted: false })))
+      .rejects.toThrow('FoxAuth 文件结构非法：缺少 accountInfos 数组')
+    await expect(importFoxauth(
+      JSON.stringify({ accountInfos: { a: 1 }, isEncrypted: true, passwordInfo: { encryptPassword: btoa('pw'), encryptIV: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] } }),
+      'pw',
+    )).rejects.toThrow('FoxAuth 文件结构非法：缺少 accountInfos')
+  })
+
   it('加密备份未给口令：明确报错（需要口令）', async () => {
     await expect(importFoxauth(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: {} })))
       .rejects.toThrow(/需要口令/)

@@ -166,6 +166,20 @@ describe('authyRowsToEntries（AuthyImporter 令牌数组行）', () => {
     expect(r.entries[0]!.secret).toBe(SECRET)
   })
 
+  it('加密条目缺 salt → 结构级报错（EncryptedState.decrypt 的 getString("salt") 抛错口径）', async () => {
+    await expect(authyRowsToEntries(
+      [{ accountType: 'github', name: 'X', digits: 6, encryptedSecret: '0Rdt6VuDJ1L/MXhfZ0dF/jUsW8ZOf2jf+b0po1qt8Rc=' }],
+      'pw',
+    )).rejects.toThrow('Authy 文件结构非法：加密条目缺少 salt')
+  })
+
+  it('encryptedSecret 非合法 base64 → 口令错误或文件已损坏', async () => {
+    await expect(authyRowsToEntries(
+      [{ accountType: 'github', name: 'X', digits: 6, encryptedSecret: '!!!not-b64!!!', salt: 'SALT' }],
+      'pw',
+    )).rejects.toThrow('Authy 口令错误或文件已损坏')
+  })
+
   it('importAuthy：shared_prefs XML 提取 .key 值（实体转义 JSON 数组）后按行转换', async () => {
     const tokens = [{ accountType: null, originalIssuer: 'ACME', originalName: 'a', name: 'ACME: a', digits: 6, decryptedSecret: SECRET }]
     const xml = `<map>\n  <string name="com.authy.storage.tokens.authenticator.key">${JSON.stringify(tokens)
@@ -175,6 +189,12 @@ describe('authyRowsToEntries（AuthyImporter 令牌数组行）', () => {
     expect(r.entries[0]).toMatchObject({ issuer: 'ACME', label: 'a', secret: SECRET })
     // 无 .key 键 → 空结果（Aegis read(InputStream) 口径：JSONArray 保持空）
     expect(await importAuthy('<map><string name="other">1</string></map>')).toEqual({ entries: [], failures: [] })
+  })
+
+  it('importAuthy：.key 值非 JSON / 非 JSON 数组 → 结构级报错', async () => {
+    const xml = (value: string): string => `<map><string name="com.authy.storage.tokens.authenticator.key">${value}</string></map>`
+    await expect(importAuthy(xml('{oops'))).rejects.toThrow('Authy 文件结构非法：令牌值不是合法 JSON')
+    await expect(importAuthy(xml('{"a": 1}'))).rejects.toThrow('Authy 文件结构非法：令牌值不是 JSON 数组')
   })
 })
 
