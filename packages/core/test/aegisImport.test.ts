@@ -242,8 +242,8 @@ describe('importAegisEncrypted 加密结构分支（盘点 B1 #8）', () => {
 
   it('slot 结构残缺（缺 key 串 / n 非有限）→ 该 slot 失败换下一个，后续 slot 可解', async () => {
     const good = await buildAegisEncrypted('pw')
-    const parsed = JSON.parse(good) as { header: { slots: unknown[] } }
-    const okSlot = parsed.header.slots[0]
+    const parsed = JSON.parse(good) as { header: { slots: Array<Record<string, unknown>> } }
+    const okSlot = parsed.header.slots[0]!
     const text = JSON.stringify({
       ...parsed,
       header: { ...parsed.header, slots: [{ ...okSlot, key: 123 }, { ...okSlot, n: 'abc' }, okSlot] },
@@ -329,5 +329,69 @@ describe('importAegisPlaintext 明文字段与 groups 边角（盘点 B1 #2-5）
     expect(r.entries[1]).toMatchObject({ counter: 7 })
     expect('note' in r.entries[1]!).toBe(false)
     expect(r.entries[2]).toMatchObject({ type: 'steam', digits: 5 })
+  })
+
+  it('条目数组 null 元素 / 缺 info 对象 → 单条失败不阻断', () => {
+    const r = importAegisPlaintext(JSON.stringify({
+      db: { entries: [null, { type: 'totp', uuid: 'u2', name: 'NoInfo' }] },
+    }))
+    expect(r.entries).toHaveLength(0)
+    expect(r.failures.map((f) => f.message)).toEqual(['条目 0 非对象', '条目 1 缺少 secret'])
+  })
+
+  it('issuer 非字符串（非法形态）且 name 无冒号 → issuer 空、label 全名', () => {
+    const r = importAegisPlaintext(JSON.stringify({
+      db: { entries: [{ type: 'totp', uuid: 'u1', name: 'plainname', issuer: 42, info: { secret: 'JBSWY3DPEHPK3PXP' } }] },
+    }))
+    expect(r.entries[0]).toMatchObject({ issuer: '', label: 'plainname' })
+  })
+
+  it('顶层 JSON null → 结构级报错（区别于解析失败）', () => {
+    expect(() => importAegisPlaintext('null')).toThrow('Aegis 文件结构非法：顶层不是 JSON 对象')
+  })
+
+  it('yandex 无 pin：不写 pin 字段', () => {
+    const r = importAegisPlaintext(JSON.stringify({
+      db: { entries: [{ type: 'yandex', uuid: 'u1', name: 'Yandex:u', info: { secret: 'KJTEUGOD5SNXVWBCWJ4G36W4IA' } }] },
+    }))
+    expect(r.entries[0]).toMatchObject({ type: 'yandex' })
+    expect('pin' in r.entries[0]!).toBe(false)
+  })
+
+  it('slot 残缺形态（salt 非 hex / nonce 长度≠12 / 缺 key_params）→ 该 slot 解密返回 null，后续 slot 可解', async () => {
+    const good = await buildAegisEncrypted('pw')
+    const parsed = JSON.parse(good) as { header: { slots: Array<Record<string, unknown>> } }
+    const okSlot = parsed.header.slots[0]!
+    const { key_params: _kp, ...noKeyParams } = okSlot
+    void _kp
+    const text = JSON.stringify({
+      ...parsed,
+      header: {
+        ...parsed.header,
+        slots: [
+          { ...okSlot, salt: 'zz-not-hex' },
+          { ...okSlot, key_params: { nonce: 'aa'.repeat(11), tag: 'bb'.repeat(16) } },
+          noKeyParams,
+          okSlot,
+        ],
+      },
+    })
+    const r = await importAegisEncrypted(text, 'pw')
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries[0]!.issuer).toBe('GitHub')
+  })
+
+  it('db 存在但缺 entries 数组 → 结构级报错；name 非字符串 → name 空串', () => {
+    expect(() => importAegisPlaintext(JSON.stringify({ db: { groups: [] } }))).toThrow('缺少 db.entries 数组')
+    const r = importAegisPlaintext(JSON.stringify({
+      db: { entries: [{ type: 'totp', uuid: 'u1', name: 42, info: { secret: 'JBSWY3DPEHPK3PXP' } }] },
+    }))
+    expect(r.entries[0]).toMatchObject({ issuer: '', label: '' })
+  })
+
+  it('params.tag 非字符串 → 结构级报错', async () => {
+    const good = JSON.parse(await buildAegisEncrypted('pw')) as { header: { params: Record<string, string> } }
+    const text = JSON.stringify({ ...good, header: { ...good.header, params: { nonce: 'aa'.repeat(12), tag: 42 } } })
+    await expect(importAegisEncrypted(text, 'pw')).rejects.toThrow('nonce/tag 非法')
   })
 })

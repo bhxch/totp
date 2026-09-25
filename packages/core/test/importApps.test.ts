@@ -95,6 +95,30 @@ describe('importTwoFas', () => {
     expect(r.failures).toHaveLength(0)
     expect(r.entries[0]!.tags).toEqual(['工作'])
   })
+
+  it('schemaVersion 缺失（非有限数）不触发版本拒绝；service 无 name 时 issuer 回退 otp.issuer', () => {
+    const text = JSON.stringify({
+      services: [
+        { secret: SECRET, otp: { account: 'me', issuer: 'Fallback' } },
+        { name: '', secret: SECRET, otp: { account: 'me2' } }, // name 空串 → 回退 otp.issuer 缺失 → ''
+        { secret: SECRET, otp: { account: 42, issuer: 'N' } }, // account 非串 → label ''
+      ],
+    })
+    const r = importTwoFas(text)
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries[0]).toMatchObject({ issuer: 'Fallback', label: 'me' })
+    expect(r.entries[1]).toMatchObject({ issuer: '', label: 'me2' })
+    expect(r.entries[2]).toMatchObject({ issuer: 'N', label: '' })
+  })
+
+  it('services 数组 null 元素 → 单条失败「非对象」不阻断', () => {
+    const r = importTwoFas(JSON.stringify({
+      schemaVersion: 4,
+      services: [null, { name: 'Ok', secret: SECRET, otp: { account: 'me' } }],
+    }))
+    expect(r.entries).toHaveLength(1)
+    expect(r.failures).toEqual([{ index: 0, message: '条目 0 非对象' }])
+  })
 })
 
 // ---------- Bitwarden（BitwardenImporter.java：items[].login.totp 为 otpauth URI；本工具扩展裸 base32 secret） ----------
@@ -134,6 +158,20 @@ describe('importBitwarden', () => {
     expect(r.failures.map((f) => f.index)).toEqual([0, 1, 2])
   })
 
+  it('otpauth URI 解析抛错（缺 secret）与 steam secret 非法 → 单条失败', () => {
+    const r = importBitwarden(JSON.stringify({
+      items: [
+        { name: 'BadUri', login: { totp: 'otpauth://totp/x' } },
+        { name: 'BadSteam', login: { totp: 'steam://!!not-b32!!' } },
+      ],
+    }))
+    expect(r.entries).toHaveLength(0)
+    expect(r.failures.map((f) => f.message)).toEqual([
+      '条目 0 totp 非法 otpauth URI',
+      '条目 1 steam secret 非法',
+    ])
+  })
+
   it('结构级错误：缺 items 数组 / 非法 JSON / 密码保护导出（encrypted:true）', () => {
     expect(() => importBitwarden('{"folders": []}')).toThrow(/items/)
     expect(() => importBitwarden('not json')).toThrow(/Bitwarden/)
@@ -168,6 +206,17 @@ describe('importBitwarden', () => {
     }))
     expect(r.entries).toHaveLength(1)
     expect(r.failures).toEqual([{ index: 0, message: '条目 0 缺少 login.totp' }])
+  })
+
+  it('item 字段脏形态容错：name 非串→issuer 空、notes 空串→不产出 note 值', () => {
+    const r = importBitwarden(JSON.stringify({
+      items: [
+        { name: 42, notes: '', login: { username: 'u', totp: 'JBSWY3DPEHPK3PXP' } },
+      ],
+    }))
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries[0]).toMatchObject({ issuer: '', label: 'u', secret: 'JBSWY3DPEHPK3PXP' })
+    expect(r.entries[0]!.note).toBeUndefined()
   })
 })
 
@@ -229,6 +278,33 @@ describe('importProton', () => {
     expect(r.failures.map((f) => f.index)).toEqual([0, 1, 2])
   })
 
+  it('字段脏形态容错：uri 纯空白串按缺失失败、name 非串→label 空', () => {
+    const r = importProton(JSON.stringify({
+      entries: [
+        { content: { name: 'blank', uri: '   ' } },
+        { content: { uri: `otpauth://totp/Uri:issuer?secret=${SECRET}` } },
+      ],
+    }))
+    expect(r.entries).toHaveLength(1)
+    expect(r.failures).toEqual([{ index: 0, message: '条目 0 缺少 content.uri' }])
+    expect(r.entries[0]).toMatchObject({ issuer: 'Uri', label: '' })
+  })
+
+  it('entries 数组 null 元素与 steam secret 非法 → 单条失败', () => {
+    const r = importProton(JSON.stringify({
+      entries: [
+        null,
+        { content: { name: 's', uri: 'steam://!!not-b32!!' } },
+        { content: { name: 'ok', uri: `otpauth://totp/ok?secret=${SECRET}` } },
+      ],
+    }))
+    expect(r.entries).toHaveLength(1)
+    expect(r.failures.map((f) => f.message)).toEqual([
+      '条目 0 非对象',
+      '条目 1 steam secret 非法',
+    ])
+  })
+
   it('结构级错误：缺 entries / 加密导出（salt+content）', () => {
     expect(() => importProton('{"foo": 1}')).toThrow(/entries/)
     expect(() => importProton(JSON.stringify({ version: 1, salt: 's', content: 'c' }))).toThrow(/加密/)
@@ -273,6 +349,30 @@ describe('importStratum', () => {
   it('结构级错误：缺 Authenticators / 非法 JSON（含二进制加密导出）', () => {
     expect(() => importStratum('{"db": {}}')).toThrow(/Authenticators/)
     expect(() => importStratum('AUTHENTICATORPRO-binary-blob')).toThrow(/Stratum/)
+  })
+
+  it('字段脏形态容错：Username 数值→String 化、Secret 纯空白→失败、Algorithm 负数越界→失败', () => {
+    const r = importStratum(JSON.stringify({
+      Authenticators: [
+        { Type: 2, Issuer: 'A', Username: 42, Secret: SECRET, Algorithm: 0, Digits: 6, Period: 30, Counter: 0 },
+        { Type: 2, Issuer: 'B', Username: null, Secret: '   ', Algorithm: 0, Digits: 6, Period: 30, Counter: 0 },
+        { Type: 2, Issuer: 'C', Username: null, Secret: SECRET, Algorithm: -1, Digits: 6, Period: 30, Counter: 0 },
+      ],
+    }))
+    expect(r.entries).toHaveLength(1)
+    expect(r.entries[0]).toMatchObject({ issuer: 'A', label: '42' })
+    expect(r.failures.map((f) => f.index)).toEqual([1, 2])
+  })
+
+  it('Authenticators 数组 null 元素与 Issuer 非串 → 单条失败', () => {
+    const r = importStratum(JSON.stringify({
+      Authenticators: [
+        null,
+        { Type: 2, Issuer: 42, Username: null, Secret: SECRET, Algorithm: 0, Digits: 6, Period: 30, Counter: 0 },
+      ],
+    }))
+    expect(r.entries).toHaveLength(0)
+    expect(r.failures.map((f) => f.message)).toEqual(['条目 0 非对象', '条目 1 缺少 Issuer'])
   })
 })
 

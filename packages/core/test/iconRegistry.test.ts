@@ -40,11 +40,12 @@ describe('iconRegistry', () => {
   })
   it('推荐：悬空别名（别名指向不存在的图标 id）防御性返回 null', () => {
     const aliases = builtinData.aliases as Record<string, string>
-    aliases['__test_dangling__'] = '__no_such_icon__'
+    // 键须不含空白/点/连字符/下划线（normalizeIssuer 会折叠分隔符，导致查不到该别名）
+    aliases['zzdanglingalias'] = '__no_such_icon__'
     try {
-      expect(recommendBuiltinIcon('__test_dangling__')).toBeNull()
+      expect(recommendBuiltinIcon('zzDanglingAlias')).toBeNull()
     } finally {
-      delete aliases['__test_dangling__']
+      delete aliases['zzdanglingalias']
     }
   })
 })

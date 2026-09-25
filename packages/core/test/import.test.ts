@@ -217,12 +217,55 @@ describe('mapRowToEntry/importGeneric', () => {
     expect(r.kind).toBe('jsonl')
     expect(r.rows).toEqual([{ a: 1 }, { b: 2 }])
   })
+
+  it('对象无任何数组且无 secret-like 字段 → rows=[]（findFirstArray 落空回退）', () => {
+    const r = extractGenericRows('{"a": {"b": 1}}')
+    expect(r.kind).toBe('jsonObjectArray')
+    expect(r.rows).toEqual([])
+  })
+
+  it('mapping 缺 secret 键 → 缺少 secret 字段；缺 digits/period/algorithm 键 → 走 defaults/缺省', () => {
+    // RowMapping 类型要求 secret，此处刻意缺键验证运行时容错（generic 映射页可存残缺方案）
+    const noSecret = { issuer: { path: 'name' } } as unknown as RowMapping
+    const bare: RowMapping = { secret: { path: 'secret' } }
+    expect(mapRowToEntry({ secret: 'JBSWY3DPEHPK3PXP', name: 'A' }, { ...bare, issuer: { path: 'name' } }))
+      .toMatchObject({ digits: 6, period: 30, algorithm: 'SHA1' })
+    expect(mapRowToEntry({ name: 'A' }, noSecret)).toEqual({ error: '缺少 secret 字段' })
+  })
+
+  it('algorithm 行内值：合法映射、非法回落 SHA1、null/空串走 defaults', () => {
+    const m: RowMapping = {
+      secret: { path: 'secret' },
+      algorithm: { path: 'algo' },
+      defaults: { algorithm: 'SHA512' },
+    }
+    expect(mapRowToEntry({ secret: 'JBSWY3DPEHPK3PXP', algo: 'sha256' }, m)).toMatchObject({ algorithm: 'SHA256' })
+    expect(mapRowToEntry({ secret: 'JBSWY3DPEHPK3PXP', algo: 'md5' }, m)).toMatchObject({ algorithm: 'SHA1' })
+    expect(mapRowToEntry({ secret: 'JBSWY3DPEHPK3PXP', algo: null }, m)).toMatchObject({ algorithm: 'SHA512' })
+    expect(mapRowToEntry({ secret: 'JBSWY3DPEHPK3PXP', algo: '' }, m)).toMatchObject({ algorithm: 'SHA512' })
+  })
+
+  it('digits/period 映射路径生效（非仅 defaults）', () => {
+    const m: RowMapping = {
+      secret: { path: 'secret' },
+      digits: { path: 'd' },
+      period: { path: 'p' },
+    }
+    expect(mapRowToEntry({ secret: 'JBSWY3DPEHPK3PXP', d: 8, p: 45 }, m)).toMatchObject({ digits: 8, period: 45 })
+  })
+
+  it('深层嵌套：secret 数组藏在另一数组的对象内仍被探出（findFirstArray 递归回传）', () => {
+    const r = extractGenericRows(JSON.stringify({ list: [{ sub: [{ secret: 'JBSWY3DPEHPK3PXP' }] }] }))
+    expect(r.kind).toBe('jsonObjectArray')
+    expect(r.rows).toEqual([{ secret: 'JBSWY3DPEHPK3PXP' }])
+  })
 })
 
 describe('嗅探与批量导入边角（盘点 B6/B7 #27-28）', () => {
   it('importUriBatch 空文本输入 → 空结果', () => {
     expect(importUriBatch('')).toEqual({ entries: [], failures: [] })
     expect(importUriBatch('   \n  ')).toEqual({ entries: [], failures: [] })
+    expect(sniffFormat('')).toBeNull()
   })
 
   it('sniffAegis/sniffFoxauthEncrypted 对非对象 JSON 与解析失败收敛 false/null', () => {
@@ -234,5 +277,28 @@ describe('嗅探与批量导入边角（盘点 B6/B7 #27-28）', () => {
 
   it('整体非合法 JSON 的花括号文本不误判：落 JSONL 判定失败后返回 null', () => {
     expect(sniffFormat('{"db":{"entries":[]},,}')).toBeNull()
+  })
+
+  it('数组/JSONL 残块与裸量收敛：非法数组块、单行可解析非块文本、纯数字', () => {
+    expect(sniffFormat('[1,2')).toBeNull() // 以 [ 开头但非法 → 落 JSONL 判定（单行失败）
+    expect(sniffFormat('123')).toBeNull() // 单行可解析但非块/非多行 → 不判 generic
+  })
+
+  it('特征键内层脏数据不误判格式：null service/login/content/数组元素', () => {
+    // 2FAS：services 存在但条目为 null → 仍判 twoFas（空/无 secret 交 importTwoFas 报「无条目」）
+    expect(sniffFormat(JSON.stringify({ services: [null, { otp: {} }] }))).toBe('twoFas')
+    // 空数组显式判 twoFas（importTwoFas 给出「无条目」明确错误）
+    expect(sniffFormat(JSON.stringify({ services: [] }))).toBe('twoFas')
+    // Bitwarden：login 为 null、item 数组含 null 元素
+    expect(sniffFormat(JSON.stringify({ items: [{ login: null }, { login: { totp: 'x' } }] }))).toBe('bitwarden')
+    expect(sniffFormat(JSON.stringify({ items: [null, { login: { totp: 'x' } }] }))).toBe('bitwarden')
+    // Proton：content 为 null、entry 数组含 null 元素
+    expect(sniffFormat(JSON.stringify({ entries: [{ content: null }, { content: { uri: 'otpauth://totp/a?secret=X' } }] }))).toBe('proton')
+    expect(sniffFormat(JSON.stringify({ entries: [null, { content: { uri: 'otpauth://totp/a?secret=X' } }] }))).toBe('proton')
+  })
+
+  it('andOtp/totpAuthenticator 数组内非对象元素跳过，不阻断特征判定', () => {
+    expect(sniffFormat(JSON.stringify([42, { type: 'TOTP', algorithm: 'SHA1', label: 'a', secret: 'JBSWY3DPEHPK3PXP' }]))).toBe('andOtp')
+    expect(sniffFormat(JSON.stringify([null, { base: 32, key: 'JBSWY3DPEHPK3PXP' }]))).toBe('totpAuthenticator')
   })
 })

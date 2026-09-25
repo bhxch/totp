@@ -5,6 +5,7 @@ import {
   importFreeOtp,
   importFreeOtpLegacy,
   importTotpAuthenticator,
+  importTotpAuthenticatorPlaintext,
   xmlUnescape,
 } from '../src/import/miscApps'
 import { sniffFormat } from '../src/import/sniff'
@@ -64,6 +65,37 @@ describe('importFreeOtp（FreeOTP+ JSON 导出）', () => {
     expect(r.failures.map((f) => f.index)).toEqual([0, 1, 2, 3, 4])
   })
 
+  it('字段脏形态与显式 null：secret 数值越界（>255）、label 非串、period/counter 显式 null', () => {
+    const r = importFreeOtp(JSON.stringify({
+      tokens: [
+        { issuerExt: 'overflow', label: 'x', secret: [1, 999], type: 'TOTP' },
+        { issuerExt: 'nullCounter', label: 'x', secret: signedBytes(SECRET_BYTES), type: 'HOTP', counter: null },
+        { issuerExt: 'nulls', label: 42, secret: signedBytes(SECRET_BYTES), type: 'TOTP', period: null, digits: null, algo: null },
+        { issuerExt: 'ok', label: 'ok', secret: signedBytes(SECRET_BYTES), type: 'TOTP' },
+      ],
+    }))
+    expect(r.entries).toHaveLength(2)
+    expect(r.entries[0]).toMatchObject({ issuer: 'nulls', label: '', period: 30, digits: 6, algorithm: 'SHA1' })
+    expect(r.failures.map((f) => f.index)).toEqual([0, 1])
+  })
+
+  it('tokens 数组 null 元素 / type 缺失 / HOTP counter 非有限数 → 逐条失败', () => {
+    const r = importFreeOtp(JSON.stringify({
+      tokens: [
+        null,
+        { issuerExt: 'noType', label: 'x', secret: signedBytes(SECRET_BYTES) },
+        { issuerExt: 'badCounter', label: 'x', secret: signedBytes(SECRET_BYTES), type: 'HOTP', counter: 'NaN' },
+        { issuerExt: 'ok', label: 'ok', secret: signedBytes(SECRET_BYTES), type: 'TOTP' },
+      ],
+    }))
+    expect(r.entries).toHaveLength(1)
+    expect(r.failures.map((f) => f.message)).toEqual([
+      '条目 0 非对象',
+      '不支持的 type: ',
+      'HOTP counter 非法',
+    ])
+  })
+
   it('结构级错误：非 JSON / 顶层非对象 / 缺 tokens 数组', () => {
     expect(() => importFreeOtp('not json')).toThrow(/FreeOTP\+/)
     expect(() => importFreeOtp('[1,2]')).toThrow(/FreeOTP\+/)
@@ -102,6 +134,12 @@ describe('importFreeOtpLegacy（旧版 FreeOTP tokens.xml）', () => {
     expect(r.entries[0]).toMatchObject({ issuer: 'Ok' })
     expect(r.failures).toHaveLength(1)
     expect(() => importFreeOtpLegacy('{"tokens": []}')).toThrow(/XML/)
+  })
+
+  it('token 值为合法 JSON 但非对象（数字）→ 单条失败「非对象」', () => {
+    const r = importFreeOtpLegacy('<map><string name="num">42</string></map>')
+    expect(r.entries).toHaveLength(0)
+    expect(r.failures).toEqual([{ index: 0, message: '条目 0 非对象' }])
   })
 
   it('数字实体反转义：十六进制（&#x41;）与十进制（&#66;）形态（Battle.net/Authy XML 复用同一实现）', () => {
@@ -158,6 +196,49 @@ describe('importTotpAuthenticator', () => {
     expect(r.entries).toHaveLength(1)
     expect(r.entries[0]).toMatchObject({ issuer: 'ok' })
     expect(r.failures.map((f) => f.index)).toEqual([0, 1, 2])
+  })
+
+  it('坏条目形态补充：数组内非对象元素、base64 解码失败、issuer/label 非串', async () => {
+    const r = await importTotpAuthenticator(
+      JSON.stringify([
+        42,
+        { base: 64, key: '!!!not-b64!!!', issuer: 'x' },
+        { base: 32, key: SECRET, issuer: 42, name: 42 },
+        { base: 32, key: SECRET, issuer: 'ok' },
+      ]),
+    )
+    expect(r.entries).toHaveLength(2)
+    expect(r.entries[0]).toMatchObject({ issuer: '', label: '' })
+    expect(r.entries[1]).toMatchObject({ issuer: 'ok' })
+    expect(r.failures.map((f) => f.index)).toEqual([0, 1])
+  })
+
+  it('secret 编码边角：缺 base、base16 非 hex；明文入口非 JSON 结构级报错', async () => {
+    const r = await importTotpAuthenticator(JSON.stringify([
+      { key: SECRET, issuer: 'noBase' }, // 缺 base → Number(undefined) 非整数
+      { base: 16, key: 'zz-non-hex' },
+      { base: 32, key: SECRET, issuer: 'ok' },
+    ]))
+    expect(r.entries).toHaveLength(1)
+    expect(r.failures.map((f) => f.message)).toEqual([
+      '缺少 base',
+      'base 16 secret 解码失败',
+    ])
+    // 粘贴分发使用的同步明文入口：非 JSON 直接结构级报错
+    expect(() => importTotpAuthenticatorPlaintext('not json')).toThrow('TOTP Authenticator 文件结构非法：不是合法 JSON')
+  })
+
+  it('解密后首键 JSON 合法但非数组 → 结构级报错', async () => {
+    const iv = new Uint8Array(16)
+    const keyBytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('pw')))
+    const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-CBC', false, ['encrypt'])
+    const outer = JSON.stringify({ [JSON.stringify({ a: 1 })]: '' }) // 首键解析为对象而非数组
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-CBC', iv }, key, new TextEncoder().encode(outer)))
+    let s = ''
+    for (const b of ct) s += String.fromCharCode(b)
+    await expect(importTotpAuthenticator(btoa(s), 'pw')).rejects.toThrow(
+      'TOTP Authenticator 文件结构非法：条目不是 JSON 数组',
+    )
   })
 
   it('加密分享文件：口令解密（默认口令 TotpAuthenticator）、自定义口令、错口令中文报错', async () => {
@@ -256,6 +337,19 @@ describe('importAndOtp', () => {
     expect(() => importAndOtp('not json')).toThrow(/加密/)
     // 模拟二进制加密备份被文本管道读入（迭代数头 + 随机字节）
     expect(() => importAndOtp('\u0000\u0000\u03e8\u0000saltnonces....')).toThrow(/加密/)
+    // 以 [ 开头但 JSON 非法 → 不是合法 JSON（区别于加密备份提示）
+    expect(() => importAndOtp('[oops')).toThrow('andOTP 文件结构非法：不是合法 JSON')
+  })
+
+  it('issuer 显式 null → 空串（String(obj.issuer ?? "") 口径），label 必需仍生效', () => {
+    const text = JSON.stringify([
+      { secret: SECRET, issuer: null, label: 'NullIssuer', digits: 6, type: 'TOTP', algorithm: 'SHA1', period: 30 },
+      { secret: SECRET, issuer: 42, label: 'NumIssuer', digits: 6, type: 'TOTP', algorithm: 'SHA1', period: 30 },
+    ])
+    const r = importAndOtp(text)
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries[0]).toMatchObject({ issuer: '', label: 'NullIssuer' })
+    expect(r.entries[1]).toMatchObject({ issuer: '42', label: 'NumIssuer' })
   })
 
   it('条目 tags 数组直接映射（过滤非字符串与空白项）', () => {

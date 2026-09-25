@@ -111,16 +111,25 @@ describe('exportAegisPlaintext 导出补全（盘点 B11 #42）', () => {
     expect(r.entries[0]!.tags).toEqual(['工作'])
   })
 
-  it('无 crypto.randomUUID 的宿主回落时间戳 id（导入侧不校验 uuid 形态，导出不崩）', () => {
-    // 先在真实 crypto 下建好 vault/vault 模块同用 crypto.randomUUID
-    const v = addEntry(createVault(), newEntryFromUri('otpauth://totp/G:a?secret=JBSWY3DPEHPK3PXP'))
+  it('无 crypto.randomUUID 的宿主回落时间戳 id（含 groups uuid 生成，导出不崩）', () => {
+    // 先在真实 crypto 下建好 vault（vault 模块同用 crypto.randomUUID）
+    let v = createVault()
+    const { vault: v1, tagIds } = resolveTagNames(v, ['工作'])
+    v = v1
+    const e = newEntryFromUri('otpauth://totp/G:a?secret=JBSWY3DPEHPK3PXP')
+    e.tagIds = [tagIds[0]!]
+    v = addEntry(v, e)
     const original = globalThis.crypto
     // 模拟旧宿主：crypto 存在但无 randomUUID（aegisVault 的回落分支在导出调用期求值）
     vi.stubGlobal('crypto', { getRandomValues: original.getRandomValues.bind(original) })
     try {
-      const obj = JSON.parse(exportAegisPlaintext(v).json) as { db: { entries: Array<{ uuid: string }>; groups: Array<{ uuid: string }> } }
+      const obj = JSON.parse(exportAegisPlaintext(v).json) as {
+        db: { entries: Array<{ uuid: string }>; groups: Array<{ uuid: string }> }
+      }
       expect(typeof obj.db.entries[0]!.uuid).toBe('string')
       expect(obj.db.entries[0]!.uuid.length).toBeGreaterThan(0)
+      expect(typeof obj.db.groups[0]!.uuid).toBe('string')
+      expect(obj.db.groups[0]!.uuid.length).toBeGreaterThan(0)
     } finally {
       vi.unstubAllGlobals()
     }

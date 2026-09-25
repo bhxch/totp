@@ -105,4 +105,15 @@ describe('schemes', () => {
     const [upper] = normalizeSchemes([{ id: 'u', name: 'U', mapping: { secret: { path: 's' } }, createdAt: 1 }])
     expect(mapRowToEntry({ s: ' jbsw y3dp ' }, upper!.mapping)).toMatchObject({ secret: 'JBSWY3DP' })
   })
+
+  it('mapping.defaults 合法对象保留（非法/缺失不产出 defaults 键）；matchSchemes 按映射字段首段参与打分', () => {
+    const [kept] = normalizeSchemes([
+      { id: 'd1', name: '带 defaults', mapping: { secret: { path: 's' }, defaults: { issuer: '默认发行方', digits: 8 } }, createdAt: 1 },
+    ])
+    expect(kept!.mapping.defaults).toEqual({ issuer: '默认发行方', digits: 8 })
+    // matchSchemes：issuer/label 映射字段的首段参与与 sampleKeys 的交集计数
+    const withFields = mk({ id: 'f', mapping: { secret: { path: 'otp.secret' }, issuer: { path: 'otp.issuer' }, note: { path: 'memo.text' } } })
+    expect(matchSchemes([withFields], ['otp', 'memo'])).toEqual([withFields])
+    expect(matchSchemes([withFields], ['unrelated'])).toEqual([])
+  })
 })

@@ -20,6 +20,21 @@ describe('importFoxauth 明文', () => {
     expect(bnet).toMatchObject({ type: 'hotp', issuer: 'Battle.net', digits: 8, counter: 0 })
   })
 
+  it('条目脏形态：缺 localSecretToken / localIssuer 非串 / digits 非串 / accountName 非串 → 缺失与容错口径', async () => {
+    const r = await importFoxauth(JSON.stringify({
+      accountInfos: [
+        { localIssuer: 'NoSecret', localAccountName: 'x', localOTPType: 'Time based' },
+        { localIssuer: 42, localAccountName: 'y', localSecretToken: 'JBSWY3DPEHPK3PXP', localOTPType: 'Time based', localOTPDigits: 8, localOTPPeriod: 45 },
+        { localIssuer: 'NoName', localAccountName: 42, localSecretToken: 'JBSWY3DPEHPK3PXP', localOTPType: 'Time based' },
+      ],
+      isEncrypted: false,
+    }))
+    expect(r.entries).toHaveLength(2)
+    expect(r.entries[0]).toMatchObject({ issuer: '', label: 'y', digits: 8, period: 45 })
+    expect(r.entries[1]).toMatchObject({ issuer: 'NoName', label: '' })
+    expect(r.failures).toEqual([{ index: 0, message: '条目 0 缺少 secret' }])
+  })
+
   it('结构级错误：非对象/缺 accountInfos/空数组', async () => {
     await expect(importFoxauth('[]')).rejects.toThrow(/顶层不是 JSON 对象/)
     await expect(importFoxauth('{}')).rejects.toThrow(/accountInfos/)
@@ -45,6 +60,26 @@ describe('importFoxauth 明文', () => {
   it('加密备份缺 encryptPassword：提示备份不含口令（官方支持口令存 sessionStorage）', async () => {
     await expect(importFoxauth(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: {} }), 'any-password'))
       .rejects.toThrow(/不包含口令/)
+    // encryptPassword 为空串同口径（typeof 通过、空值拒绝）
+    await expect(importFoxauth(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: { encryptPassword: '', encryptIV: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] } }), 'any-password'))
+      .rejects.toThrow(/不包含口令/)
+  })
+
+  it('加密备份缺 passwordInfo / passwordInfo 非对象 → 结构级报错', async () => {
+    await expect(importFoxauth(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true }), 'pw'))
+      .rejects.toThrow('FoxAuth 文件结构非法：加密备份缺少 passwordInfo')
+    await expect(importFoxauth(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: 'nope' }), 'pw'))
+      .rejects.toThrow('FoxAuth 文件结构非法：加密备份缺少 passwordInfo')
+  })
+
+  it('整串密文解出非数组 JSON → 结构级报错（不是条目数组）', async () => {
+    const key = await foxauthTestKey('pw')
+    const fixture = JSON.stringify({
+      accountInfos: await foxauthTestEncrypt(key, FOXAUTH_IV, '{"not": "array"}'),
+      isEncrypted: true,
+      passwordInfo: { encryptPassword: btoa('pw'), encryptIV: Array.from(FOXAUTH_IV) },
+    })
+    await expect(importFoxauth(fixture, 'pw')).rejects.toThrow('FoxAuth 文件结构非法：accountInfos 不是条目数组')
   })
 })
 
@@ -171,6 +206,36 @@ describe('importFoxauth 加密备份（真实导出形态：数组 + 逐字段�
     expect(r.failures).toHaveLength(1)
     expect(r.entries[0]).toMatchObject({ type: 'totp', issuer: 'GitHub', label: 'a@b.c', algorithm: 'SHA1', digits: 6, period: 30 })
     expect(r.entries[1]).toMatchObject({ type: 'hotp', issuer: 'Battle.net', digits: 8, counter: 0 })
+  })
+
+  it('字段缺失直落空串：数组形态条目的空字段跳过解密（官方 info[key] || \'\' 语义的读取端）', async () => {
+    const key = await foxauthTestKey('test-password')
+    const parsed = JSON.parse(encryptedFixture) as { accountInfos: Array<Record<string, unknown>> }
+    parsed.accountInfos.push({
+      localIssuer: 'EmptyName',
+      localAccountName: '', // 空串字段：跳过解密直落空串
+      localSecretToken: await foxauthTestEncrypt(key, FOXAUTH_IV, 'JBSWY3DPEHPK3PXP'),
+      localOTPType: 'Time based', localOTPDigits: '6', localOTPPeriod: '30',
+    })
+    const r = await importFoxauth(JSON.stringify(parsed), 'test-password')
+    expect(r.failures).toHaveLength(1) // 原「坏条目」仍失败
+    const empty = r.entries.find((e) => e.issuer === 'EmptyName')
+    expect(empty).toMatchObject({ label: '', secret: 'JBSWY3DPEHPK3PXP' })
+  })
+
+  it('数组形态含非对象元素：原样透传并在收集阶段单条失败', async () => {
+    const key = await foxauthTestKey('test-password')
+    const fixture = JSON.stringify({
+      accountInfos: [
+        42,
+        { localIssuer: 'Ok', localAccountName: await foxauthTestEncrypt(key, FOXAUTH_IV, 'a@b.c'), localSecretToken: await foxauthTestEncrypt(key, FOXAUTH_IV, 'JBSWY3DPEHPK3PXP'), localOTPType: 'Time based', localOTPDigits: '6', localOTPPeriod: '30' },
+      ],
+      isEncrypted: true,
+      passwordInfo: { encryptPassword: btoa('test-password'), encryptIV: Array.from(FOXAUTH_IV) },
+    })
+    const r = await importFoxauth(fixture, 'test-password')
+    expect(r.entries).toHaveLength(1)
+    expect(r.failures).toEqual([{ index: 0, message: '条目 0 非对象' }])
   })
 
   it('错误口令：结构级报错（口令错误或文件已损坏）', async () => {

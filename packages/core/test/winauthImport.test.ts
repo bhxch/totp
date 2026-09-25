@@ -265,12 +265,43 @@ describe('importWinauth XML 边角与条目字段边角（盘点 B8 #30-31）', 
       '<!DOCTYPE WinAuth PUBLIC "-//x//EN" "dtd.dtd">' +
       '<!-- exported by WinAuth -->' +
       `<WinAuth version='3.6.4.2'>` +
-      `<WinAuthAuthenticator type="WinAuth.GoogleAuthenticator"><name>A&amp;B:me@x.com</name>` +
-      `<authenticatordata><secretdata><![CDATA[${sd}]]></secretdata></authenticatordata>` +
+      `<WinAuthAuthenticator type="WinAuth.GoogleAuthenticator"><name>A&amp;B&lt;C&gt;D&quot;E&apos;F&#66;&#x43;:me@x.com</name>` +
+      `<authenticatordata><created/><secretdata><![CDATA[${sd}]]></secretdata></authenticatordata>` +
       `</WinAuthAuthenticator></WinAuth>`
     const r = await importWinauth(xml)
     expect(r.failures).toHaveLength(0)
-    expect(r.entries[0]).toMatchObject({ issuer: 'A&B', label: 'me@x.com', secret: SECRET })
+    expect(r.entries[0]).toMatchObject({ issuer: `A&B<C>D"E'FBC`, label: 'me@x.com', secret: SECRET })
+  })
+
+  it('应用设置节点忽略、嵌套 <WinAuth>/<config> 容器递归、无 encrypted 的 <data> 跳过', async () => {
+    const xml = `<WinAuth version="3.6.4.2">` +
+      `<usetrayicon>true</usetrayicon><data>非密文无 encrypted 属性</data>` +
+      `<WinAuth>${ENTRY_XML('Nested:inner', secretData())}</WinAuth>` +
+      `<config>${ENTRY_XML('Config:child', secretData())}</config>` +
+      `<WinAuthAuthenticator type="WinAuth.GoogleAuthenticator"><name>Top:level</name>` +
+      `<authenticatordata><secretdata>${secretData()}</secretdata></authenticatordata></WinAuthAuthenticator>` +
+      `</WinAuth>`
+    const r = await importWinauth(xml)
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries.map((e) => e.issuer)).toEqual(['Nested', 'Config', 'Top'])
+  })
+
+  it('无 type 属性默认 totp；缺 <name> 元素 issuer/label 空', async () => {
+    const xml = `<WinAuth version="3.6.4.2">` +
+      `<WinAuthAuthenticator><name>NoType:e</name><authenticatordata><secretdata>${secretData()}</secretdata></authenticatordata></WinAuthAuthenticator>` +
+      `<WinAuthAuthenticator type="WinAuth.GoogleAuthenticator"><authenticatordata><secretdata>${secretData()}</secretdata></authenticatordata></WinAuthAuthenticator>` +
+      `</WinAuth>`
+    const r = await importWinauth(xml)
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries[0]).toMatchObject({ type: 'totp', issuer: 'NoType', label: 'e' })
+    expect(r.entries[1]).toMatchObject({ issuer: '', label: '' })
+  })
+
+  it('secretdata 缺 digits/period 段（无制表符）→ 回退 6/30', async () => {
+    const xml = `<WinAuth version="3.6.4.2">${ENTRY_XML('Bare:secret', SECRET_HEX)}</WinAuth>`
+    const r = await importWinauth(xml)
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries[0]).toMatchObject({ secret: SECRET, digits: 6, period: 30 })
   })
 
   it('标签不匹配 / 多根元素 / 未闭合 → 结构化错误', async () => {
@@ -318,6 +349,29 @@ describe('importWinauth XML 边角与条目字段边角（盘点 B8 #30-31）', 
       'secretdata 非法',
       '缺少 secret',
     ])
+  })
+})
+
+describe('fixture 构造器与原语层的防御分支（盘点 B8 #33 配套）', () => {
+  it('buildWinauthSequence：explicit 层缺口令 → 明确报错（fixture 误用防线）', async () => {
+    await expect(buildWinauthSequence('00ff', 'y')).rejects.toThrow('buildWinauthSequence: explicit 层需要口令')
+  })
+
+  it('blowfishEcbEncrypt/Decrypt：块长非 8 字节 → throw', async () => {
+    const key = unhex('0001020304050607')
+    expect(() => blowfishEcbEncrypt(key, unhex('00'.repeat(4)))).toThrow('Blowfish 块必须为 8 字节')
+    expect(() => blowfishEcbDecrypt(key, unhex('00'.repeat(7)))).toThrow('Blowfish 块必须为 8 字节')
+  })
+
+  it('口令层密文为空 / 非块对齐 → 口令错误（ISO10126 去填充前置检查）', async () => {
+    const wrap = (dataHex: string): string =>
+      `<WinAuth version="3.2.0.0"><WinAuthAuthenticator type="WinAuth.GoogleAuthenticator"><name>GitHub:me@x.com</name><authenticatordata encrypted="y">${dataHex}</authenticatordata></WinAuthAuthenticator></WinAuth>`
+    // salt 之外无密文字节
+    const r0 = await importWinauth(wrap('00'.repeat(8)), { password: 'p' })
+    expect(r0.failures[0]!.message).toBe('需要口令或口令错误')
+    // 密文 4 字节（%8 ≠ 0）
+    const r1 = await importWinauth(wrap('00'.repeat(8) + 'aabbccdd'), { password: 'p' })
+    expect(r1.failures[0]!.message).toBe('需要口令或口令错误')
   })
 })
 

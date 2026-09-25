@@ -50,6 +50,20 @@ describe('msAuthRowsToEntries（MicrosoftAuthImporter accounts 表行）', () =>
     expect(r.failures.map((f) => f.index)).toEqual([0, 1, 2, 3, 4])
   })
 
+  it('显式 null 与解码成功的空值：account_type null → 缺失失败；type1 空 base64 → 解码成功但 secret 为空', () => {
+    const r = msAuthRowsToEntries([
+      { account_type: null, oath_secret_key: SECRET, name: 'NullType', username: 'a' },
+      { account_type: 1, oath_secret_key: '', name: 'EmptyB64', username: 'b' }, // atob('')='' → 空字节
+      { account_type: 0, oath_secret_key: SECRET, name: null, username: null }, // 列值 null → issuer/label 空串
+    ])
+    expect(r.entries).toHaveLength(1)
+    expect(r.entries[0]).toMatchObject({ issuer: '', label: '' })
+    expect(r.failures).toEqual([
+      { index: 0, message: '缺少 account_type' },
+      { index: 1, message: 'secret 为空' },
+    ])
+  })
+
   it('type0 secret 忽略空格与连字符后 base32 解码（GoogleAuthInfo.parseSecret 口径）', () => {
     const r = msAuthRowsToEntries([
       { account_type: 0, oath_secret_key: 'JBSW Y3DP-EHPK 3PXP', name: 'N', username: 'u' },
@@ -87,6 +101,24 @@ describe('duoRowsToEntries（DuoImporter accounts.json 行）', () => {
     expect(r.entries).toHaveLength(1)
     expect(r.entries[0]).toMatchObject({ label: 'ok' })
     expect(r.failures.map((f) => f.index)).toEqual([0, 1, 2])
+  })
+
+  it('行数组含 null 元素 → 单条失败「条目非对象」不阻断', () => {
+    const r = duoRowsToEntries([null as unknown as Record<string, unknown>, { name: 'ok', otpGenerator: { otpSecret: SECRET } }])
+    expect(r.entries).toHaveLength(1)
+    expect(r.failures).toEqual([{ index: 0, message: '条目非对象' }])
+  })
+
+  it('otpGenerator 缺 otpSecret / 空 otpSecret → 逐条失败', () => {
+    const r = duoRowsToEntries([
+      { name: 'noSecret', otpGenerator: {} },
+      { name: 'emptySecret', otpGenerator: { otpSecret: '' } },
+    ])
+    expect(r.entries).toHaveLength(0)
+    expect(r.failures.map((f) => f.message)).toEqual([
+      '缺少 secret（otpSecret）',
+      'otpSecret 解码失败（非法 base32）',
+    ])
   })
 
   it('importDuo：顶层非 JSON / 非 JSON 数组 → 结构级报错；空数组 → 空结果', () => {
@@ -127,6 +159,7 @@ describe('authyRowsToEntries（AuthyImporter 令牌数组行）', () => {
     const r = await authyRowsToEntries([
       { name: 'Authy Diamond', digits: 6, secretSeed: seed },
       { name: 'noDigits', secretSeed: seed }, // 缺 digits（getInt 必需）
+      { name: 'nullDigits', secretSeed: seed, digits: null }, // 显式 null 同口径
       { name: 'noSecret', digits: 6, secretSeed: null }, // getString(null) 抛 → 单条失败（has() 为 true，不触发加密判定）
       { name: 'badSeed', digits: 6, secretSeed: 'xyz' }, // hex 非法
     ])
@@ -134,7 +167,28 @@ describe('authyRowsToEntries（AuthyImporter 令牌数组行）', () => {
     expect(r.entries[0]).toMatchObject({
       type: 'totp', issuer: 'Authy Diamond', label: '', secret: SECRET, algorithm: 'SHA1', digits: 6, period: 10,
     })
-    expect(r.failures.map((f) => f.index)).toEqual([1, 2, 3])
+    expect(r.failures.map((f) => f.index)).toEqual([1, 2, 3, 4])
+  })
+
+  it('sanitize 兜底链走尽：originalIssuer/originalName 均缺、name 无分隔、accountType null → 单条失败', async () => {
+    const r = await authyRowsToEntries([
+      { accountType: null, originalIssuer: null, originalName: null, name: 'plain', digits: 6, decryptedSecret: SECRET },
+    ])
+    expect(r.entries).toHaveLength(0)
+    expect(r.failures).toEqual([{ index: 0, message: '缺少 accountType' }])
+  })
+
+  it('明文条目 secret 脏形态：decryptedSecret 非串 / 空串 → 单条失败', async () => {
+    const r = await authyRowsToEntries([
+      { name: 'nullSecret', digits: 6, decryptedSecret: null },
+      { name: 'emptySecret', digits: 6, decryptedSecret: '' },
+      { name: 'ok', digits: 6, accountType: 'y', decryptedSecret: SECRET },
+    ])
+    expect(r.entries).toHaveLength(1)
+    expect(r.failures.map((f) => f.message)).toEqual([
+      '缺少 secret（decryptedSecret）',
+      'secret 解码失败',
+    ])
   })
 
   it('加密条目（encryptedSecret+salt）：PBKDF2-HMAC-SHA1(1000/256bit)+AES-CBC(IV=0) 解密后转换', async () => {
@@ -173,6 +227,23 @@ describe('authyRowsToEntries（AuthyImporter 令牌数组行）', () => {
     )).rejects.toThrow('Authy 文件结构非法：加密条目缺少 salt')
   })
 
+  it('混合态：已含 decryptedSecret 的行在加密模式下原样透传，仅解密加密行', async () => {
+    const r = await authyRowsToEntries(
+      [
+        { accountType: 'github', originalIssuer: 'ACME', originalName: 'a', name: 'ACME: a', digits: 6, decryptedSecret: SECRET },
+        {
+          accountType: 'github', name: 'X', digits: 6,
+          encryptedSecret: '0Rdt6VuDJ1L/MXhfZ0dF/jUsW8ZOf2jf+b0po1qt8Rc=', salt: 'SALT-STRING',
+        },
+      ],
+      'test-password',
+    )
+    expect(r.failures).toEqual([])
+    expect(r.entries).toHaveLength(2)
+    expect(r.entries[0]).toMatchObject({ issuer: 'ACME', label: 'a' })
+    expect(r.entries[1]).toMatchObject({ issuer: 'Github', secret: SECRET })
+  })
+
   it('encryptedSecret 非合法 base64 → 口令错误或文件已损坏', async () => {
     await expect(authyRowsToEntries(
       [{ accountType: 'github', name: 'X', digits: 6, encryptedSecret: '!!!not-b64!!!', salt: 'SALT' }],
@@ -195,6 +266,14 @@ describe('authyRowsToEntries（AuthyImporter 令牌数组行）', () => {
     const xml = (value: string): string => `<map><string name="com.authy.storage.tokens.authenticator.key">${value}</string></map>`
     await expect(importAuthy(xml('{oops'))).rejects.toThrow('Authy 文件结构非法：令牌值不是合法 JSON')
     await expect(importAuthy(xml('{"a": 1}'))).rejects.toThrow('Authy 文件结构非法：令牌值不是 JSON 数组')
+  })
+
+  it('importAuthy：tokens.authy.key（Authy Authenticator 专用键）同样被识别', async () => {
+    const tokens = [{ name: 'Authy Diamond', digits: 6, secretSeed: Array.from(SECRET_BYTES, (b) => b.toString(16).padStart(2, '0')).join('') }]
+    const xml = `<map><string name="com.authy.storage.tokens.authy.key">${JSON.stringify(tokens)}</string></map>`
+    const r = await importAuthy(xml)
+    expect(r.failures).toEqual([])
+    expect(r.entries[0]).toMatchObject({ issuer: 'Authy Diamond', period: 10 })
   })
 })
 
