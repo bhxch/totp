@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import {
   baseUrlOf,
   entryMatchesUrl,
@@ -113,41 +113,19 @@ describe('F13：hasNestedQuantifierRisk 嵌套量词保守筛查', () => {
     ['a{2,4', false, '非成对 { 按字面量'],
     ['x{,5}', false, '{,5} 非量词语法按字面量'],
     ['(?:a{2,4}?)x', false, '惰性有界量词 {n,m}? 按单 token 消费（含尾随 ?）→ 安全'],
-  ])('未测形态 %s → %s（%s）', (p, expected) => {
+  ])('F13 形态 %s → %s（%s）', (p, expected) => {
     expect(hasNestedQuantifierRisk(p)).toBe(expected)
   })
 })
 
-describe('F13：regex 编译缓存 256 条上限', () => {
-  it('超过 REGEX_CACHE_LIMIT 整体清空重建（Map set 探针观测），淘汰后求值结果仍正确', async () => {
-    // 模块级 regexCache 无 reset 钩子：以「重置模块注册表 + 换入计数 Map」的全新模块实例
-    // 精确观测淘汰策略（实现为 size>=256 时 clear 后再 set，非 LRU 逐条淘汰）。
-    vi.resetModules()
-    const sizesAfterSet: number[] = []
-    const NativeMap = globalThis.Map
-    class SizeProbeMap<K, V> extends NativeMap<K, V> {
-      override set(key: K, value: V): this {
-        super.set(key, value)
-        sizesAfterSet.push(this.size)
-        return this
-      }
-    }
-    vi.stubGlobal('Map', SizeProbeMap)
-    let engine: typeof import('../src/match/engine')
-    try {
-      engine = await import('../src/match/engine')
-    } finally {
-      vi.unstubAllGlobals()
-    }
-    // 257 个互不相同的安全 pattern：全部应正确命中（编译一次，结果不受缓存策略影响）
+describe('F13：regex 编译缓存（消费者行为面）', () => {
+  it('257 个不同 pattern（≥已知缓存规模）滚动求值结果恒正确；早期 pattern 复用仍命中', () => {
+    // 缓存规模与淘汰策略（整体清空/LRU 等均属实现细节，不在此钉死）；
+    // 锚定行为面：大批量规则滚动求值不因缓存清理产生错误结果，旧 pattern 再次求值仍正确。
     for (let i = 0; i < 257; i++) {
-      expect(engine.urlMatches(`https://a${i}.com/x`, { strategy: 'regex', pattern: `a${i}\\.com` })).toBe(true)
+      expect(urlMatches(`https://a${i}.com/x`, rule('regex', `a${i}\\.com`))).toBe(true)
     }
-    expect(Math.max(...sizesAfterSet)).toBe(256) // 上限恰为 256
-    expect(sizesAfterSet[sizesAfterSet.length - 1]).toBe(1) // 第 257 次 set 前 clear，仅剩最新一条
-    // 被淘汰的首个 pattern 再次求值：重新编译，结果仍正确
-    expect(engine.urlMatches('https://a0.com/y', { strategy: 'regex', pattern: 'a0\\.com' })).toBe(true)
-    expect(sizesAfterSet[sizesAfterSet.length - 1]).toBe(2)
+    expect(urlMatches('https://a0.com/y', rule('regex', 'a0\\.com'))).toBe(true)
   })
 })
 

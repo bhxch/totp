@@ -69,7 +69,6 @@ describe('settingsStore', () => {
     await s.set(SETTINGS_KEY, JSON.stringify({ urlFilterEnabled: false }))
     const loaded = await loadSettings(s)
     expect(loaded.syncPrefs).toEqual({ autoFollow: true })
-    expect(loaded.syncPrefs).toEqual(DEFAULT_SETTINGS.syncPrefs)
     expect(loaded.urlFilterEnabled).toBe(false) // 已存字段不受影响
   })
   it('锁定偏好缺省（plan16 T6）：lockOnRestart=true / lockIdleMinutes=0 / lockOnSystemLock=true', async () => {

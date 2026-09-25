@@ -121,7 +121,7 @@ describe('validateVaultObject / loadVault 结构校验（F6）', () => {
     ['order 非有限数字', { order: 'x' }],
     ['createdAt 非有限数字', { createdAt: 'x' }],
     ['matchRules 元素非对象', { matchRules: ['host'] }],
-  ])('条目级违规拒绝（未测方向补全）：%s', async (_name, patch) => {
+  ])('条目级违规拒绝：%s', async (_name, patch) => {
     const s = createMemoryStorage()
     await s.set(VAULT_KEY, JSON.stringify(validVault({}, [{ ...emptySecretHotp, ...patch }])))
     await expect(loadVault(s)).rejects.toThrow('vault corrupted')

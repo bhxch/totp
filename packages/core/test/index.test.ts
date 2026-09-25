@@ -15,10 +15,11 @@ describe('@totp/core 桶导出面（防漏导出/改名破坏消费方）', () =
     }
     expect(keys).toMatchSnapshot()
   })
-  it('关键导出为可调用值、版本常量可读（冒烟）', () => {
+  it('关键导出为可调用值、版本常量为合法 semver（冒烟）', () => {
     expect(typeof core.parseOtpUri).toBe('function')
     expect(typeof core.createMemoryStorage).toBe('function')
     expect(typeof core.validateVaultObject).toBe('function')
-    expect(core.CORE_VERSION).toBe('0.1.0')
+    // 版本与 package.json 同源维护，此处只锚定格式（避免双写钉死）
+    expect(core.CORE_VERSION).toMatch(/^\d+\.\d+\.\d+$/)
   })
 })
