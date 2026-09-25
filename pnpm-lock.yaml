@@ -57,6 +57,12 @@ importers:
       '@vitest/coverage-v8':
         specifier: ^2.1.9
         version: 2.1.9(vitest@2.1.9(@types/node@22.20.2)(jsdom@25.0.1))
+      '@vue/test-utils':
+        specifier: ^2.4.0
+        version: 2.5.0(@vue/compiler-dom@3.5.42)(@vue/server-renderer@3.5.42)(vue@3.5.42(typescript@5.9.3))
+      jsdom:
+        specifier: ^25.0.0
+        version: 25.0.1
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
