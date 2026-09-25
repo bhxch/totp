@@ -351,6 +351,14 @@ describe('Google Drive 后端', () => {
     await expect(backend.get(PATH)).rejects.toThrow('Google Drive 网络请求失败：fetch failed')
   })
 
+  it('get：查询响应 body 非法（res.json() 解析失败）→ 异常原样上抛（200 假响应不伪造成命中）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('not-json {{', { status: 200 })))
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok' }) // 无 fileId：get 先按名查询
+    await expect(backend.get(PATH)).rejects.toThrow()
+    // 200 但 body 非法时不存在任何「按未命中处理」的静默路径
+    await expect(backend.exists(PATH)).rejects.toThrow()
+  })
+
   it('listBackups：files/{fileId}?fields=parents 取父目录，再列同父 vault-*；names 过滤 BACKUP_NAME_RE', async () => {
     const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
       const u = new URL(String(url))
@@ -661,21 +669,24 @@ describe('OneDrive 后端', () => {
     await expect(backend.listBackups!()).rejects.toThrow('OneDrive 请求失败（HTTP 500）')
   })
 
-  it('listBackups：children 响应缺 value / 条目缺 name → 空结果不抛（宽松容错，@odata.nextLink 空串同止）', async () => {
+  it('listBackups：children 响应缺 value / 条目缺 name → 宽松容错不抛；@odata.nextLink 空串同止', async () => {
     const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
       const u = String(url)
       if (u === `${GRAPH}/me/drive/root:/${PATH}:?select=parentReference`) {
         return jsonRes({ parentReference: { id: 'pid1' } })
       }
       if (u === `${GRAPH}/me/drive/items/pid1/children`) {
-        return jsonRes({ '@odata.nextLink': '' }) // 缺 value + 空串 nextLink（都容忍）
+        return jsonRes({ '@odata.nextLink': '2' }) // 缺 value：空迭代不抛，nextLink 仍续拉
+      }
+      if (u === '2') {
+        return jsonRes({ value: [{ id: 'x' }] }) // 条目缺 name：过滤跳过；无 nextLink 终止
       }
       throw new Error(`意外请求：${u}`)
     })
     vi.stubGlobal('fetch', fetchMock)
     const backend = createOneDriveBackend({ backend: 'onedrive', accessToken: 'tok' })
     expect(await backend.listBackups!()).toEqual([])
-    expect(fetchMock).toHaveBeenCalledTimes(2) // 空串 nextLink 不发起续拉
+    expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 })
 
