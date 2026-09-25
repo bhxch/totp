@@ -112,6 +112,7 @@ describe('F13：hasNestedQuantifierRisk 嵌套量词保守筛查', () => {
     ['(a??)+', true, '锚定：有界量词组体 + 组被量化 → 保守判风险'],
     ['a{2,4', false, '非成对 { 按字面量'],
     ['x{,5}', false, '{,5} 非量词语法按字面量'],
+    ['(?:a{2,4}?)x', false, '惰性有界量词 {n,m}? 按单 token 消费（含尾随 ?）→ 安全'],
   ])('未测形态 %s → %s（%s）', (p, expected) => {
     expect(hasNestedQuantifierRisk(p)).toBe(expected)
   })

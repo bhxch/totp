@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
-  addPrfSource, changeVaultPassphrase, decryptVaultWithDek, encryptVaultWithDek, isEncryptedVault,
-  setupVaultEncryption, unlockVaultEncryption, SECURITY_KEY,
+  addPrfSource, changeVaultPassphrase, decryptVaultWithDek, decryptVaultWithDekDetailed, encryptVaultWithDek,
+  isEncryptedVault, isSecuritySettings, setupVaultEncryption, unlockVaultEncryption, SECURITY_KEY, VaultRollbackError,
 } from '../src/security/securityStore'
+import type { SecuritySettings } from '../src/security/securityStore'
 import { unlockWithPrf } from '../src/security/multiKek'
 import { bytesToBase64, randomBytes } from '../src/crypto/aesgcm'
 
@@ -109,6 +110,18 @@ describe('securityStore', () => {
     await expect(encryptVaultWithDek(new Uint8Array(16), '{}')).rejects.toThrow('invalid dek')
     await expect(unlockVaultEncryption({ v: 2 } as never, 'p')).rejects.toThrow('invalid security settings')
   })
+  it('decryptVaultWithDekDetailed 对非 32B dek 抛 invalid dek', async () => {
+    const { encrypted } = await setupVaultEncryption(vaultJson, 'p')
+    await expect(decryptVaultWithDek(new Uint8Array(16), encrypted)).rejects.toThrow('invalid dek')
+  })
+  it('decryptVaultWithDekDetailed：密文结构非法 → invalid encrypted vault', async () => {
+    await expect(decryptVaultWithDekDetailed(new Uint8Array(32), { v: 2 } as never)).rejects.toThrow('invalid encrypted vault')
+    await expect(decryptVaultWithDekDetailed(new Uint8Array(32), null as never)).rejects.toThrow('invalid encrypted vault')
+  })
+  it('addPrfSource：settings 结构非法 → invalid security settings', async () => {
+    await expect(addPrfSource({ v: 2 } as never, new Uint8Array(32), 'cred', randomBytes(64), 'c2FsdA=='))
+      .rejects.toThrow('invalid security settings')
+  })
   it('两次 setup 产生不同 salt/nonce（随机性）', async () => {
     const a = await setupVaultEncryption(vaultJson, 'p')
     const b = await setupVaultEncryption(vaultJson, 'p')
@@ -138,5 +151,53 @@ describe('securityStore', () => {
     // 唯一性验证：prf credentialId 唯一、dpapi 唯一
     const prfIds = (s2.kekSources ?? []).filter((k) => k.kind === 'prf').map((k) => (k as { credentialId: string }).credentialId)
     expect(new Set(prfIds).size).toBe(prfIds.length)
+  })
+})
+
+describe('securityStore 拒绝方向补全（解锁/改密异常入参）', () => {
+  /** 最小合法 SecuritySettings fixture（不经 setup，避免 argon2 开销；仅测结构校验路径） */
+  const bareSecurity = (kdfPatch: Record<string, unknown> = {}): SecuritySettings =>
+    ({
+      v: 1,
+      enabled: true,
+      kdf: { alg: 'argon2id', m: 65536, t: 3, p: 1, salt: bytesToBase64(randomBytes(16)), ...kdfPatch },
+      wrapNonce: bytesToBase64(randomBytes(12)),
+      wrappedDek: bytesToBase64(randomBytes(48)),
+    }) as SecuritySettings
+
+  it('unlock：security 非对象（null/标量）→ invalid security settings', async () => {
+    await expect(unlockVaultEncryption(null as never, 'p')).rejects.toThrow('invalid security settings')
+    await expect(unlockVaultEncryption('x' as never, 'p')).rejects.toThrow('invalid security settings')
+  })
+  it('unlock：kdf.salt 非字符串 → invalid security settings', async () => {
+    await expect(unlockVaultEncryption(bareSecurity({ salt: 12345 }), 'p')).rejects.toThrow('invalid security settings')
+  })
+  it('unlock：kdf.salt base64 非法 → 派生前按结构拒绝（invalid security settings，不触发 KDF）', async () => {
+    await expect(unlockVaultEncryption(bareSecurity({ salt: '!!not-base64' }), 'p')).rejects.toThrow('invalid security settings')
+  })
+  it('changeVaultPassphrase：dek 非 32B → invalid dek', async () => {
+    await expect(changeVaultPassphrase(bareSecurity(), new Uint8Array(16), '新口令')).rejects.toThrow('invalid dek')
+  })
+  it('changeVaultPassphrase：security 结构非法 → invalid security settings', async () => {
+    await expect(changeVaultPassphrase({ v: 2 } as never, new Uint8Array(32), '新口令')).rejects.toThrow('invalid security settings')
+  })
+  it('changeVaultPassphrase：kdf 参数超钳制 → 派生前拒绝（invalid security settings）', async () => {
+    await expect(changeVaultPassphrase(bareSecurity({ m: 262145 }), new Uint8Array(32), '新')).rejects.toThrow('invalid security settings')
+    await expect(changeVaultPassphrase(bareSecurity({ t: 0 }), new Uint8Array(32), '新')).rejects.toThrow('invalid security settings')
+  })
+  it('isEncryptedVault / isSecuritySettings：null 与标量 → false（类型守卫宽松侧）', () => {
+    for (const bad of [null, undefined, 'str', 42, true]) {
+      expect(isEncryptedVault(bad)).toBe(false)
+      expect(isSecuritySettings(bad)).toBe(false)
+    }
+  })
+})
+
+describe('VaultRollbackError（F8 回滚拒绝错误类型，最小构造锚定）', () => {
+  it('Error 子类、name 与中文消息锚定', () => {
+    const e = new VaultRollbackError()
+    expect(e).toBeInstanceOf(Error)
+    expect(e.name).toBe('VaultRollbackError')
+    expect(e.message).toBe('vault 回滚被拒绝：密文 rev 低于本地水位')
   })
 })

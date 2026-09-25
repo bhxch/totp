@@ -1,4 +1,4 @@
-import { yandexCode, yandexValidateSecret, base32Decode, base32Encode } from '@totp/core'
+import { yandexCode, yandexSecretBytes, yandexValidateSecret, base32Decode, base32Encode } from '@totp/core'
 import { describe, expect, it } from 'vitest'
 
 // 由 scripts/gen-yaotp-vectors.mjs 产出（独立参考实现 node:crypto，Step 1 运行结果原样粘贴）：
@@ -110,5 +110,25 @@ describe('yandexValidateSecret（Aegis YandexInfo.validateSecret 移植，KeeYaO
     const bytes = base32Decode(VECTORS[0]!.secretB32)
     expect(bytes.length).toBe(16)
     expect(base32Encode(bytes)).toBe(VECTORS[0]!.secretB32 + '======')
+  })
+
+  it('26 字节 secret 全零数据域：CRC 归一化 accum===0 边界分支 + 校验通过后取前 16B（slice 分支）', () => {
+    // 全零数据域（42 个 'A' = 26 个 0x00）使 13 位分组累积在第 2 次空填充迭代后 accum 归零——
+    // Java 移植位长归一化（32-clz32）的唯一 0 值分支；校验值恰为 0，回填后自洽。
+    const b32 = 'A'.repeat(42)
+    const bytes = yandexSecretBytes(b32) // 不抛 = 校验通过
+    expect(bytes.length).toBe(16)
+    expect(bytes).toEqual(new Uint8Array(16))
+  })
+
+  it('yandexCode：SHA-256 首字节为 0 的 pin‖secret → 走 key 去首字节分支，正常产出（fixture 暴力搜索所得）', async () => {
+    // pin='2a' 对 16B 全零 secret：SHA256('2a'||zeros) 首字节为 0 → key=digest.slice(1)（31B HMAC key）
+    const code1 = await yandexCode('A'.repeat(42), '2a', 1_700_000_000_000)
+    const code2 = await yandexCode('A'.repeat(42), '2a', 1_700_000_000_000)
+    expect(code1).toMatch(/^[a-z]{8}$/)
+    expect(code1).toBe(code2) // 分支路径下仍确定性
+    // 对照：非零首字节的普通 pin 产出不同码（两分支真实分流）
+    const normal = await yandexCode('A'.repeat(42), '12', 1_700_000_000_000)
+    expect(normal).not.toBe(code1)
   })
 })

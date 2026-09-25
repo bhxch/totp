@@ -35,6 +35,9 @@ describe('DEK 保管区', () => {
   it("raw='' → 空保管区（不抛）", async () => {
     await expect(openSecretBag(randomBytes(32), '')).resolves.toEqual(emptyBag())
   })
+  it("raw='null'（JSON null 字面量脏数据）→ 空保管区（不抛）", async () => {
+    await expect(openSecretBag(randomBytes(32), 'null')).resolves.toEqual(emptyBag())
+  })
   it('dek 非 32B：seal 与 open 双向均抛 invalid dek（先于内容校验）', async () => {
     const dek16 = new Uint8Array(16)
     await expect(sealSecretBag(dek16, { backupPassword: 'x', creds: {} })).rejects.toThrow('invalid dek')

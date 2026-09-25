@@ -81,4 +81,14 @@ describe('verifyTotp', () => {
     // t0 比 nowMs/1000 大很多，差值为负，current<0 → false
     expect(await verifyTotp(secret, '123456', { nowMs, t0: 1000 })).toBe(false)
   })
+
+  it('首个周期内验证：窗口越界负 counter 跳过（c<0 continue），当前码仍可命中', async () => {
+    const secret = base32Decode('JBSWY3DPEHPK3PXP')
+    // nowMs=5s：current=0，window=1 → c 从 -1 起扫（-1 越界跳过，不误命中也不抛错）
+    const code = await totp(secret, 5_000)
+    expect(await verifyTotp(secret, code, { nowMs: 5_000 })).toBe(true)
+    // 窗口 [−1,1] 内的 counter=1（35s）可命中；窗口外 counter=2（65s）拒绝
+    expect(await verifyTotp(secret, await totp(secret, 35_000), { nowMs: 5_000 })).toBe(true)
+    expect(await verifyTotp(secret, await totp(secret, 65_000), { nowMs: 5_000 })).toBe(false)
+  })
 })

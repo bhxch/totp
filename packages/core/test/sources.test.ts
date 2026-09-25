@@ -20,6 +20,12 @@ describe('BackupSource 存取', () => {
     expect(isBackupSource({ ...src(), kind: 'ftp' })).toBe(false)
     expect(isBackupSource({ ...src(), retention: { type: 'keep', n: -1 } })).toBe(false)
   })
+  it('isBackupSource：非对象（null/标量）→ false；retention 非对象/null → false', () => {
+    for (const bad of [null, undefined, 'str', 42, true]) expect(isBackupSource(bad)).toBe(false)
+    expect(isBackupSource({ ...src(), retention: null })).toBe(false)
+    expect(isBackupSource({ ...src(), retention: 'keep' })).toBe(false)
+    expect(isBackupSource({ ...src(), retention: 3 })).toBe(false)
+  })
   it('loadSources：坏 JSON/缺键 → 空数组；非法条目过滤不抛', async () => {
     const a = createMemoryStorage()
     await expect(loadSources(a)).resolves.toEqual([])
@@ -80,6 +86,12 @@ describe('primary/replica 角色（活动目标单选，设计 §2）', () => {
   it('normalizeSourceRoles：全部 disabled → 保持输入原 role 不变', () => {
     const list = [src({ id: 'a', enabled: false, role: 'primary' }), src({ id: 'b', enabled: false, role: 'replica' })]
     expect(normalizeSourceRoles(list)).toEqual(list)
+  })
+  it('normalizeSourceRoles：无 primary 且存量数据缺 role → 补 replica（?? 兜底分支）', () => {
+    const list = [
+      { id: 'a', kind: 'webdav', name: 'a', retention: { type: 'overwrite' }, enabled: false },
+    ] as unknown as BackupSource[]
+    expect(normalizeSourceRoles(list)[0]!.role).toBe('replica')
   })
   it('normalizeSourceRoles：local 源不参与 primary 选举——盘上 [local(enabled), cloud(enabled)] → cloud=primary、local=replica（T11F）', () => {
     // desktop saveCloudSourcesPreservingLocal 恒把保留的 local 源置于盘上列表头：按旧「首个 enabled」

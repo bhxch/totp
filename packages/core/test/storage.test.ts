@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createMemoryStorage } from '../src/storage/memory'
 import { loadVault, saveVault, validateVaultObject, VAULT_KEY } from '../src/storage/vaultStore'
+import { loadSettings, DEFAULT_SETTINGS, SETTINGS_KEY } from '../src/storage/vaultStore'
 import { addEntry, createVault } from '../src/vault'
 import { newEntryFromUri } from '../src/vault'
 
@@ -32,6 +33,14 @@ describe('vaultStore', () => {
     const s = createMemoryStorage()
     await s.set(VAULT_KEY, '{oops')
     await expect(loadVault(s)).rejects.toThrow('vault corrupted')
+  })
+
+  it('存盘 JSON 为 null 字面量（脏数据方向）→ vault corrupted / settings 回默认', async () => {
+    const s = createMemoryStorage()
+    await s.set(VAULT_KEY, 'null')
+    await expect(loadVault(s)).rejects.toThrow('vault corrupted')
+    await s.set(SETTINGS_KEY, 'null')
+    expect(await loadSettings(s)).toEqual(DEFAULT_SETTINGS)
   })
 })
 
@@ -91,6 +100,12 @@ describe('validateVaultObject / loadVault 结构校验（F6）', () => {
     await expect(loadVault(s)).rejects.toThrow('vault corrupted')
   })
 
+  it('tags 元素非对象（标量）→ 整记录拒绝', async () => {
+    const s = createMemoryStorage()
+    await s.set(VAULT_KEY, JSON.stringify(validVault({ tags: [42] })))
+    await expect(loadVault(s)).rejects.toThrow('vault corrupted')
+  })
+
   it.each([
     ['note 非字符串', { note: 123 }],
     ['pinned 非布尔', { pinned: 'yes' }],
@@ -103,6 +118,8 @@ describe('validateVaultObject / loadVault 结构校验（F6）', () => {
     ['issuer 非字符串', { issuer: 1 }],
     ['label 非字符串', { label: 2 }],
     ['secret 非字符串', { secret: 3 }],
+    ['order 非有限数字', { order: 'x' }],
+    ['createdAt 非有限数字', { createdAt: 'x' }],
     ['matchRules 元素非对象', { matchRules: ['host'] }],
   ])('条目级违规拒绝（未测方向补全）：%s', async (_name, patch) => {
     const s = createMemoryStorage()

@@ -26,6 +26,12 @@ describe('远端滚动删除', () => {
   it('删除名单与 selectBackupsToKeep 同源（超额=旧→新前 N）', () => {
     expect(selectBackupsToKeep(names, 2)).toEqual(['vault-20260101-000000.totpbackup'])
   })
+  it('list 返回空串/纯斜杠等脏条目 → basename 回退原值不抛，正则不命中不误删', async () => {
+    const del = vi.fn<(p: string) => Promise<void>>().mockResolvedValue(undefined)
+    const deleted = await enforceRemoteRetention({ listBackups: async () => ['', '/'], delete: del } as never, 2)
+    expect(deleted).toBe(0)
+    expect(del).not.toHaveBeenCalled()
+  })
   it('单个删除失败不阻断：其余照删，返回成功删除数', async () => {
     const del = vi.fn(async (name: string) => {
       if (name === 'vault-20260202-000000.totpbackup') throw new Error('HTTP 500')

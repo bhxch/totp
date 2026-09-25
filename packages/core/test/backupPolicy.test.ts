@@ -45,6 +45,11 @@ describe('selectBackupsToKeep', () => {
     expect(selectBackupsToKeep(names, 2)).toEqual(['vault-20260911-090000.totpbackup'])
     expect(selectBackupsToKeep(names, 5)).toEqual([])
   })
+  it('keep=0/负数 → 返回全部合法名（全量清理方向，不裁剪）', () => {
+    const allValid = ['vault-20260911-090000.totpbackup', 'vault-20260912-090000.totpbackup', 'vault-20260913-150405.totpbackup']
+    expect(selectBackupsToKeep(names, 0)).toEqual(allValid)
+    expect(selectBackupsToKeep(names, -1)).toEqual(allValid)
+  })
   it('冲突副本不计入滚动删除', () => {
     expect(selectBackupsToKeep(['conflict-20260913-150405.totpbackup', 'vault-20260912-090000.totpbackup'], 1)).toEqual([])
   })

@@ -53,6 +53,14 @@ describe('kekSourcesOf 归一化', () => {
     const s = { ...bareSettings(), kekSources: [{ kind: 'bogus' }, { kind: 'prf', credentialId: 'x' }] as never }
     expect(kekSourcesOf(s)).toEqual([{ kind: 'password' }])
   })
+  it('非对象元素（null/数字/字符串）→ 过滤；与合法条目混存时仅保留合法条目', () => {
+    const allBad = { ...bareSettings(), kekSources: [null, 42, 'password'] as never }
+    expect(kekSourcesOf(allBad)).toEqual([{ kind: 'password' }])
+    const mixed = { ...bareSettings(), kekSources: [null, prfSource('c1')] as never }
+    const out = kekSourcesOf(mixed)
+    expect(out).toHaveLength(1)
+    expect(out[0]).toMatchObject({ kind: 'prf', credentialId: 'c1' })
+  })
 })
 
 describe('withPrfSource / withDpapiSource 添加来源', () => {

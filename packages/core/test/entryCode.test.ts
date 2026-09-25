@@ -30,7 +30,12 @@ describe('computeEntryCode', () => {
   it('period 0 / undefined（falsy）→ 回落 30（旧数据 period 缺失方向）', async () => {
     const zero = await computeEntryCode({ ...base, type: 'totp', period: 0 }, 59_000)
     expect(zero.period).toBe(30)
-    const missing = await computeEntryCode({ ...base, type: 'totp', period: undefined }, 59_000)
+    // 模拟旧盘 JSON 落盘缺 period 键（字段真正缺失而非显式 undefined）
+    const { period: _period, ...noPeriod } = base
+    const missing = await computeEntryCode(
+      JSON.parse(JSON.stringify({ ...noPeriod, type: 'totp' })) as typeof base & { type: 'totp' },
+      59_000,
+    )
     expect(missing.period).toBe(30)
   })
 
