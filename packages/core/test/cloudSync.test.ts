@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CloudBackend } from '../src/cloud/backend'
 import { CloudHttpError, cloudFetch, ensureHttpOk, isAuthError } from '../src/cloud/backend'
 import { createBackupEnvelope, createSyncEnvelope, openBackupEnvelope } from '../src/backup/envelope'
@@ -517,10 +517,14 @@ describe('CloudHttpError / isAuthError（审查 I2 结构化凭据失效判定�
 })
 
 describe('cloudFetch（网络层包装）', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
   it('fetch 抛出物非 Error（字符串 reject）→ 消息按 String(err) 归一，不加 CORS 提示', async () => {
-    globalThis.fetch = (async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
       throw 'socket reset' // 非 TypeError 且非 Error
-    }) as typeof fetch
+    }))
     const err = await cloudFetch('WebDAV', 'https://dav.example.com/obj').then(() => null, (e: unknown) => e)
     expect(err).toBeInstanceOf(Error)
     expect((err as Error).message).toBe('WebDAV 网络请求失败：socket reset（dav.example.com/obj）')
@@ -528,9 +532,9 @@ describe('cloudFetch（网络层包装）', () => {
   })
 
   it('url 非法（URL 构造失败）→ 错误位置回落「<url 解析失败>」占位，不抛二级异常', async () => {
-    globalThis.fetch = (async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
       throw new TypeError('fetch failed')
-    }) as typeof fetch
+    }))
     const err = await cloudFetch('S3', '::not a url::').then(() => null, (e: unknown) => e)
     expect((err as Error).message).toBe('S3 网络请求失败：fetch failed — 若为自建 WebDAV/S3(MinIO)请检查服务端 CORS 配置（<url 解析失败>）')
   })

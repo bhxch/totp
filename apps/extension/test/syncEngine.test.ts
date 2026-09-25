@@ -162,6 +162,157 @@ describe('pushOnce 编排（经 pushSync）', () => {
     expect(sync.data[META_KEY]).toMatchObject({ rev: 2 })
     expect(local.data[VAULT_KEY]).toBe(JSON.stringify({ entries: ['stale-local'] }))
   })
+  it('appliedRev 缺失（新设备）且远端有 meta → push 前先拉取应用（远端 rev>0 恒判有未应用更新）', async () => {
+    const remotePayload = JSON.stringify({ version: 2, entries: [], tags: [], updatedAt: 7 })
+    const { local, sync } = installChrome(
+      {
+        [VAULT_KEY]: JSON.stringify({ entries: ['fresh-device'] }),
+        [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }),
+      },
+      { ...remotePush(remotePayload, 5) },
+    )
+
+    await pushSync()
+
+    // 前置 pull 生效（appliedRev 缺失按 0 < 5），随后推送 rev=6
+    expect(local.data[VAULT_KEY]).toBe(remotePayload)
+    expect(sync.data[META_KEY]).toMatchObject({ rev: 6 })
+  })
+  it('push 阶段 getBytesInUse 抛错（quota 判定）→ error 状态（实现行为：判定失败按异常收敛）', async () => {
+    const shim = installChrome(
+      {
+        [VAULT_KEY]: JSON.stringify({ entries: ['data'] }),
+        [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }),
+      },
+      {},
+    )
+    shim.sync.getBytesInUse = async () => {
+      throw new Error('getBytesInUse not supported')
+    }
+
+    await pushSync()
+
+    // pushOnce 自身的 inUse 探测在 try 块内：抛错走整体 catch → error（与 setSyncStatus 的 pct 容错不同层）
+    expect(shim.local.data[SYNC_STATUS_KEY]).toMatchObject({ state: 'error' })
+    expect(shim.sync.data[META_KEY]).toMatchObject({ rev: 1 }) // 推送本身已完成
+  })
+  it('push 全程异常（sync.set 抛错）→ error 状态；恢复后下一轮照常运行', async () => {
+    const shim = installChrome(
+      {
+        [VAULT_KEY]: JSON.stringify({ entries: ['data'] }),
+        [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }),
+      },
+      {},
+    )
+    const realSet = shim.sync.set.bind(shim.sync)
+    let setFail = true
+    shim.sync.set = async (obj: Store) => {
+      if (setFail) throw new Error('sync quota write failed')
+      return realSet(obj)
+    }
+
+    await expect(pushSync()).resolves.toBeUndefined() // 吞错不 reject
+    expect(shim.local.data[SYNC_STATUS_KEY]).toMatchObject({ state: 'error' })
+
+    // 恢复后再次 push：走完整流程（meta rev=1 落盘、状态回 ok）
+    setFail = false
+    await pushSync()
+    expect((shim.sync.data[META_KEY] as { rev: number }).rev).toBe(1)
+    expect(shim.local.data[SYNC_STATUS_KEY]).toMatchObject({ state: 'ok' })
+  })
+  it('本端无 vault → 不推送（无 payload 可推，零 sync 区写）', async () => {
+    const { local, sync } = installChrome(
+      { [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }) },
+      {},
+    )
+    await pushSync()
+    expect(sync.data[META_KEY]).toBeUndefined()
+    expect(local.data[APPLIED_REV_KEY]).toBeUndefined()
+  })
+  it('密文 vault 且 local security 缺失 → error 拒推（防密文 vault 落 sync 区后无人可解）', async () => {
+    const encrypted = JSON.stringify({ v: 1, enc: true, dataNonce: 'n0nce', ciphertext: 'c1ph3r' })
+    const { local, sync } = installChrome(
+      { [VAULT_KEY]: encrypted, [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }) },
+      {},
+    )
+    await pushSync()
+    expect(sync.data[META_KEY]).toBeUndefined() // 未推送
+    expect(local.data[SYNC_STATUS_KEY]).toMatchObject({ state: 'error' })
+  })
+  it('vault 非 JSON 且无 security（明文路径放行）→ 照常推送', async () => {
+    const { local, sync } = installChrome(
+      { [VAULT_KEY]: 'plain-not-json{{', [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }) },
+      {},
+    )
+    await pushSync()
+    expect(sync.data[META_KEY]).toMatchObject({ rev: 1 })
+    expect(local.data[SYNC_STATUS_KEY]).toMatchObject({ state: 'ok' })
+  })
+  it('security 存在才写 sync:security；settings 在场则随批同步（pushSync 前置 readSyncEnabled 语义下 settings 恒在场）', async () => {
+    const { sync } = installChrome(
+      {
+        [VAULT_KEY]: JSON.stringify({ entries: ['n1'] }),
+        [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }),
+        [SECURITY_KEY]: '{"wrapped":"k"}',
+      },
+      {},
+    )
+    await pushSync()
+    expect(sync.data[META_KEY]).toMatchObject({ rev: 1 })
+    expect(sync.data['sync:settings']).toBe(JSON.stringify({ syncEnabled: true }))
+    expect(sync.data['sync:security']).toBe('{"wrapped":"k"}')
+  })
+  it('明文 vault 无 security → 推送不含 sync:security（pull 端同态移除语义的对侧）', async () => {
+    const { sync } = installChrome(
+      {
+        [VAULT_KEY]: JSON.stringify({ entries: ['plain'] }),
+        [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }),
+      },
+      {},
+    )
+    await pushSync()
+    expect(sync.data['sync:security']).toBeUndefined()
+  })
+  it('推送后 stale 清理：旧 total 分片键被移除（total 收缩场景）', async () => {
+    // 远端曾以 total=2 推送 rev1；本端 applied=1 直推 rev2（total=1）→ 旧 chunk 1/2 成 stale
+    const oldPayload = JSON.stringify({ version: 2, entries: [], tags: [], updatedAt: 1 })
+    const oldChunks = splitIntoChunks(oldPayload, 1, 1000, 10) // 强制 2 片
+    const syncInit: Store = { [META_KEY]: chunksToMeta(oldChunks) }
+    for (const c of oldChunks) syncInit[chunkKey(c.part, c.total)] = c
+    const { sync } = installChrome(
+      {
+        [VAULT_KEY]: JSON.stringify({ entries: ['n1'] }),
+        [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }),
+        [APPLIED_REV_KEY]: 1,
+      },
+      syncInit,
+    )
+
+    await pushSync()
+
+    expect(sync.data[META_KEY]).toMatchObject({ rev: 2 })
+    expect(sync.data[chunkKey(1, 2)]).toBeUndefined() // stale 已清理
+    expect(sync.data[chunkKey(0, 1)]).toBeDefined()
+  })
+
+  it('push 后同步区占用 >90% 配额 → quota 状态 + pct 百分比（I57）', async () => {
+    const shim = installChrome(
+      {
+        [VAULT_KEY]: JSON.stringify({ entries: ['data'] }),
+        [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }),
+      },
+      {},
+    )
+    shim.sync.QUOTA_BYTES = 100_000
+    shim.sync.getBytesInUse = async () => 95_000 // 固定占用桩：不与 shim 现算互证（循环论证）
+
+    await pushSync()
+
+    const status = shim.local.data[SYNC_STATUS_KEY] as { state: string; pct?: number }
+    expect(status.state).toBe('quota')
+    expect(status.pct).toBe(95) // Math.round(95_000 / 100_000 * 100)，且 >90% 阈值判定成立
+  })
+
 })
 
 describe('pullSyncIfNewer（经 pullOnce）', () => {
@@ -346,23 +497,6 @@ describe('pullSyncIfNewer（经 pullOnce）', () => {
     expect(local.data[SYNC_STATUS_KEY]).toBeUndefined()
   })
 
-  it('appliedRev 缺失（新设备）且远端有 meta → push 前先拉取应用（远端 rev>0 恒判有未应用更新）', async () => {
-    const remotePayload = JSON.stringify({ version: 2, entries: [], tags: [], updatedAt: 7 })
-    const { local, sync } = installChrome(
-      {
-        [VAULT_KEY]: JSON.stringify({ entries: ['fresh-device'] }),
-        [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }),
-      },
-      { ...remotePush(remotePayload, 5) },
-    )
-
-    await pushSync()
-
-    // 前置 pull 生效（appliedRev 缺失按 0 < 5），随后推送 rev=6
-    expect(local.data[VAULT_KEY]).toBe(remotePayload)
-    expect(sync.data[META_KEY]).toMatchObject({ rev: 6 })
-  })
-
   it('分片同版本过滤：旧 rev 残片与新版分片共存 → 只合并与 meta 同 rev/updatedAt/total 的分片', async () => {
     const remotePayload = JSON.stringify({ version: 2, entries: [], tags: [], updatedAt: 2 })
     // 残留 rev2 旧分片（若混入会因 total/rev 不一致致 mergeChunks null）
@@ -443,24 +577,6 @@ describe('pullSyncIfNewer（经 pullOnce）', () => {
     expect(shim.local.calls.remove).toBe(1)
   })
 
-  it('push 后同步区占用 >90% 配额 → quota 状态 + pct 百分比（I57）', async () => {
-    const shim = installChrome(
-      {
-        [VAULT_KEY]: JSON.stringify({ entries: ['data'] }),
-        [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }),
-      },
-      {},
-    )
-    shim.sync.QUOTA_BYTES = 100 // 收缩配额：推送后占用必然超过 90%
-
-    await pushSync()
-
-    const status = shim.local.data[SYNC_STATUS_KEY] as { state: string; pct?: number }
-    expect(status.state).toBe('quota')
-    expect(status.pct).toBe(Math.round((await shim.sync.getBytesInUse()) / 100 * 100))
-    expect(status.pct).toBeGreaterThan(90)
-  })
-
   it('getBytesInUse 抛错 → pull 状态 ok 但 pct 缺省（setSyncStatus 容错，UI 不显示百分比）', async () => {
     const shim = installChrome(
       {
@@ -480,130 +596,9 @@ describe('pullSyncIfNewer（经 pullOnce）', () => {
     expect('pct' in status).toBe(false) // 配额探测失败不阻断，pct 缺省
   })
 
-  it('push 阶段 getBytesInUse 抛错（quota 判定）→ error 状态（实现行为：判定失败按异常收敛）', async () => {
-    const shim = installChrome(
-      {
-        [VAULT_KEY]: JSON.stringify({ entries: ['data'] }),
-        [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }),
-      },
-      {},
-    )
-    shim.sync.getBytesInUse = async () => {
-      throw new Error('getBytesInUse not supported')
-    }
+})
 
-    await pushSync()
-
-    // pushOnce 自身的 inUse 探测在 try 块内：抛错走整体 catch → error（与 setSyncStatus 的 pct 容错不同层）
-    expect(shim.local.data[SYNC_STATUS_KEY]).toMatchObject({ state: 'error' })
-    expect(shim.sync.data[META_KEY]).toMatchObject({ rev: 1 }) // 推送本身已完成
-  })
-
-  it('push 全程异常（sync.set 抛错）→ error 状态；恢复后下一轮照常运行', async () => {
-    const shim = installChrome(
-      {
-        [VAULT_KEY]: JSON.stringify({ entries: ['data'] }),
-        [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }),
-      },
-      {},
-    )
-    const realSet = shim.sync.set.bind(shim.sync)
-    let setFail = true
-    shim.sync.set = async (obj: Store) => {
-      if (setFail) throw new Error('sync quota write failed')
-      return realSet(obj)
-    }
-
-    await expect(pushSync()).resolves.toBeUndefined() // 吞错不 reject
-    expect(shim.local.data[SYNC_STATUS_KEY]).toMatchObject({ state: 'error' })
-
-    // 恢复后再次 push：走完整流程（meta rev=1 落盘、状态回 ok）
-    setFail = false
-    await pushSync()
-    expect((shim.sync.data[META_KEY] as { rev: number }).rev).toBe(1)
-    expect(shim.local.data[SYNC_STATUS_KEY]).toMatchObject({ state: 'ok' })
-  })
-
-  it('本端无 vault → 不推送（无 payload 可推，零 sync 区写）', async () => {
-    const { local, sync } = installChrome(
-      { [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }) },
-      {},
-    )
-    await pushSync()
-    expect(sync.data[META_KEY]).toBeUndefined()
-    expect(local.data[APPLIED_REV_KEY]).toBeUndefined()
-  })
-
-  it('密文 vault 且 local security 缺失 → error 拒推（防密文 vault 落 sync 区后无人可解）', async () => {
-    const encrypted = JSON.stringify({ v: 1, enc: true, dataNonce: 'n0nce', ciphertext: 'c1ph3r' })
-    const { local, sync } = installChrome(
-      { [VAULT_KEY]: encrypted, [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }) },
-      {},
-    )
-    await pushSync()
-    expect(sync.data[META_KEY]).toBeUndefined() // 未推送
-    expect(local.data[SYNC_STATUS_KEY]).toMatchObject({ state: 'error' })
-  })
-
-  it('vault 非 JSON 且无 security（明文路径放行）→ 照常推送', async () => {
-    const { local, sync } = installChrome(
-      { [VAULT_KEY]: 'plain-not-json{{', [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }) },
-      {},
-    )
-    await pushSync()
-    expect(sync.data[META_KEY]).toMatchObject({ rev: 1 })
-    expect(local.data[SYNC_STATUS_KEY]).toMatchObject({ state: 'ok' })
-  })
-
-  it('security 存在才写 sync:security；settings 在场则随批同步（pushSync 前置 readSyncEnabled 语义下 settings 恒在场）', async () => {
-    const { sync } = installChrome(
-      {
-        [VAULT_KEY]: JSON.stringify({ entries: ['n1'] }),
-        [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }),
-        [SECURITY_KEY]: '{"wrapped":"k"}',
-      },
-      {},
-    )
-    await pushSync()
-    expect(sync.data[META_KEY]).toMatchObject({ rev: 1 })
-    expect(sync.data['sync:settings']).toBe(JSON.stringify({ syncEnabled: true }))
-    expect(sync.data['sync:security']).toBe('{"wrapped":"k"}')
-  })
-
-  it('明文 vault 无 security → 推送不含 sync:security（pull 端同态移除语义的对侧）', async () => {
-    const { sync } = installChrome(
-      {
-        [VAULT_KEY]: JSON.stringify({ entries: ['plain'] }),
-        [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }),
-      },
-      {},
-    )
-    await pushSync()
-    expect(sync.data['sync:security']).toBeUndefined()
-  })
-
-  it('推送后 stale 清理：旧 total 分片键被移除（total 收缩场景）', async () => {
-    // 远端曾以 total=2 推送 rev1；本端 applied=1 直推 rev2（total=1）→ 旧 chunk 1/2 成 stale
-    const oldPayload = JSON.stringify({ version: 2, entries: [], tags: [], updatedAt: 1 })
-    const oldChunks = splitIntoChunks(oldPayload, 1, 1000, 10) // 强制 2 片
-    const syncInit: Store = { [META_KEY]: chunksToMeta(oldChunks) }
-    for (const c of oldChunks) syncInit[chunkKey(c.part, c.total)] = c
-    const { sync } = installChrome(
-      {
-        [VAULT_KEY]: JSON.stringify({ entries: ['n1'] }),
-        [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }),
-        [APPLIED_REV_KEY]: 1,
-      },
-      syncInit,
-    )
-
-    await pushSync()
-
-    expect(sync.data[META_KEY]).toMatchObject({ rev: 2 })
-    expect(sync.data[chunkKey(1, 2)]).toBeUndefined() // stale 已清理
-    expect(sync.data[chunkKey(0, 1)]).toBeDefined()
-  })
-
+describe('mkSerialized 串行化与 markSyncOff（导出包装面）', () => {
   it('markSyncOff：写 off 状态（无 pct 探测），供 UI 显示「未启用」', async () => {
     const shim = installChrome({}, {})
     await markSyncOff()
@@ -612,7 +607,6 @@ describe('pullSyncIfNewer（经 pullOnce）', () => {
     expect(typeof status.at).toBe('number')
     expect(shim.sync.calls.getBytesInUse).toBe(0) // 非 ok/quota 不探测配额
   })
-
   it('mkSerialized 并发重入：in-flight 期间重入立即返回，首轮跑完自动补跑一轮（pending 语义）', async () => {
     const shim = installChrome(
       {
@@ -638,7 +632,6 @@ describe('pullSyncIfNewer（经 pullOnce）', () => {
       expect((shim.sync.data[META_KEY] as { rev: number }).rev).toBe(2)
     })
   })
-
   it('mkSerialized run 抛错 → inFlight 复位：后续调用可正常运行（不被在途标志卡死）', async () => {
     const shim = installChrome(
       {

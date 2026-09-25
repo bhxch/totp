@@ -6,9 +6,14 @@
  * - interval 到点触发拉取，stop 后停止
  * - runPull 抛错走 onError，不中断调度
  */
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CloudHttpError } from '@totp/core'
 import { createSyncScheduler } from '../src/syncScheduler'
+
+// fake timers 文件级兜底：个别用例断言路径提前返回时也能还原真实时钟（不污染后续文件内用例）
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 function makeDeps(overrides: Partial<Parameters<typeof createSyncScheduler>[0]> = {}) {
   const unlockCbs: Array<() => void> = []

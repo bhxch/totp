@@ -18,7 +18,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const testScope = vi.hoisted(() => ({
   adapterData: {} as Record<string, string>,
   /** 捕获工厂传入 createCloudSyncRunner 的完整 deps（桥接断言直接驱动各成员） */
-  runnerDeps: null as { [k: string]: (...args: never[]) => unknown } | null,
+  runnerDeps: null as import('@totp/ui').CloudRunnerDeps | null,
   /** runner.run 的可编程实现（onAuthFailure 由它模拟 runner 轮内上抛） */
   runImpl: null as null | ((mode?: 'auto' | 'manual' | 'pull') => Promise<void>),
 }))
@@ -38,7 +38,7 @@ vi.mock('../src/store', async () => ({
 vi.mock('@totp/ui', async () => {
   const fn = (await import('vitest')).vi.fn
   return {
-    createCloudSyncRunner: fn((deps: { [k: string]: (...args: never[]) => unknown }) => {
+    createCloudSyncRunner: fn((deps: import('@totp/ui').CloudRunnerDeps) => {
       testScope.runnerDeps = deps
       return {
         run: (mode?: 'auto' | 'manual' | 'pull') => testScope.runImpl!(mode),
@@ -51,7 +51,7 @@ vi.mock('@totp/ui', async () => {
       delete: fn(async () => {}),
       exists: fn(async () => false),
     })),
-    requestMergeConfirm: fn(async (preview: unknown) => ({ preview, ok: true })),
+    requestMergeConfirm: fn(async (_preview: unknown) => true),
     setSyncProgress: fn(),
   }
 })
@@ -109,14 +109,14 @@ function memoryAdapter() {
   }
 }
 
-// 测试驱动用动态视图：runner deps 成员签名各异（core/ui/宿主混合形态），
-// 逐成员静态声明反而失真——测试内以 any 视图直调并断言接线
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function deps(): any {
-  return testScope.runnerDeps
+/** 类型视图直调（type-level import 不受 vi.mock 影响）：按 createCloudSyncRunner 参数类型
+ *  断言接线，可选成员以 `!` 显式标注（mock 装配恒提供） */
+function deps(): import('@totp/ui').CloudRunnerDeps {
+  return testScope.runnerDeps!
 }
 
 beforeEach(() => {
+  vi.clearAllMocks() // 调用记录不跨用例累积（mock 工厂为模块级单例）
   for (const k of Object.keys(testScope.adapterData)) delete testScope.adapterData[k]
   testScope.runImpl = async () => {}
 })
@@ -164,10 +164,10 @@ describe('createExtensionCloudRunner 装配（deps 逐成员接线）', () => {
     expect(deps().isLocked()).toBe(false)
     expect(deps().getSecret()).toBe('pw')
     expect(JSON.parse(deps().getVaultJson() as never as string)).toEqual(store.vault)
-    expect(deps().kdfProfile()).toBe('fast') // store.settings.backupKdfProfile 透传
-    expect(deps().conflictCount()).toBe(3)
+    expect(deps().kdfProfile!()).toBe('fast') // store.settings.backupKdfProfile 透传
+    expect(deps().conflictCount!()).toBe(3)
     // onError 桥：runner 全程意外抛错时 console.warn 留痕
-    deps().onError('意外错误')
+    deps().onError!('意外错误')
     expect(warnSpy).toHaveBeenCalledWith('[cloudAutoSync]', '意外错误')
     warnSpy.mockRestore()
   })
@@ -179,29 +179,29 @@ describe('createExtensionCloudRunner 装配（deps 逐成员接线）', () => {
       { id: 'gist', kind: 'gist', name: 'Gist 备份', retention: { type: 'overwrite' }, enabled: true, role: 'replica' },
       { id: 'local', kind: 'local', name: '本地目录', retention: { type: 'overwrite' }, enabled: true, role: 'replica' },
     ] as never)
-    const pairs = await (deps().loadSources as () => Promise<Array<{ source: { id: string } }>>)()
+    const pairs = await deps().loadSources()
     // local 源归本地备份卡（extension 无）；gist 无凭据（credsCache 缺席）→ 跳过不阻塞
     expect(pairs.map((p) => p.source.id)).toEqual(['webdav'])
     // sourceName：loadSources 装配时刷新缓存 → 显示名；缓存外 id 回退原值
-    expect(deps().sourceName('webdav')).toBe('我的网盘')
-    expect(deps().sourceName('ghost')).toBe('ghost')
+    expect(deps().sourceName!('webdav')).toBe('我的网盘')
+    expect(deps().sourceName!('ghost')).toBe('ghost')
     // 每轮刷新：改名后 loadSources 再次装配 → 新显示名生效
     await saveSources(memoryAdapter() as never, [
       { id: 'webdav', kind: 'webdav', name: '改名网盘', retention: { type: 'overwrite' }, enabled: true, role: 'primary' },
     ] as never)
-    await (deps().loadSources as () => Promise<unknown[]> )()
-    expect(deps().sourceName('webdav')).toBe('改名网盘')
+    await deps().loadSources()
+    expect(deps().sourceName!('webdav')).toBe('改名网盘')
   })
 
   it('loadSyncState/saveSyncState 桥接 storageAdapter + revSeal（未启用加密=明文往返）；deviceId 持久化', async () => {
     createExtensionCloudRunner({ store: makeStore(), t })
-    await (deps().saveSyncState as (id: string, st: unknown) => Promise<void>)('src', { lastKnownRemoteRev: 4, baseSnapshot: '{"v":2}' })
-    expect(await (deps().loadSyncState as (id: string) => Promise<unknown>)('src')).toEqual({ lastKnownRemoteRev: 4, baseSnapshot: '{"v":2}' })
+    await deps().saveSyncState('src', { lastKnownRemoteRev: 4, baseSnapshot: '{"v":2}' })
+    expect(await deps().loadSyncState('src')).toEqual({ lastKnownRemoteRev: 4, baseSnapshot: '{"v":2}' })
     // bag 为 JSON 对象（明文形态，键 cloudSyncState），内嵌快照串经转义存储
     expect(testScope.adapterData['cloudSyncState']).toContain('"lastKnownRemoteRev":4')
     expect(testScope.adapterData['cloudSyncState']).toContain('baseSnapshot')
     // deviceId：经 core loadDeviceId 持久（二次同值）
-    const d1 = await (deps().deviceId as () => Promise<string>)()
+    const d1 = await deps().deviceId()
     expect(d1).toMatch(/^[0-9a-f-]{36}$/)
     expect(await loadDeviceId(memoryAdapter() as never)).toBe(d1)
   })
@@ -209,22 +209,22 @@ describe('createExtensionCloudRunner 装配（deps 逐成员接线）', () => {
   it('内容门基线（cloudContentHash）与 makeBackend/persistAdopted 透传', async () => {
     const store = makeStore()
     createExtensionCloudRunner({ store, t })
-    expect(await (deps().loadContentHash as () => Promise<string | null>)()).toBeNull()
-    await (deps().saveContentHash as (h: string | null) => Promise<void>)('abc123')
+    expect(await deps().loadContentHash()).toBeNull()
+    await deps().saveContentHash('abc123')
     expect(testScope.adapterData['cloudContentHash']).toBe('abc123')
-    await (deps().saveContentHash as (h: string | null) => Promise<void>)(null)
+    await deps().saveContentHash(null)
     expect(testScope.adapterData['cloudContentHash']).toBeUndefined() // null=删除（强制下轮重试）
     // makeBackend → ui createCloudBackend(cred)
-    deps().makeBackend(WEBDAV_CRED as never)
+    deps().makeBackend(WEBDAV_CRED)
     expect(createCloudBackend).toHaveBeenCalledWith(WEBDAV_CRED)
     // persistAdopted → store.replaceAllOp(JSON.parse(json))
-    await (deps().persistAdopted as (json: string) => Promise<void>)('{"entries":[{"uuid":"r1"}]}')
+    await deps().persistAdopted('{"entries":[{"uuid":"r1"}]}')
     expect(store.replaceAllOp).toHaveBeenCalledWith({ entries: [{ uuid: 'r1' }] })
   })
 
   it('saveConflictBackup → addConflictCopy（storage.local 列表），返回副本名', async () => {
     createExtensionCloudRunner({ store: makeStore(), t })
-    const name = await (deps().saveConflictBackup as (k: string, b: Uint8Array) => Promise<string>)('webdav', new TextEncoder().encode('ENVELOPE'))
+    const name = await deps().saveConflictBackup!('webdav', new TextEncoder().encode('ENVELOPE'))
     expect(name).toMatch(/^conflict-webdav-\d{8}-\d{6}\.totpbackup$/)
     const list = await listConflictCopies(memoryAdapter() as never)
     expect(list).toHaveLength(1)
@@ -237,7 +237,7 @@ describe('createExtensionCloudRunner 装配（deps 逐成员接线）', () => {
     try {
       const store = makeStore({ addMergeConflictsOp: vi.fn(async () => { throw new Error('锁定态入库失败') }) })
       createExtensionCloudRunner({ store, t })
-      expect(() => deps().onMergeConflicts([{ entryId: 'e1' }] as never)).not.toThrow()
+      expect(() => deps().onMergeConflicts!([{ entryId: 'e1' }] as never)).not.toThrow()
       await new Promise((r) => setTimeout(r, 0))
       expect(store.addMergeConflictsOp).toHaveBeenCalled()
       expect(warnSpy).toHaveBeenCalled()
@@ -250,11 +250,11 @@ describe('createExtensionCloudRunner 装配（deps 逐成员接线）', () => {
     const shim = installChromeShim()
     try {
       createExtensionCloudRunner({ store: makeStore(), t })
-      deps().onConflicts(2)
+      deps().onConflicts!(2)
       await new Promise((r) => setTimeout(r, 0))
       expect(testScope.adapterData['cloudConflictCount']).toBe('2')
       expect(shim.setBadgeText).toHaveBeenCalledWith({ text: '!' })
-      deps().onConflicts(0)
+      deps().onConflicts!(0)
       await new Promise((r) => setTimeout(r, 0))
       expect(shim.setBadgeText).toHaveBeenLastCalledWith({ text: '' })
     } finally {
@@ -264,16 +264,16 @@ describe('createExtensionCloudRunner 装配（deps 逐成员接线）', () => {
 
   it('onRetentionDeleted → retentionNotes 并入 recordStatus summary（deleted=0 不追加，不跨轮残留）', async () => {
     createExtensionCloudRunner({ store: makeStore(), t })
-    deps().onRetentionDeleted('我的网盘', 3)
-    deps().onRetentionDeleted('Gist', -1)
-    deps().onRetentionDeleted('无信息量', 0) // deleted=0 → null 不追加
-    deps().recordStatus(true, 'webdav: 已上传')
+    deps().onRetentionDeleted!('我的网盘', 3)
+    deps().onRetentionDeleted!('Gist', -1)
+    deps().onRetentionDeleted!('无信息量', 0) // deleted=0 → null 不追加
+    deps().recordStatus!(true, 'webdav: 已上传')
     await new Promise((r) => setTimeout(r, 0))
     const record = JSON.parse(testScope.adapterData['cloudAutoStatus']!) as { ok: boolean; summary: string }
     expect(record.ok).toBe(true)
     expect(record.summary).toBe('webdav: 已上传；我的网盘 清理 3 份旧云备份；Gist 后端不支持远端清理')
     // 清空后不跨轮残留：下一轮 recordStatus 不再拼接旧 notes
-    deps().recordStatus(true, '第二轮')
+    deps().recordStatus!(true, '第二轮')
     await new Promise((r) => setTimeout(r, 0))
     const second = JSON.parse(testScope.adapterData['cloudAutoStatus']!) as { summary: string }
     expect(second.summary).toBe('第二轮')
@@ -282,10 +282,9 @@ describe('createExtensionCloudRunner 装配（deps 逐成员接线）', () => {
   it('onManualConfirm/onProgress 桥接 cloudSyncBridge（requestMergeConfirm/setSyncProgress 透传）', async () => {
     createExtensionCloudRunner({ store: makeStore(), t })
     const preview = { conflicts: [], mergeDegraded: false, sourceName: '我的网盘' }
-    const ok = await (deps().onManualConfirm as (p: typeof preview) => Promise<{ ok: boolean }>)(preview)
-    expect(ok.ok).toBe(true)
+    expect(await deps().onManualConfirm!(preview)).toBe(true)
     expect(requestMergeConfirm).toHaveBeenCalledWith(preview)
-    deps().onProgress(1, 2)
+    deps().onProgress!(1, 2)
     expect(setSyncProgress).toHaveBeenCalledWith(1, 2)
   })
 })
@@ -294,7 +293,7 @@ describe('run 包装（T4 凭据失效 → resolve 后转 reject）', () => {
   it('onAuthFailure 暂存：runner resolve 后 run 转 reject，status 挂错误对象（结构化判定优先）', async () => {
     const runner = createExtensionCloudRunner({ store: makeStore(), t })
     testScope.runImpl = async () => {
-      deps().onAuthFailure('Google Drive 请求失败（HTTP 401）', 401)
+      deps().onAuthFailure!('Google Drive 请求失败（HTTP 401）', 401)
     }
     const err = await runner.run('auto').then(() => null, (e: unknown) => e)
     expect((err as Error).message).toBe('Google Drive 请求失败（HTTP 401）')
@@ -304,7 +303,7 @@ describe('run 包装（T4 凭据失效 → resolve 后转 reject）', () => {
   it('无 status 的凭据失效消息 → reject 不挂 status（调度器消息兜底分类）', async () => {
     const runner = createExtensionCloudRunner({ store: makeStore(), t })
     testScope.runImpl = async () => {
-      deps().onAuthFailure('WebDAV 请求失败（HTTP 403）')
+      deps().onAuthFailure!('WebDAV 请求失败（HTTP 403）')
     }
     const err = await runner.run('pull').then(() => null, (e: unknown) => e)
     expect((err as Error).message).toContain('403')
@@ -315,7 +314,7 @@ describe('run 包装（T4 凭据失效 → resolve 后转 reject）', () => {
     const runner = createExtensionCloudRunner({ store: makeStore(), t })
     let fail = true
     testScope.runImpl = async () => {
-      if (fail) deps().onAuthFailure('S3 请求失败（HTTP 401）', 401)
+      if (fail) deps().onAuthFailure!('S3 请求失败（HTTP 401）', 401)
     }
     await expect(runner.run('auto')).rejects.toThrow('S3 请求失败')
     fail = false
