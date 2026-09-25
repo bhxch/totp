@@ -22,6 +22,12 @@ export function resolveObjectPath(cred: CloudCred): string {
  *  （质量审查勘误）。 */
 const lastIssuedMsByDir = new Map<string, number>()
 
+/** 测试隔离：清空同秒防撞记忆（模块级状态跨用例污染；生产代码勿调）。
+ *  先例：oauthRefresh.ts __resetOAuthCacheForTest 同款。 */
+export function __resetForTest(): void {
+  lastIssuedMsByDir.clear()
+}
+
 /** keep-n 云源上传名：对象路径同目录下 vault-{yyyyMMdd-HHmmss}.totpbackup（与本地 backupFileName 同戳格式） */
 export function resolveTimestampPath(cred: CloudCred, now: Date): string {
   const dir = resolveDirPath(cred)

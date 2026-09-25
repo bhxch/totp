@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { DEFAULT_OBJECT_PATH, resolveDirPath, resolveObjectPath, resolveTimestampPath } from '../src/cloud/targetPath'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { DEFAULT_OBJECT_PATH, __resetForTest, resolveDirPath, resolveObjectPath, resolveTimestampPath } from '../src/cloud/targetPath'
 
 describe('resolveObjectPath', () => {
   it('无 objectPath 时各后端用默认值', () => {
@@ -73,5 +73,23 @@ describe('keep-n 云源时间戳路径（设计 §3）', () => {
     // 真实场景：同轮两个 keep 源相隔几百毫秒顺序上传（.2s 与 .8s 同一秒）——毫秒级比较会漏判撞名
     expect(resolveTimestampPath(collideMs, new Date(NOW.getTime() + 200))).toBe('collidems/vault-20260917-123456.totpbackup')
     expect(resolveTimestampPath(collideMs, new Date(NOW.getTime() + 800))).toBe('collidems/vault-20260917-123457.totpbackup')
+  })
+})
+
+describe('__resetForTest（模块级同秒防撞记忆清空，防跨用例污染）', () => {
+  const cred = { backend: 'webdav', serverUrl: 's', username: 'u', password: 'p', objectPath: 'reset/totp-backup.totpbackup' } as const
+  const NOW = new Date(2026, 8, 17, 12, 34, 56)
+
+  beforeEach(() => {
+    __resetForTest()
+  })
+
+  it('清空后同目录同一 NOW 重新从整秒签发（未被此前用例的签发记忆推进）', () => {
+    // 制造记忆：该目录已签发 NOW 与 NOW+1s
+    expect(resolveTimestampPath(cred, NOW)).toBe('reset/vault-20260917-123456.totpbackup')
+    expect(resolveTimestampPath(cred, NOW)).toBe('reset/vault-20260917-123457.totpbackup')
+    __resetForTest()
+    // 记忆已清：同一 NOW 不再被判同秒撞名，重新签发整秒名
+    expect(resolveTimestampPath(cred, NOW)).toBe('reset/vault-20260917-123456.totpbackup')
   })
 })

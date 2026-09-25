@@ -40,6 +40,7 @@ exports[`@totp/core 桶导出面（防漏导出/改名破坏消费方） > 导�
   "VaultRollbackError",
   "XML_STRING_RE",
   "YANDEX_DIGITS",
+  "__resetForTest",
   "__resetOAuthCacheForTest",
   "addEntry",
   "addPrfSource",
