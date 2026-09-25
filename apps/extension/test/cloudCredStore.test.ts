@@ -230,6 +230,93 @@ describe('migrateLegacySources（旧多目标键 → 源模型 + 保管区）', 
     expect(adapter.data[CLOUD_CRED_KEY]).toBe('{bad')
     expect(adapter.data[CLOUD_REVS_KEY]).toBe(JSON.stringify({ webdav: 'w-hash' })) // 保守保留
   })
+
+  it('⑬写新阶段失败（saveSources 抛错）→ 中止上抛，旧键全保留（先写新后删旧安全序）', async () => {
+    adapter.data[CLOUD_CREDS_KEY] = JSON.stringify([{ cred: WEBDAV, enabled: true }])
+    adapter.data[CLOUD_REVS_KEY] = JSON.stringify({ webdav: 'w-hash' })
+    const failing = makeAdapter()
+    failing.set = async (key) => {
+      if (key === SOURCES_KEY) throw new Error('settings 域写盘失败')
+      failing.data[key] = 'x'
+    }
+    failing.data[CLOUD_CREDS_KEY] = adapter.data[CLOUD_CREDS_KEY]
+    failing.data[CLOUD_REVS_KEY] = adapter.data[CLOUD_REVS_KEY]
+    await expect(migrateLegacySources(failing, { saveCred: vi.fn().mockResolvedValue(undefined) })).rejects.toThrow('settings 域写盘失败')
+    expect(failing.data[CLOUD_CREDS_KEY]).toBe(adapter.data[CLOUD_CREDS_KEY]) // 旧键保留，重跑自愈
+    expect(failing.data[CLOUD_REVS_KEY]).toBe(adapter.data[CLOUD_REVS_KEY])
+    expect(failing.data[CLOUD_CRED_KEY]).toBeUndefined()
+  })
+
+  it('⑭迁移中 sources 域读取异常 → core loadSources 兜底 []，迁移照常继续（源列表仅含迁移源）', async () => {
+    // 盘点「迁移中 loadSources 抛错」在现有架构不可达：core loadSources 捕获读取异常回落 []（以实现为准记录）
+    adapter.data[CLOUD_CREDS_KEY] = JSON.stringify([{ cred: WEBDAV, enabled: true }])
+    adapter.get = async (key: string) => {
+      if (key === SOURCES_KEY) throw new Error('sources 域读取失败')
+      return adapter.data[key] ?? null
+    }
+    const saveCred = vi.fn().mockResolvedValue(undefined)
+    await expect(migrateLegacySources(adapter, { saveCred })).resolves.toBe(1)
+    expect(JSON.parse(adapter.data[SOURCES_KEY]!)).toEqual([
+      { id: 'webdav', kind: 'webdav', name: 'WebDAV', retention: { type: 'overwrite' }, enabled: true, role: 'replica' },
+    ])
+    expect(adapter.data[CLOUD_CREDS_KEY]).toBeUndefined() // 迁移收敛：旧键删除
+  })
+
+  it('⑮storage 读取异常（读旧凭据阶段）→ 按无旧键出口返回 0（下轮重试）', async () => {
+    adapter.get = async () => {
+      throw new Error('IO error')
+    }
+    await expect(migrateLegacySources(adapter, { saveCred: vi.fn() })).resolves.toBe(0)
+    expect(SOURCES_KEY in adapter.data).toBe(false)
+  })
+
+  it('⑯旧数组脏元素（缺 cred.backend / enabled 非布尔）逐条丢弃；全脏 → 合法空配置出口', async () => {
+    adapter.data[CLOUD_CREDS_KEY] = JSON.stringify([
+      { cred: { serverUrl: 'no-backend-field' }, enabled: true }, // 缺 backend
+      { cred: WEBDAV, enabled: 'yes' }, // enabled 非布尔
+      { cred: GIST, enabled: false }, // 合法项保留
+    ])
+    const saveCred = vi.fn().mockResolvedValue(undefined)
+    await expect(migrateLegacySources(adapter, { saveCred })).resolves.toBe(1)
+    expect(JSON.parse(adapter.data[SOURCES_KEY]!)).toEqual([
+      { id: 'gist', kind: 'gist', name: 'GitHub Gist', retention: { type: 'overwrite' }, enabled: false, role: 'replica' },
+    ])
+    expect(saveCred).toHaveBeenCalledTimes(1)
+
+    // 全脏：targets 空 → 合法空配置出口（删自身与 revs 孤儿）
+    adapter.data[CLOUD_CREDS_KEY] = JSON.stringify([{ cred: {}, enabled: true }])
+    adapter.data[CLOUD_REVS_KEY] = JSON.stringify({ webdav: 'w-hash' })
+    await expect(migrateLegacySources(adapter, { saveCred: vi.fn() })).resolves.toBe(0)
+    expect(adapter.data[CLOUD_CREDS_KEY]).toBeUndefined()
+  })
+
+  it('⑰单对象 cloudCred 形状不符（无 backend 字段）→ 读不出不删（防数据丢失）', async () => {
+    adapter.data[CLOUD_CRED_KEY] = JSON.stringify({ serverUrl: 'https://dav' }) // 无 backend
+    await expect(migrateLegacySources(adapter, { saveCred: vi.fn() })).resolves.toBe(0)
+    expect(adapter.data[CLOUD_CRED_KEY]).toBe(JSON.stringify({ serverUrl: 'https://dav' }))
+  })
+
+  it('⑱cloudRevs 坏 JSON → 基线放弃平移（下轮全量重比）；无 cloudRevs 且 cloudRev 缺失 → 不平移', async () => {
+    adapter.data[CLOUD_CREDS_KEY] = JSON.stringify([{ cred: WEBDAV, enabled: true }])
+    adapter.data[CLOUD_REVS_KEY] = '{corrupted'
+    adapter.data[CLOUD_REV_KEY] = 'legacy-hash'
+    const saveCred = vi.fn().mockResolvedValue(undefined)
+    await expect(migrateLegacySources(adapter, { saveCred })).resolves.toBe(1)
+    // cloudRevs 读不出 → revs=null → 走 cloudRev 单继承分支
+    expect(JSON.parse(adapter.data[SOURCE_REVS_KEY]!)).toEqual({ webdav: 'legacy-hash' })
+
+    // cloudRevs 缺失 + cloudRev 也缺失：不平移、不写 sourceRevs
+    const bare = makeAdapter({ [CLOUD_CREDS_KEY]: JSON.stringify([{ cred: WEBDAV, enabled: true }]) })
+    await expect(migrateLegacySources(bare, { saveCred })).resolves.toBe(1)
+    expect(SOURCE_REVS_KEY in bare.data).toBe(false)
+  })
+
+  it('⑲未知 backend 值 → name 回退 backend 键（LABEL 表缺项不白屏）', async () => {
+    adapter.data[CLOUD_CREDS_KEY] = JSON.stringify([{ cred: { backend: 'minio-webdav' } as unknown as CloudCred, enabled: true }])
+    await expect(migrateLegacySources(adapter, { saveCred: vi.fn() })).resolves.toBe(1)
+    const sources = JSON.parse(adapter.data[SOURCES_KEY]!) as Array<{ id: string; name: string }>
+    expect(sources[0]!.name).toBe('minio-webdav')
+  })
 })
 
 describe('loadSourcesImpl/saveSourcesImpl（core 包装）', () => {

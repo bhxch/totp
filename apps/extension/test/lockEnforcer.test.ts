@@ -199,6 +199,23 @@ describe('容错与生命周期', () => {
     expect(t.calls.lock).toBe(0)
   })
 
+  it('queryState 回调内 deps.lock 抛错 → onError 上报不向上抛（回调异常同走 tick 容错）', async () => {
+    installChromeIdle({
+      queryState: (cb) => cb('idle'), // 回调同步调用 lock（真实 idle API 回调形态）
+    })
+    const calls = { onError: [] as unknown[] }
+    const watcher = createIdleLockWatcher({
+      getPrefs: async () => ({ idleMinutes: 5, lockOnSystemLock: true }),
+      lock: () => {
+        throw new Error('store lock failed')
+      },
+      onError: (e) => calls.onError.push(e),
+    })
+    watcher.start()
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(calls.onError).toHaveLength(1) // 不向上抛（轮询存活到下个 tick）
+  })
+
   it('getPrefs 抛错 → onError 上报不向上抛', async () => {
     installChromeIdle()
     const t = setup({ idleMinutes: 5, lockOnSystemLock: true })

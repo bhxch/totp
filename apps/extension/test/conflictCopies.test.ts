@@ -45,6 +45,44 @@ describe('conflictCopies', () => {
     expect(await listConflictCopies(a)).toEqual([])
   })
 
+  it('adapter.get 抛错（IO 故障）→ 空列表不抛', async () => {
+    const a = createMemoryStorage()
+    a.get = async () => {
+      throw new Error('storage IO error')
+    }
+    expect(await listConflictCopies(a)).toEqual([])
+  })
+
+  it('形态不符：顶层非数组（对象/字符串）→ 空列表；数组内形态不符元素逐条丢弃', async () => {
+    const a = createMemoryStorage()
+    await a.set(CONFLICT_COPIES_KEY, JSON.stringify({ name: 'not-an-array' }))
+    expect(await listConflictCopies(a)).toEqual([])
+    await a.set(CONFLICT_COPIES_KEY, JSON.stringify('just-a-string'))
+    expect(await listConflictCopies(a)).toEqual([])
+    await a.set(CONFLICT_COPIES_KEY, JSON.stringify([
+      { name: 'ok-1', at: 1, bytesBase64: 'aGk=' }, // 合法
+      { name: 42, at: 1, bytesBase64: 'aGk=' }, // name 非串
+      { name: 'no-at', bytesBase64: 'aGk=' }, // 缺 at
+      null, // 非 object
+    ]))
+    const list = await listConflictCopies(a)
+    expect(list).toHaveLength(1)
+    expect(list[0]!.name).toBe('ok-1')
+  })
+
+  it('并发 add（未 await 交错）：读改写竞态下最后写者胜，列表保持完整 JSON 形态（实现行为锚定）', async () => {
+    const a = createMemoryStorage()
+    // 两个 add 交错：均在对方 set 前完成 list 读取 → 各自基于空列表写入，后完成者覆盖（无丢失损坏）
+    const [n1, n2] = await Promise.all([
+      addConflictCopy(a, bytesOf('E1'), 's1'),
+      addConflictCopy(a, bytesOf('E2'), 's2'),
+    ])
+    const list = await listConflictCopies(a)
+    expect(list).toHaveLength(1) // 竞态：最后写入者的全量列表生效
+    const lastName = list[0]!.name
+    expect([n1, n2]).toContain(lastName)
+  })
+
   it('export：按名触发下载（a.download=副本名）且字节一致；无名 → false 不下载', async () => {
     const a = createMemoryStorage()
     await addConflictCopy(a, bytesOf('ENVELOPE-EXPORT'), 's1')

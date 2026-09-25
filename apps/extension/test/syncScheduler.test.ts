@@ -255,4 +255,58 @@ describe('syncScheduler', () => {
     expect(s2.authFailed()).toBe(false)
     s2.stop()
   })
+
+  // ---- P2a 补全：in-flight 防重入 / intervalMs 读取时机 / in-flight 期间 stop ----
+
+  it('in-flight 重入跳过：runPull 进行中的 syncNow 直接返回（不并发、不排队丢弃）', async () => {
+    let release!: (v?: unknown) => void
+    const { deps } = makeDeps({ runPull: vi.fn(() => new Promise((r) => { release = r })) })
+    const s = createSyncScheduler(deps)
+    s.start()
+    const first = s.syncNow()
+    await vi.waitFor(() => expect(deps.runPull).toHaveBeenCalledOnce())
+    const second = s.syncNow() // 首轮在途：重入直接跳过
+    await second
+    expect(deps.runPull).toHaveBeenCalledOnce()
+    release()
+    await first
+    expect(deps.runPull).toHaveBeenCalledOnce()
+    // 在途结束后重入窗口关闭：再次调用正常执行（换立返实现便于断言）
+    ;(deps.runPull as ReturnType<typeof vi.fn>).mockResolvedValue(undefined)
+    await s.syncNow()
+    expect(deps.runPull).toHaveBeenCalledTimes(2)
+    s.stop()
+  })
+
+  it('intervalMs 在 start 时读取一次：start 后返回值变化不影响已建 interval（须 stop/start 重建）', async () => {
+    vi.useFakeTimers()
+    let ms: number | null = 1000
+    const { deps } = makeDeps({ intervalMs: () => ms })
+    const s = createSyncScheduler(deps)
+    s.start()
+    ms = null // options 页关闭自动跟随：getter 已变，但旧 interval 由显式 stop/start 重建
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(deps.runPull).toHaveBeenCalledTimes(3) // 旧 interval 仍按旧间隔跑（轮询生命周期由宿主管理）
+    s.stop()
+    vi.useRealTimers()
+  })
+
+  it('stop 在 in-flight 期间：清理钩子与 interval，在途轮自然收尾（finally 不抛）', async () => {
+    let release!: (v?: unknown) => void
+    const onError = vi.fn()
+    const { deps, fireUnlock } = makeDeps({
+      runPull: vi.fn(() => new Promise((r) => { release = r })),
+      onError,
+    })
+    const s = createSyncScheduler(deps)
+    s.start()
+    const inFlight = s.syncNow()
+    await vi.waitFor(() => expect(deps.runPull).toHaveBeenCalledOnce())
+    s.stop() // 在途期间卸载（popup/options 关闭形态）
+    fireUnlock() // 钩子已反注册：不触发新拉取
+    release()
+    await inFlight // finally 正常结清，不抛错
+    expect(deps.runPull).toHaveBeenCalledOnce()
+    expect(onError).not.toHaveBeenCalled()
+  })
 })
