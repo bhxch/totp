@@ -27,6 +27,27 @@ describe('computeEntryCode', () => {
     expect(r2.counter).toBe(5)
   })
 
+  it('period 0 / undefined（falsy）→ 回落 30（旧数据 period 缺失方向）', async () => {
+    const zero = await computeEntryCode({ ...base, type: 'totp', period: 0 }, 59_000)
+    expect(zero.period).toBe(30)
+    const missing = await computeEntryCode({ ...base, type: 'totp', period: undefined }, 59_000)
+    expect(missing.period).toBe(30)
+  })
+
+  it('hotp counter 缺省 → 按 0 计算（与显式 counter=0 同码）', async () => {
+    const missing = await computeEntryCode({ ...base, type: 'hotp' }, 59_000)
+    const zero = await computeEntryCode({ ...base, type: 'hotp', counter: 0 }, 59_000)
+    expect(missing.counter).toBe(0)
+    expect(missing.code).toBe(zero.code)
+  })
+
+  it('yandex 条目缺 pin → 按空 pin 计算（与 pin="" 同码）', async () => {
+    const e = { ...base, type: 'yandex' as const, secret: 'KJTEUGOD5SNXVWBCWJ4G36W4IA', digits: 8 as const }
+    const missing = await computeEntryCode(e, 1700000000000)
+    const empty = await computeEntryCode({ ...e, pin: '' }, 1700000000000)
+    expect(missing.code).toBe(empty.code)
+  })
+
   it('RFC 6238 已知向量锚定（T=59, SHA1, 8位=94287082）', async () => {
     const r = await computeEntryCode({ ...base, type: 'totp', digits: 8 }, 59_000)
     expect(r.code).toBe('94287082')

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { base32Decode } from '../src/encoding/base32'
 import { steamCode } from '../src/otp/steam'
-import { parseOtpUri, buildOtpUri } from '../src/otp/uri'
+import { parseOtpUri, buildOtpUri, normalizeExtOtpauth } from '../src/otp/uri'
 
 describe('parseOtpUri', () => {
   it('标准 totp：label 前缀 issuer + 参数齐全', () => {
@@ -32,6 +32,24 @@ describe('parseOtpUri', () => {
     const p = parseOtpUri('otpauth://hotp/x:y?secret=JBSWY3DPEHPK3PXP&counter=5')
     expect(p.type).toBe('hotp')
     expect(p.counter).toBe(5)
+  })
+
+  it('secret 含空白字符 → 去除后解析成功（用户手抄 secret 带分隔符场景）', () => {
+    const p = parseOtpUri('otpauth://totp/A:b?secret=JBSW%20Y3DPEHPK%203PXP')
+    expect(p.secret).toBe('JBSWY3DPEHPK3PXP')
+    expect(p.secretBytes).toEqual(base32Decode('JBSWY3DPEHPK3PXP'))
+  })
+
+  it('secret 非 base32 → 不抛错且 secretBytes 缺省（宽松容错契约，与参数错误硬失败对比）', () => {
+    const p = parseOtpUri('otpauth://totp/A:b?secret=not-base32!!')
+    expect(p.secret).toBe('not-base32!!')
+    expect(p.secretBytes).toBeUndefined()
+    expect(p.type).toBe('totp')
+    expect(p.issuer).toBe('A')
+  })
+
+  it('完全无 secret 参数 → 硬失败 invalid otpauth uri', () => {
+    expect(() => parseOtpUri('otpauth://totp/A:b')).toThrow('invalid otpauth uri')
   })
 
   it.each([
@@ -121,5 +139,27 @@ describe('buildOtpUri', () => {
   it('I34：buildOtpUri steam 不输出 algorithm 参数', () => {
     const uri = buildOtpUri({ type: 'steam', issuer: 'Steam', label: 'u', secret: 'AB', algorithm: 'SHA512', digits: 5, period: 30 })
     expect(uri).not.toContain('algorithm=')
+  })
+
+  it('issuer 为空 → label 不加 Issuer: 前缀且不写 issuer 参数', () => {
+    const uri = buildOtpUri({ type: 'totp', issuer: '', label: 'alice', secret: 'AB', algorithm: 'SHA1', digits: 6, period: 30 })
+    expect(uri).toBe('otpauth://totp/alice?secret=AB')
+  })
+})
+
+describe('normalizeExtOtpauth（Firefox ext+otpauth scheme 还原，core 层直测）', () => {
+  it('ext+otpauth://… → 还原为 otpauth://…', () => {
+    expect(normalizeExtOtpauth('ext+otpauth://totp/A:b?secret=AB')).toBe('otpauth://totp/A:b?secret=AB')
+  })
+  it('无 // 形态（ext+otpauth:…）→ 还原为 otpauth://（避免还原出空 host 被拒）', () => {
+    expect(normalizeExtOtpauth('ext+otpauth:totp/A:b?secret=AB')).toBe('otpauth://totp/A:b?secret=AB')
+  })
+  it('大小写变体（EXT+OTPAUTH://）scheme 不敏感', () => {
+    expect(normalizeExtOtpauth('EXT+OTPAUTH://totp/A:b?secret=AB')).toBe('otpauth://totp/A:b?secret=AB')
+  })
+  it('还原后 parseOtpUri 可正常解析（round-trip）', () => {
+    const p = parseOtpUri(normalizeExtOtpauth('ext+otpauth://totp/GitHub:me?secret=JBSWY3DPEHPK3PXP'))
+    expect(p.type).toBe('totp')
+    expect(p.secret).toBe('JBSWY3DPEHPK3PXP')
   })
 })

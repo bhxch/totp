@@ -62,4 +62,27 @@ describe('aesGcm', () => {
       await expect(aesGcmDecrypt(key, new Uint8Array(len), nonce)).rejects.toThrow('ciphertext too short')
     }
   })
+  it('nonce 非 12B：encrypt 侧显式拒绝（nonce must be 12 bytes）', async () => {
+    const key = randomBytes(32)
+    for (const len of [0, 11, 13, 16]) {
+      await expect(aesGcmEncrypt(key, new TextEncoder().encode('x'), new Uint8Array(len)))
+        .rejects.toThrow('nonce must be 12 bytes')
+    }
+  })
+  it('nonce 非 12B：decrypt 侧显式拒绝（nonce must be 12 bytes）', async () => {
+    const key = randomBytes(32)
+    for (const len of [0, 11, 13, 16]) {
+      await expect(aesGcmDecrypt(key, new Uint8Array(32), new Uint8Array(len)))
+        .rejects.toThrow('nonce must be 12 bytes')
+    }
+  })
+  it('key 非 32B 直调原语：AES-256 key must be 32 bytes（加/解两向，早于 GCM 调用）', async () => {
+    const nonce = randomBytes(12)
+    for (const len of [0, 16, 24, 31, 64]) {
+      await expect(aesGcmEncrypt(new Uint8Array(len), new TextEncoder().encode('x'), nonce))
+        .rejects.toThrow('AES-256 key must be 32 bytes')
+      await expect(aesGcmDecrypt(new Uint8Array(len), new Uint8Array(32), nonce))
+        .rejects.toThrow('AES-256 key must be 32 bytes')
+    }
+  })
 })
