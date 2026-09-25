@@ -56,16 +56,24 @@ function buildZip(specs: ZipEntrySpec[]): Uint8Array {
     const locExtra = s.locExtra ?? cenExtra
     const comment = s.comment ?? new Uint8Array(0)
     const loc = concat(
-      u32(0x04034b50), u16(51), u16(0), u16(method), u16(0), u16(0), u32(0),
-      u32(s.data.length), u32(s.data.length), u16(nameB.length), u16(locExtra.length),
+      u32(0x04034b50), // LOC 签名
+      u16(51), u16(0), // 提取版本 / flags
+      u16(method), u16(0), u16(0), // method / time / date
+      u32(0), // crc
+      u32(s.data.length), u32(s.data.length), // csize / usize
+      u16(nameB.length), u16(locExtra.length), // nameLen / extraLen
       nameB, locExtra, s.data,
     )
     locs.push(loc)
     const cen = concat(
-      u32(0x02014b50), u16(51), u16(51), u16(0), u16(method), u16(0), u16(0), u32(0),
-      u32(s.csizeOverride ?? s.data.length), u32(s.data.length),
-      u16(nameB.length), u16(cenExtra.length), u16(comment.length),
-      u16(0), u16(0), u32(0), u32(offset),
+      u32(0x02014b50), // CEN 签名
+      u16(51), u16(51), u16(0), // 制作版本 / 提取版本 / flags
+      u16(method), u16(0), u16(0), // method / time / date
+      u32(0), // crc
+      u32(s.csizeOverride ?? s.data.length), u32(s.data.length), // csize（zip64/越界模拟改写点）/ usize
+      u16(nameB.length), u16(cenExtra.length), u16(comment.length), // nameLen / extraLen / commentLen
+      u16(0), u16(0), u32(0), // diskStart / intAttr / extAttr
+      u32(offset), // localOffset
       nameB, cenExtra, comment,
     )
     cens.push(cen)
@@ -74,8 +82,10 @@ function buildZip(specs: ZipEntrySpec[]): Uint8Array {
   const cenBlob = concat(...cens)
   const cdOffset = (specs[0] as { cdOffsetOverride?: number }).cdOffsetOverride ?? offset
   const eocd = concat(
-    u32(0x06054b50), u16(0), u16(0), u16(specs.length), u16(specs.length),
-    u32(cenBlob.length), u32(cdOffset), u16(0),
+    u32(0x06054b50), // EOCD 签名
+    u16(0), u16(0), u16(specs.length), u16(specs.length), // disk / cdDisk / diskEntries / count@10
+    u32(cenBlob.length), u32(cdOffset), // cdSize@12 / cdOffset@16
+    u16(0), // commentLen
   )
   return concat(...locs, cenBlob, eocd)
 }
@@ -139,18 +149,11 @@ describe('readZipEntryData', () => {
   })
 
   it('数据越界（CEN.csize 超出文件尾）→ throw「zip 条目数据越界（文件损坏）」', () => {
-    const zip = buildZip([{ name: 'a.txt', data: bytes('x') }])
-    const entries = listZipEntries(zip)
-    // 手工放大 csize（CEN@20），使其越过文件尾
-    const big = new Uint8Array(zip)
-    const dv = new DataView(big.buffer)
-    for (let i = 0; i < big.length - 4; i++) {
-      if (dv.getUint32(i, true) === 0x02014b50) {
-        dv.setUint32(i + 20, 0xffffff, true)
-        break
-      }
-    }
-    expect(() => readZipEntryData(big, { ...entries[0]!, csize: 0xffffff })).toThrow('数据越界')
+    // csize 声明远超实际数据（真实损坏文件的典型形态），篡改值经解析路径自然透出
+    const zip = buildZip([{ name: 'a.txt', data: bytes('x'), csizeOverride: 0xffffff }])
+    const [entry] = listZipEntries(zip)
+    expect(entry!.csize).toBe(0xffffff)
+    expect(() => readZipEntryData(zip, entry!)).toThrow('数据越界')
   })
 
   it('LOC extraLen ≠ CEN extraLen：数据偏移按 LOC 自己的 name/extraLen 计算', () => {

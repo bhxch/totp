@@ -145,16 +145,14 @@ describe('importAegisEncrypted', () => {
     // fixture 内条目 secret='JBSWY3DPEHPK3PXP'，scrypt + AES-GCM 解密后 base32Decode 须为同一字节
     expect(r.entries).toHaveLength(1)
     expect(r.entries[0]!.secret).toBe('JBSWY3DPEHPK3PXP')
-    // 16 字节 SHA-1 secret 的已知值（base32 → bytes 往返）
-    expect(r.entries[0]!.secret.replace(/\s+/g, '').toUpperCase()).toBe('JBSWY3DPEHPK3PXP')
-    const expected = base32Decode('JBSWY3DPEHPK3PXP')
-    expect(expected.length).toBe(10) // SHA-1 长度 160bit = 20 字节（这里因 base32 padding 损失了尾部，正常 16B；仅 sanity check 非空）
-    expect(expected.length).toBeGreaterThan(0)
+    const expected = base32Decode('JBSWY3DPEHPK3PXP') // 16 个 base32 字符 = 80bit = 10 字节（sanity check）
+    expect(expected.length).toBe(10)
   })
 })
 
 // ---------- 程序化加密 fixture（盘点 B1 #8）：scrypt 降参数（n=16/r=1/p=1）保证毫秒级，
-// 布局与官方 VaultFile/PasswordSlot/CryptoUtils 一致（本文件头注释），避免新增大量真实 scrypt 用例。
+// 布局与官方 VaultFile/PasswordSlot/CryptoUtils 一致（见 src/import/aegis.ts 头注释），
+// 避免新增大量真实 scrypt 用例。
 
 const DB_JSON = JSON.stringify({
   entries: [{ type: 'totp', uuid: 'u1', name: 'GitHub:me@x.com', info: { secret: 'JBSWY3DPEHPK3PXP', algo: 'SHA1', digits: 6, period: 30 } }],
@@ -174,7 +172,6 @@ async function buildAegisEncrypted(
     dbKey?: Uint8Array
     params?: Record<string, unknown>
     slots?: unknown[]
-    dbB64?: string
   } = {},
 ): Promise<string> {
   const master = randomBytes(32)
@@ -195,7 +192,7 @@ async function buildAegisEncrypted(
     slots: opts.slots ?? [slot],
     params: opts.params ?? { nonce: bytesToHex(db.nonce), tag: bytesToHex(db.tag) },
   }
-  return JSON.stringify({ version: 1, header, db: opts.dbB64 ?? Buffer.from(db.ct).toString('base64') })
+  return JSON.stringify({ version: 1, header, db: Buffer.from(db.ct).toString('base64') })
 }
 
 describe('importAegisEncrypted 加密结构分支（盘点 B1 #8）', () => {
@@ -265,19 +262,7 @@ describe('importAegisEncrypted 加密结构分支（盘点 B1 #8）', () => {
   })
 
   it('解出的 db 非合法 JSON → 结构级报错（master key 正确、db 明文损坏）', async () => {
-    const master = randomBytes(32)
-    const salt = randomBytes(16)
-    const kek = (await scrypt({ password: 'pw', salt, costFactor: 16, blockSize: 1, parallelism: 1, hashLength: 32, outputType: 'binary' })) as Uint8Array
-    const db = await gcmSplit(master, new TextEncoder().encode('{not-json'))
-    const slotWrap = await gcmSplit(kek, master)
-    const text = JSON.stringify({
-      version: 1,
-      header: {
-        slots: [{ type: 1, uuid: 's', key: bytesToHex(slotWrap.ct), key_params: { nonce: bytesToHex(slotWrap.nonce), tag: bytesToHex(slotWrap.tag) }, salt: bytesToHex(salt), n: 16, r: 1, p: 1 }],
-        params: { nonce: bytesToHex(db.nonce), tag: bytesToHex(db.tag) },
-      },
-      db: Buffer.from(db.ct).toString('base64'),
-    })
+    const text = await buildAegisEncrypted('pw', { dbPlain: '{not-json' })
     await expect(importAegisEncrypted(text, 'pw')).rejects.toThrow('结构非法')
   })
 })

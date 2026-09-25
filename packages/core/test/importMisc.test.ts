@@ -157,17 +157,19 @@ describe('importFreeOtpLegacy（旧版 FreeOTP tokens.xml）', () => {
 // 外部分享 = Base64(AES-CBC(SHA-256(口令), IV=0, PKCS5))，明文为「首键即条目数组 JSON 串」的对象；
 // 内部/解密态条目 {base:16|32|64, key, name?, issuer?}，固定 totp/SHA1/6/30） ----------
 describe('importTotpAuthenticator', () => {
-  // TotpAuthenticatorImporter.decrypt：解出 JSON 对象后取 names()[0]（即条目数组的 JSON 字符串）
-  const buildBin = async (entries: unknown[], password: string): Promise<string> => {
-    const outer = JSON.stringify({ [JSON.stringify(entries)]: '' })
+  // 统一加密构造：外层 JSON → AES-CBC(SHA-256(UTF8(口令)), IV=全零) → Base64
+  const buildBinRaw = async (outerJson: string, password: string): Promise<string> => {
     const iv = new Uint8Array(16) // WARNING 注释下方的全零 IV
     const keyBytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(password)))
     const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-CBC', false, ['encrypt'])
-    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-CBC', iv }, key, new TextEncoder().encode(outer)))
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-CBC', iv }, key, new TextEncoder().encode(outerJson)))
     let s = ''
     for (const b of ct) s += String.fromCharCode(b)
     return btoa(s)
   }
+  // TotpAuthenticatorImporter.decrypt：解出 JSON 对象后取 names()[0]（即条目数组的 JSON 字符串）
+  const buildBin = (entries: unknown[], password: string): Promise<string> =>
+    buildBinRaw(JSON.stringify({ [JSON.stringify(entries)]: '' }), password)
 
   it('明文条目数组：base 16/32/64 三种编码，label 取 name、issuer 取 issuer，固定 totp/SHA1/6/30', async () => {
     const r = await importTotpAuthenticator(
@@ -229,14 +231,9 @@ describe('importTotpAuthenticator', () => {
   })
 
   it('解密后首键 JSON 合法但非数组 → 结构级报错', async () => {
-    const iv = new Uint8Array(16)
-    const keyBytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('pw')))
-    const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-CBC', false, ['encrypt'])
-    const outer = JSON.stringify({ [JSON.stringify({ a: 1 })]: '' }) // 首键解析为对象而非数组
-    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-CBC', iv }, key, new TextEncoder().encode(outer)))
-    let s = ''
-    for (const b of ct) s += String.fromCharCode(b)
-    await expect(importTotpAuthenticator(btoa(s), 'pw')).rejects.toThrow(
+    // 首键解析为对象而非数组（外层结构损坏但可解密）
+    const bin = await buildBinRaw(JSON.stringify({ [JSON.stringify({ a: 1 })]: '' }), 'pw')
+    await expect(importTotpAuthenticator(bin, 'pw')).rejects.toThrow(
       'TOTP Authenticator 文件结构非法：条目不是 JSON 数组',
     )
   })
@@ -257,18 +254,8 @@ describe('importTotpAuthenticator', () => {
     await expect(importTotpAuthenticator('not base64!!!')).rejects.toThrow(/base64/)
   })
 
-  // 解密后内容形态边角（盘点 B3 #17）：解密成功但外层结构各异的收敛口径。
-  // 复用 buildBin 的加密通道，仅替换外层 JSON 形态。
-  const buildBinRaw = async (outerJson: string, password: string): Promise<string> => {
-    const iv = new Uint8Array(16)
-    const keyBytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(password)))
-    const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-CBC', false, ['encrypt'])
-    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-CBC', iv }, key, new TextEncoder().encode(outerJson)))
-    let s = ''
-    for (const b of ct) s += String.fromCharCode(b)
-    return btoa(s)
-  }
-
+  // 解密后内容形态边角（盘点 B3 #17）：解密成功但外层结构各异的收敛口径，
+  // 统一走 describe 顶部的 buildBinRaw，仅替换外层 JSON 形态。
   it('解密后空对象 → 空结果（源码 keys 判空口径）', async () => {
     const r = await importTotpAuthenticator(await buildBinRaw('{}', 'TotpAuthenticator'))
     expect(r).toEqual({ entries: [], failures: [] })
