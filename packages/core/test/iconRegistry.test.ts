@@ -12,6 +12,8 @@ describe('iconRegistry', () => {
   it('normalizeIssuer', () => {
     expect(normalizeIssuer('GitHub Inc.')).toBe('githubinc')
     expect(normalizeIssuer('  Steam-Chat ')).toBe('steamchat')
+    // 多连续分隔符（空白/点/连字符/下划线混排）折叠为空
+    expect(normalizeIssuer('Git--Hub__..X  Y')).toBe('githubxy')
   })
   it('推荐：精确/别名/大小写', () => {
     expect(recommendBuiltinIcon('GitHub')!.id).toBe('github')
@@ -19,10 +21,31 @@ describe('iconRegistry', () => {
     expect(recommendBuiltinIcon('谷歌')!.id).toBe('google')
     expect(recommendBuiltinIcon('不存在的服务')).toBeNull()
   })
+  it('推荐：normalize 后为空（纯分隔符输入）→ null', () => {
+    expect(recommendBuiltinIcon('   .-_ ')).toBeNull()
+    expect(recommendBuiltinIcon('')).toBeNull()
+  })
   it('suggestIcons 前缀包含', () => {
     const s = suggestIcons('git', 5)
     expect(s.length).toBeGreaterThan(0)
     expect(s.every((i) => normalizeIssuer(i.id).includes('git') || normalizeIssuer(i.title).includes('git'))).toBe(true)
+  })
+  it('suggestIcons：limit 参数生效、空 key 返回空数组', () => {
+    const all = suggestIcons('git')
+    expect(all).toHaveLength(5) // 默认 limit=5
+    expect(suggestIcons('git', 2)).toHaveLength(2)
+    expect(suggestIcons('git', 100).length).toBeGreaterThanOrEqual(all.length)
+    expect(suggestIcons(' .-_ ')).toEqual([])
+    expect(suggestIcons('')).toEqual([])
+  })
+  it('推荐：悬空别名（别名指向不存在的图标 id）防御性返回 null', () => {
+    const aliases = builtinData.aliases as Record<string, string>
+    aliases['__test_dangling__'] = '__no_such_icon__'
+    try {
+      expect(recommendBuiltinIcon('__test_dangling__')).toBeNull()
+    } finally {
+      delete aliases['__test_dangling__']
+    }
   })
 })
 

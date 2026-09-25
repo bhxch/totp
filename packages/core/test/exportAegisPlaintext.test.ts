@@ -1,5 +1,5 @@
 import { addEntry, createVault, exportAegisPlaintext, importAegisPlaintext, newEntryFromUri, resolveTagNames } from '@totp/core'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 describe('exportAegisPlaintext', () => {
   it('round-trip：导出 → 本项目 Aegis 明文导入器逐字段恒等', () => {
@@ -67,5 +67,62 @@ describe('exportAegisPlaintext', () => {
     expect(obj['version']).toBe(1)
     expect((obj['header'] as Record<string, unknown>)['slots']).toEqual([])
     expect(Array.isArray((obj['db'] as Record<string, unknown>)['entries'])).toBe(true)
+  })
+})
+
+describe('exportAegisPlaintext 导出补全（盘点 B11 #42）', () => {
+  it('yandex 条目：pin 写 info.pin（官方 YandexInfo.toJson 口径），round-trip 保真', () => {
+    const e = newEntryFromUri('otpauth://yaotp/Yandex:user?secret=KJTEUGOD5SNXVWBCWJ4G36W4IA&pin=4321')
+    const v = addEntry(createVault(), e)
+    const entry = (JSON.parse(exportAegisPlaintext(v).json) as { db: { entries: Array<{ info: Record<string, unknown> }> } }).db.entries[0]!
+    expect(entry.info['pin']).toBe('4321')
+    const r = importAegisPlaintext(exportAegisPlaintext(v).json)
+    expect(r.entries[0]).toMatchObject({ type: 'yandex', digits: 8, pin: '4321' })
+  })
+
+  it('hotp 无 counter（undefined）恒写 counter=0（官方 HotpInfo 无空计数语义）', () => {
+    const e = newEntryFromUri('otpauth://hotp/Repo:bob?secret=JBSWY3DPEHPK3PXP')
+    expect(e.counter).toBeUndefined()
+    const v = addEntry(createVault(), e)
+    const entry = (JSON.parse(exportAegisPlaintext(v).json) as { db: { entries: Array<{ info: Record<string, unknown> }> } }).db.entries[0]!
+    expect(entry.info['counter']).toBe(0)
+  })
+
+  it('空 vault：db.entries/groups 为空数组、report.usedGroups 空', () => {
+    const { json, report } = exportAegisPlaintext(createVault())
+    const db = (JSON.parse(json) as { db: { entries: unknown[]; groups: unknown[] } }).db
+    expect(db.entries).toEqual([])
+    expect(db.groups).toEqual([])
+    expect(report.usedGroups).toEqual([])
+    expect(report.droppedTagCount).toBe(0)
+  })
+
+  it('tagId 悬空（tagNameOf null）过滤：不产出幽灵组，其余标签正常', () => {
+    const e = newEntryFromUri('otpauth://totp/GitHub:alice?secret=JBSWY3DPEHPK3PXP')
+    let v = createVault()
+    const { vault: v1, tagIds } = resolveTagNames(v, ['工作'])
+    v = v1
+    e.tagIds = [tagIds[0]!, 'ghost-tag-id'] // 悬空 id（vault.tags 中无此 tag）
+    v = addEntry(v, e)
+    const obj = JSON.parse(exportAegisPlaintext(v).json) as { db: { entries: Array<{ groups?: string[] }>; groups: Array<{ name: string }> } }
+    expect(obj.db.groups.map((g) => g.name)).toEqual(['工作'])
+    expect(obj.db.entries[0]!.groups).toHaveLength(1)
+    const r = importAegisPlaintext(exportAegisPlaintext(v).json)
+    expect(r.entries[0]!.tags).toEqual(['工作'])
+  })
+
+  it('无 crypto.randomUUID 的宿主回落时间戳 id（导入侧不校验 uuid 形态，导出不崩）', () => {
+    // 先在真实 crypto 下建好 vault/vault 模块同用 crypto.randomUUID
+    const v = addEntry(createVault(), newEntryFromUri('otpauth://totp/G:a?secret=JBSWY3DPEHPK3PXP'))
+    const original = globalThis.crypto
+    // 模拟旧宿主：crypto 存在但无 randomUUID（aegisVault 的回落分支在导出调用期求值）
+    vi.stubGlobal('crypto', { getRandomValues: original.getRandomValues.bind(original) })
+    try {
+      const obj = JSON.parse(exportAegisPlaintext(v).json) as { db: { entries: Array<{ uuid: string }>; groups: Array<{ uuid: string }> } }
+      expect(typeof obj.db.entries[0]!.uuid).toBe('string')
+      expect(obj.db.entries[0]!.uuid.length).toBeGreaterThan(0)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
