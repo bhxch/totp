@@ -72,10 +72,16 @@ vi.mock('../src/store', async () => {
   }
 })
 
+vi.mock('../src/extApi', async () => (await import('./helpers/extApiMock')).extApiMock())
+
 import App from '../entrypoints/popup/App.vue'
 import { createTestI18n } from './helpers/i18n'
-import { addEntryOp, initStore, locked, settings, storageAdapter, store, vault } from '../src/store'
+import { installChromeShim, type ChromeShim } from './helpers/chromeShim'
+import { addEntryOp, initStore, locked, removeEntryOp, settings, storageAdapter, store, updateEntryOp, vault } from '../src/store'
 import { SOURCES_KEY } from '@totp/core'
+
+/** P3a 补齐用例的 shim 槽：按需注入（chromeShim 注入 globalThis.chrome，extApiMock 惰性桥实时可见） */
+let shim: ChromeShim | undefined
 
 /** BatchPastePanel 桩：保留 added 事件发射能力（点内嵌按钮触发），data-test 判定渲染 */
 const BatchPastePanelStub = {
@@ -92,6 +98,26 @@ const OtpListItemStub = {
   template: `<div class="otp-item-stub">{{ code }}</div>`,
 }
 
+/** MdMenu 桩（P3a 右键菜单用例）：open 时渲染 slot 内菜单项，省去真实组件的定位/Teleport 复杂度 */
+const MdMenuStub = {
+  name: 'MdMenuStub',
+  props: ['open', 'x', 'y', 'triggerEl'],
+  template: `<div v-if="open" data-test="ctx-menu"><slot /></div>`,
+}
+/** OtpQrDialog 桩：open 时渲染 entry 标识 */
+const OtpQrDialogStub = {
+  name: 'OtpQrDialogStub',
+  props: ['open', 'entry'],
+  template: `<div v-if="open" data-test="qr-dialog">{{ entry?.issuer }}</div>`,
+}
+/** TagFilterRow 桩：透出 selectedIds 供恢复/悬空剔除断言 */
+const TagFilterRowStub = {
+  name: 'TagFilterRowStub',
+  props: ['tags', 'selectedIds', 'mode'],
+  emits: ['update:selectedIds', 'update:mode'],
+  template: `<div data-test="tag-filter-stub" />`,
+}
+
 async function mountApp(opts?: { otpListItem?: typeof OtpListItemStub }) {
   const wrapper = mount(App, {
     global: {
@@ -102,6 +128,9 @@ async function mountApp(opts?: { otpListItem?: typeof OtpListItemStub }) {
         BatchPastePanel: BatchPastePanelStub,
         // 编辑态用例需要 item-wrap 渲染出 ✎ 按钮；行内容与本测试无关，桩掉
         OtpListItem: opts?.otpListItem ?? true,
+        MdMenu: MdMenuStub,
+        OtpQrDialog: OtpQrDialogStub,
+        TagFilterRow: TagFilterRowStub,
       },
     },
   })
@@ -448,5 +477,385 @@ describe('popup 跟随拉取行为（跨端同步 T2/T3，审查修复）', () =
     lockedRef.value = false
     await vi.waitFor(() => expect(storageAdapter.get).toHaveBeenCalledWith(SOURCES_KEY))
     await vi.waitFor(() => expect(storageAdapter.set).toHaveBeenCalledWith('cloudAutoStatus', expect.anything()))
+  })
+})
+
+// ==================== P3a 补齐（盘点 B3-11~17）====================
+
+const VALID_URI = 'otpauth://totp/GitHub:me?secret=JBSWY3DPEHPK3PXP'
+const lockedRef = locked as unknown as Ref<boolean>
+
+/** 挂载前注入 ?uri= 查询参数（Firefox ext+otpauth 协议回调入口），尾部恢复干净路径 */
+function withUriQuery(uri: string | null): void {
+  window.history.replaceState({}, '', uri === null ? '/' : `/?uri=${encodeURIComponent(uri)}`)
+}
+
+/** 恢复 clipboard 相关全局（clipboard mock/offscreen 注入/settings 开关） */
+function resetClipboardEnv(): void {
+  settings.clipboardClearEnabled = false
+  try {
+    delete (navigator as unknown as { clipboard?: unknown }).clipboard
+  } catch { /* 不可删则留给下个 defineProperty 覆盖 */ }
+}
+
+describe('popup otpauth 导入入口（B3-13：?uri= 优先、pendingOtpauth 读取即清）', () => {
+  afterEach(() => {
+    withUriQuery(null)
+    shim?.restore()
+  })
+
+  it('?uri= 协议回调优先消费：合法 URI → EntryForm 预填，不读 pendingOtpauth', async () => {
+    withUriQuery('otpauth://totp/Acme:dev?secret=JBSWY3DPEHPK3PXP')
+    const wrapper = await mountApp()
+
+    expect(wrapper.find('entry-form-stub').exists()).toBe(true)
+    const initial = wrapper.findComponent({ name: 'EntryForm' }).props('initial') as { issuer?: string } | null
+    expect(initial).toMatchObject({ issuer: 'Acme' })
+    expect(wrapper.find('.error').exists()).toBe(false)
+  })
+
+  it('?uri= 非法 URI：importError 常显（details 折叠时也在），不渲染预填表单', async () => {
+    withUriQuery('notauri')
+    const wrapper = await mountApp()
+
+    const err = wrapper.find('.error')
+    expect(err.exists()).toBe(true)
+    expect(err.text()).not.toBe('')
+    // 错误置于 details 外：details 保持折叠仍可见（本次直接断言 details 无 open 属性）
+    expect(wrapper.find('details.otpauth-import').attributes('open')).toBeUndefined()
+    expect(wrapper.find('entry-form-stub').exists()).toBe(false)
+  })
+
+  it('无 ?uri= 时读 pendingOtpauth（Chrome 右键菜单写入）：合法→预填，读取即 remove', async () => {
+    shim = installChromeShim({ local: { pendingOtpauth: VALID_URI } })
+    const wrapper = await mountApp()
+
+    expect(wrapper.find('entry-form-stub').exists()).toBe(true)
+    const initial = wrapper.findComponent({ name: 'EntryForm' }).props('initial') as { issuer?: string } | null
+    expect(initial).toMatchObject({ issuer: 'GitHub' })
+    expect(shim.local.data['pendingOtpauth']).toBeUndefined() // 读取即清除
+    expect(shim.local.calls.remove).toBe(1)
+  })
+
+  it('pendingOtpauth 非法字符串：importError 报错，但同样消费即清（不残留重弹）', async () => {
+    shim = installChromeShim({ local: { pendingOtpauth: 'junk-uri' } })
+    const wrapper = await mountApp()
+
+    expect(wrapper.find('.error').exists()).toBe(true)
+    expect(wrapper.find('entry-form-stub').exists()).toBe(false)
+    expect(shim.local.data['pendingOtpauth']).toBeUndefined()
+  })
+})
+
+describe('popup 右键菜单四项（B3-17：编辑/显示二维码/复制 URI/置顶）', () => {
+  const yandexEntry = {
+    uuid: 'e-y', type: 'yandex', issuer: 'Yandex', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
+    algorithm: 'SHA1', digits: 8, period: 30, pin: '1234', tagIds: [], order: 0, createdAt: 0,
+  }
+
+  async function mountWithEntryAndOpenMenu(entry: Record<string, unknown>) {
+    vault.entries.push(entry as never)
+    const wrapper = await mountApp({ otpListItem: OtpListItemStub })
+    wrapper
+      .findComponent({ name: 'OtpListItemStub' })
+      .vm.$emit('context', { clientX: 10, clientY: 20, currentTarget: null })
+    await flushPromises()
+    return wrapper
+  }
+
+  afterEach(() => {
+    vault.entries.length = 0
+    shim?.restore()
+    resetClipboardEnv()
+  })
+
+  it('菜单打开渲染四项；「编辑」→ 编辑态 EntryForm 并收起菜单', async () => {
+    const wrapper = await mountWithEntryAndOpenMenu({
+      uuid: 'e1', type: 'totp', issuer: 'GitHub', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
+      algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 0,
+    })
+    const items = wrapper.findAll('[data-test="ctx-menu"] .ctx-item')
+    expect(items).toHaveLength(4)
+    expect(items[0]!.text()).toBe('编辑')
+    expect(items[3]!.text()).toBe('置顶')
+
+    await items[0]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('entry-form-stub').exists()).toBe(true)
+    expect(wrapper.find('[data-test="ctx-menu"]').exists()).toBe(false)
+  })
+
+  it('「显示二维码」：OtpQrDialog 打开并携带该条目', async () => {
+    const wrapper = await mountWithEntryAndOpenMenu(yandexEntry)
+    await wrapper.findAll('[data-test="ctx-menu"] .ctx-item')[1]!.trigger('click')
+    await flushPromises()
+
+    const dialog = wrapper.find('[data-test="qr-dialog"]')
+    expect(dialog.exists()).toBe(true)
+    expect(dialog.text()).toContain('Yandex')
+  })
+
+  it('「复制 URI」：yandex 条目经 buildOtpUri 产出 yaotp host + pin（I1d），成功出已复制横幅', async () => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    const wrapper = await mountWithEntryAndOpenMenu(yandexEntry)
+
+    await wrapper.findAll('[data-test="ctx-menu"] .ctx-item')[2]!.trigger('click')
+    await flushPromises()
+
+    expect(writeText).toHaveBeenCalledTimes(1)
+    const uri = (writeText.mock.calls[0] as unknown as [string])[0]
+    expect(uri).toContain('otpauth://yaotp/')
+    expect(uri).toContain('pin=1234')
+    expect(wrapper.find('.copied-banner:not(.copied-banner--error)').exists()).toBe(true)
+  })
+
+  it('「置顶」切换：未置顶 → updateEntryOp(uuid,{pinned:true})；已置顶文案为「取消置顶」', async () => {
+    vi.mocked(updateEntryOp).mockClear()
+    const wrapper = await mountWithEntryAndOpenMenu(yandexEntry)
+    const items = wrapper.findAll('[data-test="ctx-menu"] .ctx-item')
+    await items[3]!.trigger('click')
+    await flushPromises()
+    expect(updateEntryOp).toHaveBeenCalledWith('e-y', { pinned: true })
+    expect(wrapper.find('[data-test="ctx-menu"]').exists()).toBe(false)
+
+    // 已置顶条目：mock 不回写 vault，手动置位（contextMenu.entry 与 vault 同引用）——
+    // 菜单文案切换为「取消置顶」，点击撤销
+    ;(yandexEntry as { pinned?: boolean }).pinned = true
+    vi.mocked(updateEntryOp).mockClear()
+    wrapper.findComponent({ name: 'OtpListItemStub' }).vm.$emit('context', { clientX: 1, clientY: 1, currentTarget: null })
+    await flushPromises()
+    const items2 = wrapper.findAll('[data-test="ctx-menu"] .ctx-item')
+    expect(items2[3]!.text()).toBe('取消置顶')
+    await items2[3]!.trigger('click')
+    await flushPromises()
+    expect(updateEntryOp).toHaveBeenCalledWith('e-y', { pinned: false })
+  })
+})
+
+describe('popup 复制行为补齐（B3-15/16：HOTP 递增、清剪贴板三重门控）', () => {
+  const totpEntry = {
+    uuid: 'e1', type: 'totp', issuer: 'GitHub', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
+    algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 0,
+  }
+
+  afterEach(() => {
+    vault.entries.length = 0
+    shim?.restore()
+    resetClipboardEnv()
+    vi.useRealTimers()
+  })
+
+  async function mountTotpReady() {
+    vault.entries.push(totpEntry as never)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: vi.fn(async () => {}) }, configurable: true })
+    const wrapper = await mountApp({ otpListItem: OtpListItemStub })
+    await vi.waitFor(() => {
+      expect(wrapper.find('.otp-item-stub').text()).not.toBe('------')
+    })
+    return wrapper
+  }
+
+  it('HOTP 复制：复制旧 counter 的码后递增 counter（RFC 语义）', async () => {
+    vault.entries.push({
+      uuid: 'e-h', type: 'hotp', issuer: 'H', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
+      algorithm: 'SHA1', digits: 6, counter: 2, period: 30, tagIds: [], order: 0, createdAt: 0,
+    } as never)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: vi.fn(async () => {}) }, configurable: true })
+    vi.mocked(updateEntryOp).mockClear()
+    const wrapper = await mountApp({ otpListItem: OtpListItemStub })
+    await vi.waitFor(() => {
+      expect(wrapper.find('.otp-item-stub').text()).not.toBe('------')
+    })
+    vi.useFakeTimers()
+
+    wrapper.findComponent({ name: 'OtpListItemStub' }).vm.$emit('copy')
+    await flushPromises()
+
+    expect(updateEntryOp).toHaveBeenCalledWith('e-h', { counter: 3 })
+    expect(wrapper.find('.copied-banner:not(.copied-banner--error)').exists()).toBe(true)
+  })
+
+  it('清剪贴板三重门控：开关关不发；canOffscreen false 不发；两者齐备才发 delayMs 消息', async () => {
+    shim = installChromeShim()
+    const wrapper = await mountTotpReady()
+    vi.useFakeTimers()
+    const sendSpy = vi.spyOn(
+      shim.chrome.runtime as { sendMessage: (msg: unknown) => Promise<unknown> },
+      'sendMessage',
+    )
+    const item = wrapper.findComponent({ name: 'OtpListItemStub' })
+
+    // 门 1：开关关（默认设置）
+    item.vm.$emit('copy')
+    await flushPromises()
+    expect(sendSpy).not.toHaveBeenCalled()
+
+    // 门 2：开关开但无 offscreen API（Firefox 形态——shim 未注入 offscreen）
+    settings.clipboardClearEnabled = true
+    item.vm.$emit('copy')
+    await flushPromises()
+    expect(sendSpy).not.toHaveBeenCalled()
+
+    // 三门齐备：发 schedule-clipboard-clear（CLIPBOARD_CLEAR_DELAY_MS=30s）
+    shim.chrome.offscreen = {}
+    item.vm.$emit('copy')
+    await flushPromises()
+    expect(sendSpy).toHaveBeenCalledWith({ type: 'schedule-clipboard-clear', delayMs: 30_000 })
+  })
+})
+
+describe('popup 删除两击确认与 3s 超时复位（B3-17）', () => {
+  afterEach(() => {
+    vault.entries.length = 0
+    vi.useRealTimers()
+  })
+
+  async function mountWithEntry() {
+    vault.entries.push({
+      uuid: 'e1', type: 'totp', issuer: 'GitHub', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
+      algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 0,
+    } as never)
+    return await mountApp()
+  }
+
+  it('首击出确认按钮，3s 超时复位回删除钮；两击内确认才真正删除', async () => {
+    vi.mocked(removeEntryOp).mockClear()
+    const wrapper = await mountWithEntry()
+    await vi.waitFor(() => {
+      expect(wrapper.findAll('button').some((b) => b.text() === '🗑')).toBe(true)
+    })
+    vi.useFakeTimers()
+
+    const delBtn = () => wrapper.findAll('button').find((b) => b.text() === '🗑')
+    const confirmBtn = () => wrapper.findAll('button').find((b) => b.text().includes('删除'))
+
+    // 首击：进入确认态（删除钮被确认钮替换）
+    expect(delBtn()).toBeTruthy()
+    await delBtn()!.trigger('click')
+    expect(delBtn()).toBeUndefined()
+    expect(confirmBtn()).toBeTruthy()
+
+    // 3s 无操作：超时复位回删除钮
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(confirmBtn()).toBeUndefined()
+    expect(delBtn()).toBeTruthy()
+    expect(removeEntryOp).not.toHaveBeenCalled()
+
+    // 两击内确认：删除落地
+    await delBtn()!.trigger('click')
+    await confirmBtn()!.trigger('click')
+    await flushPromises()
+    expect(removeEntryOp).toHaveBeenCalledWith('e1')
+  })
+})
+
+describe('popup 编辑 digits 重算与 URI 导入 carried 透传（B3-16）', () => {
+  afterEach(() => {
+    vault.entries.length = 0
+    shim?.restore()
+    withUriQuery(null)
+  })
+
+  it('编辑路径 type 变更：steam→totp 时 digits 重算（5→6），type 未变沿用表单值', async () => {
+    vault.entries.push({
+      uuid: 'e-s', type: 'steam', issuer: 'Steam', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
+      algorithm: 'SHA1', digits: 5, period: 30, tagIds: [], order: 0, createdAt: 0,
+    } as never)
+    const wrapper = await mountApp()
+    await wrapper.findAll('button').find((b) => b.text() === '✎')!.trigger('click')
+    const form = wrapper.findComponent({ name: 'EntryForm' })
+
+    form.vm.$emit('save', {
+      type: 'totp', issuer: 'Steam', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
+      algorithm: 'SHA1', digits: 6, period: 30, note: '', tagIds: [], matchRules: [],
+    })
+    await flushPromises()
+    expect(updateEntryOp).toHaveBeenCalledWith('e-s', expect.objectContaining({ type: 'totp', digits: 6 }))
+
+    // type 未变（steam）：沿用表单提交值 5
+    vi.mocked(updateEntryOp).mockClear()
+    await wrapper.findAll('button').find((b) => b.text() === '✎')!.trigger('click')
+    wrapper.findComponent({ name: 'EntryForm' }).vm.$emit('save', {
+      type: 'steam', issuer: 'Steam', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
+      algorithm: 'SHA1', digits: 5, period: 30, note: '', tagIds: [], matchRules: [],
+    })
+    await flushPromises()
+    expect(updateEntryOp).toHaveBeenCalledWith('e-s', expect.objectContaining({ type: 'steam', digits: 5 }))
+  })
+
+  it('URI 导入预填同 type：carried 透传 algorithm/digits/period/counter（hotp counter 保留）', async () => {
+    withUriQuery('otpauth://hotp/Acme:dev?secret=JBSWY3DPEHPK3PXP&counter=5&digits=7')
+    vi.mocked(addEntryOp).mockClear()
+    const wrapper = await mountApp()
+    expect(wrapper.find('entry-form-stub').exists()).toBe(true)
+
+    wrapper.findComponent({ name: 'EntryForm' }).vm.$emit('save', {
+      type: 'hotp', issuer: 'Acme', label: 'dev', secret: 'JBSWY3DPEHPK3PXP',
+      algorithm: 'SHA1', digits: 7, period: 30, note: '', tagIds: [], matchRules: [],
+    })
+    await flushPromises()
+
+    const entry = vi.mocked(addEntryOp).mock.calls[0]![0] as unknown as Record<string, unknown>
+    expect(entry.type).toBe('hotp')
+    expect(entry.counter).toBe(5) // carried.counter（同 type 透传）
+    expect(entry.digits).toBe(7) // carried.digits
+    expect(entry.algorithm).toBe('SHA1')
+    expect(entry.period).toBe(30)
+  })
+
+  it('URI 导入 type 变更（hotp→totp）：carried 失效，counter 不透传，digits 按表单收口', async () => {
+    withUriQuery('otpauth://hotp/Acme:dev?secret=JBSWY3DPEHPK3PXP&counter=5')
+    vi.mocked(addEntryOp).mockClear()
+    const wrapper = await mountApp()
+
+    wrapper.findComponent({ name: 'EntryForm' }).vm.$emit('save', {
+      type: 'totp', issuer: 'Acme', label: 'dev', secret: 'JBSWY3DPEHPK3PXP',
+      algorithm: 'SHA1', digits: 6, period: 45, note: '', tagIds: [], matchRules: [],
+    })
+    await flushPromises()
+
+    const entry = vi.mocked(addEntryOp).mock.calls[0]![0] as unknown as Record<string, unknown>
+    expect(entry.type).toBe('totp')
+    expect(entry.counter).toBeUndefined() // carried=null：hotp counter 不带
+    expect(entry.digits).toBe(6)
+    // 现状锚定：carried=null 时 period 恒 30（`period: carried?.period ?? 30` 覆盖 ...data 的表单值）
+    expect(entry.period).toBe(30)
+  })
+})
+
+describe('popup 锁定态与标签筛选恢复（B3-11/14）', () => {
+  afterEach(() => {
+    vault.tags.length = 0
+    settings.rememberTagFilter = false
+    settings.lastTagFilterIds = []
+    lockedRef.value = false
+  })
+
+  it('锁定态：渲染 LockScreen 且 allowPasskey=false（popup 无 WebAuthn 入口）', async () => {
+    lockedRef.value = true
+    const wrapper = await mountApp()
+    expect(wrapper.find('lock-screen-stub').exists()).toBe(true)
+    expect(wrapper.findComponent({ name: 'LockScreen' }).props('allowPasskey')).toBe(false)
+    expect(wrapper.find('main').exists()).toBe(false)
+  })
+
+  it('rememberTagFilter 恢复：悬空 id 剔除、有效选中恢复并透传 TagFilterRow', async () => {
+    settings.rememberTagFilter = true
+    settings.lastTagFilterIds = ['t1', 'gone']
+    vault.tags.push({ id: 't1', name: '工作' }, { id: 't2', name: '个人' } as never)
+
+    const wrapper = await mountApp()
+    const stub = wrapper.findComponent({ name: 'TagFilterRowStub' })
+    expect(stub.props('selectedIds')).toEqual(['t1']) // gone 已被悬空剔除
+  })
+
+  it('rememberTagFilter 关闭：不恢复持久化选中（空集合）', async () => {
+    settings.rememberTagFilter = false
+    settings.lastTagFilterIds = ['t1']
+    vault.tags.push({ id: 't1', name: '工作' } as never)
+
+    const wrapper = await mountApp()
+    expect(wrapper.findComponent({ name: 'TagFilterRowStub' }).props('selectedIds')).toEqual([])
   })
 })
