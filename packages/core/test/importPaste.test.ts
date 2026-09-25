@@ -31,6 +31,20 @@ describe('parsePastedText', () => {
     const r = parsePastedText(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: {} }))
     expect(r).toEqual({ unsupported: expect.stringContaining('导入页') })
   })
+  it('Aegis 加密 vault（db 为密文 Base64 串）拦截引导至导入页口令通道，不走明文解析', () => {
+    // 结构对齐真实加密导出：header 带 slots/params、顶层 db 为 Base64 密文字符串（sniffAegis.encrypted=true）
+    const encrypted = JSON.stringify({
+      version: 1,
+      header: { slots: [{ type: 1, uuid: 's', key: 'ab', key_params: { nonce: 'cd', tag: 'ef' }, salt: '01', n: 16384, r: 8, p: 1 }], params: { nonce: 'aa'.repeat(12), tag: 'bb'.repeat(16) } },
+      db: 'aGVsbG8=',
+    })
+    const r = parsePastedText(encrypted)
+    expect(r).toEqual({ unsupported: '加密 Aegis 文件请走导入页（需输入口令）' })
+  })
+  it('WinAuth XML 拦截：文件惯例不走粘贴强解，提示选择文件导入', () => {
+    const r = parsePastedText('<?xml version="1.0"?><WinAuth version="3.6.4.2"></WinAuth>')
+    expect(r).toEqual({ unsupported: 'WinAuth 请在导入页选择文件导入' })
+  })
   it('通用 JSON 提示走导入页', () => {
     const r = parsePastedText('{"foo": 1}')
     expect(r).toEqual({ unsupported: expect.stringContaining('导入页') })
