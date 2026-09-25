@@ -1,5 +1,6 @@
 /**
- * syncEngine 编排层测试：chrome.storage（local/sync）以内存实现注入 globalThis.chrome，
+ * syncEngine 编排层测试：chrome.storage（local/sync）以内存实现注入 globalThis.chrome
+ * （P0 起经公共 fixture test/helpers/chromeShim.ts，原 makeArea 手写 shim 已收敛），
  * 无法自动化真实 chrome.sync（需浏览器账号云），故在编排逻辑层面验证：
  * - meta.rev > appliedRev 时 pushSync 先走 pullOnce 应用远端、再重读本端推送（不覆盖他端较新数据）
  * - pull 未成功应用（分片缺失/损坏）时放弃推送，宁缺勿以陈旧覆盖
@@ -10,6 +11,7 @@ import {
   base64ToBytes, bytesToBase64, chunkKey, chunksToMeta, splitIntoChunks, type SyncChunk,
 } from '@totp/core'
 import { needsPullBeforePush, pullSyncIfNewer, pushSync, SYNC_STATUS_KEY } from '../src/syncEngine'
+import { installChromeShim, type Store } from './helpers/chromeShim'
 
 // ext 是模块导入期快照，逐用例 globalThis.chrome 注入需经惰性桥透传（批⑧ Task 10，见 helper 注释）
 vi.mock('../src/extApi', async () => (await import('./helpers/extApiMock')).extApiMock())
@@ -20,37 +22,9 @@ const SETTINGS_KEY = 'settings'
 const META_KEY = 'sync:meta'
 const APPLIED_REV_KEY = 'sync:appliedRev'
 
-type Store = Record<string, unknown>
-
-/** chrome.storage.Area 的内存实现（get(null)/get(keys)/set/remove/getBytesInUse） */
-function makeArea(initial: Store = {}) {
-  const data: Store = { ...initial }
-  return {
-    data,
-    async get(keys: string[] | null): Promise<Store> {
-      if (keys === null) return { ...data }
-      const out: Store = {}
-      for (const k of keys) if (k in data) out[k] = data[k]
-      return out
-    },
-    async set(obj: Store): Promise<void> {
-      Object.assign(data, obj)
-    },
-    async remove(keys: string[]): Promise<void> {
-      for (const k of keys) delete data[k]
-    },
-    async getBytesInUse(): Promise<number> {
-      return JSON.stringify(data).length
-    },
-    QUOTA_BYTES: 102_400,
-  }
-}
-
+/** chrome.storage（local/sync）内存实现注入：初始内容注入即落盘，data 直读可断言 */
 function installChrome(localInit: Store = {}, syncInit: Store = {}) {
-  const local = makeArea(localInit)
-  const sync = makeArea(syncInit)
-  ;(globalThis as unknown as { chrome: unknown }).chrome = { storage: { local, sync } }
-  return { local, sync }
+  return installChromeShim({ local: localInit, sync: syncInit })
 }
 
 /** UTF-8 字符串 ↔ base64（复用 core 的编解码，与被测实现同语义） */

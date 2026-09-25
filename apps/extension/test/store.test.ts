@@ -1,8 +1,8 @@
 /**
  * extension store 注册层单测（审查 I7）：chrome.storage.onChanged → registerStorageSync
  * payload 映射的透传验证 + 冲突裁决 badge 即时对账。chrome.storage.local / onChanged /
- * runtime.sendMessage / action.setBadgeText 以内存实现注入 globalThis.chrome（沿用
- * dekSession.test 既有 shim 模式）：
+ * runtime.sendMessage / action.setBadgeText 以内存实现注入 globalThis.chrome（P0 起经公共
+ * fixture test/helpers/chromeShim.ts，沿用原 installChrome 语义）：
  * - secretBag 键变更 → 透传触发 ui store 的 reloadBagFromDisk（跨上下文保管区感知）
  * - 仅 vault/settings 键变更 → 不触碰 bag（credsCache 不被无谓重读）
  * - area !== 'local'（如 session 区 DEK 写入）→ 整体忽略
@@ -10,47 +10,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { sealSecretBag, SECRET_BAG_KEY, type CloudCred, type EntryConflict, type OtpEntry } from '@totp/core'
 import { createExtensionStore } from '../src/store'
+import { installChromeShim } from './helpers/chromeShim'
 
 // ext 是模块导入期快照，逐用例 globalThis.chrome 注入需经惰性桥透传（批⑧ Task 10，见 helper 注释）
 vi.mock('../src/extApi', async () => (await import('./helpers/extApiMock')).extApiMock())
 
-type Store = Record<string, unknown>
-type Listener = (changes: Record<string, { newValue?: unknown }>, area: string) => void
-
-/** chrome.storage（local + onChanged）与 runtime 内存实现；emit 模拟浏览器派发 onChanged */
+/** chrome.storage/local + onChanged + runtime + badge 内存实现注入；data 直读写，onChanged 经 emit 手动派发 */
 function installChrome() {
-  const local = new Map<string, string>()
-  const listeners: Listener[] = []
-  const setBadgeText = vi.fn()
-  ;(globalThis as unknown as { chrome: unknown }).chrome = {
-    storage: {
-      local: {
-        async get(key: string): Promise<Store> {
-          return local.has(key) ? { [key]: local.get(key) } : {}
-        },
-        async set(obj: Store): Promise<void> {
-          for (const [k, v] of Object.entries(obj)) local.set(k, v as string)
-        },
-        async remove(key: string): Promise<void> {
-          local.delete(key)
-        },
-      },
-      onChanged: {
-        addListener(cb: Listener): void {
-          listeners.push(cb)
-        },
-      },
-    },
-    runtime: { sendMessage: async () => {} }, // sync-push 调度通道（无关本测试，静默吞）
-    action: { setBadgeText }, // 冲突 badge 通道（裁决即时对账用例断言）
-  }
-  return {
-    local,
-    setBadgeText,
-    emit: (changes: Record<string, { newValue?: unknown }>, area = 'local') => {
-      for (const l of listeners) l(changes, area)
-    },
-  }
+  return installChromeShim()
 }
 
 const WEBDAV: CloudCred = { backend: 'webdav', serverUrl: 'https://d.example', username: 'u', password: 'p' }
@@ -90,7 +57,7 @@ describe('extension store registerSync 映射（审查 I7）', () => {
 
     // 模拟另一上下文（popup/options）写保管区：以同 DEK 封存含 src-2 的新 bag 落盘
     const dek = s.getCurrentDek()!
-    await c.local.set(SECRET_BAG_KEY, await sealSecretBag(dek, { backupPassword: '', creds: { 'src-1': WEBDAV, 'src-2': GIST } }))
+    c.local.data[SECRET_BAG_KEY] = await sealSecretBag(dek, { backupPassword: '', creds: { 'src-1': WEBDAV, 'src-2': GIST } })
     c.emit({ secretBag: { newValue: '...' } })
     await vi.waitFor(() => expect(s.credsCache.value['src-2']).toEqual(GIST)) // 远端变更已感知（轮询等 crypto 链路）
   })
@@ -103,7 +70,7 @@ describe('extension store registerSync 映射（审查 I7）', () => {
     await s.enableEncryption('masterpw')
     await s.saveSourceCredOp('src-1', WEBDAV)
     const dek = s.getCurrentDek()!
-    await c.local.set(SECRET_BAG_KEY, await sealSecretBag(dek, { backupPassword: '', creds: { 'src-2': GIST } }))
+    c.local.data[SECRET_BAG_KEY] = await sealSecretBag(dek, { backupPassword: '', creds: { 'src-2': GIST } })
 
     // vault/settings 通知不触发 bag 重读
     c.emit({ vault: { newValue: '...' }, settings: { newValue: '...' } })
@@ -124,7 +91,7 @@ describe('extension store registerSync 映射（审查 I7）', () => {
     await s.enableEncryption('masterpw')
     const dek = s.getCurrentDek()!
     s.lock()
-    await c.local.set(SECRET_BAG_KEY, await sealSecretBag(dek, { backupPassword: '', creds: { 'src-2': GIST } }))
+    c.local.data[SECRET_BAG_KEY] = await sealSecretBag(dek, { backupPassword: '', creds: { 'src-2': GIST } })
     c.emit({ secretBag: { newValue: '...' } })
     await settle()
     expect(s.locked.value).toBe(true)
@@ -157,11 +124,11 @@ describe('extension store 冲突裁决 badge 即时对账（badge 滞后修复�
 
     await s.resolveMergeConflictOp('e1', 'ours') // 裁决一条：剩 1 条 → badge 保持「!」，持久键同步
     expect(c.setBadgeText).toHaveBeenLastCalledWith({ text: '!' })
-    await vi.waitFor(() => expect(c.local.get('cloudConflictCount')).toBe('1'))
+    await vi.waitFor(() => expect(c.local.data['cloudConflictCount']).toBe('1'))
 
     await s.resolveMergeConflictOp('e2', 'theirs') // 裁决最后一条：清零 → 立即清 badge（无需等下轮同步/重开 options）
     expect(c.setBadgeText).toHaveBeenLastCalledWith({ text: '' })
-    await vi.waitFor(() => expect(c.local.get('cloudConflictCount')).toBe('0'))
+    await vi.waitFor(() => expect(c.local.data['cloudConflictCount']).toBe('0'))
     expect(s.conflictCount.value).toBe(0)
   })
 })

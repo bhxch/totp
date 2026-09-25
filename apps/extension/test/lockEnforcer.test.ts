@@ -1,6 +1,7 @@
 /**
  * lockEnforcer（idle/锁屏自动锁定执行器）单测（plan16 T12）：
- * chrome.idle 以假实现注入 globalThis.chrome + vitest fake timers，验证编排逻辑：
+ * chrome.idle 以假实现注入 globalThis.chrome（P0 起经公共 fixture test/helpers/chromeShim.ts，
+ * 调用记录恒保留、行为经 on* 钩子注入）+ vitest fake timers，验证编排逻辑：
  * - 30s tick；idleMinutes>=1 时 setDetectionInterval(clamp(idleMinutes*60))，且仅值变化时调用一次
  * - queryState(clamp(idleMinutes*60))（勘误 审查C3：queryState 只认入参阈值，不认 setDetectionInterval）
  * - queryState 'locked'+lockOnSystemLock → lock；'idle'+idleMinutes>=1 → lock
@@ -10,28 +11,20 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createIdleLockWatcher, type IdleLockPrefs } from '../src/lockEnforcer'
+import { installChromeShim, type IdleState } from './helpers/chromeShim'
 
 // ext 是模块导入期快照，逐用例 globalThis.chrome 注入需经惰性桥透传（批⑧ Task 10，见 helper 注释）
 vi.mock('../src/extApi', async () => (await import('./helpers/extApiMock')).extApiMock())
 
-type IdleState = 'active' | 'idle' | 'locked'
-
+/** chrome.idle 内存实现注入（仅安装 idle；storage/runtime 同场可用但与本测试无关） */
 function installChromeIdle(overrides: { setDetectionInterval?: () => void; queryState?: (cb: (s: IdleState) => void) => void } = {}) {
-  const calls = { setDetectionInterval: [] as number[], queryState: [] as number[] }
-  const idle = {
-    setDetectionInterval(seconds: number): void {
-      calls.setDetectionInterval.push(seconds)
-      overrides.setDetectionInterval?.()
+  const shim = installChromeShim({
+    idle: {
+      onSetDetectionInterval: overrides.setDetectionInterval ?? null,
+      onQueryState: overrides.queryState ?? null,
     },
-    queryState(_detectionIntervalInSeconds: number, cb: (s: `${IdleState}`) => void): void {
-      calls.queryState.push(_detectionIntervalInSeconds)
-      // 默认 active；用例经 overrides 注入目标态（同步回调，与真实 API 的 callback 形状一致）
-      if (overrides.queryState) overrides.queryState(cb)
-      else cb('active')
-    },
-  }
-  ;(globalThis as unknown as { chrome: unknown }).chrome = { idle }
-  return { calls, idle }
+  })
+  return { calls: shim.idle!.calls, idle: shim.idle! }
 }
 
 beforeEach(() => {
