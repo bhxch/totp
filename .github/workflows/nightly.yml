@@ -34,9 +34,10 @@ jobs:
         run: find artifacts -mindepth 2 -type f -exec mv -t artifacts {} + && find artifacts -mindepth 1 -type d -empty -delete
       - name: sha256
         run: cd artifacts && sha256sum * > ../sha256sums.txt
-      # schedule/dispatch 事件无 head_commit，body 用日期 + 短 sha 组装
+      # schedule/dispatch 事件无 head_commit，body 用日期 + 短 sha 组装；
+      # date 格式串必须加引号，否则分词后报 extra operand、输出为空
       - name: Assemble release body
-        run: echo "NIGHTLY_BODY=自动构建 $(date -u +%Y-%m-%d %H:%M UTC) @ ${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+        run: echo "NIGHTLY_BODY=自动构建 $(date -u '+%Y-%m-%d %H:%M') UTC @ ${GITHUB_SHA::7}" >> "$GITHUB_ENV"
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9（= v9.0.0，annotated tag 解引用后的 commit）
         with:
           script: |
