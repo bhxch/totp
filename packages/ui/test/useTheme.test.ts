@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { reactive } from 'vue'
 import type { VueStore } from '../src/store'
-import { applyThemeAttributes, isThemeColor, THEME_PALETTES, useTheme } from '../src/theme/useTheme'
+import { applyThemeAttributes, isThemeColor, readThemeMirror, THEME_PALETTES, useTheme } from '../src/theme/useTheme'
 
 // mock 静态依赖链上的加载器:loadPalettes 每次被调用即代表发起一次 palettes chunk 动态导入;
 // 失败分支经 setTimeout 异步化,模拟真实网络往返(同步 reject 会在 watchEffect 同 tick 重试,失真)
@@ -141,5 +141,44 @@ describe('applyThemeAttributes', () => {
   it('直接写 dataset', () => {
     applyThemeAttributes('light', 'slate')
     expect(document.documentElement.dataset).toMatchObject({ mode: 'light', color: 'slate' })
+  })
+})
+
+describe('useTheme 防御分支补全', () => {
+  it('镜像坏 JSON：readThemeMirror 回退空对象不抛（try/catch 兜底）', () => {
+    localStorage.setItem('themePref', '{broken json')
+    expect(readThemeMirror()).toEqual({})
+  })
+  it('color set 非法值：忽略，不写 settings 也不改镜像（写侧白名单守卫）', async () => {
+    const s = store()
+    const t = useTheme(s)
+    await Promise.resolve() // 首帧镜像校正落地
+    const before = localStorage.getItem('themePref')
+    t.color.value = 'not-a-color' as never
+    await Promise.resolve()
+    expect(s.settings.themeColor).toBe('blue')
+    expect(localStorage.getItem('themePref')).toBe(before)
+  })
+  it('无 addEventListener 的 matchMedia 环境（旧宿主）：system 判定仍成立且不抛', () => {
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true, configurable: true,
+      value: vi.fn().mockReturnValue({ matches: false }),
+    })
+    const s = store()
+    s.settings.themeMode = 'auto'
+    expect(useTheme(s).resolvedMode.value).toBe('light')
+  })
+  it('localStorage.setItem 抛错（隐私模式配额）：镜像失败不影响主题功能', async () => {
+    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('quota') })
+    try {
+      const s = store()
+      const t = useTheme(s)
+      t.mode.value = 'dark'
+      await Promise.resolve()
+      expect(document.documentElement.dataset.mode).toBe('dark')
+      expect(s.commitSettings).toHaveBeenCalled()
+    } finally {
+      spy.mockRestore()
+    }
   })
 })
