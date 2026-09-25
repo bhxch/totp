@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CloudBackend } from '../src/cloud/backend'
-import { CloudHttpError, ensureHttpOk, isAuthError } from '../src/cloud/backend'
+import { CloudHttpError, cloudFetch, ensureHttpOk, isAuthError } from '../src/cloud/backend'
 import { createBackupEnvelope, createSyncEnvelope, openBackupEnvelope } from '../src/backup/envelope'
 import { contentHash } from '../src/cloud/canonical'
 import { sha256Hex, syncWithCloudRev } from '../src/cloud/syncOrchestrator'
@@ -360,6 +360,128 @@ describe('syncWithCloudRev', () => {
     ).rejects.toThrow('副本写入失败')
     expect(backend.putCount).toBe(0)
   })
+
+  it('副本回调同步 throw（非 Promise reject 形态）→ merged 分支整体失败：不上传合并结果', async () => {
+    const base = revVaultJson([revEntry('a', { order: 1 })], 1)
+    const ours = revVaultJson([revEntry('a', { order: 1 }), revEntry('b', { order: 2 })], 2)
+    const theirs = revVaultJson([revEntry('a', { order: 1 }), revEntry('c', { order: 3 })], 3)
+    const backend = mockBackend(await sealedRemote(5, theirs, 'wrong'))
+    await expect(
+      syncWithCloudRev({
+        backend, path: PATH, vaultJson: ours, password: PASSWORD,
+        state: revState(4, base), deviceId: DEV_A,
+        onConflictBackup: () => {
+          throw new Error('副本同步抛错') // 同步 throw：宿主回调非 async 形态的失败同样中止上传
+        },
+      }),
+    ).rejects.toThrow('副本同步抛错')
+    expect(backend.putCount).toBe(0)
+  })
+
+  it('exists=true 但 get→null 竞态（对象在探测后被删）→ 按「云端无对象」uploaded：rev 从本端时钟续起', async () => {
+    const backend = mockBackend()
+    let getCalls = 0
+    backend.exists = async () => true // 探测命中
+    backend.get = async () => (getCalls++ === 0 ? null : backend.store.get(PATH) ?? null) // 首读被并发删除；回读恢复正常
+    const r = await syncWithCloudRev({
+      backend, path: PATH, vaultJson: LOCAL_VAULT, password: PASSWORD,
+      state: revState(4, LOCAL_VAULT), deviceId: DEV_A,
+    })
+    expect(r.action).toBe('uploaded')
+    expect(r.remoteRev).toBeNull() // 视作云端无对象（与 rev=0 不混用）
+    expect(r.newRev).toBe(5) // knownRev+1：对象被删后重推不回退时钟
+    expect(backend.putCount).toBe(1)
+  })
+
+  it('远端回滚（rev < 本端已知且内容不同）+ 本地未动 → downloaded（不因 rev 倒退误判 in-sync）', async () => {
+    // 场景：云端对象被旧备份回滚覆盖（rev 2 < 已知 5），内容≠baseSnapshot
+    const backend = mockBackend(await sealedRemote(2, REMOTE_VAULT))
+    const r = await syncWithCloudRev({
+      backend, path: PATH, vaultJson: LOCAL_VAULT, password: PASSWORD,
+      state: revState(5, LOCAL_VAULT), deviceId: DEV_A,
+    })
+    expect(r.action).toBe('downloaded')
+    expect(r.appliedVaultJson).toBe(REMOTE_VAULT)
+    expect(r.remoteRev).toBe(2)
+    expect(backend.putCount).toBe(0)
+  })
+
+  it('远端回滚 + 本地也动 → merged：newRev 从本端已知时钟续起（max(remote,known)+1 单调）', async () => {
+    const base = revVaultJson([revEntry('a', { order: 1 })], 1)
+    const ours = revVaultJson([revEntry('a', { order: 1 }), revEntry('b', { order: 2 })], 2)
+    const theirs = revVaultJson([revEntry('a', { order: 1 }), revEntry('c', { order: 3 })], 3)
+    // rev 2 < 已知 5：合并上传的新 rev 必须 6（不回退到 3）
+    const backend = mockBackend(await sealedRemote(2, theirs, 'wrong'))
+    const r = await syncWithCloudRev({
+      backend, path: PATH, vaultJson: ours, password: PASSWORD,
+      state: revState(5, base), deviceId: DEV_A,
+    })
+    expect(r.action).toBe('merged')
+    expect(r.remoteRev).toBe(2)
+    expect(r.newRev).toBe(6)
+    const stored = JSON.parse(new TextDecoder().decode(backend.store.get(PATH)!))
+    expect(stored.sync.rev).toBe(6)
+  })
+
+  it('readPath 分离（orchestrator 层）：判定/下载走 readPath，uploaded 写入恒走 path（keep 源读最新份写新份）', async () => {
+    // readPath 上有对端重推的同基线内容（rev 4，内容==baseSnapshot → 云端未动），path（写入域）为空；
+    // 本用例后端按真实 path 落键
+    const seeded = await sealedRemote(4, LOCAL_VAULT)
+    const store = new Map<string, Uint8Array>([['dir/vault-20250101-000000.totpbackup', seeded]])
+    const backend: CloudBackend = {
+      id: 'webdav',
+      put: async (p, data) => void store.set(p, data),
+      get: async (p) => store.get(p) ?? null,
+      delete: async (p) => void store.delete(p),
+      exists: async (p) => store.has(p),
+    }
+    const local = revVaultJson([revEntry('n1', { order: 1 })], 9) // 本地已改（相对基线）
+    const r = await syncWithCloudRev({
+      backend, path: 'dir/vault-20250102-000000.totpbackup',
+      readPath: 'dir/vault-20250101-000000.totpbackup',
+      vaultJson: local, password: PASSWORD,
+      state: revState(4, LOCAL_VAULT), deviceId: DEV_A,
+    })
+    // 读侧 rev4==known、内容==baseSnapshot → 云端未动本地已改 → uploaded；写入落 path（新时间戳份）
+    expect(r.action).toBe('uploaded')
+    expect(r.newRev).toBe(5)
+    expect(store.has('dir/vault-20250102-000000.totpbackup')).toBe(true)
+    // 读侧对象零改动（readPath 只读；密文随机 IV，按字节比对原始种子）
+    expect(store.get('dir/vault-20250101-000000.totpbackup')).toBe(seeded)
+  })
+
+  it('readPath 分离（orchestrator 层）：readPath 较新且本地未动 → downloaded，零写（写入域不含本轮）', async () => {
+    const store = new Map<string, Uint8Array>([['dir/vault-20250101-000000.totpbackup', await sealedRemote(4, REMOTE_VAULT)]])
+    const backend: CloudBackend = {
+      id: 'webdav',
+      put: async (p, data) => void store.set(p, data),
+      get: async (p) => store.get(p) ?? null,
+      delete: async (p) => void store.delete(p),
+      exists: async (p) => store.has(p),
+    }
+    const r = await syncWithCloudRev({
+      backend, path: 'dir/vault-20250102-000000.totpbackup',
+      readPath: 'dir/vault-20250101-000000.totpbackup',
+      vaultJson: LOCAL_VAULT, password: PASSWORD,
+      state: revState(3, LOCAL_VAULT), deviceId: DEV_A,
+    })
+    expect(r.action).toBe('downloaded')
+    expect(r.appliedVaultJson).toBe(REMOTE_VAULT)
+    expect(store.has('dir/vault-20250102-000000.totpbackup')).toBe(false)
+  })
+
+  it('preview + 云端未动本地已改 → uploaded 预览零写（写分支的 preview 短路）', async () => {
+    const backend = mockBackend(await sealedRemote(3, LOCAL_VAULT))
+    const local = revVaultJson([revEntry('n1', { order: 1 })], 9)
+    const r = await syncWithCloudRev({
+      backend, path: PATH, vaultJson: local, password: PASSWORD,
+      state: revState(3, LOCAL_VAULT), deviceId: DEV_A, mode: 'preview',
+    })
+    expect(r.action).toBe('uploaded')
+    expect(r.remoteRev).toBe(3)
+    expect(r.newRev).toBeUndefined()
+    expect(backend.putCount).toBe(0)
+  })
 })
 
 describe('CloudHttpError / isAuthError（审查 I2 结构化凭据失效判定）', () => {
@@ -391,5 +513,25 @@ describe('CloudHttpError / isAuthError（审查 I2 结构化凭据失效判定�
     expect(isAuthError(new Error('路径 /bucket-4013/obj 不存在'))).toBe(false)
     expect(isAuthError(new Error('网络超时'))).toBe(false)
     expect(isAuthError('字符串形态：Gist 请求失败（HTTP 401）')).toBe(true)
+  })
+})
+
+describe('cloudFetch（网络层包装）', () => {
+  it('fetch 抛出物非 Error（字符串 reject）→ 消息按 String(err) 归一，不加 CORS 提示', async () => {
+    globalThis.fetch = (async () => {
+      throw 'socket reset' // 非 TypeError 且非 Error
+    }) as typeof fetch
+    const err = await cloudFetch('WebDAV', 'https://dav.example.com/obj').then(() => null, (e: unknown) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).toBe('WebDAV 网络请求失败：socket reset（dav.example.com/obj）')
+    expect((err as Error).message).not.toContain('CORS')
+  })
+
+  it('url 非法（URL 构造失败）→ 错误位置回落「<url 解析失败>」占位，不抛二级异常', async () => {
+    globalThis.fetch = (async () => {
+      throw new TypeError('fetch failed')
+    }) as typeof fetch
+    const err = await cloudFetch('S3', '::not a url::').then(() => null, (e: unknown) => e)
+    expect((err as Error).message).toBe('S3 网络请求失败：fetch failed — 若为自建 WebDAV/S3(MinIO)请检查服务端 CORS 配置（<url 解析失败>）')
   })
 })

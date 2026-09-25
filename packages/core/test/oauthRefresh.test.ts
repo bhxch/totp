@@ -182,4 +182,56 @@ describe('oauthRefresh：refreshAccessToken', () => {
     await refreshAccessToken(cred)
     expect(hits).toBe(1)
   })
+
+  it('expires_in=0/负数/非法类型 → 兜底 3600 秒寿命（后续调用走缓存零请求）', async () => {
+    let hits = 0
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      hits++
+      return new Response(JSON.stringify({ access_token: 'tokDefault', expires_in: 0 }), { status: 200 })
+    }))
+    const cred = { backend: 'gdrive' as const, accessToken: '', oauth: { ...OAUTH } }
+    expect(await refreshAccessToken(cred)).toBe('tokDefault')
+    expect(await refreshAccessToken(cred)).toBe('tokDefault')
+    expect(hits).toBe(1) // 兜底寿命下缓存有效
+  })
+
+  it('200 但 body 非法 JSON → res.json() 解析失败按 {} 处理 → 401 语义（不缓存）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('not-json {{', { status: 200 })))
+    const cred = { backend: 'gdrive' as const, accessToken: '', oauth: OAUTH }
+    const err = await refreshAccessToken(cred).then(() => null, (e: unknown) => e)
+    expect(isAuthError(err)).toBe(true)
+    // 失败不污染缓存：修复后同凭据重刷正常
+    const fetchMock = tokenStub('tokD')
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await refreshAccessToken(cred)).toBe('tokD')
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('网络失败抛出物非 Error（字符串 reject）→ 消息含 String(err) 归一原因', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw 'network dead' // 非 Error 抛出物
+    }))
+    const cred = { backend: 'gdrive' as const, accessToken: '', oauth: OAUTH }
+    const err = await refreshAccessToken(cred).then(() => null, (e: unknown) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect(isAuthError(err)).toBe(false)
+    expect((err as Error).message).toContain('OAuth 刷新请求网络失败：network dead')
+  })
+
+  it('credKey 稳定性：同 clientId+refreshToken 的不同 cred 实例共享缓存（凭据明文不直接作 key）', async () => {
+    let hits = 0
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      hits++
+      return new Response(JSON.stringify({ access_token: 'tokShared', expires_in: 3600 }), { status: 200 })
+    }))
+    // 两次调用来自不同 cred 对象（accessToken 等外围字段不同），OAuth 三元组相同 → 同 credKey
+    const cred1 = { backend: 'gdrive' as const, accessToken: 'aaa', oauth: { ...OAUTH } }
+    const cred2 = { backend: 'gdrive' as const, accessToken: 'bbb', oauth: { clientId: 'cid-1', clientSecret: 'sec-1', refreshToken: 'rtok-1' } }
+    expect(await refreshAccessToken(cred1)).toBe('tokShared')
+    expect(await refreshAccessToken(cred2)).toBe('tokShared')
+    expect(hits).toBe(1) // 第二次命中缓存：同凭据稳定同 key
+    // 换 refreshToken → 不同 key → 重新请求
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'tokOther', expires_in: 3600 }), { status: 200 })))
+    expect(await refreshAccessToken({ backend: 'gdrive', accessToken: 'aaa', oauth: { ...OAUTH, refreshToken: 'rtok-2' } })).toBe('tokOther')
+  })
 })

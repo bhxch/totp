@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { base64ToBytes } from '../src/crypto/aesgcm'
+import { base64ToBytes, bytesToBase64 } from '../src/crypto/aesgcm'
 import { chunkKey, chunksToMeta, DEFAULT_MAX_DATA_BYTES, mergeChunks, splitIntoChunks, staleChunkKeys } from '../src/sync/chunks'
 import type { SyncChunk } from '../src/sync/chunks'
 
@@ -43,6 +43,11 @@ describe('splitIntoChunks', () => {
     expect(chunks.map((c) => c.part)).toEqual([0, 1, 2])
     expect(chunks.every((c) => c.total === 3)).toBe(true)
     expect(chunks.map((c) => new TextDecoder().decode(base64ToBytes(c.data)))).toEqual(['ab', 'cd', 'ef'])
+  })
+  it('maxDataBytes 非法（0/负数/非整数）→ 抛错（防除零与死循环切片）', () => {
+    for (const bad of [0, -10, 2.5]) {
+      expect(() => splitIntoChunks('abc', 1, 1, bad)).toThrow('maxDataBytes must be a positive integer')
+    }
   })
 
   it('多字节 UTF-8（中文/emoji）：按字节切，单片 ≤ maxDataBytes，不丢字节', () => {
@@ -152,12 +157,28 @@ describe('mergeChunks', () => {
     expect(mergeChunks([{ ...c!, data: c!.data.replace('aGV', 'aGV\n') }])).toBeNull()
   })
 
+  it('合法 base64 但解码后非合法 UTF-8（fatal 解码抛错）→ null（catch 兜底，不产出乱码 payload）', () => {
+    // 0xFF 0xFE 是合法字节的 base64（'/w=='→[0xFF]、'3/4'→[0xDF,0xFE] 截断代理），TextDecoder fatal 抛 TypeError
+    const bad = mergeChunks([{ rev: 1, updatedAt: 1, part: 0, total: 1, data: bytesToBase64(new Uint8Array([0xff, 0xfe])) }])
+    expect(bad).toBeNull()
+  })
+
   it('空数组 → null', () => {
     expect(mergeChunks([])).toBeNull()
+  })
+
+  it('首片缺失（数组含 undefined 槽位）→ null；total<1 → null', () => {
+    expect(mergeChunks([undefined as unknown as SyncChunk])).toBeNull()
+    expect(mergeChunks([{ rev: 1, updatedAt: 1, part: 0, total: 0, data: '' }])).toBeNull()
+    expect(mergeChunks([{ rev: 1, updatedAt: 1, part: 0, total: -3, data: '' }])).toBeNull()
+    expect(mergeChunks([{ rev: 1, updatedAt: 1, part: 0, total: 1.5, data: '' }])).toBeNull()
   })
 })
 
 describe('chunksToMeta', () => {
+  it('空数组 → 抛错（meta 必须来自非空分片集）', () => {
+    expect(() => chunksToMeta([])).toThrow('chunks must not be empty')
+  })
   it('从任一片提取 rev/updatedAt/total', () => {
     const chunks = splitIntoChunks('i'.repeat(DEFAULT_MAX_DATA_BYTES + 1), 77, 8888)
     expect(chunksToMeta(chunks)).toEqual({ rev: 77, updatedAt: 8888, total: 2 })

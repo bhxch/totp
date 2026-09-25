@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createWebdavBackend } from '../src/cloud/webdav'
+import { createWebdavBackend, joinDavUrl } from '../src/cloud/webdav'
 import { createGistBackend } from '../src/cloud/gist'
 
 const PATH = 'totp-backup.totpbackup'
@@ -12,6 +12,14 @@ function jsonRes(body: unknown, status = 200): Response {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+})
+
+describe('joinDavUrl（拼接归一）', () => {
+  it('serverUrl 多重尾斜杠与 path 多重前导斜杠归一为单斜杠（不产生双斜杠 URL）', () => {
+    expect(joinDavUrl(`${DAV}/dav//`, '//dir/obj.totpbackup')).toBe(`${DAV}/dav/dir/obj.totpbackup`)
+    expect(joinDavUrl(DAV, PATH)).toBe(`${DAV}/${PATH}`)
+    expect(joinDavUrl(`${DAV}///`, '/')).toBe(`${DAV}/`)
+  })
 })
 
 describe('WebDAV 后端', () => {

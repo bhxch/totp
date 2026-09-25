@@ -364,4 +364,71 @@ describe('双设备收敛（共享云对象，primary 单目标 + state 幂等�
     expect(cloud.putRevs).toEqual([2, 3])
     expectRevMonotonic(cloud)
   })
+
+  it('场景5：三设备各改一条目 → 交替同步收敛，三方条目并集都在、rev 单调、零冲突副本', { timeout: 30_000 }, async () => {
+    const base = v([e('a', { label: 'base' })])
+    const cloud = fakeCloud()
+    await seedCloudV3(cloud, 1, base)
+    const devA = await makeDevice('A', base, seedState(base))
+    const devB = await makeDevice('B', base, seedState(base))
+    const devC = await makeDevice('C', base, seedState(base))
+
+    // 三设备离线并发各加不同条目
+    devA.edit((vt) => { vt.entries = [...vt.entries, e('x', { label: 'from-a', updatedAt: 2 })] })
+    devB.edit((vt) => { vt.entries = [...vt.entries, e('y', { label: 'from-b', updatedAt: 3 })] })
+    devC.edit((vt) => { vt.entries = [...vt.entries, e('z', { label: 'from-c', updatedAt: 4 })] })
+    const localBBeforeMerge = devB.local() // B 合并前本地内容（副本断言锚点）
+
+    const trace = await runUntilInSync([devA, devB, devC], cloud)
+    // 三设备全部收敛（最终一轮三者皆 in-sync；中途可有先行 in-sync 后被对端推进的轨迹）
+    expect(trace.slice(-3).every((t) => t.endsWith('in-sync'))).toBe(true)
+
+    const expected = ['a:base', 'x:from-a', 'y:from-b', 'z:from-c']
+    expect(entriesOf(devA.local())).toEqual(expected)
+    expect(entriesOf(devB.local())).toEqual(expected)
+    expect(entriesOf(devC.local())).toEqual(expected)
+    expect(entriesOf(await cloudPlain(cloud))).toEqual(expected)
+    expect(await contentHash(devA.local())).toBe(await contentHash(devC.local()))
+
+    // rev 严格单调（多设备交替写不回退）
+    expectRevMonotonic(cloud)
+    // 无「同条目双改」→ 零条目冲突；merged 轮各有一份安全副本（B、C 合并前本地内容），A 纯上传/下载零副本
+    expect(devA.copies()).toEqual([])
+    expect(devB.copies()).toHaveLength(1)
+    expect(devC.copies()).toHaveLength(1)
+    await expect(openBackupEnvelope(JSON.parse(DEC.decode(devB.copies()[0]!.bytes)), PW)).resolves.toBe(localBBeforeMerge)
+  })
+
+  it('场景6：merged 采纳后一方本地回滚（撤销采纳）→ 回滚作为新本地变更上传收敛（rev 续起不回退）', { timeout: 30_000 }, async () => {
+    const base = v([e('a', { label: 'base' })])
+    const cloud = fakeCloud()
+    await seedCloudV3(cloud, 1, base)
+    const devA = await makeDevice('A', base, seedState(base))
+    const devB = await makeDevice('B', base, seedState(base))
+
+    // A 加 x 上传；B 加 y → merged 采纳（本地=a,x,y）
+    devA.edit((vt) => { vt.entries = [...vt.entries, e('x', { label: 'from-a', updatedAt: 2 })] })
+    await devA.run(cloud)
+    devB.edit((vt) => { vt.entries = [...vt.entries, e('y', { label: 'from-b', updatedAt: 3 })] })
+    const rB1 = await devB.run(cloud)
+    expect(rB1.results[0]!.outcome).toMatchObject({ action: 'merged' })
+    expect(entriesOf(devB.local())).toEqual(['a:base', 'x:from-a', 'y:from-b'])
+
+    // B 撤销采纳：本地回滚到合并前内容（a,y——丢弃 A 的 x）
+    devB.edit((vt) => { vt.entries = vt.entries.filter((x) => x.uuid !== 'x') })
+    const rollback = devB.local()
+    expect(entriesOf(rollback)).toEqual(['a:base', 'y:from-b'])
+
+    // 交替同步：B 的回滚按「本地已改」上传（rev 续起），A 经 downloaded 跟随回滚——
+    // 撤销是普通变更语义，双向收敛到回滚结果而非被云端合并结果再覆盖回来
+    const trace = await runUntilInSync([devA, devB], cloud)
+    expect(trace.some((t) => t === 'B:uploaded')).toBe(true)
+    expect(entriesOf(devA.local())).toEqual(['a:base', 'y:from-b'])
+    expect(entriesOf(devB.local())).toEqual(['a:base', 'y:from-b'])
+    expect(entriesOf(await cloudPlain(cloud))).toEqual(['a:base', 'y:from-b'])
+    expect(await contentHash(devA.local())).toBe(await contentHash(devB.local()))
+    // 回滚上传不产生冲突副本（非 merged 路径）
+    expect(devB.copies()).toHaveLength(1) // 仅首轮 merged 的安全副本
+    expectRevMonotonic(cloud)
+  })
 })

@@ -179,6 +179,23 @@ describe('SigV4 核心步骤（AWS aws-sig-v4-test-suite 官方向量锚定）',
     expect(buildCanonicalQueryString({ 'a': '1', 'b': '2' })).toBe('a=1&b=2')
     // 值也需编码：空格、空值都参与
     expect(buildCanonicalQueryString({ 'a': 'a b', 'c': '' })).toBe('a=a%20b&c=')
+    // 值缺失（undefined）按空串处理（防御形态）
+    expect(buildCanonicalQueryString({ 'k': undefined as unknown as string })).toBe('k=')
+  })
+
+  it('get-header-key-duplicate 逆序插入：头名降序到达时排序比较器走 false 分支，结果仍按名升序', () => {
+    const creq = sigV4CanonicalRequest(
+      'GET',
+      '/',
+      '',
+      [
+        ['x-amz-date', '20150830T123600Z'], // 名序在 host 之后插入（降序到达）
+        ['host', 'example.amazonaws.com'],
+      ],
+      EMPTY_SHA256,
+    )
+    expect(creq).toContain('host:example.amazonaws.com\nx-amz-date:20150830T123600Z')
+    expect(creq).toContain('\nhost;x-amz-date\n')
   })
 })
 
@@ -352,6 +369,37 @@ describe('S3 后端（默认 AWS endpoint，virtual-host style）', () => {
     const backend = createS3Backend(CRED, OPTS)
     await expect(backend.listBackups!()).rejects.toThrow('S3 请求失败（HTTP 403）')
   })
+
+  it('listBackups：NextContinuationToken 持续下发 → 恰 10 页截断（防服务端异常失控）', async () => {
+    const cred = { ...CRED, objectPath: 'dir/totp-backup.totpbackup' }
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      const u = new URL(String(url))
+      const page = Number(u.searchParams.get('continuation-token') ?? 0)
+      return new Response(`<ListBucketResult><Contents><Key>dir/vault-2026010${page}-000000.totpbackup</Key></Contents><NextContinuationToken>${page + 1}</NextContinuationToken></ListBucketResult>`, { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createS3Backend(cred, OPTS)
+    expect(await backend.listBackups!()).toHaveLength(10) // 恰 10 页后截断
+    expect(fetchMock).toHaveBeenCalledTimes(10)
+  })
+
+  it('put/delete 网络失败 → cloudFetch 中文错误（TypeError 形态）', async () => {
+    const backend = createS3Backend(CRED, OPTS)
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('put net down') }))
+    await expect(backend.put(PATH, new TextEncoder().encode('x'))).rejects.toThrow('S3 网络请求失败：put net down')
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('delete net down') }))
+    await expect(backend.delete(PATH)).rejects.toThrow('S3 网络请求失败：delete net down')
+  })
+
+  it('缺省时钟（不注入 opts.now）→ x-amz-date 取当前 UTC 时刻（ SigV4 流程不变）', async () => {
+    const fetchMock = vi.fn(async (_u: RequestInfo | URL, _i?: RequestInit) => new Response(null, { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createS3Backend(CRED) // 无 opts.now：走 `() => new Date()` 缺省分支
+    await backend.put(PATH, new TextEncoder().encode('x'))
+    const amzDate = (fetchMock.mock.calls[0]![1]!.headers as Record<string, string>)['x-amz-date']!
+    expect(amzDate).toMatch(/^\d{8}T\d{6}Z$/)
+    expect(amzDate.slice(0, 8)).toBe(new Date().toISOString().slice(0, 10).replace(/-/g, ''))
+  })
   it('网络层 TypeError 命中 CORS 模式时追加「请检查服务端 CORS 配置」中文提示（自建 WebDAV/MinIO 场景）', async () => {
     const cases: Array<[string, string]> = [
       ['fetch failed', '请检查服务端 CORS 配置'],
@@ -419,6 +467,31 @@ describe('S3 后端（自定义 endpoint 兼容 MinIO，path-style）', () => {
     const backend = createS3Backend({ ...CRED, prefix: '/backups/sub/' }, OPTS)
     await backend.put(PATH, new TextEncoder().encode('x'))
     expect(fetchMock.mock.calls[0]![0]).toBe(`http://localhost:9000/mybucket/backups/sub/${PATH}`)
+  })
+
+  it('listBackups：path-style 下列表 URL 为 {endpoint}/{bucket}/?list-type=2…（与 put/get 同 endpoint 域）', async () => {
+    const cred = { ...CRED, objectPath: 'dir/totp-backup.totpbackup' }
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      const u = new URL(String(url))
+      expect(u.origin + u.pathname).toBe('http://localhost:9000/mybucket/')
+      expect(u.searchParams.get('list-type')).toBe('2')
+      expect(u.searchParams.get('prefix')).toBe('dir/')
+      return new Response('<ListBucketResult><Contents><Key>dir/vault-20260101-000000.totpbackup</Key></Contents></ListBucketResult>', { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createS3Backend(cred, OPTS)
+    expect(await backend.listBackups!()).toEqual(['dir/vault-20260101-000000.totpbackup'])
+  })
+
+  it('listBackups：无 dir 无 prefix → 列 bucket 根，返回裸名（dir ? dir/name : name 的根分支）', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      const u = new URL(String(url))
+      expect(u.searchParams.get('prefix')).toBe('')
+      return new Response('<ListBucketResult><Contents><Key>vault-20260101-000000.totpbackup</Key></Contents></ListBucketResult>', { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createS3Backend({ ...CRED, endpoint: 'http://localhost:9000' }, OPTS) // objectPath 缺省 → dir=''
+    expect(await backend.listBackups!()).toEqual(['vault-20260101-000000.totpbackup'])
   })
 })
 

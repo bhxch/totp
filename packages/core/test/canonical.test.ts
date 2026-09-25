@@ -11,6 +11,15 @@ describe('canonicalJson', () => {
   it('undefined 字段与缺失等价', () => {
     expect(canonicalJson({ a: 1, b: undefined })).toBe(canonicalJson({ a: 1 }))
   })
+  it('标量与 null：原样 JSON 序列化（null ≠ 缺失 ≠ "null" 字符串）', () => {
+    expect(canonicalJson(null)).toBe('null')
+    expect(canonicalJson(undefined)).toBe('null') // JSON.stringify(undefined)=undefined → 'null' 兜底
+    expect(canonicalJson(42)).toBe('42')
+    expect(canonicalJson('x')).toBe('"x"')
+    expect(canonicalJson(true)).toBe('true')
+    // null 作为值保留（不与 undefined 剔除语义混淆）
+    expect(canonicalJson({ a: null })).toBe('{"a":null}')
+  })
 })
 
 describe('contentHash', () => {

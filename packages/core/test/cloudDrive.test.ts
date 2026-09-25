@@ -423,6 +423,107 @@ describe('Google Drive 后端', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 401 })))
     await expect(gone.listBackups!()).rejects.toThrow('Google Drive 请求失败（HTTP 401）')
   })
+
+  it('put：创建响应缺 id（业务字段缺失）→ 抛专用中文错误（与 HTTP 层错误文案区分）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonRes({}))) // 200 但无 id
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok' })
+    await expect(backend.put(PATH, BYTES)).rejects.toThrow('files.create 响应缺少文件 id')
+  })
+
+  it('primaryParent：200 但无 parents 字段 → 回落 Drive 根别名 root（listBackups 圈列域同源）', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      const u = new URL(String(url))
+      if (u.pathname === '/drive/v3/files/fid9' && u.searchParams.get('fields') === 'parents') {
+        return jsonRes({}) // 200 无 parents（共享给我的文件等形态）
+      }
+      if (u.origin + u.pathname === 'https://www.googleapis.com/drive/v3/files') {
+        expect(decodeURIComponent(u.searchParams.get('q')!)).toBe(`'root' in parents and name contains 'vault-' and trashed=false`)
+        return jsonRes({ files: [] })
+      }
+      throw new Error(`意外请求：${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok', fileId: 'fid9' })
+    expect(await backend.listBackups!()).toEqual([])
+  })
+
+  it('listBackups：响应缺 files 字段 / 条目缺 name → 空结果不抛（宽松容错）', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const u = new URL(String(url))
+      if (u.pathname === '/drive/v3/files/fid9') return jsonRes({ parents: ['pid1'] })
+      if (u.pathname === '/drive/v3/files') {
+        if (u.searchParams.get('pageToken') !== null) return jsonRes({ files: [{ id: 'noname' }] }) // 条目缺 name：过滤跳过
+        return jsonRes({ nextPageToken: '2' }) // 整页缺 files：空迭代不抛，token 仍续拉
+      }
+      throw new Error(`意外请求：${init!.method} ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok', fileId: 'fid9' })
+    // 两页均无可用名（页1缺 files、页2缺 name）→ 空结果不抛
+    expect(await backend.listBackups!()).toEqual([])
+  })
+
+  it('listBackups：nextPageToken 空串 → 视为无续页中止（空串续拉会打出无效请求）', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      const u = new URL(String(url))
+      if (u.pathname === '/drive/v3/files/fid9') return jsonRes({ parents: ['pid1'] })
+      if (u.searchParams.get('pageToken') === null) {
+        return jsonRes({ files: [{ name: 'vault-20260101-000000.totpbackup' }], nextPageToken: '' }) // 空串 token
+      }
+      throw new Error('空串 token 不应发起续拉')
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok', fileId: 'fid9' })
+    expect(await backend.listBackups!()).toEqual(['vault-20260101-000000.totpbackup'])
+    expect(fetchMock).toHaveBeenCalledTimes(2) // parents + 1 页
+  })
+
+  it('listBackups：分页上限 10 页（服务端异常持续下发 token 时截断，不失控）', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      const u = new URL(String(url))
+      if (u.pathname === '/drive/v3/files/fid9') return jsonRes({ parents: ['pid1'] })
+      if (u.pathname === '/drive/v3/files') {
+        const page = Number(u.searchParams.get('pageToken') ?? 0)
+        return jsonRes({ files: [{ name: `vault-2026010${page}-000000.totpbackup` }], nextPageToken: String(page + 1) })
+      }
+      throw new Error(`意外请求：${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok', fileId: 'fid9' })
+    const names = await backend.listBackups!()
+    expect(names).toHaveLength(10) // 恰 10 页聚合后截断
+    const listCalls = fetchMock.mock.calls.filter(([u]) => new URL(String(u)).pathname === '/drive/v3/files')
+    expect(listCalls).toHaveLength(10) // parents 探测 1 次 + list 恰 10 页
+  })
+
+  it('delete：异名目标 + 主对象已删（parents 404）→ 静默返回（删除域无法圈定，宁可不删不可误删）', async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok', fileId: 'fid9', objectPath: 'dir/totp-backup.totpbackup' })
+    await backend.delete('dir/vault-20260101-000000.totpbackup')
+    expect(fetchMock).toHaveBeenCalledOnce() // 仅 parents 探测，无查询无 DELETE
+  })
+
+  it('delete：path 全分隔符（basename 空）→ 异名流程按名查询删除，不误伤主对象', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const u = new URL(String(url))
+      if (u.pathname === '/drive/v3/files/fid9') return jsonRes({ parents: ['pid1'] })
+      if (u.pathname === '/drive/v3/files') {
+        expect(decodeURIComponent(u.searchParams.get('q')!)).toBe(
+          `name='///' and mimeType='application/json' and 'pid1' in parents and trashed=false`,
+        )
+        return jsonRes({ files: [{ id: 'weird1' }] })
+      }
+      if (init!.method === 'DELETE' && String(url) === 'https://www.googleapis.com/drive/v3/files/weird1') {
+        return new Response(null, { status: 204 })
+      }
+      throw new Error(`意外请求：${init!.method} ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createGDriveBackend({ backend: 'gdrive', accessToken: 'tok', fileId: 'fid9' })
+    await backend.delete('///')
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
 })
 
 describe('OneDrive 后端', () => {
@@ -558,6 +659,23 @@ describe('OneDrive 后端', () => {
     expect(await backend.listBackups!()).toEqual([])
     vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 500 })))
     await expect(backend.listBackups!()).rejects.toThrow('OneDrive 请求失败（HTTP 500）')
+  })
+
+  it('listBackups：children 响应缺 value / 条目缺 name → 空结果不抛（宽松容错，@odata.nextLink 空串同止）', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      const u = String(url)
+      if (u === `${GRAPH}/me/drive/root:/${PATH}:?select=parentReference`) {
+        return jsonRes({ parentReference: { id: 'pid1' } })
+      }
+      if (u === `${GRAPH}/me/drive/items/pid1/children`) {
+        return jsonRes({ '@odata.nextLink': '' }) // 缺 value + 空串 nextLink（都容忍）
+      }
+      throw new Error(`意外请求：${u}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createOneDriveBackend({ backend: 'onedrive', accessToken: 'tok' })
+    expect(await backend.listBackups!()).toEqual([])
+    expect(fetchMock).toHaveBeenCalledTimes(2) // 空串 nextLink 不发起续拉
   })
 })
 

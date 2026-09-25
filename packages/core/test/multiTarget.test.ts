@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createSyncEnvelope, KDF_PROFILES, openBackupEnvelope } from '../src/backup/envelope'
+import { createBackupEnvelope, createSyncEnvelope, KDF_PROFILES, openBackupEnvelope } from '../src/backup/envelope'
 import type { OtpEntry } from '../src/model'
 import { mergeVaults } from '../src/merge/vaultMerge'
 import type { BackupSource } from '../src/backup/sources'
@@ -67,6 +67,12 @@ async function sealedRemote(rev: number, content: string, baseContentHash?: stri
   return ENC.encode(JSON.stringify(env))
 }
 
+/** 以 v2 信封（无 sync 头）预置远端：旧版本客户端写入形态 */
+async function sealedRemoteV2(content: string): Promise<Uint8Array> {
+  const env = await createBackupEnvelope(content, PW)
+  return ENC.encode(JSON.stringify(env))
+}
+
 /** 断言云端字节可用口令解开为期望 vault 明文 */
 async function expectOpensTo(bytes: Uint8Array, password: string, expected: string): Promise<void> {
   const env = JSON.parse(new TextDecoder().decode(bytes))
@@ -97,6 +103,25 @@ describe('pushEnvelope', () => {
     await expectOpensTo(stored, PW, A)
     expect(pushed.hash).toBe(await sha256Hex(stored))
     expect(await sha256Hex(ENC.encode(pushed.envelopeJson))).toBe(await sha256Hex(stored))
+  })
+
+  it('回读 get→null（假写成功竞态）→ 抛「云端校验失败」', async () => {
+    const backend = fakeBackend()
+    backend.get = async () => null // put 声称成功但对象立即可读消失
+    await expect(
+      pushEnvelope({ backend, path: PATH, vaultJson: A, password: PW }),
+    ).rejects.toThrow('云端校验失败：上传内容与回读不一致')
+  })
+
+  it('回读内容被篡改（sha256 不一致，如代理/网关截断改写）→ 抛「云端校验失败」', async () => {
+    const backend = fakeBackend()
+    backend.put = async (_p, data) => {
+      // 落盘时被中间层损坏：截掉尾部字节（回读 hash ≠ 上传 hash）
+      backend.store.set(PATH, data.slice(0, data.length - 8))
+    }
+    await expect(
+      pushEnvelope({ backend, path: PATH, vaultJson: A, password: PW }),
+    ).rejects.toThrow('云端校验失败：上传内容与回读不一致')
   })
 })
 
@@ -448,6 +473,129 @@ describe('syncMultipleTargets（primary 裁决 + replica 收敛复制）', () =>
     expect(rb.putCount).toBe(0)
     expect(r.results.map((x) => x.key)).toEqual(['pri'])
     expect(r.states['rep']).toBeUndefined()
+  })
+
+  it('primary in-sync（对端重推同内容）+ replica 落后 → replica 照常推平（states 混合形态）', async () => {
+    // primary 云端 rev5==内容一致 → in-sync（final=本地入参）；replica 云端停留在旧内容 rev2 → 推平
+    const pb = fakeBackend(await sealedRemote(5, A))
+    const stale = v([e('x')])
+    const rb = fakeBackend(await sealedRemote(2, stale))
+    const r = await syncMultipleTargets({
+      targets: [pri({ backend: pb, state: revState(5, A) }), rep({ backend: rb, state: revState(2, stale) })],
+      vaultJson: A, password: PW, deviceId: DEV,
+    })
+    expect(find(r, 'pri').outcome!.action).toBe('in-sync')
+    expect(find(r, 'rep').outcome!.action).toBe('uploaded')
+    expect(find(r, 'rep').outcome!.newRev).toBe(3)
+    await expectOpensTo(rb.store.get(PATH)!, PW, A)
+    expect(r.states['pri']).toEqual({ lastKnownRemoteRev: 5, baseSnapshot: A })
+    expect(r.states['rep']).toEqual({ lastKnownRemoteRev: 3, baseSnapshot: A })
+  })
+
+  it('全部目标失败收敛：primary 与 replica 全失败 → final=本地、adopted=false、states 原样、错误逐目标记录', async () => {
+    const pb = fakeBackend()
+    pb.get = async () => {
+      throw new Error('primary 网络错误')
+    }
+    const rb = fakeBackend()
+    rb.exists = async () => {
+      throw 'replica 字符串异常' // 非 Error 抛出物：error 字段按 String(err) 归一
+    }
+    const r = await syncMultipleTargets({
+      targets: [pri({ backend: pb, state: revState(4, A) }), rep({ backend: rb, state: revState(2, A) })],
+      vaultJson: A, password: PW, deviceId: DEV,
+    })
+    expect(find(r, 'pri').outcome).toBeNull()
+    expect(find(r, 'pri').error).toContain('primary 网络错误')
+    expect(find(r, 'rep').outcome).toBeNull()
+    expect(find(r, 'rep').error).toBe('replica 字符串异常') // String(err) 分支
+    expect(r.finalVaultJson).toBe(A)
+    expect(r.adopted).toBe(false)
+    expect(r.states['pri']).toEqual(revState(4, A))
+    expect(r.states['rep']).toEqual(revState(2, A))
+  })
+
+  it('onConflictBackup reject 在 multiTarget 层：primary merged 副本失败 → 该目标 outcome null，零写云，state 原样', async () => {
+    const base = v([e('a', { label: 'old' })])
+    const ours = v([e('a', { label: 'local', updatedAt: 2 }), e('b')])
+    const theirs = v([e('a', { label: 'remote', updatedAt: 3 }), e('c')])
+    const pb = fakeBackend(await sealedRemote(5, theirs, await contentHash(base)))
+    const rb = fakeBackend() // replica 空云：验证 primary 失败不阻断 replica 首推
+    const r = await syncMultipleTargets({
+      targets: [pri({ backend: pb, state: revState(4, base) }), rep({ backend: rb })],
+      vaultJson: ours, password: PW, deviceId: DEV,
+      onConflictBackup: () => Promise.reject(new Error('副本存储已满')),
+    })
+    expect(find(r, 'pri').outcome).toBeNull()
+    expect(find(r, 'pri').error).toContain('副本存储已满')
+    expect(pb.putCount).toBe(0) // 安全序：副本失败绝不继续上传合并结果
+    expect(r.states['pri']).toEqual(revState(4, base)) // 失败目标 state 原样
+    // replica 仍照常按 final=本地内容首推（单目标失败不阻断）
+    expect(find(r, 'rep').outcome!.action).toBe('uploaded')
+  })
+
+  it('replica merged：副本回调同样透传 target key（副本=合并前 final 内容）', async () => {
+    const ac = v([e('a'), e('c')])
+    const pb = fakeBackend()
+    const rb = fakeBackend(await sealedRemote(5, ac, 'wrong'))
+    const copies: Array<{ key: string; bytes: Uint8Array }> = []
+    const r = await syncMultipleTargets({
+      targets: [pri({ backend: pb }), rep({ backend: rb, state: revState(2, A) })],
+      vaultJson: AB, password: PW, deviceId: DEV,
+      onConflictBackup: (key, bytes) => {
+        copies.push({ key, bytes })
+      },
+    })
+    expect(find(r, 'rep').outcome!.action).toBe('merged')
+    expect(copies).toHaveLength(1)
+    expect(copies[0]!.key).toBe('rep')
+    await expectOpensTo(copies[0]!.bytes, PW, AB) // 副本=合并前本地内容（此处=final）
+  })
+
+  it('primary in-sync 且 remoteRev=null（v2 无头内容一致）→ state 保持原 lastKnownRemoteRev 不写 0', async () => {
+    const pb = fakeBackend(await sealedRemoteV2(A)) // v2 信封无 sync 头
+    const r = await syncMultipleTargets({
+      targets: [pri({ backend: pb, state: revState(7, A) })],
+      vaultJson: A, password: PW, deviceId: DEV,
+    })
+    expect(find(r, 'pri').outcome).toMatchObject({ action: 'in-sync', remoteRev: null })
+    // newRev/remoteRev 均 null → 回退 state 原值（不落 0）
+    expect(r.states['pri']).toEqual({ lastKnownRemoteRev: 7, baseSnapshot: A })
+  })
+
+  it('replica in-sync 且 remoteRev=null（v2 无头内容一致）→ state 保持原 lastKnownRemoteRev 不写 0', async () => {
+    const pb = fakeBackend()
+    const rb = fakeBackend(await sealedRemoteV2(A))
+    const r = await syncMultipleTargets({
+      targets: [pri({ backend: pb }), rep({ backend: rb, state: revState(9, A) })],
+      vaultJson: A, password: PW, deviceId: DEV,
+    })
+    expect(find(r, 'rep').outcome).toMatchObject({ action: 'in-sync', remoteRev: null })
+    expect(r.states['rep']).toEqual({ lastKnownRemoteRev: 9, baseSnapshot: A })
+  })
+
+  it('replica 云端为 v2 较新内容 → downloaded 并入后二次收敛推平：中间态 remoteRev=null 回退已知时钟', async () => {
+    // v2 无头使 downloaded 的 remoteRev=null：二次调用 state.lastKnownRemoteRev 回退 t.state 原值，
+    // 二次调用对 v2 远端再走保守内容比对 → merged（降级两方），newRev=max(0, known)+1 单调
+    const ad = v([e('a'), e('d')])
+    const pb = fakeBackend()
+    const rb = fakeBackend(await sealedRemoteV2(ad))
+    const copies: Array<{ key: string; bytes: Uint8Array }> = []
+    const r = await syncMultipleTargets({
+      targets: [pri({ backend: pb }), rep({ backend: rb, state: revState(2, AB) })],
+      vaultJson: AB, password: PW, deviceId: DEV,
+      onConflictBackup: (key, bytes) => {
+        copies.push({ key, bytes })
+      },
+    })
+    expect(uuidsOf(r.finalVaultJson)).toEqual(['a', 'b', 'd']) // 并入不丢
+    expect(find(r, 'rep').outcome!.action).toBe('merged')
+    expect(find(r, 'rep').outcome!.newRev).toBe(3) // max(null→0, 2) + 1
+    await expectOpensTo(rb.store.get(PATH)!, PW, r.finalVaultJson)
+    expect(r.states['rep']).toEqual({ lastKnownRemoteRev: 3, baseSnapshot: r.finalVaultJson })
+    // 首轮 downloaded 零副本；二次收敛轮 merged 落安全副本（key 透传，副本=该轮上传前的 final 内容）
+    expect(copies.map((c) => c.key)).toEqual(['rep'])
+    await expectOpensTo(copies[0]!.bytes, PW, r.finalVaultJson)
   })
 })
 

@@ -34,4 +34,51 @@ describe('syncState', () => {
     expect(id1).toMatch(/^[0-9a-f-]{36}$/)
     expect(await loadDeviceId(a)).toBe(id1)
   })
+  it('adapter.get 抛错（IO 故障）→ 回落缺省状态不抛错', async () => {
+    const a = createMemoryStorage()
+    a.get = async () => {
+      throw new Error('storage IO error')
+    }
+    expect(await loadSyncState(a, 's1')).toEqual({ lastKnownRemoteRev: null, baseSnapshot: null })
+  })
+  it('字段类型矫正：lastKnownRemoteRev 非数字 / baseSnapshot 非字符串 / 条目非对象 → 各自回落 null', async () => {
+    const a = createMemoryStorage()
+    await a.set('cloudSyncState', JSON.stringify({
+      s1: { lastKnownRemoteRev: '5', baseSnapshot: 42 }, // 字段类型全错
+      s2: 'garbage', // 条目非对象
+    }))
+    expect(await loadSyncState(a, 's1')).toEqual({ lastKnownRemoteRev: null, baseSnapshot: null })
+    expect(await loadSyncState(a, 's2')).toEqual({ lastKnownRemoteRev: null, baseSnapshot: null })
+  })
+  it('bag 多源共存：save 源B 不丢源A（明文与 seal 两种形态）', async () => {
+    const a = createMemoryStorage()
+    await saveSyncState(a, 'sA', { lastKnownRemoteRev: 3, baseSnapshot: '{"a":1}' })
+    await saveSyncState(a, 'sB', { lastKnownRemoteRev: null, baseSnapshot: null })
+    expect(await loadSyncState(a, 'sA')).toEqual({ lastKnownRemoteRev: 3, baseSnapshot: '{"a":1}' })
+    expect(await loadSyncState(a, 'sB')).toEqual({ lastKnownRemoteRev: null, baseSnapshot: null })
+
+    const seal = {
+      seal: async (p: string) => 'ENC[' + btoa(p) + ']',
+      unseal: async (s: string) => atob(s.slice(4, -1)),
+    }
+    const b = createMemoryStorage()
+    await saveSyncState(b, 'sA', { lastKnownRemoteRev: 3, baseSnapshot: '{"a":1}' }, seal)
+    await saveSyncState(b, 'sB', { lastKnownRemoteRev: 8, baseSnapshot: '{"b":2}' }, seal)
+    expect(await loadSyncState(b, 'sA', seal)).toEqual({ lastKnownRemoteRev: 3, baseSnapshot: '{"a":1}' })
+    expect(await loadSyncState(b, 'sB', seal)).toEqual({ lastKnownRemoteRev: 8, baseSnapshot: '{"b":2}' })
+  })
+  it('save 时读旧 bag 抛错（盘上损坏/unseal 失败）→ 重写仅含本次源（不抛错、不丢写入）', async () => {
+    const a = createMemoryStorage()
+    await a.set('cloudSyncState', '{corrupted')
+    await saveSyncState(a, 's1', { lastKnownRemoteRev: 6, baseSnapshot: '{"v":2}' })
+    // 旧 bag 不可读 → 从空重建：本次源写入成功（旧源数据已不可读，无从保留）
+    expect(await loadSyncState(a, 's1')).toEqual({ lastKnownRemoteRev: 6, baseSnapshot: '{"v":2}' })
+  })
+  it('loadDeviceId：set 失败原样上抛（持久化故障不得静默伪成功）', async () => {
+    const a = createMemoryStorage()
+    a.set = async () => {
+      throw new Error('quota exceeded')
+    }
+    await expect(loadDeviceId(a)).rejects.toThrow('quota exceeded')
+  })
 })
