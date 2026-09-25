@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import { createMemoryStorage } from '../src/storage/memory'
 import { MERGE_CONFLICTS_MAX, loadMergeConflicts, saveMergeConflicts } from '../src/merge/conflictStore'
+import type { StorageAdapter } from '../src/storage/adapter'
 import type { EntryConflict } from '../src/merge/vaultMerge'
 
 const conflict = (entryId: string): EntryConflict => ({
@@ -52,6 +53,17 @@ describe('conflictStore', () => {
     const list = await loadMergeConflicts(a)
     expect(list).toHaveLength(1)
     expect(list[0]!.entryId).toBe('ok')
+  })
+
+  it('adapter.get 本身抛错（存储层故障）→ 空数组不抛，不阻断同步', async () => {
+    const broken: StorageAdapter = {
+      get: async () => {
+        throw new Error('storage broken')
+      },
+      set: async () => {},
+      delete: async () => {},
+    }
+    expect(await loadMergeConflicts(broken)).toEqual([])
   })
 
   it('超上限（>100）保存裁最旧：保留最新 100 条', async () => {

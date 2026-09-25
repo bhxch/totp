@@ -120,4 +120,41 @@ describe('mergeVaults', () => {
     const r = mergeVaults(vault([], 1), vault([entry({ uuid: 'n' })], 50), vault([], 30))
     expect(r.vault.updatedAt).toBe(50)
   })
+  it('vault.updatedAt 取两侧较大值（云侧更大方向）', () => {
+    const r = mergeVaults(vault([], 1), vault([], 30), vault([entry({ uuid: 'n' })], 50))
+    expect(r.vault.updatedAt).toBe(50)
+  })
+})
+
+describe('非条目域：mergeTags 与 updatedAt 防 NaN', () => {
+  it('tags 按 id 并集：theirs 独有 tag 并入，同 id 不同名取 ours（确定性低风险裁决）', () => {
+    const ours = vault([entry({ uuid: 'a' })], 1)
+    ours.tags = [{ id: 't1', name: 'ours-1' }, { id: 't2', name: 'ours-2' }]
+    const theirs = vault([entry({ uuid: 'a' })], 1)
+    theirs.tags = [{ id: 't2', name: 'theirs-2' }, { id: 't3', name: 'theirs-3' }]
+    const r = mergeVaults(null, ours, theirs)
+    expect(r.vault.tags).toEqual([
+      { id: 't1', name: 'ours-1' },
+      { id: 't2', name: 'ours-2' }, // 同 id 异名取 ours
+      { id: 't3', name: 'theirs-3' },
+    ])
+  })
+  it('mergeTags 纯函数契约：原 vault.tags 数组与元素对象不被修改', () => {
+    const ours = vault([entry({ uuid: 'a' })], 1)
+    ours.tags = [{ id: 't1', name: 'ours-1' }]
+    const theirs = vault([entry({ uuid: 'a' })], 1)
+    theirs.tags = [{ id: 't1', name: 'theirs-1' }, { id: 't2', name: 'theirs-2' }]
+    const oursBefore = structuredClone(ours.tags)
+    const theirsBefore = structuredClone(theirs.tags)
+    mergeVaults(null, ours, theirs)
+    expect(ours.tags).toEqual(oursBefore)
+    expect(theirs.tags).toEqual(theirsBefore)
+  })
+  it('vault.updatedAt 缺字段（畸形运行时输入）防 NaN：单侧缺失取有值侧，双侧缺失回落 0', () => {
+    const noTs = { version: 2, entries: [], tags: [] } as unknown as Vault
+    expect(mergeVaults(null, noTs, vault([], 77)).vault.updatedAt).toBe(77)
+    expect(mergeVaults(null, vault([], 55), noTs).vault.updatedAt).toBe(55)
+    expect(mergeVaults(null, noTs, { ...noTs } as Vault).vault.updatedAt).toBe(0)
+    expect(Number.isNaN(mergeVaults(null, noTs, { ...noTs } as Vault).vault.updatedAt)).toBe(false)
+  })
 })
