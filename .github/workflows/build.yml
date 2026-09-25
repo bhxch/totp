@@ -41,10 +41,22 @@ jobs:
           $tag = "$(Get-Date -Format yyyyMMdd).$($env:GITHUB_SHA.Substring(0,7))"
           Get-ChildItem apps/desktop/src-tauri/target/release/bundle/nsis/*.exe |
             Rename-Item -NewName { $_.Name -replace '\.exe$', ".$tag.exe" }
+      # 便携版：cargo 产物裸 exe（无安装器，依赖系统 WebView2 运行时），
+      # 命名与 NSIS 契约对齐（TOTP.Tools_<ver>_x64-portable[.tag].exe）
+      - name: Prepare portable exe
+        shell: pwsh
+        run: |
+          $ver = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
+          $tag = ""
+          if ("${{ inputs.nightly }}" -eq "true") { $tag = ".$(Get-Date -Format yyyyMMdd).$($env:GITHUB_SHA.Substring(0,7))" }
+          New-Item -ItemType Directory -Force apps/desktop/src-tauri/target/release/bundle/portable | Out-Null
+          Copy-Item "apps/desktop/src-tauri/target/release/totp-desktop.exe" "apps/desktop/src-tauri/target/release/bundle/portable/TOTP.Tools_${ver}_x64-portable$tag.exe"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7（= v7.0.1）
         with:
           name: desktop-windows-${{ inputs.suffix }}
-          path: apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+            apps/desktop/src-tauri/target/release/bundle/portable/*.exe
           if-no-files-found: error
 
   desktop-macos:
@@ -88,8 +100,8 @@ jobs:
           ref: "${{ inputs.ref }}"
           persist-credentials: false
       # libayatana-appindicator3-dev：ubuntu-24.04（ubuntu-latest）已移除 libappindicator3-dev；
-      # libxdo-dev 为 tauri v2 Linux 官方依赖清单项。
-      - run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev libxdo-dev
+      # libxdo-dev 为 tauri v2 Linux 官方依赖清单项；rpm 包提供 rpmbuild 供 rpm bundle 使用。
+      - run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev libxdo-dev rpm
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6（= v6.1.0）
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6（= v6.5.0）
         with: { node-version: 22, cache: pnpm }
@@ -97,7 +109,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with: { workspaces: apps/desktop/src-tauri }
       - run: pnpm install --frozen-lockfile
-      - run: pnpm tauri build --bundles deb,appimage
+      - run: pnpm tauri build --bundles deb,appimage,rpm
         working-directory: apps/desktop
       # 产物名含空格（"TOTP Tools_..."），必须整段引用；用参数扩展而非
       # basename/sed 拼 dirname，避免 word splitting 把空格拆成多参数
@@ -108,12 +120,14 @@ jobs:
           cd apps/desktop/src-tauri/target/release/bundle
           for f in deb/*.deb; do mv "$f" "${f%.deb}.$tag.deb"; done
           for f in appimage/*.AppImage; do mv "$f" "${f%.AppImage}.$tag.AppImage"; done
+          for f in rpm/*.rpm; do mv "$f" "${f%.rpm}.$tag.rpm"; done
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7（= v7.0.1）
         with:
           name: desktop-linux-${{ inputs.suffix }}
           path: |
             apps/desktop/src-tauri/target/release/bundle/deb/*.deb
             apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+            apps/desktop/src-tauri/target/release/bundle/rpm/*.rpm
           if-no-files-found: error
 
   extension:
