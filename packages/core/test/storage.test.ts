@@ -83,6 +83,33 @@ describe('validateVaultObject / loadVault 结构校验（F6）', () => {
     await expect(loadVault(s)).rejects.toThrow('vault corrupted')
   })
 
+  it('entries / tags 数组元素为 null → 整记录拒绝', async () => {
+    const s = createMemoryStorage()
+    await s.set(VAULT_KEY, JSON.stringify(validVault({}, [null])))
+    await expect(loadVault(s)).rejects.toThrow('vault corrupted')
+    await s.set(VAULT_KEY, JSON.stringify(validVault({ tags: [null] })))
+    await expect(loadVault(s)).rejects.toThrow('vault corrupted')
+  })
+
+  it.each([
+    ['note 非字符串', { note: 123 }],
+    ['pinned 非布尔', { pinned: 'yes' }],
+    ['pin 非字符串', { pin: 1234 }],
+    ['icon 非对象（字符串）', { icon: 'builtin:github' }],
+    ['icon 为 null', { icon: null }],
+    ['icon.id 非字符串', { icon: { kind: 'builtin', id: 1 } }],
+    ['kind=url 缺 url', { icon: { kind: 'url', id: 'i1' } }],
+    ['yandex digits≠8', { type: 'yandex', digits: 6 }],
+    ['issuer 非字符串', { issuer: 1 }],
+    ['label 非字符串', { label: 2 }],
+    ['secret 非字符串', { secret: 3 }],
+    ['matchRules 元素非对象', { matchRules: ['host'] }],
+  ])('条目级违规拒绝（未测方向补全）：%s', async (_name, patch) => {
+    const s = createMemoryStorage()
+    await s.set(VAULT_KEY, JSON.stringify(validVault({}, [{ ...emptySecretHotp, ...patch }])))
+    await expect(loadVault(s)).rejects.toThrow('vault corrupted')
+  })
+
   it.each([
     ['uuid 非字符串', { uuid: 1 }],
     ['type 非法', { type: 'otp' }],

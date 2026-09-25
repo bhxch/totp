@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   baseUrlOf,
   entryMatchesUrl,
@@ -57,6 +57,12 @@ describe('urlMatches 五策略', () => {
   it('URL 解析失败一律 false', () => {
     expect(urlMatches('not a url', rule('baseDomain', 'a.com'))).toBe(false)
   })
+  it('pattern 空/纯空白 → 各策略一律 false（trim 后空串守卫）', () => {
+    for (const strategy of ['baseDomain', 'host', 'exact', 'startsWith', 'regex'] as const) {
+      expect(urlMatches('https://a.com/x', rule(strategy, ''))).toBe(false)
+      expect(urlMatches('https://a.com/x', rule(strategy, '   '))).toBe(false)
+    }
+  })
 })
 
 describe('entryMatchesUrl', () => {
@@ -92,6 +98,55 @@ describe('F13：hasNestedQuantifierRisk 嵌套量词保守筛查', () => {
     ['a+literal)+', '不成对括号按字面量，不误报'],
   ])('%s → 安全（%s）', (p) => {
     expect(hasNestedQuantifierRisk(p)).toBe(false)
+  })
+
+  it.each([
+    ['(?<year>\\d{4})-[a-z]', false, '具名组：跳过 (?<name> 引导段后正常扫描'],
+    ['(?<name>a+)+', true, '具名组组体量词化再被量化 → 风险'],
+    ['(?<broken', false, '锚定：具名组无闭 > 形态非法（编译期即失败），保守返回安全'],
+    ['[a\\]b]+x', false, '字符类内转义 ] 不提前结束类'],
+    ['(a+|b)+', false, '锚定：跨支歧义属保守检测已知残留（F13 注释明示不覆盖）'],
+    ['(?:a*?)b', false, '惰性 *? 按一个量词 token 消费，组后无量化 → 安全'],
+    ['(a+?)+', true, '惰性 +? 仍属风险量词：组体量词化 + 组被量化 → 风险'],
+    ['a??b', false, '有界 ? 的惰性形态无风险'],
+    ['(a??)+', true, '锚定：有界量词组体 + 组被量化 → 保守判风险'],
+    ['a{2,4', false, '非成对 { 按字面量'],
+    ['x{,5}', false, '{,5} 非量词语法按字面量'],
+  ])('未测形态 %s → %s（%s）', (p, expected) => {
+    expect(hasNestedQuantifierRisk(p)).toBe(expected)
+  })
+})
+
+describe('F13：regex 编译缓存 256 条上限', () => {
+  it('超过 REGEX_CACHE_LIMIT 整体清空重建（Map set 探针观测），淘汰后求值结果仍正确', async () => {
+    // 模块级 regexCache 无 reset 钩子：以「重置模块注册表 + 换入计数 Map」的全新模块实例
+    // 精确观测淘汰策略（实现为 size>=256 时 clear 后再 set，非 LRU 逐条淘汰）。
+    vi.resetModules()
+    const sizesAfterSet: number[] = []
+    const NativeMap = globalThis.Map
+    class SizeProbeMap<K, V> extends NativeMap<K, V> {
+      override set(key: K, value: V): this {
+        super.set(key, value)
+        sizesAfterSet.push(this.size)
+        return this
+      }
+    }
+    vi.stubGlobal('Map', SizeProbeMap)
+    let engine: typeof import('../src/match/engine')
+    try {
+      engine = await import('../src/match/engine')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    // 257 个互不相同的安全 pattern：全部应正确命中（编译一次，结果不受缓存策略影响）
+    for (let i = 0; i < 257; i++) {
+      expect(engine.urlMatches(`https://a${i}.com/x`, { strategy: 'regex', pattern: `a${i}\\.com` })).toBe(true)
+    }
+    expect(Math.max(...sizesAfterSet)).toBe(256) // 上限恰为 256
+    expect(sizesAfterSet[sizesAfterSet.length - 1]).toBe(1) // 第 257 次 set 前 clear，仅剩最新一条
+    // 被淘汰的首个 pattern 再次求值：重新编译，结果仍正确
+    expect(engine.urlMatches('https://a0.com/y', { strategy: 'regex', pattern: 'a0\\.com' })).toBe(true)
+    expect(sizesAfterSet[sizesAfterSet.length - 1]).toBe(2)
   })
 })
 

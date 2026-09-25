@@ -27,6 +27,18 @@ describe('vault 操作', () => {
     expect(v3.entries).toHaveLength(0)
   })
 
+  it('updateEntry 多条目场景只改目标：其余条目内容与对象引用均不动', () => {
+    let v = createVault()
+    v = addEntry(v, mkEntry('a', 0))
+    v = addEntry(v, mkEntry('b', 1))
+    const aBefore = v.entries.find((e) => e.uuid === 'a')
+    const v2 = updateEntry(v, 'b', { issuer: 'GitLab' })
+    expect(v2.entries.find((e) => e.uuid === 'b')!.issuer).toBe('GitLab')
+    const a = v2.entries.find((e) => e.uuid === 'a')!
+    expect(a.issuer).toBe('GitHub')
+    expect(a).toBe(aBefore) // map 谓词 false 分支原样返回，不重造对象
+  })
+
   it('renameTag 返回新对象且只改目标 tag 名，原 vault 不变', () => {
     const v0 = createVault()
     const r1 = addTag(v0, '旧名')
@@ -36,6 +48,20 @@ describe('vault 操作', () => {
     expect(v2).not.toBe(r1.vault)
     expect(r1.vault.tags[0]!.name).toBe('旧名')
     expect(v0.tags).toHaveLength(0)
+  })
+
+  it('renameTag 多 tag 场景：非目标 tag 名称与对象引用均不动', () => {
+    let v = createVault()
+    const r1 = addTag(v, '工作')
+    v = r1.vault
+    const r2 = addTag(v, '生活')
+    v = r2.vault
+    const workBefore = v.tags.find((t) => t.id === r1.tagId)!
+    const v2 = renameTag(v, r2.tagId, ' 生活2 ')
+    expect(v2.tags.find((t) => t.id === r2.tagId)!.name).toBe('生活2')
+    const work = v2.tags.find((t) => t.id === r1.tagId)!
+    expect(work.name).toBe('工作')
+    expect(work).toBe(workBefore) // map false 分支原样返回（重命名不合并、不动兄弟 tag）
   })
 
   it('addTag 同名（trim + 大小写不敏感）幂等复用，不建第二个', () => {
@@ -62,6 +88,19 @@ describe('vault 操作', () => {
     expect(v.entries[0]!.tagIds).toEqual([])
   })
 
+  it('removeTag：不含该 tag 的条目内容与对象引用不被触碰', () => {
+    let v = createVault()
+    const r = addTag(v, '工作')
+    v = r.vault
+    v = addEntry(v, { ...mkEntry('a'), tagIds: [r.tagId] })
+    v = addEntry(v, mkEntry('b'))
+    const bBefore = v.entries.find((e) => e.uuid === 'b')!
+    v = removeTag(v, r.tagId)
+    const b = v.entries.find((e) => e.uuid === 'b')!
+    expect(b.tagIds).toEqual([])
+    expect(b).toBe(bBefore) // map 谓词 false 分支：无引用条目不重造对象
+  })
+
   it('reorder 按 uuid 序列重排 order', () => {
     let v = createVault()
     v = addEntry(v, mkEntry('a', 0))
@@ -71,6 +110,19 @@ describe('vault 操作', () => {
     expect(v.entries.find((e) => e.uuid === 'c')!.order).toBe(0)
     expect(v.entries.find((e) => e.uuid === 'a')!.order).toBe(1)
     expect(v.entries.find((e) => e.uuid === 'b')!.order).toBe(2)
+  })
+
+  it('reorderEntries：不在列表中的条目 order 保持且引用不变（部分重排场景）', () => {
+    let v = createVault()
+    v = addEntry(v, mkEntry('a', 0))
+    v = addEntry(v, mkEntry('b', 1))
+    v = addEntry(v, mkEntry('c', 2))
+    const aBefore = v.entries.find((e) => e.uuid === 'a')!
+    v = reorderEntries(v, ['c'])
+    expect(v.entries.find((e) => e.uuid === 'c')!.order).toBe(0)
+    expect(v.entries.find((e) => e.uuid === 'a')!.order).toBe(0) // 列表外 order 保持
+    expect(v.entries.find((e) => e.uuid === 'b')!.order).toBe(1)
+    expect(v.entries.find((e) => e.uuid === 'a')).toBe(aBefore) // has false 分支原样返回
   })
 
   it('newEntryFromUri 解析 otpauth 并补默认值（tagIds 为空数组）', () => {
