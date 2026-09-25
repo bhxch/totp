@@ -12,3 +12,4 @@ apps/desktop/src-tauri/gen/
 .zcode/
 .zcodeignore
 coverage/
+*.profraw
