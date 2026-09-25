@@ -146,6 +146,181 @@ describe('importWinauth DPAPI 条目', () => {
   })
 })
 
+// ---------- 旧布局 / 边角矩阵（盘点 B8 #30-33） ----------
+
+const HEADER_HEX_LEN = 16 // ENCRYPTION_HEADER = hex("WINAUTH3")，8 字节（BitConverter 大写 hex）
+const SALT_HEX_LEN = 16
+const HASH_HEX_LEN = 64
+
+describe('importWinauth v3.0 旧布局与无 WINAUTH3 头 v2 路径', () => {
+  const pass = 'legacy-pass'
+  it('v3.0 旧布局：密文直接是 <WinAuth> 根元素文本（ReadXmlInternal 根节点 encrypted 分支）', async () => {
+    const payloadHex = hex(utf8(`<config>${ENTRY_XML('GitHub:me@x.com', secretData())}</config>`))
+    const seq = await buildWinauthSequence(payloadHex, 'y', pass)
+    const xml = `<WinAuth version="3.0.0.0" encrypted="y">${seq}</WinAuth>`
+    const r = await importWinauth(xml, { password: pass })
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries[0]).toMatchObject({ issuer: 'GitHub', label: 'me@x.com', secret: SECRET })
+  })
+
+  it('v3.0 旧布局带 encrypted 属性但根元素无密文文本：不进解密分支，空结果', async () => {
+    const r = await importWinauth(`<WinAuth version="3.0.0.0" encrypted="y">   </WinAuth>`, { password: pass })
+    expect(r.entries).toHaveLength(0)
+    expect(r.failures).toHaveLength(0)
+  })
+
+  it('无 WINAUTH3 头（v2 无头路径）：payload = hex(salt)+hex(Blowfish 密文) 直接解口令层', async () => {
+    const payloadHex = hex(utf8(PLAIN_AUTH_DATA(secretData())))
+    const seq = await buildWinauthSequence(payloadHex, 'y', pass)
+    const headless = seq.slice(HEADER_HEX_LEN + SALT_HEX_LEN + HASH_HEX_LEN) // 剥掉头+盐+哈希 → v2 布局
+    const xml = `<WinAuth version="3.2.0.0"><WinAuthAuthenticator type="WinAuth.GoogleAuthenticator"><name>GitHub:me@x.com</name><authenticatordata encrypted="y">${headless}</authenticatordata></WinAuthAuthenticator></WinAuth>`
+    const r = await importWinauth(xml, { password: pass })
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries[0]).toMatchObject({ issuer: 'GitHub', secret: SECRET })
+  })
+
+  it('头剥离大小写不敏感：全小写密文同样可解（真实文件为大写 BitConverter 输出）', async () => {
+    const payloadHex = hex(utf8(`<config>${ENTRY_XML('Low:case', secretData())}</config>`))
+    const seq = await buildWinauthSequence(payloadHex, 'y', pass)
+    const xml = `<WinAuth version="3.6.4.2"><data encrypted="y">${seq.toLowerCase()}</data></WinAuth>`
+    const r = await importWinauth(xml, { password: pass })
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries[0]).toMatchObject({ issuer: 'Low', label: 'case' })
+  })
+})
+
+describe('importWinauth 加密失败分类（DecodePasswordTypes 四态与 hash 校验点）', () => {
+  it('encrypted 含 "a"/"b"（YubiKey）→「暂不支持」', async () => {
+    const payloadHex = hex(utf8(PLAIN_AUTH_DATA(secretData())))
+    for (const flag of ['a', 'b']) {
+      const seq = await buildWinauthSequence(payloadHex, flag)
+      const xml = `<WinAuth version="3.6.4.2"><WinAuthAuthenticator type="WinAuth.GoogleAuthenticator"><name>GitHub:me@x.com</name><authenticatordata encrypted="${flag}">${seq}</authenticatordata></WinAuthAuthenticator></WinAuth>`
+      const r = await importWinauth(xml)
+      expect(r.entries).toHaveLength(0)
+      expect(r.failures[0]!.message).toBe('该 WinAuth 条目使用 YubiKey 加密，暂不支持')
+    }
+  })
+
+  it('m+u 双 DPAPI 层：按 Machine→User 逆序各解一次（decryptDpapi stub 调用两次）', async () => {
+    const innerXml = `<config>${ENTRY_XML('GitHub:me@x.com', secretData())}</config>`
+    const payloadHex = hex(utf8(innerXml))
+    const seq = await buildWinauthSequence(payloadHex, 'mu')
+    const xml = `<WinAuth version="3.6.4.2"><data encrypted="mu">${seq}</data></WinAuth>`
+    let calls = 0
+    const stub = async (b64: string): Promise<string> => {
+      calls++
+      return new TextDecoder().decode(new Uint8Array([...atob(b64)].map((c) => c.charCodeAt(0))))
+    }
+    const r = await importWinauth(xml, { decryptDpapi: stub })
+    expect(calls).toBe(2) // m、u 各一层
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries[0]).toMatchObject({ issuer: 'GitHub', secret: SECRET })
+  })
+
+  it('有 WINAUTH3 头且口令正确但 SHA256 校验段被篡改 → 独立命中哈希不匹配分支（同样归类口令错误）', async () => {
+    const payloadHex = hex(utf8(PLAIN_AUTH_DATA(secretData())))
+    const seq = await buildWinauthSequence(payloadHex, 'y', 'right-pass')
+    // 篡改 hash 段（位于头 14 + 盐 16 字符之后的 64 字符）
+    const tampered = seq.slice(0, HEADER_HEX_LEN + SALT_HEX_LEN) + (seq.charAt(HEADER_HEX_LEN + SALT_HEX_LEN) === '0' ? '1' : '0') + seq.slice(HEADER_HEX_LEN + SALT_HEX_LEN + 1)
+    const wrap = (s: string): string =>
+      `<WinAuth version="3.6.4.2"><WinAuthAuthenticator type="WinAuth.GoogleAuthenticator"><name>GitHub:me@x.com</name><authenticatordata encrypted="y">${s}</authenticatordata></WinAuthAuthenticator></WinAuth>`
+    const r = await importWinauth(wrap(tampered), { password: 'right-pass' })
+    expect(r.entries).toHaveLength(0)
+    expect(r.failures[0]!.message).toBe('需要口令或口令错误')
+  })
+
+  it('ISO10126 去填充 pad 超过块长（错口令解出随机尾字节）→ 口令错误', async () => {
+    // 手工构造无头口令层密文：单块明文尾字节 0xFF（> 块长 8）→ 去填充即抛
+    const salt = new Uint8Array(8)
+    const key = await deriveExplicitKey('some-pass', salt, 256)
+    const plain = new Uint8Array(8)
+    plain[7] = 0xff
+    const cipher = blowfishEcbEncrypt(key, plain)
+    const dataHex = hex(salt) + hex(cipher)
+    const xml = `<WinAuth version="3.2.0.0"><WinAuthAuthenticator type="WinAuth.GoogleAuthenticator"><name>GitHub:me@x.com</name><authenticatordata encrypted="y">${dataHex}</authenticatordata></WinAuthAuthenticator></WinAuth>`
+    const r = await importWinauth(xml, { password: 'some-pass' })
+    expect(r.entries).toHaveLength(0)
+    expect(r.failures[0]!.message).toBe('需要口令或口令错误')
+  })
+
+  it('密文含非 hex 字符（无头路径 hexToBytes 抛「非法 hex」）→ 归类口令错误', async () => {
+    const xml = `<WinAuth version="3.2.0.0"><WinAuthAuthenticator type="WinAuth.GoogleAuthenticator"><name>GitHub:me@x.com</name><authenticatordata encrypted="y">zzzz-not-hex</authenticatordata></WinAuthAuthenticator></WinAuth>`
+    const r = await importWinauth(xml, { password: 'p' })
+    expect(r.entries).toHaveLength(0)
+    expect(r.failures[0]!.message).toBe('需要口令或口令错误')
+  })
+
+  it('DPAPI 层解出非 XML（内层损坏）→ 兜底「条目解析失败」', async () => {
+    const xml = `<WinAuth version="3.6.4.2"><WinAuthAuthenticator type="WinAuth.GoogleAuthenticator"><name>GitHub:me@x.com</name><authenticatordata encrypted="m">00ff</authenticatordata></WinAuthAuthenticator></WinAuth>`
+    const r = await importWinauth(xml, { decryptDpapi: async () => 'this is not xml' })
+    expect(r.entries).toHaveLength(0)
+    expect(r.failures[0]!.message).toBe('条目解析失败')
+  })
+})
+
+describe('importWinauth XML 边角与条目字段边角（盘点 B8 #30-31）', () => {
+  it('BOM/DOCTYPE/注释剥离 + CDATA secretdata + 实体与单引号属性均正常解析', async () => {
+    const sd = secretData()
+    const xml = '\uFEFF<?xml version="1.0" encoding="utf-8"?>' +
+      '<!DOCTYPE WinAuth PUBLIC "-//x//EN" "dtd.dtd">' +
+      '<!-- exported by WinAuth -->' +
+      `<WinAuth version='3.6.4.2'>` +
+      `<WinAuthAuthenticator type="WinAuth.GoogleAuthenticator"><name>A&amp;B:me@x.com</name>` +
+      `<authenticatordata><secretdata><![CDATA[${sd}]]></secretdata></authenticatordata>` +
+      `</WinAuthAuthenticator></WinAuth>`
+    const r = await importWinauth(xml)
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries[0]).toMatchObject({ issuer: 'A&B', label: 'me@x.com', secret: SECRET })
+  })
+
+  it('标签不匹配 / 多根元素 / 未闭合 → 结构化错误', async () => {
+    await expect(importWinauth('<WinAuth><data></other></WinAuth>')).rejects.toThrow('结构非法')
+    await expect(importWinauth('<WinAuth/><WinAuth2/>')).rejects.toThrow('结构非法')
+    await expect(importWinauth('<WinAuth><data>')).rejects.toThrow('结构非法')
+  })
+
+  it('secretdata SHA256/SHA512 算法字段；HOTP counter 追加段', async () => {
+    const xml = `<WinAuth version="3.6.4.2">` +
+      ENTRY_XML('A:a', secretData(6, 'SHA256')) +
+      ENTRY_XML('B:b', secretData(8, 'SHA512')) +
+      ENTRY_XML('C:c', secretData(6, 'SHA1', 60, 7), 'WinAuth.HOTPAuthenticator') +
+      `</WinAuth>`
+    const r = await importWinauth(xml)
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries[0]).toMatchObject({ algorithm: 'SHA256', digits: 6 })
+    expect(r.entries[1]).toMatchObject({ algorithm: 'SHA512', digits: 8 })
+    expect(r.entries[2]).toMatchObject({ type: 'hotp', algorithm: 'SHA1', period: 60, counter: 7 })
+  })
+
+  it('name 无冒号 → issuer 空、label 全名；digits/period 非正回退 6/30', async () => {
+    const xml = `<WinAuth version="3.6.4.2">` +
+      ENTRY_XML('NoIssuer', secretData(0, 'SHA1', 0)) +
+      ENTRY_XML('Neg:ative', secretData(-3, 'SHA1', -5)) +
+      `</WinAuth>`
+    const r = await importWinauth(xml)
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries[0]).toMatchObject({ issuer: '', label: 'NoIssuer', digits: 6, period: 30 })
+    expect(r.entries[1]).toMatchObject({ issuer: 'Neg', label: 'ative', digits: 6, period: 30 })
+  })
+
+  it('缺 authenticatordata / 缺 secretdata / secretdata 非 hex / 空 secret → 逐条 failures', async () => {
+    const xml = `<WinAuth version="3.6.4.2">` +
+      `<WinAuthAuthenticator type="WinAuth.GoogleAuthenticator"><name>A:a</name></WinAuthAuthenticator>` +
+      `<WinAuthAuthenticator type="WinAuth.GoogleAuthenticator"><name>B:b</name><authenticatordata><servertimediff>0</servertimediff></authenticatordata></WinAuthAuthenticator>` +
+      `<WinAuthAuthenticator type="WinAuth.GoogleAuthenticator"><name>C:c</name><authenticatordata><secretdata>zz</secretdata></authenticatordata></WinAuthAuthenticator>` +
+      `<WinAuthAuthenticator type="WinAuth.GoogleAuthenticator"><name>D:d</name><authenticatordata><secretdata></secretdata></authenticatordata></WinAuthAuthenticator>` +
+      `</WinAuth>`
+    const r = await importWinauth(xml)
+    expect(r.entries).toHaveLength(0)
+    expect(r.failures.map((f) => f.message)).toEqual([
+      '缺少 authenticatordata',
+      '缺少 secret',
+      'secretdata 非法',
+      '缺少 secret',
+    ])
+  })
+})
+
 describe('importWinauth 口令保护（官方算法，Authenticator.cs L1250-1309 Decrypt：PBKDF2-SHA1×2000 派生 256 字节密钥 + Blowfish/ISO10126）', () => {
   const pass = 'winauth-pass'
   it('fixture 锚定官方序列布局：大写 WINAUTH3 头 + 256 字节派生密钥可解开', async () => {
