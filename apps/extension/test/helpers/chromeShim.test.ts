@@ -66,6 +66,85 @@ describe('alarms', () => {
     shim.emitAlarm({ name: 'clipboard-clear' })
     expect(got).toHaveLength(1)
   })
+
+  it('clear 真实清除语义：存在同名移除返 true、不存在返 false、无参清全部', async () => {
+    const shim = installChromeShim()
+    shim.alarms.create('a')
+    shim.alarms.create('b')
+    await expect(shim.alarms.clear('missing')).resolves.toBe(false)
+    await expect(shim.alarms.clear('a')).resolves.toBe(true)
+    expect(shim.alarms.created.map((a) => a.name)).toEqual(['b'])
+    await expect(shim.alarms.clear()).resolves.toBe(true)
+    expect(shim.alarms.created).toEqual([])
+    await expect(shim.alarms.clear()).resolves.toBe(false)
+  })
+})
+
+describe('contextMenus 与 notifications（P3a background 测试面）', () => {
+  it('create 记录 props+callback；同 id 重复创建在 callback 期间暴露 runtime.lastError（幂等吞）', () => {
+    const shim = installChromeShim()
+    shim.contextMenus.create({ id: 'm1', title: 't' }, () => {
+      expect(shim.chrome.runtime.lastError).toBeUndefined()
+    })
+    shim.contextMenus.create({ id: 'm1', title: 't' }, () => {
+      expect(shim.chrome.runtime.lastError).toMatchObject({ message: /duplicate id m1/ })
+    })
+    expect(shim.contextMenus.created).toHaveLength(2)
+    expect(shim.chrome.runtime.lastError).toBeUndefined() // callback 结束后清除（Chrome 口径）
+  })
+
+  it('onClicked 经 emitContextMenuClick 派发，可移除', () => {
+    const shim = installChromeShim()
+    const seen: Array<Record<string, unknown>> = []
+    const listener = (info: Record<string, unknown>): void => {
+      seen.push(info)
+    }
+    shim.contextMenus.onClicked.addListener(listener)
+    shim.emitContextMenuClick({ menuItemId: 'm1', selectionText: 'x' })
+    shim.contextMenus.onClicked.removeListener(listener)
+    shim.emitContextMenuClick({ menuItemId: 'm1' })
+    expect(seen).toEqual([{ menuItemId: 'm1', selectionText: 'x' }])
+  })
+
+  it('notifications.create 记录选项并返回 id', () => {
+    const shim = installChromeShim()
+    expect(shim.notifications.create({ type: 'basic', message: 'm' })).toBe('notification-1')
+    expect(shim.notifications.created).toEqual([{ type: 'basic', message: 'm' }])
+  })
+})
+
+describe('offscreen / action.openPopup / tabs（按需安装）', () => {
+  it('opts.offscreen 给出才安装：createDocument 记录调用，默认成功，失败行为可注入', async () => {
+    const without = installChromeShim()
+    expect(without.chrome.offscreen).toBeUndefined() // Firefox 形态：canOffscreen false 前提
+
+    const shim = installChromeShim({ offscreen: {} })
+    await shim.offscreen!.createDocument({ url: 'offscreen.html' })
+    expect(shim.offscreen!.calls.createDocument).toEqual([{ url: 'offscreen.html' }])
+
+    shim.offscreen!.onCreateDocument = () => {
+      throw new Error('Duplicate offscreen document')
+    }
+    await expect(shim.offscreen!.createDocument({ url: 'offscreen.html' })).rejects.toThrow(/Duplicate/)
+    expect(shim.offscreen!.calls.createDocument).toHaveLength(2)
+  })
+
+  it('opts.openPopup 给出才挂 action.openPopup；tabs.query 返回注入 URL、create 记录调用', async () => {
+    const plain = installChromeShim()
+    expect((plain.chrome.action as { openPopup?: unknown }).openPopup).toBeUndefined()
+
+    const openPopup = vi.fn(() => Promise.resolve())
+    const shim = installChromeShim({ openPopup, tabUrls: ['https://example.com/a'] })
+    expect((shim.chrome.action as { openPopup: unknown }).openPopup).toBe(openPopup)
+    await expect(shim.tabs.query()).resolves.toEqual([{ url: 'https://example.com/a' }])
+    await shim.tabs.create({ url: 'x.html' })
+    expect(shim.tabs.create).toHaveBeenCalledWith({ url: 'x.html' })
+  })
+
+  it('runtime.getURL 产出扩展内绝对 URL', () => {
+    const shim = installChromeShim()
+    expect(shim.chrome.runtime.getURL('options.html#/settings')).toBe('chrome-extension://test-id/options.html#/settings')
+  })
 })
 
 describe('runtime 双向通道', () => {

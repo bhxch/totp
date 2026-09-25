@@ -14,8 +14,11 @@
  *   应答；无监听 reject「Receiving end does not exist」与 Chrome 一致；receive 模拟入站消息）
  * - idle / action.setBadgeText：lockEnforcer 与 store 迁移所需；按需安装 idle
  *   （lockEnforcer 有「宿主无 idle 权限」降级用例，故 idle 仅在 opts.idle 给出时存在）
+ * - contextMenus（create 记录 + 同 id lastError 模拟 + onClicked 派发）、notifications（create 记录）、
+ *   offscreen（按需安装：Firefox 形态无此 API；createDocument 失败行为可注入）、tabs（query/create）、
+ *   runtime.getURL、action.openPopup（按需注入）——background/offscreen 测试所需（P3a）
  *
- * 后续批次可按需在 opts/对象上扩展（如 contextMenus/notifications），不改既有形状。
+ * 后续批次可按需在 opts/对象上扩展，不改既有形状。
  *
  * store 构造守则（桌面端 mock 工厂同款）：挂载测试一律
  * createVueStore(createMemoryStorage(), { windowId })，禁止把普通 store 传入 reactive 包装。
@@ -94,6 +97,36 @@ export interface ChromeShimOptions {
     onSetDetectionInterval?: ((seconds: number) => void) | null
     onQueryState?: ((cb: (s: IdleState) => void) => void) | null
   }
+  /** 给出才安装 action.openPopup（仅部分 Chromium 开放，能力探测依赖成员存在性） */
+  openPopup?: () => unknown
+  /** 给出才安装 chrome.offscreen（Firefox 形态无此 API → canOffscreen false）
+   *  onCreateDocument 缺省成功；注入抛错/reject 模拟「已存在」「权限缺失」 */
+  offscreen?: {
+    onCreateDocument?: (opts: Record<string, unknown>) => Promise<void> | void
+  }
+  /** tabs.query 返回的标签页（缺省空数组；url 以 http 开头 popup 才启用 URL 过滤） */
+  tabUrls?: string[]
+}
+
+export interface ContextMenusShim {
+  created: Array<{ props: Record<string, unknown>; callback?: () => void }>
+  create(props: Record<string, unknown>, callback?: () => void): void
+  onClicked: {
+    addListener(cb: (info: Record<string, unknown>) => void): void
+    removeListener(cb: (info: Record<string, unknown>) => void): void
+  }
+}
+
+export interface NotificationsShim {
+  created: Array<Record<string, unknown>>
+  create(opts: Record<string, unknown>): string
+}
+
+export interface OffscreenShim {
+  calls: { createDocument: Array<Record<string, unknown>> }
+  /** 测试注入失败行为（抛错/ reject）；null = 默认成功 */
+  onCreateDocument: ((opts: Record<string, unknown>) => Promise<void> | void) | null
+  createDocument(opts: Record<string, unknown>): Promise<void>
 }
 
 export interface ChromeShim {
@@ -118,6 +151,14 @@ export interface ChromeShim {
   }
   /** 模拟 alarm 到点触发 */
   emitAlarm(alarm: { name: string; scheduledTime?: number }): void
+  /** 模拟右键菜单点击 */
+  emitContextMenuClick(info: Record<string, unknown>): void
+  contextMenus: ContextMenusShim
+  notifications: NotificationsShim
+  offscreen?: OffscreenShim
+  tabs: { query(): Promise<Array<{ url?: string }>>; create: ReturnType<typeof vi.fn> }
+  /** 当前注册的 onMessage listener 副本（直接派发/断言 offscreen listener 返回值用） */
+  onMessageListeners(): MessageListener[]
   /** 出站消息记录（sendMessage 语义经 chrome.runtime.sendMessage） */
   runtime: {
     sendMessage(msg: unknown): Promise<unknown>
@@ -141,6 +182,7 @@ export function installChromeShim(opts: ChromeShimOptions = {}): ChromeShim {
   const onChangedListeners: OnChangedListener[] = []
   const alarmListeners: Array<(alarm: { name: string; scheduledTime?: number }) => void> = []
   const messageListeners: MessageListener[] = []
+  const contextMenuListeners: Array<(info: Record<string, unknown>) => void> = []
 
   const setBadgeText = vi.fn()
 
@@ -165,7 +207,11 @@ export function installChromeShim(opts: ChromeShimOptions = {}): ChromeShim {
           // listener 抛错视为未响应（真实浏览器按 lastError 处理，不中断其他 listener）
         }
       }
-      if (!held && !settled) resolve(undefined) // 已送达但无 ack：按「无应答」收束
+      // Foot-gun（与 Chrome 一致）：listener 返回 true 表示「异步 sendResponse」——在真实应答
+      // 到达前本 promise 既不 resolve 也不 reject（通道保持开放）。测试侧若模拟了返回 true 的
+      // listener 却从不应答，sendMessage 会悬挂，须用 fake timers 走被测代码自身的超时路径，
+      // 或在断言前手动 sendResponse；无返回 true 的 listener 时按「已送达无应答」立即收束。
+      if (!held && !settled) resolve(undefined)
     })
   }
 
@@ -188,6 +234,75 @@ export function installChromeShim(opts: ChromeShimOptions = {}): ChromeShim {
     }
   }
 
+  const alarmCreated: Array<{ name: string; info?: unknown }> = []
+
+  let offscreen: OffscreenShim | undefined
+  if (opts.offscreen) {
+    offscreen = {
+      calls: { createDocument: [] },
+      onCreateDocument: opts.offscreen.onCreateDocument ?? null,
+      async createDocument(opts) {
+        this.calls.createDocument.push(opts)
+        await this.onCreateDocument?.(opts)
+      },
+    }
+  }
+
+  const contextMenus: ContextMenusShim = {
+    created: [],
+    create(props, callback) {
+      // 同 id 重复创建：真实 Chrome 以 runtime.lastError 报错而非抛异常（幂等注册吞 lastError 即
+      // 视为成功——background C11 语义）。callback 执行期间暴露 lastError，结束后清除（Chrome 口径）
+      const dup = typeof props.id === 'string' && this.created.some((c) => c.props.id === props.id)
+      this.created.push({ props, callback })
+      if (callback) {
+        runtimeApi.lastError = dup ? { message: `Cannot create item with duplicate id ${String(props.id)}` } : undefined
+        try {
+          callback()
+        } finally {
+          runtimeApi.lastError = undefined
+        }
+      }
+    },
+    onClicked: {
+      addListener(cb) {
+        contextMenuListeners.push(cb)
+      },
+      removeListener(cb) {
+        const i = contextMenuListeners.indexOf(cb)
+        if (i >= 0) contextMenuListeners.splice(i, 1)
+      },
+    },
+  }
+
+  const notifications: NotificationsShim = {
+    created: [],
+    create(opts) {
+      this.created.push(opts)
+      return `notification-${this.created.length}`
+    },
+  }
+
+  const tabsCreate = vi.fn(async () => ({}))
+
+  const runtimeApi = {
+    lastError: undefined as unknown,
+    getURL: (path: string): string => `chrome-extension://test-id/${path.replace(/^\//, '')}`,
+    sendMessage: (msg: unknown): Promise<unknown> => dispatchMessage(msg, {}),
+    onMessage: {
+      addListener(cb: MessageListener): void {
+        messageListeners.push(cb)
+      },
+      removeListener(cb: MessageListener): void {
+        const i = messageListeners.indexOf(cb)
+        if (i >= 0) messageListeners.splice(i, 1)
+      },
+    },
+  }
+
+  const action: Record<string, unknown> = { setBadgeText }
+  if (opts.openPopup) action.openPopup = opts.openPopup
+
   const chrome: Record<string, unknown> = {
     storage: {
       local,
@@ -204,12 +319,21 @@ export function installChromeShim(opts: ChromeShimOptions = {}): ChromeShim {
       },
     },
     alarms: {
-      created: [] as Array<{ name: string; info?: unknown }>,
-      create(this: { created: Array<{ name: string; info?: unknown }> }, name: string, info?: unknown): void {
-        this.created.push({ name, info }) // 同名 create 在真实 API 为覆盖；记录序供断言
+      created: alarmCreated,
+      create(name: string, info?: unknown): void {
+        alarmCreated.push({ name, info }) // 同名 create 在真实 API 为覆盖；记录序供断言
       },
-      clear(): Promise<boolean> {
-        return Promise.resolve(true)
+      // 真实清除语义：存在同名 → 移除并返回 true；不存在 → false。无参清全部（任一存在即 true）
+      async clear(name?: string): Promise<boolean> {
+        if (name === undefined) {
+          const had = alarmCreated.length > 0
+          alarmCreated.length = 0
+          return had
+        }
+        const i = alarmCreated.findIndex((a) => a.name === name)
+        if (i < 0) return false
+        alarmCreated.splice(i, 1)
+        return true
       },
       onAlarm: {
         addListener(cb: (alarm: { name: string; scheduledTime?: number }) => void): void {
@@ -221,22 +345,17 @@ export function installChromeShim(opts: ChromeShimOptions = {}): ChromeShim {
         },
       },
     },
-    runtime: {
-      lastError: undefined,
-      sendMessage: (msg: unknown): Promise<unknown> => dispatchMessage(msg, {}),
-      onMessage: {
-        addListener(cb: MessageListener): void {
-          messageListeners.push(cb)
-        },
-        removeListener(cb: MessageListener): void {
-          const i = messageListeners.indexOf(cb)
-          if (i >= 0) messageListeners.splice(i, 1)
-        },
-      },
+    runtime: runtimeApi,
+    action,
+    contextMenus,
+    notifications,
+    tabs: {
+      query: async () => (opts.tabUrls ?? []).map((url) => ({ url })),
+      create: tabsCreate,
     },
-    action: { setBadgeText },
   }
   if (idle) chrome.idle = idle
+  if (offscreen) chrome.offscreen = offscreen
 
   const g = globalThis as unknown as { chrome?: unknown; browser?: unknown }
   const original = g.chrome
@@ -261,10 +380,18 @@ export function installChromeShim(opts: ChromeShimOptions = {}): ChromeShim {
     },
     setBadgeText,
     idle,
+    offscreen,
+    contextMenus,
+    notifications,
+    tabs: chrome.tabs as ChromeShim['tabs'],
     alarms: chrome.alarms as ChromeShim['alarms'],
     emitAlarm(alarm) {
       for (const l of [...alarmListeners]) l(alarm)
     },
+    emitContextMenuClick(info) {
+      for (const l of [...contextMenuListeners]) l(info)
+    },
+    onMessageListeners: () => [...messageListeners],
     runtime: {
       sendMessage: (chrome.runtime as { sendMessage: (msg: unknown) => Promise<unknown> }).sendMessage,
       receive: (msg: unknown, sender: unknown = { id: 'test' }) => dispatchMessage(msg, sender),
