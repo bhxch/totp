@@ -1,5 +1,11 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { blobToPixels } from '../src/qr/imageSource'
-import { describe, expect, it, vi } from 'vitest'
+
+// stubGlobal 替身（createImageBitmap/OffscreenCanvas）逐用例统一还原，与 DOM 回退用例口径一致
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
 
 /** 记录调用的假 2d 上下文（drawImage/getImageData） */
 function makeFakeCtx(pixels: { data: Uint8ClampedArray; width: number; height: number } | null) {
@@ -79,7 +85,5 @@ describe('blobToPixels（DOM canvas 回退路径：无 OffscreenCanvas 宿主）
     expect(ctx.drawImage).toHaveBeenCalledWith(bmp, 0, 0)
     expect(out).toBe(pixels)
     expect(closed).toHaveBeenCalledTimes(1)
-    vi.restoreAllMocks()
-    vi.unstubAllGlobals()
-  })
+  }) // stub/mock 还原统一走文件级 afterEach
 })

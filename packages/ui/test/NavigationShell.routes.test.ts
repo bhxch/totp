@@ -86,6 +86,33 @@ describe('NavigationShell pageProps 精确分发（五路由全走查，真实 s
 })
 
 describe('NavigationShell matchMedia 监听清理', () => {
+  it('onMqlChange 运行时翻转：宽→窄 Rail 切 Tabs，再翻回 Rail（断点跨过即时响应）', async () => {
+    const hooks: { change: ((e: { matches: boolean }) => void) | null } = { change: null }
+    const mql = {
+      matches: false,
+      addEventListener: (_t: string, cb: (e: { matches: boolean }) => void) => { hooks.change = cb },
+      removeEventListener: () => { hooks.change = null },
+    }
+    vi.spyOn(window, 'matchMedia').mockReturnValue(mql as unknown as MediaQueryList)
+    const { router, store } = await makeShellDeps()
+    await router.push('/')
+    await router.isReady()
+    const w = mount(NavigationShell, { global: { plugins: [router, createTestI18n()] }, props: { store } })
+    await nextTick()
+    expect(w.find('.md-rail').exists()).toBe(true) // 初值宽窗 Rail
+    expect(w.find('.md-tabs').exists()).toBe(false)
+    hooks.change?.({ matches: true }) // 视口跨入 <600px：Rail→Tabs
+    await nextTick()
+    expect(w.find('.md-tabs').exists()).toBe(true)
+    expect(w.find('.md-rail').exists()).toBe(false)
+    hooks.change?.({ matches: false }) // 再跨回宽窗：Tabs→Rail
+    await nextTick()
+    expect(w.find('.md-rail').exists()).toBe(true)
+    expect(w.find('.md-tabs').exists()).toBe(false)
+    w.unmount()
+    vi.restoreAllMocks()
+  })
+
   it('卸载时移除 mql change 监听（不残留全局回调）', async () => {
     const hooks: { change: ((e: { matches: boolean }) => void) | null } = { change: null }
     const mql = {
