@@ -28,12 +28,12 @@ const DATA_KEYS = ['vault', 'settings', 'credsCache', 'mergeConflicts']
 
 describe('createVueStore 返回对象形状（R6 硬约束守卫）', () => {
   it('成员集合精确不变（键名快照）', () => {
-    const s = createVueStore(createMemoryStorage())
+    const s = createVueStore(createMemoryStorage()) as unknown as Record<string, unknown>
     expect(Object.keys(s).sort()).toEqual(EXPECTED_KEYS)
   })
 
   it('成员类别不变：computed 视图 / reactive 数据 / 函数', () => {
-    const s = createVueStore(createMemoryStorage())
+    const s = createVueStore(createMemoryStorage()) as unknown as Record<string, unknown>
     for (const k of VIEW_KEYS) expect(s[k], k).toHaveProperty('value')
     for (const k of DATA_KEYS) expect(typeof s[k], k).not.toBe('function')
     for (const k of EXPECTED_KEYS) {
