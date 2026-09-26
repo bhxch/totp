@@ -15,6 +15,7 @@ vi.mock('../src/components/cloudPlatform', async (importOriginal) => {
 
 import { contentHash, pushEnvelope, syncMultipleTargets, type BackupSource, type CloudBackend, type CloudCred, type EntryConflict, type SourceSyncState } from '@totp/core'
 import { createCloudBackend } from '../src/components/cloudPlatform'
+import { createCloudSyncRunner } from '../src/components/cloudRunner'
 import CloudCard from '../src/components/CloudCard.vue'
 import { clearSyncProgress, settleMergeConfirm } from '../src/components/cloudSyncBridge'
 import { createTestI18n } from './helpers/i18n'
@@ -922,5 +923,137 @@ describe('CloudCard 手动合并预览（spec §3/§4 合规缺口，T11F）', (
     expect(mockedSync.mock.calls[1]![0].mode).toBe('apply')
     expect(p.saveSourceState).toHaveBeenCalledWith('s-webdav', { lastKnownRemoteRev: 3, baseSnapshot: VALID_VAULT })
     expect(w.text()).toContain('已上传')
+  })
+})
+
+describe('R1 手动通道行为分叉修复（readPath / 确认流回归 / single-flight）', () => {
+  beforeEach(() => vi.clearAllMocks())
+  afterEach(() => {
+    settleMergeConfirm(false) // 清挂起征询，防用例间模块级桥/链状态串扰
+    clearSyncProgress()
+  })
+
+  const KEEP_SOURCE: BackupSource = { id: 's-keep', kind: 'webdav', name: 'WebDAV', retention: { type: 'keep', n: 3 }, enabled: true, role: 'replica' }
+  const KEEP_CRED: CloudCred = { ...WEBDAV_CRED, objectPath: 'dir/totp-backup.totpbackup' }
+  const LATEST_REMOTE = 'dir/vault-20260303-000000.totpbackup'
+
+  function fakeKeepBackend(): CloudBackend {
+    return {
+      id: 'webdav',
+      listBackups: async () => ['dir/vault-20260101-000000.totpbackup', LATEST_REMOTE],
+      put: async () => {},
+      get: async () => null,
+      delete: async () => {},
+      exists: async () => false,
+    }
+  }
+
+  it('㉒keep 源 readPath：手动通道读远端最新份、写新时间戳份（preview/apply 两轮同 inputs）', async () => {
+    mockedSync.mockResolvedValue({
+      results: [{ key: 's-keep', outcome: { action: 'uploaded', remoteRev: 3, newRev: 4 } }],
+      finalVaultJson: VALID_VAULT,
+      adopted: false,
+      conflicts: [],
+      states: {},
+    })
+    vi.mocked(createCloudBackend).mockReturnValue(fakeKeepBackend())
+    const p = makePlatform({
+      loadSources: vi.fn().mockResolvedValue([KEEP_SOURCE]),
+      creds: { 's-keep': KEEP_CRED },
+    })
+    const w = await mountCard(p)
+    await clickSync(w)
+    expect(mockedSync).toHaveBeenCalledTimes(2)
+    for (const [i, call] of mockedSync.mock.calls.entries()) {
+      expect(call[0].mode).toBe(i === 0 ? 'preview' : 'apply')
+      // 与 runner 通道同口径：keep 源 readPath=名单内最新份（读侧参与 rev 判定/下载/合并），
+      // 缺失则手动通道永远收不到远端最新份（R1 分叉核心）
+      expect(call[0].targets[0]!.readPath).toBe(LATEST_REMOTE)
+      // 写侧仍为新时间戳份（读/写分离，不覆盖远端既有份）
+      expect(call[0].targets[0]!.path).not.toBe(LATEST_REMOTE)
+    }
+  })
+
+  it('㉓确认流回归：取消采用→基线不变→下轮同步重新提示（R1 验收）', async () => {
+    mockedSync.mockResolvedValue({
+      results: [{ key: 's-webdav', outcome: { action: 'downloaded', remoteRev: 9, appliedVaultJson: VALID_VAULT } }],
+      finalVaultJson: VALID_VAULT,
+      adopted: true,
+      conflicts: [],
+      states: { 's-webdav': { lastKnownRemoteRev: 9, baseSnapshot: VALID_VAULT } },
+    })
+    const p = makePlatform({
+      loadSources: vi.fn().mockResolvedValue([WEBDAV_SOURCE]),
+      creds: { 's-webdav': WEBDAV_CRED },
+    })
+    const w = await mountCard(p)
+    await clickSync(w)
+    expect(w.find('.confirm-row').exists()).toBe(true)
+    await w.findAll('button').find((b) => b.text() === '取消')!.trigger('click')
+    await flushPromises()
+    // 取消：本地不动、采纳基线不写
+    expect(p.persistDownloaded).not.toHaveBeenCalled()
+    expect(p.saveSourceState).not.toHaveBeenCalled()
+    expect(w.find('.confirm-row').exists()).toBe(false)
+    // 下轮同步：基线未变 → 仍重新下载并再次提示（不静默）
+    await clickSync(w)
+    expect(w.find('.confirm-row').exists()).toBe(true)
+    expect(p.saveSourceState).not.toHaveBeenCalled()
+  })
+
+  it('㉔single-flight：runner 轮在跑时手动直调排队互斥（R1）', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    let entered!: () => void
+    const enteredP = new Promise<void>((r) => { entered = r })
+    const IN_SYNC_RESULT = {
+      results: [{ key: 's-webdav', outcome: { action: 'in-sync' as const, remoteRev: 1 } }],
+      finalVaultJson: VALID_VAULT,
+      adopted: false,
+      conflicts: [] as EntryConflict[],
+      states: {} as Record<string, SourceSyncState>,
+    }
+    // runner auto 轮在 core 编排处挂起（模拟在途云请求）
+    mockedSync.mockImplementationOnce(async () => {
+      entered()
+      await gate
+      return IN_SYNC_RESULT
+    })
+    mockedSync.mockResolvedValue({
+      results: [{ key: 's-webdav', outcome: { action: 'uploaded', remoteRev: 2, newRev: 3 } }],
+      finalVaultJson: VALID_VAULT,
+      adopted: false,
+      conflicts: [],
+      states: { 's-webdav': { lastKnownRemoteRev: 3, baseSnapshot: VALID_VAULT } },
+    })
+    const runner = createCloudSyncRunner({
+      isLocked: () => false,
+      getSecret: () => 'pw',
+      getVaultJson: () => VALID_VAULT,
+      loadSources: async () => [{ source: WEBDAV_SOURCE, cred: WEBDAV_CRED }],
+      loadSyncState: async () => ({ lastKnownRemoteRev: null, baseSnapshot: null }),
+      saveSyncState: async () => {},
+      deviceId: async () => 'dev-test',
+      loadContentHash: async () => null,
+      saveContentHash: async () => {},
+      makeBackend: () => fakeKeepBackend(),
+      persistAdopted: async () => {},
+      t: (k) => k,
+    })
+    const autoRun = runner.run('auto')
+    await enteredP // runner 轮已进编排（mockedSync 挂起中）
+    const p = makePlatform({
+      loadSources: vi.fn().mockResolvedValue([WEBDAV_SOURCE]),
+      creds: { 's-webdav': WEBDAV_CRED },
+    })
+    const w = await mountCard(p)
+    await clickSync(w) // 手动直调：应接入同一 single-flight 链排队，而非与 runner 轮并发
+    expect(mockedSync).toHaveBeenCalledTimes(1) // 排队中：手动 preview 未并发发起
+    release()
+    await autoRun
+    await flushPromises()
+    expect(mockedSync).toHaveBeenCalledTimes(3) // runner 轮完成后手动 preview+apply 串行执行
+    expect(mockedSync.mock.calls[1]![0].mode).toBe('preview')
+    expect(mockedSync.mock.calls[2]![0].mode).toBe('apply')
   })
 })

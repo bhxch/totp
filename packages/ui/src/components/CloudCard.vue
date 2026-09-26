@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import type { BackupSource, CloudCred, EntryConflict, GDriveCred, GistCred, OneDriveCred, S3Cred, SourceSyncState, WebdavCred } from '@totp/core'
-import {
-  contentHashVault, DEFAULT_OBJECT_PATH, enforceRemoteRetention, pushEnvelope, resolveObjectPath, resolveTimestampPath, syncMultipleTargets,
-} from '@totp/core'
+import { contentHashVault, DEFAULT_OBJECT_PATH, pushEnvelope, resolveObjectPath, resolveTimestampPath, syncMultipleTargets } from '@totp/core'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { VueStore } from '../store'
 import { createCloudBackend, isPlaintextHttpUrl } from './cloudPlatform'
 import type { CloudAutoPrefs, CloudPlatform } from './cloudPlatform'
+import { actionStatusLabelKey, allTargetsSettled, buildSyncTargets, runExclusive, runKeepRetention } from './cloudSyncShared'
 import { pendingMergeConfirm, requestMergeConfirm, settleMergeConfirm, syncProgressState } from './cloudSyncBridge'
 import MergeConflictList from './MergeConflictList.vue'
 import MergePreviewDialog from './MergePreviewDialog.vue'
@@ -34,15 +33,6 @@ const props = withDefaults(defineProps<{
 }>(), { store: null, authFailed: false })
 
 const { t } = useI18n()
-
-/** 同步动作 → 状态文案 key（i18n D2：卡内状态行经 t() 渲染；自动 runner 摘要经 deps.t 用 common.json cloudRunner.* 记录）。
- *  键 = rev 编排四出口（RevSyncAction；旧 conflict-resolved 标签随 T9 pull 通道改造删除） */
-const ACTION_LABEL_KEY: Record<string, string> = {
-  uploaded: 'cloudCard.actionUploaded',
-  downloaded: 'cloudCard.actionDownloaded',
-  merged: 'cloudCard.actionMerged',
-  'in-sync': 'cloudCard.actionInSync',
-}
 
 const BACKENDS = ['webdav', 's3', 'gist', 'gdrive', 'onedrive'] as const
 type BackendId = (typeof BACKENDS)[number]
@@ -460,8 +450,9 @@ const trunc = (s: string, n = 60) => (s.length > n ? `${s.slice(0, n)}…` : s)
 /**
  * 手动多源同步（复用 core syncMultipleTargets）：仅 enabled 源参与；凭据取编辑副本（无则已存凭据）。
  * 无凭据（锁定态缓存空/编辑副本空白）的启用源报错跳过：状态行「缺少凭据：解锁后保存凭据后再同步」，
- * 不阻塞其余源。keep 源 path=resolveTimestampPath（时间戳名），上传成功后远端滚动删除超额旧份。
- * 基线回写时机（沿用旧卡语义）：非采纳源立即回写（失败源 null=删基线，下轮全量重比）；
+ * 不阻塞其余源。R1 起与 runner 通道共享同构底座（cloudSyncShared）：targets 组装（keep 源
+ * readPath=远端最新份，读最新份/写新时间戳份分离）、动作文案表、keep 滚动清理、single-flight 链。
+ * 基线回写时机（有意语义差异，沿用旧卡确认流，不与 runner apply 通道合并）：非采纳源立即回写；
  * 下载/冲突采纳源的基线在「采用云端」确认成功后才写——取消则保持旧基线，下次同步仍会重新
  * 下载提示，不会出现「基线=云端但本地为旧数据」的静默僵持。
  */
@@ -474,120 +465,119 @@ async function onSync(): Promise<void> {
   busy.value = true
   msg.value = ''
   statusMap.value = {}
+  // 会话口令快照（上方已收窄非空）：single-flight 链内闭包不保留 props 属性收窄，显式捕获
+  const secret: string = props.sessionSecret
   try {
-    const inputs: Array<{ key: string; backend: ReturnType<typeof createCloudBackend>; path: string; source: BackupSource; state: SourceSyncState }> = []
-    for (const s of enabled) {
-      const cred = credDrafts.value[s.id] ?? p.creds[s.id]
-      if (!cred || isBlankCred(cred)) {
-        statusMap.value[s.id] = t('cloudCard.missingCreds') // 锁定态缓存为空同此口径
-        continue
+    // single-flight 共享链（R1）：手动直调与 runner 各轮（auto/manual/pull）同链互斥排队——
+    // 不再与自动轮并发；预览确认挂起期间自动轮排队等确认（bridge 60s 超时保证链自愈）
+    await runExclusive(async () => {
+      // targets 组装收敛 cloudSyncShared.buildSyncTargets（R1）：缺凭据源报错跳过不阻塞其余源；
+      // keep 源补 readPath（名单内最新份）——缺 readPath 则手动通道永远收不到 keep 源远端最新份
+      const pairs: Array<{ source: BackupSource; cred: CloudCred }> = []
+      for (const s of enabled) {
+        const cred = credDrafts.value[s.id] ?? p.creds[s.id]
+        if (!cred || isBlankCred(cred)) {
+          statusMap.value[s.id] = t('cloudCard.missingCreds') // 锁定态缓存为空同此口径
+          continue
+        }
+        pairs.push({ source: s, cred })
       }
-      inputs.push({
-        key: s.id,
-        backend: createCloudBackend(cred, (next) => {
+      const inputs = await buildSyncTargets({
+        pairs,
+        makeBackend: (cred, id) => createCloudBackend(cred, (next) => {
           // GDrive 首推自动建文件回存 fileId / 后端探测回写：按 sourceId 更新编辑副本（本会话继续可用）
-          if (credDrafts.value[s.id]) credDrafts.value[s.id] = { ...next }
+          if (credDrafts.value[id]) credDrafts.value[id] = { ...next }
           // 持久化=单源保管区 op（未保存的其他行编辑不外溢落盘）
-          void p.saveCred(s.id, next).catch((e) => console.warn('[CloudCard] 凭据回存失败:', e))
+          void p.saveCred(id, next).catch((e) => console.warn('[CloudCard] 凭据回存失败:', e))
         }),
-        path: s.retention.type === 'keep' ? resolveTimestampPath(cred, new Date()) : resolveObjectPath(cred),
-        source: s,
-        state: await p.loadSourceState(s.id),
+        loadState: (id) => p.loadSourceState(id),
       })
-    }
-    if (inputs.length === 0) return fail(new Error(t('cloudCard.allCredsMissing')))
-    // 手动合并预览（spec §3/§4，T11F 补齐直调路径合规缺口）：先 mode:'preview' 只读跑一轮（core
-    // 预览零写云/零副本/零 state 推导），任一目标 merged 时经 cloudSyncBridge 的 requestMergeConfirm
-    // 挂起征询——与宿主 runner 的 onManualConfirm 桥同槽互斥，复用卡内同一 MergePreviewDialog；
-    // 确认=false 中止（预览只读两端零痕迹，提示已跳过），true 以同一 inputs 重跑 apply（keep 源
-    // 时间戳路径两轮一致，预览即所见即所写）。无 merged 不弹窗直接 apply。代价：手动同步恒多一轮
-    // 只读预览请求，与 runner manual 通道（runOnce 'manual' 先 preview 后 apply）同构同价
-    const baseOpts = {
-      targets: inputs,
-      vaultJson: p.readVaultJson(),
-      password: props.sessionSecret,
-      deviceId: await p.deviceId(),
-      onConflictBackup: (key: string, bytes: Uint8Array) => p.saveConflictBackup?.(bytes, key),
-      profile: p.kdfProfile?.(),
-    }
-    const pv = await syncMultipleTargets({ ...baseOpts, mode: 'preview' })
-    const mergedResults = pv.results.filter((x) => x.outcome?.action === 'merged')
-    if (mergedResults.length > 0) {
-      const ok = await requestMergeConfirm({
-        conflicts: pv.conflicts,
-        mergeDegraded: mergedResults.some((x) => x.outcome?.mergeDegraded === true),
-        sourceName: mergedResults.map((x) => sourceName(x.key)).join('; '),
-      })
-      if (!ok) {
-        msg.value = t('cloudRunner.manualSkipped') // 复用 runner 跳过态文案（common.json 同域键）
-        msgKind.value = 'hint'
-        return
+      if (inputs.length === 0) throw new Error(t('cloudCard.allCredsMissing'))
+      // 手动合并预览（spec §3/§4，T11F 补齐直调路径合规缺口）：先 mode:'preview' 只读跑一轮（core
+      // 预览零写云/零副本/零 state 推导），任一目标 merged 时经 cloudSyncBridge 的 requestMergeConfirm
+      // 挂起征询——与宿主 runner 的 onManualConfirm 桥同槽互斥，复用卡内同一 MergePreviewDialog；
+      // 确认=false 中止（预览只读两端零痕迹，提示已跳过），true 以同一 inputs 重跑 apply（keep 源
+      // 时间戳路径两轮一致，预览即所见即所写）。无 merged 不弹窗直接 apply。代价：手动同步恒多一轮
+      // 只读预览请求，与 runner manual 通道（runOnce 'manual' 先 preview 后 apply）同构同价
+      const baseOpts = {
+        targets: inputs,
+        vaultJson: p.readVaultJson(),
+        password: secret,
+        deviceId: await p.deviceId(),
+        onConflictBackup: (key: string, bytes: Uint8Array) => p.saveConflictBackup?.(bytes, key),
+        profile: p.kdfProfile?.(),
       }
-    }
-    const r = await syncMultipleTargets({ ...baseOpts, mode: 'apply' })
-    resettableBackends.value = []
-    pendingStates.value = []
-    for (const res of r.results) {
-      if (!res.outcome) {
-        const errMsg = res.error ?? ''
-        if (errMsg.includes('口令不匹配')) {
-          // 换口令后云端为旧口令信封：专用状态 + 行内重置救济入口
-          statusMap.value[res.key] = t('cloudCard.failedPassphrase')
-          resettableBackends.value.push(res.key)
-        } else {
-          statusMap.value[res.key] = t('cloudCard.failed', { message: trunc(errMsg) })
+      const pv = await syncMultipleTargets({ ...baseOpts, mode: 'preview' })
+      const mergedResults = pv.results.filter((x) => x.outcome?.action === 'merged')
+      if (mergedResults.length > 0) {
+        const ok = await requestMergeConfirm({
+          conflicts: pv.conflicts,
+          mergeDegraded: mergedResults.some((x) => x.outcome?.mergeDegraded === true),
+          sourceName: mergedResults.map((x) => sourceName(x.key)).join('; '),
+        })
+        if (!ok) {
+          msg.value = t('cloudRunner.manualSkipped') // 复用 runner 跳过态文案（common.json 同域键）
+          msgKind.value = 'hint'
+          return
         }
-        // 失败源 rev 基线不落盘（states=原样，回写幂等）——下轮按原基线重做
-        continue
       }
-      // 降级合并专用文案（S3）：与 runner 摘要「已合并（降级）」同键同文案，卡内状态行不再误显「已合并」
-      const actionKey =
-        res.outcome.action === 'merged' && res.outcome.mergeDegraded === true
-          ? 'cloudRunner.action.mergedDegraded'
-          : ACTION_LABEL_KEY[res.outcome.action]
-      statusMap.value[res.key] = actionKey ? t(actionKey) : res.outcome.action
-      if (res.convergeError) statusMap.value[res.key] += t('cloudCard.convergeFailed', { message: trunc(res.convergeError) })
-      // keep 源上传成功（含收敛改写后的 uploaded）→ 远端滚动删除超额旧份，结果附到状态行：
-      // deleted>0 显示清理份数；-1=后端不支持自动清理，提示累积风险与替代选项；0=未超额不刷屏。
-      // per-source try/catch 隔离：listBackups/删除网络抛错不改写该源上传成功状态、
-      // 不中断 results 循环后续（该源基线回写与其余源处理照常），失败仅提示下轮重试
-      const src = sources.value.find((x) => x.id === res.key)
-      if (src?.retention.type === 'keep' && res.outcome.action === 'uploaded') {
-        const backend = inputs.find((x) => x.key === res.key)?.backend
-        if (backend) {
-          try {
-            const deleted = await enforceRemoteRetention(backend, src.retention.n)
-            if (deleted > 0) statusMap.value[res.key] += t('cloudCard.retentionCleaned', { count: deleted })
-            else if (deleted < 0) statusMap.value[res.key] += t('cloudCard.retentionUnsupported')
-          } catch {
-            statusMap.value[res.key] += t('cloudCard.retentionFailed')
+      const r = await syncMultipleTargets({ ...baseOpts, mode: 'apply' })
+      resettableBackends.value = []
+      pendingStates.value = []
+      // 结果归纳第一段（R1 与 runner 共享动作文案表 cloudSyncShared.actionStatusLabelKey，含
+      // merged 降级专用文案）+ 基线分流：失败源不落盘（states=原样，回写幂等）——下轮按原基线重做
+      for (const res of r.results) {
+        if (!res.outcome) {
+          const errMsg = res.error ?? ''
+          if (errMsg.includes('口令不匹配')) {
+            // 换口令后云端为旧口令信封：专用状态 + 行内重置救济入口
+            statusMap.value[res.key] = t('cloudCard.failedPassphrase')
+            resettableBackends.value.push(res.key)
+          } else {
+            statusMap.value[res.key] = t('cloudCard.failed', { message: trunc(errMsg) })
           }
+          continue
+        }
+        statusMap.value[res.key] = t(actionStatusLabelKey(res.outcome))
+        if (res.convergeError) statusMap.value[res.key] += t('cloudCard.convergeFailed', { message: trunc(res.convergeError) })
+        const st = r.states[res.key]
+        if (res.outcome.action === 'downloaded' || res.outcome.action === 'merged') {
+          if (st) pendingStates.value.push([res.key, st]) // 采纳源基线延后至「采用云端」确认成功
+        } else if (st) {
+          await p.saveSourceState(res.key, st)
         }
       }
-      const st = r.states[res.key]
-      if (res.outcome.action === 'downloaded' || res.outcome.action === 'merged') {
-        if (st) pendingStates.value.push([res.key, st]) // 采纳源基线延后至确认成功
-      } else if (st) {
-        await p.saveSourceState(res.key, st)
+      // keep 源滚动清理（R1 收敛 cloudSyncShared.runKeepRetention，与 runner 逐源隔离同构）：
+      // 结果附到状态行——deleted>0 显示清理份数；-1=后端不支持自动清理，提示累积风险与替代选项；
+      // 0=未超额不刷屏；单源清理抛错仅附失败提示（下轮重试），不改写该源上传成功状态
+      await runKeepRetention(
+        inputs,
+        r.results,
+        (id, deleted) => {
+          if (deleted > 0) statusMap.value[id] += t('cloudCard.retentionCleaned', { count: deleted })
+          else if (deleted < 0) statusMap.value[id] += t('cloudCard.retentionUnsupported')
+        },
+        (id) => { statusMap.value[id] += t('cloudCard.retentionFailed') },
+      )
+      if (p.loadAutoStatus) {
+        try {
+          autoStatus.value = await p.loadAutoStatus() // 手动完成后刷新自动状态行
+        } catch { /* 状态读取失败不影响同步 */ }
       }
-    }
-    if (p.loadAutoStatus) {
-      try {
-        autoStatus.value = await p.loadAutoStatus() // 手动完成后刷新自动状态行
-      } catch { /* 状态读取失败不影响同步 */ }
-    }
-    void refreshConflictCopies() // 手动同步可能新增冲突副本：刷新列表（extension）
-    // 跨端同步审查 I1：全部目标成功（无目标级失败/收敛失败）才算「手动同步成功」——通知宿主
-    // 复位云凭据失效警示并重启跟随轮询（重新授权闭环）；部分失败（如 401 仍在）不通知，警示保留
-    if (r.results.every((res) => res.outcome !== null && !res.convergeError)) {
-      try {
-        p.onManualSynced?.()
-      } catch { /* 宿主通知失败不影响同步结果呈现 */ }
-    }
-    if (r.adopted) {
-      parseVaultJson(r.finalVaultJson) // 远端内容先过恢复校验，不合格不进入确认流程
-      pendingAdopt.value = r.finalVaultJson
-    }
+      void refreshConflictCopies() // 手动同步可能新增冲突副本：刷新列表（extension）
+      // 跨端同步审查 I1：全部目标成功（共享谓词 allTargetsSettled：无目标级失败/收敛失败）才算
+      // 「手动同步成功」——通知宿主复位云凭据失效警示并重启跟随轮询（重新授权闭环）；部分失败
+      // （如 401 仍在）不通知，警示保留
+      if (allTargetsSettled(r.results)) {
+        try {
+          p.onManualSynced?.()
+        } catch { /* 宿主通知失败不影响同步结果呈现 */ }
+      }
+      if (r.adopted) {
+        parseVaultJson(r.finalVaultJson) // 远端内容先过恢复校验，不合格不进入确认流程
+        pendingAdopt.value = r.finalVaultJson
+      }
+    })
   } catch (e) {
     fail(e)
   } finally {
