@@ -3,7 +3,7 @@
  * - ext undefined（桌面/测试环境）短路：get null、set/delete no-op（兜底防崩）；
  * - 有宿主：缺键 null、往返、删除幂等（与 chromeShim 内存区对拍）。
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { installChromeShim, type ChromeShim } from './helpers/chromeShim'
 
 vi.mock('../src/extApi', async () => (await import('./helpers/extApiMock')).extApiMock())
@@ -11,10 +11,6 @@ vi.mock('../src/extApi', async () => (await import('./helpers/extApiMock')).extA
 import { createChromeStorage } from '../src/storage'
 
 let shim: ChromeShim
-
-beforeEach(() => {
-  vi.resetModules()
-})
 
 afterEach(() => {
   shim?.restore()

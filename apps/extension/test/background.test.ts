@@ -313,7 +313,7 @@ describe('alarm clipboard-clear → 清剪贴板重试链（B1-7）', () => {
     await vi.advanceTimersByTimeAsync(1_000) // 第 1 轮超时
     expect(sendSpy).toHaveBeenCalledTimes(2)
     await vi.advanceTimersByTimeAsync(2_000) // 第 2、3 轮
-    expect(sendSpy).toHaveBeenCalledTimes(4 - 1)
+    expect(sendSpy).toHaveBeenCalledTimes(3) // 1 首发未收 ack + 2 次重试
     expect(shim.offscreen!.calls.createDocument).toHaveLength(3) // 每轮先 ensure 再发
 
     await vi.advanceTimersByTimeAsync(10_000) // 放弃后不再动作

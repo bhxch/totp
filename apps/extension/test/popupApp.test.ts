@@ -8,7 +8,7 @@
  * createExtensionStore），node/jsdom 测试环境不可用；组件树其余走真实实现。
  */
 // @vitest-environment jsdom
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Ref } from 'vue'
 
@@ -118,7 +118,10 @@ const TagFilterRowStub = {
   template: `<div data-test="tag-filter-stub" />`,
 }
 
-async function mountApp(opts?: { otpListItem?: typeof OtpListItemStub }) {
+async function mountApp(opts?: { otpListItem?: typeof OtpListItemStub; autoFollow?: boolean }) {
+  // 默认关跟随拉取 gate：绝大多数用例不测同步，mount 首拉的真实 runner 执行只会产生
+  // [cloudAutoSync] 噪音；「跟随拉取」describe 显式传 autoFollow: true 保持被测状态
+  settings.syncPrefs.autoFollow = opts?.autoFollow ?? false
   const wrapper = mount(App, {
     global: {
       plugins: [createTestI18n()],
@@ -135,7 +138,26 @@ async function mountApp(opts?: { otpListItem?: typeof OtpListItemStub }) {
     },
   })
   await flushPromises()
+  active = wrapper // 统一入槽位：文件级 afterEach 兜底卸载，确保无实例跨用例存活
   return wrapper
+}
+
+/** 真实导出为 ComputedRef（只读类型）；mock 模块内是可写 ref，测试经断言直写（全文件唯一定义） */
+const lockedRef = locked as unknown as Ref<boolean>
+
+/** P3a 用例的活动实例槽位：mountTracked 记录、afterEach 统一卸载——
+ *  泄漏实例的 watch(locked) 会在后续用例 afterEach 置 lockedRef=false 时触发跟随拉取噪音 */
+let active: VueWrapper | null = null
+async function mountTracked(opts?: { otpListItem?: typeof OtpListItemStub }) {
+  active = await mountApp(opts)
+  return active
+}
+
+/** P3a describe 的 afterEach 首步：卸载本用例实例，再恢复全局状态 */
+function unmountActive(): void {
+  active?.unmount()
+  active = null
+  settings.syncPrefs.autoFollow = true // 恢复 mountTracked 关掉的 gate（mock settings 默认值）
 }
 
 const findAddButton = (w: Awaited<ReturnType<typeof mountApp>>) =>
@@ -396,9 +418,7 @@ describe('popup 跟随拉取行为（跨端同步 T2/T3，审查修复）', () =
   // 无真网络；runner 触达的可观察信号 = 读源键 + recordStatus 写 'cloudAutoStatus'（工厂硬编码键）。
   // 零网络断言 = gate 在 runPull 之前拦截，上述两信号均不发生（runner 完全未执行，非异常兜底）
   let active: Awaited<ReturnType<typeof mountApp>> | null = null
-  // 真实 store 导出的 locked 是 ComputedRef（只读类型）；mock 模块内是可写 ref，测试经断言直写。
-  // backupSecret 未被真实模块顶层解构导出，经 store 成员取（mock 与真实同为 ComputedRef 形状）
-  const lockedRef = locked as unknown as Ref<boolean>
+  // lockedRef 用模块级唯一定义；backupSecret 未被真实模块顶层解构导出，经 store 成员取
   const backupSecretRef = store.backupSecret as unknown as Ref<string | null>
   beforeEach(() => {
     vi.clearAllMocks() // 清调用记录（mockClear 语义：get/set 实现保留）
@@ -420,7 +440,7 @@ describe('popup 跟随拉取行为（跨端同步 T2/T3，审查修复）', () =
   it('解锁且开关开：打开后跟随拉取一次——runner 读源键并记录状态（ok=null 空表跳过，真实编排终点）', async () => {
     lockedRef.value = false // 解锁到目标态（边沿触发的残留 watcher 经 gate 后行为与被测一致）
     backupSecretRef.value = 'pw' // 会话口令在位（解锁语义），拉取链走通到网络边界
-    active = await mountApp()
+    active = await mountApp({ autoFollow: true })
     await vi.waitFor(() => expect(storageAdapter.get).toHaveBeenCalledWith(SOURCES_KEY))
     await vi.waitFor(() => expect(storageAdapter.set).toHaveBeenCalledWith('cloudAutoStatus', expect.any(String)))
     const record = vi.mocked(storageAdapter.set).mock.calls.find((c) => c[0] === 'cloudAutoStatus')
@@ -429,7 +449,7 @@ describe('popup 跟随拉取行为（跨端同步 T2/T3，审查修复）', () =
 
   it('锁定态：gate 拦截——零网络（不读源键、不写状态）', async () => {
     backupSecretRef.value = 'pw' // 保持 beforeEach 的锁定态：gate 因锁定拦截，与口令无关
-    active = await mountApp()
+    active = await mountApp({ autoFollow: true })
     await flushPromises() // 补一拍：确证是「未触发」而非「未及执行」
     expect(storageAdapter.get).not.toHaveBeenCalledWith(SOURCES_KEY)
     expect(storageAdapter.set).not.toHaveBeenCalledWith('cloudAutoStatus', expect.anything())
@@ -439,7 +459,7 @@ describe('popup 跟随拉取行为（跨端同步 T2/T3，审查修复）', () =
     lockedRef.value = false // 解锁态下仅关开关：证明拦截来自 autoFollow 而非锁定
     settings.syncPrefs.autoFollow = false
     backupSecretRef.value = 'pw'
-    active = await mountApp()
+    active = await mountApp() // 被测状态即关开关：不传 autoFollow: true
     await flushPromises()
     expect(storageAdapter.get).not.toHaveBeenCalledWith(SOURCES_KEY)
     expect(storageAdapter.set).not.toHaveBeenCalledWith('cloudAutoStatus', expect.anything())
@@ -457,7 +477,7 @@ describe('popup 跟随拉取行为（跨端同步 T2/T3，审查修复）', () =
       backupSecretRef.value = 'pw' // initStore 完成时点口令就位（保管区装载语义）
     })
     try {
-      active = await mountApp()
+      active = await mountApp({ autoFollow: true })
       await vi.waitFor(() => expect(storageAdapter.get).toHaveBeenCalledWith(SOURCES_KEY))
       await vi.waitFor(() => expect(storageAdapter.set).toHaveBeenCalledWith('cloudAutoStatus', expect.anything()))
     } finally {
@@ -468,7 +488,7 @@ describe('popup 跟随拉取行为（跨端同步 T2/T3，审查修复）', () =
 
   it('锁定态打开：initStore 后首拉被 gate 拦（零写盘），解锁边沿钩子承接拉取', async () => {
     backupSecretRef.value = 'pw' // 保持 beforeEach 锁定态；口令在位（解锁语义）
-    active = await mountApp()
+    active = await mountApp({ autoFollow: true })
     await flushPromises()
     // initStore 后首拉在锁定态被 gate 拦截：gate 先于 runner，零网络零写盘（Important-2 锁定分支）
     expect(storageAdapter.get).not.toHaveBeenCalledWith(SOURCES_KEY)
@@ -483,7 +503,15 @@ describe('popup 跟随拉取行为（跨端同步 T2/T3，审查修复）', () =
 // ==================== P3a 补齐（盘点 B3-11~17）====================
 
 const VALID_URI = 'otpauth://totp/GitHub:me?secret=JBSWY3DPEHPK3PXP'
-const lockedRef = locked as unknown as Ref<boolean>
+
+// 文件级兜底卸载：泄漏实例的 watch(locked) 会在后续用例锁定翻转时集体触发跟随拉取
+// （[cloudAutoSync] 连发噪音）。describe 级 afterEach 先执行，此处对剩余实例兜底。
+afterEach(() => {
+  if (active) {
+    active.unmount()
+    active = null
+  }
+})
 
 /** 挂载前注入 ?uri= 查询参数（Firefox ext+otpauth 协议回调入口），尾部恢复干净路径 */
 function withUriQuery(uri: string | null): void {
@@ -500,13 +528,14 @@ function resetClipboardEnv(): void {
 
 describe('popup otpauth 导入入口（B3-13：?uri= 优先、pendingOtpauth 读取即清）', () => {
   afterEach(() => {
+    unmountActive()
     withUriQuery(null)
     shim?.restore()
   })
 
   it('?uri= 协议回调优先消费：合法 URI → EntryForm 预填，不读 pendingOtpauth', async () => {
     withUriQuery('otpauth://totp/Acme:dev?secret=JBSWY3DPEHPK3PXP')
-    const wrapper = await mountApp()
+    const wrapper = await mountTracked()
 
     expect(wrapper.find('entry-form-stub').exists()).toBe(true)
     const initial = wrapper.findComponent({ name: 'EntryForm' }).props('initial') as { issuer?: string } | null
@@ -516,7 +545,7 @@ describe('popup otpauth 导入入口（B3-13：?uri= 优先、pendingOtpauth 读
 
   it('?uri= 非法 URI：importError 常显（details 折叠时也在），不渲染预填表单', async () => {
     withUriQuery('notauri')
-    const wrapper = await mountApp()
+    const wrapper = await mountTracked()
 
     const err = wrapper.find('.error')
     expect(err.exists()).toBe(true)
@@ -528,7 +557,7 @@ describe('popup otpauth 导入入口（B3-13：?uri= 优先、pendingOtpauth 读
 
   it('无 ?uri= 时读 pendingOtpauth（Chrome 右键菜单写入）：合法→预填，读取即 remove', async () => {
     shim = installChromeShim({ local: { pendingOtpauth: VALID_URI } })
-    const wrapper = await mountApp()
+    const wrapper = await mountTracked()
 
     expect(wrapper.find('entry-form-stub').exists()).toBe(true)
     const initial = wrapper.findComponent({ name: 'EntryForm' }).props('initial') as { issuer?: string } | null
@@ -539,7 +568,7 @@ describe('popup otpauth 导入入口（B3-13：?uri= 优先、pendingOtpauth 读
 
   it('pendingOtpauth 非法字符串：importError 报错，但同样消费即清（不残留重弹）', async () => {
     shim = installChromeShim({ local: { pendingOtpauth: 'junk-uri' } })
-    const wrapper = await mountApp()
+    const wrapper = await mountTracked()
 
     expect(wrapper.find('.error').exists()).toBe(true)
     expect(wrapper.find('entry-form-stub').exists()).toBe(false)
@@ -555,7 +584,7 @@ describe('popup 右键菜单四项（B3-17：编辑/显示二维码/复制 URI/�
 
   async function mountWithEntryAndOpenMenu(entry: Record<string, unknown>) {
     vault.entries.push(entry as never)
-    const wrapper = await mountApp({ otpListItem: OtpListItemStub })
+    const wrapper = await mountTracked({ otpListItem: OtpListItemStub })
     wrapper
       .findComponent({ name: 'OtpListItemStub' })
       .vm.$emit('context', { clientX: 10, clientY: 20, currentTarget: null })
@@ -564,6 +593,7 @@ describe('popup 右键菜单四项（B3-17：编辑/显示二维码/复制 URI/�
   }
 
   afterEach(() => {
+    unmountActive()
     vault.entries.length = 0
     shim?.restore()
     resetClipboardEnv()
@@ -640,6 +670,7 @@ describe('popup 复制行为补齐（B3-15/16：HOTP 递增、清剪贴板三重
   }
 
   afterEach(() => {
+    unmountActive()
     vault.entries.length = 0
     shim?.restore()
     resetClipboardEnv()
@@ -649,7 +680,7 @@ describe('popup 复制行为补齐（B3-15/16：HOTP 递增、清剪贴板三重
   async function mountTotpReady() {
     vault.entries.push(totpEntry as never)
     Object.defineProperty(navigator, 'clipboard', { value: { writeText: vi.fn(async () => {}) }, configurable: true })
-    const wrapper = await mountApp({ otpListItem: OtpListItemStub })
+    const wrapper = await mountTracked({ otpListItem: OtpListItemStub })
     await vi.waitFor(() => {
       expect(wrapper.find('.otp-item-stub').text()).not.toBe('------')
     })
@@ -663,7 +694,7 @@ describe('popup 复制行为补齐（B3-15/16：HOTP 递增、清剪贴板三重
     } as never)
     Object.defineProperty(navigator, 'clipboard', { value: { writeText: vi.fn(async () => {}) }, configurable: true })
     vi.mocked(updateEntryOp).mockClear()
-    const wrapper = await mountApp({ otpListItem: OtpListItemStub })
+    const wrapper = await mountTracked({ otpListItem: OtpListItemStub })
     await vi.waitFor(() => {
       expect(wrapper.find('.otp-item-stub').text()).not.toBe('------')
     })
@@ -707,6 +738,7 @@ describe('popup 复制行为补齐（B3-15/16：HOTP 递增、清剪贴板三重
 
 describe('popup 删除两击确认与 3s 超时复位（B3-17）', () => {
   afterEach(() => {
+    unmountActive()
     vault.entries.length = 0
     vi.useRealTimers()
   })
@@ -716,7 +748,7 @@ describe('popup 删除两击确认与 3s 超时复位（B3-17）', () => {
       uuid: 'e1', type: 'totp', issuer: 'GitHub', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
       algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 0,
     } as never)
-    return await mountApp()
+    return await mountTracked()
   }
 
   it('首击出确认按钮，3s 超时复位回删除钮；两击内确认才真正删除', async () => {
@@ -752,6 +784,7 @@ describe('popup 删除两击确认与 3s 超时复位（B3-17）', () => {
 
 describe('popup 编辑 digits 重算与 URI 导入 carried 透传（B3-16）', () => {
   afterEach(() => {
+    unmountActive()
     vault.entries.length = 0
     shim?.restore()
     withUriQuery(null)
@@ -762,7 +795,7 @@ describe('popup 编辑 digits 重算与 URI 导入 carried 透传（B3-16）', (
       uuid: 'e-s', type: 'steam', issuer: 'Steam', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
       algorithm: 'SHA1', digits: 5, period: 30, tagIds: [], order: 0, createdAt: 0,
     } as never)
-    const wrapper = await mountApp()
+    const wrapper = await mountTracked()
     await wrapper.findAll('button').find((b) => b.text() === '✎')!.trigger('click')
     const form = wrapper.findComponent({ name: 'EntryForm' })
 
@@ -787,7 +820,7 @@ describe('popup 编辑 digits 重算与 URI 导入 carried 透传（B3-16）', (
   it('URI 导入预填同 type：carried 透传 algorithm/digits/period/counter（hotp counter 保留）', async () => {
     withUriQuery('otpauth://hotp/Acme:dev?secret=JBSWY3DPEHPK3PXP&counter=5&digits=7')
     vi.mocked(addEntryOp).mockClear()
-    const wrapper = await mountApp()
+    const wrapper = await mountTracked()
     expect(wrapper.find('entry-form-stub').exists()).toBe(true)
 
     wrapper.findComponent({ name: 'EntryForm' }).vm.$emit('save', {
@@ -807,7 +840,7 @@ describe('popup 编辑 digits 重算与 URI 导入 carried 透传（B3-16）', (
   it('URI 导入 type 变更（hotp→totp）：carried 失效，counter 不透传，digits 按表单收口', async () => {
     withUriQuery('otpauth://hotp/Acme:dev?secret=JBSWY3DPEHPK3PXP&counter=5')
     vi.mocked(addEntryOp).mockClear()
-    const wrapper = await mountApp()
+    const wrapper = await mountTracked()
 
     wrapper.findComponent({ name: 'EntryForm' }).vm.$emit('save', {
       type: 'totp', issuer: 'Acme', label: 'dev', secret: 'JBSWY3DPEHPK3PXP',
@@ -826,6 +859,7 @@ describe('popup 编辑 digits 重算与 URI 导入 carried 透传（B3-16）', (
 
 describe('popup 锁定态与标签筛选恢复（B3-11/14）', () => {
   afterEach(() => {
+    unmountActive() // 先卸载：泄漏实例会在下方 lockedRef=false 翻转时触发跟随拉取
     vault.tags.length = 0
     settings.rememberTagFilter = false
     settings.lastTagFilterIds = []
@@ -834,7 +868,7 @@ describe('popup 锁定态与标签筛选恢复（B3-11/14）', () => {
 
   it('锁定态：渲染 LockScreen 且 allowPasskey=false（popup 无 WebAuthn 入口）', async () => {
     lockedRef.value = true
-    const wrapper = await mountApp()
+    const wrapper = await mountTracked()
     expect(wrapper.find('lock-screen-stub').exists()).toBe(true)
     expect(wrapper.findComponent({ name: 'LockScreen' }).props('allowPasskey')).toBe(false)
     expect(wrapper.find('main').exists()).toBe(false)
@@ -845,7 +879,7 @@ describe('popup 锁定态与标签筛选恢复（B3-11/14）', () => {
     settings.lastTagFilterIds = ['t1', 'gone']
     vault.tags.push({ id: 't1', name: '工作' }, { id: 't2', name: '个人' } as never)
 
-    const wrapper = await mountApp()
+    const wrapper = await mountTracked()
     const stub = wrapper.findComponent({ name: 'TagFilterRowStub' })
     expect(stub.props('selectedIds')).toEqual(['t1']) // gone 已被悬空剔除
   })
@@ -855,7 +889,7 @@ describe('popup 锁定态与标签筛选恢复（B3-11/14）', () => {
     settings.lastTagFilterIds = ['t1']
     vault.tags.push({ id: 't1', name: '工作' } as never)
 
-    const wrapper = await mountApp()
+    const wrapper = await mountTracked()
     expect(wrapper.findComponent({ name: 'TagFilterRowStub' }).props('selectedIds')).toEqual([])
   })
 })

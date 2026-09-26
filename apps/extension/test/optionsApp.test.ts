@@ -291,10 +291,11 @@ describe('挂载序列与 badge 对账（B4-18）', () => {
     wrapper!.unmount()
     expect(lockWatcher.stop).toHaveBeenCalledTimes(1)
 
-    // 边界注记：宿主 onUnlocked 回调体未返回 watch 反注册函数（unregister 恒 undefined），且
-    // followScheduler.start() 在 onMounted 异步链中调用——watcher 不绑定组件 effect scope，
-    // 存在对象级泄漏（随页面上下文关闭回收）。但 pre-flush watcher 在组件卸载后回调被 Vue
-    // 调度器跳过，锁定翻转零网络（现状锚定；宿主补 return watch 停止函数后语义不变，更卫生）
+    // 接线回归探针：宿主 onUnlocked 以 concise arrow 返回 watch(locked) 的 stop handle，
+    // scheduler.start() 存入 unregister、stop() 调用之，宿主 onUnmounted 调
+    // followScheduler.stop()——显式反注册闭环完整，锁定翻转零网络。watch 因 start() 在
+    // onMounted 异步链中执行不绑定组件 effect scope，但显式 stop 已覆盖（生命周期卫生靠它，
+    // 不靠 scope 兜底）
     runMock.mockClear()
     lockedRef.value = false
     await flushPromises()
