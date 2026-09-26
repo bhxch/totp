@@ -963,7 +963,7 @@ mod tests {
     // ---- R11 镜像断言：Rust 导入白名单与 extension 端 accept 派生常量集合一致（防三端漂移）----
 
     /// 从 TS 源码提取 `const NAME = ['..', ..] as const` 数组的字符串字面量项
-    /// （App.vue 的导入扩展名两段派生常量与 Rust 白名单互验）
+    /// （optionsPlatforms.ts 的导入扩展名两段派生常量与 Rust 白名单互验）
     fn ts_const_string_array(source: &str, name: &str) -> Vec<String> {
         let marker = format!("const {name}");
         let start = source.find(&marker).unwrap_or_else(|| {
@@ -984,13 +984,19 @@ mod tests {
             .collect()
     }
 
-    // include_str! 编译期内嵌 App.vue：文件缺失/常量改名/扩展名增删任一侧不同步即测试失败。
+    // include_str! 编译期内嵌 optionsPlatforms.ts（R4 起导入 accept 派生常量自 App.vue 迁驻于此）：
+    // 文件缺失/常量改名/扩展名增删任一侧不同步即测试失败。
     // 集合比较（排序后全等）不依赖两侧书写顺序
     #[test]
     fn import_whitelist_mirrors_extension_accept_constants() {
-        const APP_VUE: &str = include_str!("../../../extension/entrypoints/options/App.vue");
-        let mut ts: Vec<String> = ts_const_string_array(APP_VUE, "IMPORT_TEXT_EXTENSIONS");
-        ts.extend(ts_const_string_array(APP_VUE, "IMPORT_BINARY_EXTENSIONS"));
+        const OPTIONS_PLATFORMS_TS: &str =
+            include_str!("../../../extension/src/optionsPlatforms.ts");
+        let mut ts: Vec<String> =
+            ts_const_string_array(OPTIONS_PLATFORMS_TS, "IMPORT_TEXT_EXTENSIONS");
+        ts.extend(ts_const_string_array(
+            OPTIONS_PLATFORMS_TS,
+            "IMPORT_BINARY_EXTENSIONS",
+        ));
         ts.sort();
         let mut rs: Vec<String> = import_byte_extensions()
             .into_iter()
