@@ -16,12 +16,16 @@ P0-P6 全部完成。各包最终实测与 gate 定值（gate = 实测 -0.5pp �
 | apps/desktop/src | 98.57% | 94.62% | 332 | 98 / 94 |
 | src-tauri（原始口径） | 71.56% | 54.69% | cargo 102 | CI `--fail-under-lines 71 --fail-under-branches 54` |
 
+- desktop 于 2026-09-26 终审补登记 `src/main.ts`、`src/mini.ts` 豁免（§1.3 createApp 入口），
+  All files 基数随之升至 99.28%/94.87%，gate 定值不变。
+
 - **§3.7/§5 的 Rust 90/85 不可达**：`run()`（Tauri Builder/generate_context/托盘/快捷键装配）
   与 OS 集成（lock_events 消息泵、DPAPI/COM、系统对话框）按 §1.3 属豁免区，但 llvm-cov 只有
   整文件级排除（`--ignore-filename-regex`），**无函数/行级豁免机制**——lib.rs 等文件内豁免行为
   与大量已测代码同文件，整文件排除会连可测代码一并剔除。故 Rust gate 以原始口径 71/54 起步；
   豁免口径实测 73.50%/58.75%（排除 main.rs、lib.rs `run()`、lock_events.rs），随 seam 抽取
-  按该口径逐步收紧。
+  按该口径逐步收紧。分支 gate 经 `scripts/rust-coverage.mjs` 解析 llvm-cov export JSON 的
+  totals 实现（`--fail-under-branches` 非 cargo-llvm-cov 选项，CI 首跑实证）。
 - **分支口径说明**：§0 基线表的 Rust 分支 71.71%（185/258）为早期未开 `--branch` 的函数级
   region 口径；P0 固化测法后 `llvm-cov --branch` 的分支区域总量为 **426**，两组数字不可直接
   比较。本文所有 Rust 分支覆盖数字以 `--branch` 口径为准。
