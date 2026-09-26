@@ -84,6 +84,11 @@ export async function saveSources(adapter: StorageAdapter, sources: BackupSource
   await adapter.set(SOURCES_KEY, JSON.stringify(sources))
 }
 
+/**
+ * 旧字节 hash 基线读取（sourceRevs 键）。
+ * @deprecated 遗留口径，仅 legacy 云多目标迁移（legacyCloudMigrate.ts）平移旧基线用：新代码的
+ * 源基线是 SourceSyncState（syncState.ts，rev 逻辑时钟 + baseSnapshot），不得再读写此键。
+ */
 export async function loadSourceRevs(adapter: StorageAdapter): Promise<Record<string, string>> {
   let raw: string | null
   try {
@@ -102,7 +107,11 @@ export async function loadSourceRevs(adapter: StorageAdapter): Promise<Record<st
   }
 }
 
-/** hash=null 语义为删除该源基线键（与旧 saveTargetHash 一致，非写入 null 值） */
+/**
+ * 旧字节 hash 基线写入；hash=null 语义为删除该源基线键（与旧 saveTargetHash 一致，非写入 null 值）。
+ * @deprecated 遗留口径，仅 legacy 云多目标迁移（legacyCloudMigrate.ts）平移旧基线用：新代码的
+ * 源基线是 SourceSyncState（syncState.ts，rev 逻辑时钟 + baseSnapshot），不得再读写此键。
+ */
 export async function saveSourceRev(adapter: StorageAdapter, id: string, hash: string | null): Promise<void> {
   const revs = await loadSourceRevs(adapter)
   if (hash === null) delete revs[id]
