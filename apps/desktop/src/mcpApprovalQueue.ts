@@ -71,7 +71,7 @@ export function createMcpApprovalQueue(deps: McpApprovalQueueDeps) {
   /** 工具确认裁定回调登记（按 id）：入队登记、裁定/清算时消费恰一次 */
   const pendingDecide = new Map<number, McpToolDecide>()
 
-  const dedupeKey = (e: McpConsentItem): string => `conn:${e.ident}`
+  const dedupeKey = (e: McpApprovalEvent): string => `conn:${e.ident}`
 
   /** 首连审批入队：同 ident 10s 窗口内 → 就地更新已排队项（保持位次、刷新窗口）；
    *  已裁定离队后的窗口内重试被挡（原语义：忽略，过窗口期可再入队） */
@@ -80,7 +80,9 @@ export function createMcpApprovalQueue(deps: McpApprovalQueueDeps) {
     const key = dedupeKey(event)
     const last = lastSeen.get(key)
     if (last !== undefined && t - last < MCP_APPROVAL_DEDUPE_MS) {
-      const idx = queue.value.findIndex((e) => !('id' in e) && e.ident === event.ident)
+      // 守卫必须按通道分流（isToolConfirmItem）：窗口内审批更新只准顶首连审批项——
+      // 若误顶工具确认项，其 pendingDecide 回调无人消费即孤儿化（oneshot 悬挂等 60s 超时）
+      const idx = queue.value.findIndex((e) => !isToolConfirmItem(e) && e.ident === event.ident)
       if (idx >= 0) {
         const next = [...queue.value]
         next[idx] = { ...event }
