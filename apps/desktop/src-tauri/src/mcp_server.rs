@@ -1952,6 +1952,55 @@ mod tests {
         );
     }
 
+    // 多星号回溯形态（盘点 B33）：单回溯点贪心算法对 *-only 模式语义完备——
+    // 失配回退到最近的 `*` 多吞一个字符再试，前面已吞入的内容可被后续 `*` 覆盖
+    #[test]
+    fn wildcard_match_multi_star_backtracking() {
+        // a*b*c：多星号夹持，两段 `*` 各吞任意内容
+        assert!(wildcard_match("a*b*c", "aXbYc"));
+        assert!(wildcard_match("a*b*c", "abc"), "`*` 可吞空串");
+        assert!(wildcard_match("a*b*c", "aXXbbYYccZZc"));
+        assert!(!wildcard_match("a*b*c", "aXb"), "缺尾段 c 不匹配");
+        assert!(!wildcard_match("a*b*c", "acb"), "段序错位不匹配");
+        // 首尾 `*` 与中段组合
+        assert!(wildcard_match("*a*b*", "xxaxxbxx"));
+        assert!(wildcard_match("*a*b*", "ab"));
+        assert!(!wildcard_match("*a*b*", "xxaxx"), "缺尾段 b 不匹配");
+        // 必须回溯的形态：首个 `*` 贪婪吞掉 'a' 后失配，须回退重试
+        assert!(wildcard_match("*ab", "aab"));
+        assert!(
+            wildcard_match("*b*c", "xbxbc"),
+            "贪婪吞满后仍须可回退命中后段"
+        );
+        assert!(!wildcard_match("*b*bc", "xbc"), "回退后仍无解则不匹配");
+    }
+
+    // GateMode serde 线格式（盘点 B32）：headless 连接行 gate 字段的消费契约——
+    // run() 手写 match 映射 token/wildcard/exact/alwaysAsk，本测试锁定 serde 线格式防漂移
+    #[test]
+    fn gate_mode_serde_wire_format_roundtrip() {
+        for (mode, wire) in [
+            (GateMode::Token, "token"),
+            (GateMode::Wildcard, "wildcard"),
+            (GateMode::Exact, "exact"),
+            (GateMode::AlwaysAsk, "alwaysAsk"),
+        ] {
+            assert_eq!(
+                serde_json::to_value(mode).unwrap(),
+                serde_json::json!(wire),
+                "{wire} 线格式必须与 run() 连接行映射一致"
+            );
+            assert_eq!(
+                serde_json::from_value::<GateMode>(serde_json::json!(wire)).unwrap(),
+                mode
+            );
+        }
+        // 未知/畸形线格式 fail-closed 拒绝（不静默回落某档；camelCase 分支名本身即 "alwaysAsk"）
+        assert!(serde_json::from_value::<GateMode>(serde_json::json!("always_ask")).is_err());
+        assert!(serde_json::from_value::<GateMode>(serde_json::json!("AlwaysAsk")).is_err());
+        assert!(serde_json::from_value::<GateMode>(serde_json::json!(1)).is_err());
+    }
+
     #[test]
     fn gate_decision_matrix() {
         use GateMode::*;

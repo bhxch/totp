@@ -80,4 +80,12 @@ mod tests {
         assert!(parse_args(&s(&["--mcp-port", "47216"])).is_err()); // 缺 headless
         assert!(parse_args(&s(&["--mcp-port"])).is_err()); // 缺值
     }
+
+    // 缺值与非数字端口分支（盘点 B1-2）：CLI 错误须显式 Err（run 里 stderr+exit(2)）
+    #[test]
+    fn rejects_missing_token_value_and_non_numeric_port() {
+        assert!(parse_args(&s(&["--headless-mcp", "--mcp-token"])).is_err());
+        assert!(parse_args(&s(&["--headless-mcp", "--mcp-port", "not-a-number"])).is_err());
+        assert!(parse_args(&s(&["--headless-mcp", "--mcp-port", "-1"])).is_err());
+    }
 }
