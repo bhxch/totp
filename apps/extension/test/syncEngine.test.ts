@@ -12,7 +12,7 @@ import {
   base64ToBytes, bytesToBase64, chunkKey, chunksToMeta, splitIntoChunks, type SyncChunk,
 } from '@totp/core'
 import {
-  markSyncOff, needsPullBeforePush, pullSyncIfNewer, pushSync, SYNC_STATUS_KEY,
+  markSyncOff, needsPullBeforePush, pullSyncIfNewer, pushSync, readSyncStatus, SYNC_STATUS_KEY,
 } from '../src/syncEngine'
 import { installChromeShim, type ChromeShim, type Store } from './helpers/chromeShim'
 
@@ -313,6 +313,30 @@ describe('pushOnce 编排（经 pushSync）', () => {
     expect(status.pct).toBe(95) // Math.round(95_000 / 100_000 * 100)，且 >90% 阈值判定成立
   })
 
+})
+
+describe('readSyncStatus（R16⑪ read+校验单点化导出）', () => {
+  it('读到已写状态：state/at 原样返回，pct 仅为 number 时透传', async () => {
+    const shim = installChrome({ [SYNC_STATUS_KEY]: { state: 'ok', at: 1234, pct: 42 } }, {})
+    expect(await readSyncStatus()).toEqual({ state: 'ok', at: 1234, pct: 42 })
+    shim.local.data[SYNC_STATUS_KEY] = { state: 'off', at: 5678, pct: 'junk' }
+    expect(await readSyncStatus()).toEqual({ state: 'off', at: 5678 })
+  })
+  it('从未写入/非对象/缺 at/state 非法 → null（engine 是唯一写入方，外来值按损坏拒）', async () => {
+    installChrome({}, {})
+    expect(await readSyncStatus()).toBeNull()
+    installChrome({ [SYNC_STATUS_KEY]: 'junk' }, {})
+    expect(await readSyncStatus()).toBeNull()
+    installChrome({ [SYNC_STATUS_KEY]: { state: 'ok' } }, {})
+    expect(await readSyncStatus()).toBeNull()
+    installChrome({ [SYNC_STATUS_KEY]: { state: 'alien', at: 1 } }, {})
+    expect(await readSyncStatus()).toBeNull()
+  })
+  it('storage 抛错 → null（不扩散）', async () => {
+    const shim = installChrome({ [SYNC_STATUS_KEY]: { state: 'ok', at: 1 } }, {})
+    shim.local.get = async () => { throw new Error('io down') }
+    expect(await readSyncStatus()).toBeNull()
+  })
 })
 
 describe('pullSyncIfNewer（经 pullOnce）', () => {

@@ -37,6 +37,9 @@ const STATUS_KEY = SYNC_STATUS_KEY
  *  invalid（F6）：远端明文 payload 结构非法，落盘前被校验门拒绝（防绕过 replaceVault 校验的持久启动砖化） */
 export type SyncStatusState = 'ok' | 'quota' | 'error' | 'conflict' | 'invalid' | 'off'
 
+/** 合法状态值全集（唯一写入方 setSyncStatus 只产这些；读取时收敛校验用） */
+const SYNC_STATUS_STATES: readonly SyncStatusState[] = ['ok', 'quota', 'error', 'conflict', 'invalid', 'off']
+
 export interface SyncStatus {
   state: SyncStatusState
   at: number
@@ -57,6 +60,22 @@ async function setSyncStatus(state: SyncStatusState): Promise<void> {
   }
   const status: SyncStatus = { state, at: Date.now(), ...(pct !== undefined ? { pct } : {}) }
   await ext!.storage.local.set({ [STATUS_KEY]: status })
+}
+
+/** 读本端同步状态（R16⑪ 导出复用：read+校验单点化，宿主 UI 状态条/readStatus 不再各写一份
+ *  手写解析）。从未写入/结构损坏/state 非法（engine 是唯一写入方，外来值按损坏拒）/IO 失败
+ *  → null；pct 仅在为 number 时透传 */
+export async function readSyncStatus(): Promise<SyncStatus | null> {
+  try {
+    const raw = (await ext!.storage.local.get([STATUS_KEY]))[STATUS_KEY]
+    if (typeof raw !== 'object' || raw === null) return null
+    const s = raw as Partial<SyncStatus>
+    if (typeof s.at !== 'number') return null
+    if (typeof s.state !== 'string' || !SYNC_STATUS_STATES.includes(s.state as SyncStatusState)) return null
+    return { state: s.state as SyncStatusState, at: s.at, ...(typeof s.pct === 'number' ? { pct: s.pct } : {}) }
+  } catch {
+    return null
+  }
 }
 
 /** settings 直读 local 判定同步开关：缺省/损坏/false → 不同步（默认关闭，显式开启） */
