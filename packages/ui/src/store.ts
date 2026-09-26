@@ -40,6 +40,9 @@ export function createVueStore(
      *  invoke('clear_stashed_dek')——手动/空闲/系统锁库走纯前端 lock() 不通知 Rust，须同步清
      *  Rust 侧 DEK 暂存槽，防「stash 后 destroy 失败回滚→锁库→销毁重建回注旧 DEK 绕过锁定」 */
     onLocked?: () => void
+    /** vault 持久化失败上报（R16⑤）：commit 落盘失败不再仅 console.error 吞掉——宿主传入后
+     *  收到原始错误（内存态已前进、盘上落后，宿主可提示用户「数据未保存」）；不传保持仅日志 */
+    onPersistError?: (e: unknown) => void
   } = {},
 ) {
   const suppressMs = opts.selfWriteSuppressMs ?? 500
@@ -255,7 +258,10 @@ export function createVueStore(
         lastSelfWrite.vault = Date.now()
         await saveVaultToAdapter(gen)
       } catch (e) {
-        console.error('[store] saveVault failed:', e)
+        // R16⑤：内存态已前进而盘上落后，失败须可被宿主感知（提示「数据未保存」）——
+        // 注入 onPersistError 上报；未注入保持仅日志（队列语义不变：失败不传染后续任务）
+        if (opts.onPersistError) opts.onPersistError(e)
+        else console.error('[store] saveVault failed:', e)
       }
     })
   }

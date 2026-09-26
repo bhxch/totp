@@ -64,6 +64,23 @@ describe('createVueStore', () => {
     expect(s.vault.updatedAt).toBe(2)
   })
 
+  it('opts.onPersistError：commit 落盘失败上报回调（R16⑤，不再仅 console.error 吞掉）；不传则零行为', async () => {
+    const adapter = createMemoryStorage()
+    const boom = new Error('disk full')
+    const setOrig = adapter.set.bind(adapter)
+    adapter.set = (k, v) => (k === 'vault' ? Promise.reject(boom) : setOrig(k, v))
+    const onPersistError = vi.fn()
+    const s = createVueStore(adapter, { onPersistError })
+    await s.initStore()
+    await s.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    expect(onPersistError).toHaveBeenCalledTimes(1)
+    expect(onPersistError).toHaveBeenCalledWith(boom)
+    // 队列语义不变：失败不传染，后续写照常
+    adapter.set = setOrig
+    await s.addEntryOp(newEntryFromUri('otpauth://totp/B:c?secret=JBSWY3DPEHPK3PXP', 1700000000001))
+    expect(JSON.parse((await adapter.get('vault'))!).entries).toHaveLength(2)
+  })
+
   it('registerStorageSync：非自写通知触发重读；自写窗口内跳过', async () => {
     const adapter = createMemoryStorage()
     let notify: ((p: { vault?: boolean; settings?: boolean }) => void) | null = null
