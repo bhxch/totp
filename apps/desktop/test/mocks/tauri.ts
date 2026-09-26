@@ -5,6 +5,7 @@
  * 覆盖面（与 src 实际 invoke/listen/fs/window 使用面一一对应，见盘点底稿 D 节）：
  * - invoke：全部 31 个 Rust 命令（INVOKE_COMMANDS），按命令名注册 handler/返回值；
  *   未注册的已知命令返回 null（与 Rust Option 返回一致）；清单外命令视为命令名笔误，抛错提示
+ *   （on/onReturn/listen 注册侧同口径 fail-loud，emit 侧保持宽松）
  * - 事件：@tauri-apps/api/event listen 的 6 类事件（EVENTS）+ getCurrentWindow onFocusChanged
  * - plugin-fs：tauriFs/backupService 用到的 8 个成员（含 BaseDirectory.AppData）
  * - 窗口：getCurrentWindow 的 label/hide/onFocusChanged
@@ -91,13 +92,22 @@ export const invoke = vi.fn(async (cmd: string, args?: Args): Promise<unknown> =
   return handler ? await handler(args) : null
 })
 
-/** 注册命令 handler（可抛错/返回 Promise；每次调用现求值） */
+/** 命令名笔误防护（与 invoke 侧 fail-loud 对齐）：注册时即抛，不留「永远打不到的 handler」 */
+function assertKnownCommand(command: string): void {
+  if (!(INVOKE_COMMANDS as readonly string[]).includes(command)) {
+    throw new Error(`[tauriMock] 未知命令「${command}」——on/onReturn 仅接受 INVOKE_COMMANDS 清单内命令名（清单外视为笔误）`)
+  }
+}
+
+/** 注册命令 handler（可抛错/返回 Promise；每次调用现求值；清单外命令名抛错） */
 export function on(command: string, handler: CommandHandler): void {
+  assertKnownCommand(command)
   commandHandlers.set(command, handler)
 }
 
-/** 注册命令静态返回值（Option 命令注册 null 即显式「取消/无」语义） */
+/** 注册命令静态返回值（Option 命令注册 null 即显式「取消/无」语义；清单外命令名抛错） */
 export function onReturn(command: string, value: unknown): void {
+  assertKnownCommand(command)
   commandHandlers.set(command, () => value)
 }
 
@@ -114,6 +124,10 @@ const eventListeners = new Map<string, Set<EventHandler>>()
 let eventIdSeq = 0
 
 export const listen = vi.fn(async (event: string, cb: EventHandler): Promise<() => void> => {
+  if (!(EVENTS as readonly string[]).includes(event)) {
+    // 注册侧 fail-loud（emit 侧保持宽松：派发不存在监听的事件为无操作）
+    throw new Error(`[tauriMock] 未知事件「${event}」——listen 仅接受 EVENTS 清单内事件名（清单外视为笔误）`)
+  }
   let set = eventListeners.get(event)
   if (!set) {
     set = new Set()
@@ -141,6 +155,7 @@ export function listenerCount(event: string): number {
 // ---------------------------------------------------------------------------
 type FocusHandler = (e: { payload: boolean }) => void
 const focusListeners = new Set<FocusHandler>()
+let currentWindowLabel = 'main'
 
 export const window = {
   get label(): string {
@@ -157,7 +172,6 @@ export const window = {
     }
   }),
 }
-let currentWindowLabel = 'main'
 
 /** 派发窗口失焦/聚焦（App.vue 失焦隐藏、MiniApp 聚焦重建链路的测试入口） */
 export function emitFocusChanged(focused: boolean): void {

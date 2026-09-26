@@ -39,6 +39,14 @@ describe('invoke 分发', () => {
     await expect(tauriMock.invoke('release_policy_get')).resolves.toEqual({ mode: 'pause', lockOnPause: true })
   })
 
+  it('on/onReturn 注册清单外命令名即抛错（笔误防护与 invoke 侧对齐，不留下打不到的 handler）', async () => {
+    expect(() => tauriMock.on('stgae_clipboard_write', () => null)).toThrow(/未知命令/)
+    expect(() => tauriMock.onReturn('take_stash_dek', 'x')).toThrow(/未知命令/)
+    // 抛错路径未污染注册表：正确命令名注册照常生效
+    tauriMock.onReturn('take_stashed_dek', 'ok')
+    await expect(tauriMock.invoke('take_stashed_dek')).resolves.toBe('ok')
+  })
+
   it('清单外命令抛错（视为笔误，不给静默 null）', async () => {
     await expect(tauriMock.invoke('stgae_clipboard_write')).rejects.toThrow(/未知 invoke 命令/)
   })
@@ -105,6 +113,12 @@ describe('事件 listen/emit', () => {
     for (const ev of ['system-lock', 'force-lock', 'stash-dek-request', 'mcp://approval', 'mcp://tool-approval', 'mcp://req']) {
       expect(EVENTS).toContain(ev)
     }
+  })
+
+  it('listen 注册清单外事件名即抛错（emit 侧保持宽松不抛）', async () => {
+    await expect(tauriMock.listen('force_llock', () => {})).rejects.toThrow(/未知事件/)
+    expect(tauriMock.listenerCount('force_llock')).toBe(0)
+    tauriMock.emit('force_llock', 'x') // 宽松：无监听派发为无操作
   })
 })
 
