@@ -422,78 +422,83 @@ pub fn token_eq(a: &str, b: &str) -> bool {
         == 0
 }
 
+/// 单套 TTL 记账底座（R16⑩：once/cooldown 两套同构 ident→记账时刻映射的共用实现，
+/// GateSessions 两实例化）。grant 记账时刻；valid 判 ttl 内有效并回收过期条目——进程
+/// 生命周期内存有界（每 ident 至多一条，过期即删）。锁中毒按「未记账」处理（fail-closed，
+/// 与收敛前 once/cooldown 各自口径一致）
+#[derive(Debug, Default)]
+struct TtlBook {
+    entries: Mutex<HashMap<String, Instant>>,
+}
+
+impl TtlBook {
+    fn grant(&self, ident: String) {
+        if let Ok(mut m) = self.entries.lock() {
+            m.insert(ident, Instant::now());
+        }
+    }
+    fn valid(&self, ident: &str, ttl: Duration) -> bool {
+        let entry = self.entries.lock().ok().and_then(|m| m.get(ident).copied());
+        match entry {
+            Some(t) if t.elapsed() < ttl => true,
+            // 命中过期条目即回收：进程生命周期内存有界（每 ident 至多一条，过期即删）
+            Some(_) => {
+                if let Ok(mut m) = self.entries.lock() {
+                    m.remove(ident);
+                }
+                false
+            }
+            None => false,
+        }
+    }
+    /// 清空并返回清空条目数（锁中毒按 0 条计，与其他方法口径一致）
+    fn clear(&self) -> usize {
+        self.entries
+            .lock()
+            .map(|mut m| {
+                let n = m.len();
+                m.clear();
+                n
+            })
+            .unwrap_or(0)
+    }
+}
+
 /// 审批态记账：once = 「仅本次」（15 分钟 TTL）；deny 后短窗冷却防弹窗轰炸。
-/// 内存态，不落盘——重启即清，与「批准不跨进程生命周期」的安全预期一致
+/// 内存态，不落盘——重启即清，与「批准不跨进程生命周期」的安全预期一致。
+/// R16⑩：两套记账同构，收敛为 TtlBook{once, cooldown} 两实例化；对外方法名/语义
+/// 不变（现有测试锁定）
 #[derive(Debug, Default)]
 pub struct GateSessions {
-    once: Mutex<HashMap<String, Instant>>,
-    cooldown: Mutex<HashMap<String, Instant>>,
+    once: TtlBook,
+    cooldown: TtlBook,
 }
 pub const ONCE_TTL: Duration = Duration::from_secs(15 * 60);
 pub const DENY_COOLDOWN: Duration = Duration::from_secs(60);
 
 impl GateSessions {
     pub fn grant_once(&self, ident: String) {
-        if let Ok(mut m) = self.once.lock() {
-            m.insert(ident, Instant::now());
-        }
+        self.once.grant(ident);
     }
     pub fn once_valid(&self, ident: &str) -> bool {
-        let entry = self.once.lock().ok().and_then(|m| m.get(ident).copied());
-        match entry {
-            Some(t) if t.elapsed() < ONCE_TTL => true,
-            // 命中过期条目即回收：进程生命周期内存有界（每 ident 至多一条，过期即删）
-            Some(_) => {
-                if let Ok(mut m) = self.once.lock() {
-                    m.remove(ident);
-                }
-                false
-            }
-            None => false,
-        }
+        self.once.valid(ident, ONCE_TTL)
     }
     pub fn mark_denied(&self, ident: &str) {
-        if let Ok(mut m) = self.cooldown.lock() {
-            m.insert(ident.to_string(), Instant::now());
-        }
+        self.cooldown.grant(ident.to_string());
     }
     pub fn denied_recently(&self, ident: &str) -> bool {
-        let entry = self
-            .cooldown
-            .lock()
-            .ok()
-            .and_then(|m| m.get(ident).copied());
-        match entry {
-            Some(t) if t.elapsed() < DENY_COOLDOWN => true,
-            // 同 once：过期冷却条目即回收，内存有界
-            Some(_) => {
-                if let Ok(mut m) = self.cooldown.lock() {
-                    m.remove(ident);
-                }
-                false
-            }
-            None => false,
-        }
+        self.cooldown.valid(ident, DENY_COOLDOWN)
     }
     /// 清空全部审批记账（once 批准 + deny 冷却）：「重置审批状态」入口。返回清空条目总数。
     /// 用户主动吊销语义：once 有效批准立即失效（客户端须重新走审批弹窗），
     /// deny 冷却一并清（主动操作无需再等 60s）；锁中毒按 0 条计（与其他方法口径一致）
     pub fn clear_all(&self) -> usize {
-        let once = self.once.lock().map(|mut m| {
-            let n = m.len();
-            m.clear();
-            n
-        });
-        let cooldown = self.cooldown.lock().map(|mut m| {
-            let n = m.len();
-            m.clear();
-            n
-        });
-        once.unwrap_or(0) + cooldown.unwrap_or(0)
+        self.once.clear() + self.cooldown.clear()
     }
     #[cfg(test)]
     pub fn expire_all_for_test(&mut self) {
-        if let Ok(mut m) = self.once.lock() {
+        // 原语义：仅清 once 授权（测试模拟 once TTL 过期；deny 冷却记账不受影响）
+        if let Ok(mut m) = self.once.entries.lock() {
             m.clear();
         }
     }
