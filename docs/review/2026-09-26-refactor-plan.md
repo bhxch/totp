@@ -263,3 +263,16 @@ docs/ 历史审查记录(docs/review/、docs/e2e-test.md)仅作背景参考,结�
 | 13 | (建议,非阻塞)R4 overrides 面以差异点清单驱动最小化 | **采纳**。R4 rationale 补列已核实真实差异(extension 独有 authError 包装 cloudRunnerFactory.ts:57-61/133-145、badge/横幅通道 :114-120;desktop 独有 dpapi/unlockNaming securityPlatform.ts:126-127、目录冲突副本 cloudPlatforms.ts:102);proposal 增加纪律:每工厂先列「同型成员数 vs 注入差异数」,overrides 键数接近字面量成员数则不抽;§5.3 要求该清单作评审材料;§6 新增对应剔除项 |
 
 评审员的「核实通过记录」(对 R1-R16 关键声明、行数、基建的抽样复核)与本方案两轮验证结果一致,无分歧点,不再单列回应。修订后方案未改变 16 项的编号、优先级与总体路线;变更集中在 R1/R5 的方案形态、R16⑧/R3/R9/R11 的实施步骤精度,以及各处证据计数的准确性。
+
+---
+
+## 8. 终审修复勘误(2026-09-27)
+
+**0830b3b(R3)提交信息中「行为不变」声明不准确,特此更正**:该提交将 popup 编辑态「切换 type
+重算表单默认 digits」由基线三元 `steam?5:6` 改查 `defaultDigitsFor`(typeProfiles.ts:149-152,
+forcedDigits ?? defaultDigits),yandex 的表单默认值实际由 6 变为 8。这是**有意的行为修正**而非
+不变:基线下该路径表单显示 6,提交时经 `toOtpDigits(6,'yandex')` 边界收口强制为 8 落盘
+(typeProfiles.ts:142-146 forced 分支,test :90 锁定),显示与落盘不一致;改查后表单显示与落盘一致
+(defaultDigitsFor yandex=8 由 typeProfiles.test.ts「totp/hotp=6,steam=5,yandex=8」用例锁定)。
+R3 主张的「移除 4 处幂等 toOtpDigits 前置收口行为不变」部分不受影响。分支未推送,按「低·提交
+声明过强」以本文档勘误留痕,不改写 62 个后继提交的历史哈希。
