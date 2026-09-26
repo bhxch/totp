@@ -201,11 +201,13 @@ const SETTINGS_VALIDATORS: { [K in keyof AppSettings]: (v: unknown) => AppSettin
 function settingsFromParsed(parsed: Record<string, unknown>): AppSettings {
   // 等价于旧「{...DEFAULT, ...parsed} 后逐字段校验」：合法值透传，非法/缺失走 DEFAULT；
   // 表外键一律丢弃（旧盘多余字段不透传）。parsed 非对象（null/标量）由 try/catch 兜底回默认。
-  const out = {} as AppSettings
-  for (const k of Object.keys(SETTINGS_VALIDATORS) as Array<keyof AppSettings>) {
-    out[k] = SETTINGS_VALIDATORS[k](parsed[k])
+  // 行级返回类型安全由 SETTINGS_VALIDATORS 映射类型声明保证（缺行/行签名错=编译错误）；
+  // 装配处编译器无法逐键关联 k↔校验器行（关联联合写入限制），以 unknown 收集后整体收形。
+  const out: Record<string, unknown> = {}
+  for (const [k, validate] of Object.entries(SETTINGS_VALIDATORS)) {
+    out[k] = validate(parsed[k])
   }
-  return out
+  return out as unknown as AppSettings
 }
 
 export async function loadSettings(adapter: StorageAdapter): Promise<AppSettings> {
