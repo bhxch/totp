@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { BackupSource, CloudCred, EntryConflict, SourceSyncState } from '@totp/core'
-import { contentHashVault, pushEnvelope, resolveObjectPath, resolveTimestampPath, syncMultipleTargets } from '@totp/core'
+import { BACKEND_LABEL, contentHashVault, pushEnvelope, resolveObjectPath, resolveTimestampPath, syncMultipleTargets } from '@totp/core'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { VueStore } from '../store'
@@ -39,11 +39,9 @@ const props = withDefaults(defineProps<{
 
 const { t } = useI18n()
 
+// 可添加后端菜单子集（不含 local——本地源归 BackupCard）；后端 → 用户可见名走 core BACKEND_LABEL 单点（R14）
 const BACKENDS = ['webdav', 's3', 'gist', 'gdrive', 'onedrive'] as const
 type BackendId = (typeof BACKENDS)[number]
-const BACKEND_LABEL: Record<BackendId, string> = {
-  webdav: 'WebDAV', s3: 'S3', gist: 'GitHub Gist', gdrive: 'Google Drive', onedrive: 'OneDrive',
-}
 
 /** 源列表（挂载时 loadSources 回填；卡内编辑=内存副本，「保存凭据」才落盘） */
 const sources = ref<BackupSource[]>([])

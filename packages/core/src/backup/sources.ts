@@ -27,6 +27,13 @@ export interface BackupSource {
 export const SOURCES_KEY = 'backupSources'
 export const SOURCE_REVS_KEY = 'sourceRevs'
 
+/** 后端 kind → 用户可见名（R14 单一来源；原 ui CloudCard 与 legacy 迁移实现各持一份手写表靠
+ *  注释性同步）：云端五项为品牌名（各端一致，不 i18n）；local 为本地目录源默认名（与历史落盘
+ *  值一致，英文界面由 ui sourceDisplayNames 做展示层回落翻译，见其「源名随数据落盘不走 i18n」注）。 */
+export const BACKEND_LABEL: Record<SourceKind, string> = {
+  webdav: 'WebDAV', s3: 'S3', gist: 'GitHub Gist', gdrive: 'Google Drive', onedrive: 'OneDrive', local: '本地目录',
+}
+
 /** kind 全集登记表（isBackupSource 白名单）：键集经 satisfies Record<SourceKind, boolean> 与
  *  派生联合双向锁定——增删后端后漏登记（缺键）或残留（多键）均编译期报错，取代原数组与联合
  *  「注释性同步」（数组 satisfies 只能防非法值、防不了漏项，漏项即上面的静默丢源）。 */
