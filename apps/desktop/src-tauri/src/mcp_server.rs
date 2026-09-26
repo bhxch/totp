@@ -275,6 +275,46 @@ impl BridgeShared {
     }
 }
 
+/// bridge_call 的等待+回收核心（emit 之外的可测单元，不依赖 AppHandle 构造）：
+/// 前端回传 → 透传结果；发送端被弃（前端 drop 请求）→ "frontend dropped the request"；
+/// 超时 → 回收表项（防 pending 表泄漏）+ "app busy"（设计 §4）
+async fn await_bridge_response(
+    bridge: &BridgeShared,
+    id: u64,
+    rx: oneshot::Receiver<Result<serde_json::Value, String>>,
+    timeout: Duration,
+) -> Result<serde_json::Value, String> {
+    match tokio::time::timeout(timeout, rx).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(_)) => Err("frontend dropped the request".into()),
+        Err(_) => {
+            bridge.take(id);
+            Err("app busy".into())
+        }
+    }
+}
+
+/// bridge_call 注入 emit 的变体（超时/回收语义可测；emit 失败回收表项，不留僵尸 pending）：
+/// alloc id → 登记 oneshot → emit `mcp://req` {id, tool, args} → 等待回传
+async fn bridge_call_with(
+    bridge: &BridgeShared,
+    window: &str,
+    tool: &str,
+    args: serde_json::Value,
+    timeout: Duration,
+    emit: impl FnOnce(&str, serde_json::Value) -> Result<(), String>,
+) -> Result<serde_json::Value, String> {
+    let id = bridge.alloc_id();
+    let (tx, rx) = oneshot::channel();
+    bridge.insert(id, tx);
+    let payload = serde_json::json!({ "id": id, "tool": tool, "args": args });
+    if let Err(e) = emit(window, payload) {
+        bridge.take(id);
+        return Err(format!("emit failed: {e}"));
+    }
+    await_bridge_response(bridge, id, rx, timeout).await
+}
+
 /// 工具调用 → webview 事件 → 前端回传，全程 5 秒超时。
 /// （window 参数：目标 webview 窗口 label，主窗口恒 "main"。Task 6 由 rmcp tool handler 调用。）
 pub async fn bridge_call(
@@ -285,27 +325,18 @@ pub async fn bridge_call(
     args: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     use tauri::Emitter;
-    let id = bridge.alloc_id();
-    let (tx, rx) = oneshot::channel();
-    bridge.insert(id, tx);
-    app.emit_to(
+    bridge_call_with(
+        bridge,
         window,
-        "mcp://req",
-        serde_json::json!({ "id": id, "tool": tool, "args": args }),
+        tool,
+        args,
+        Duration::from_secs(5),
+        |window, payload| {
+            app.emit_to(window, "mcp://req", payload)
+                .map_err(|e| e.to_string())
+        },
     )
-    .map_err(|e| {
-        bridge.take(id);
-        format!("emit failed: {e}")
-    })?;
-    // 5 秒超时（设计 §4 app busy）；超时后手动 take 防表泄漏
-    match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
-        Ok(Ok(result)) => result,
-        Ok(Err(_)) => Err("frontend dropped the request".into()),
-        Err(_) => {
-            bridge.take(id);
-            Err("app busy".into())
-        }
-    }
+    .await
 }
 
 /// action 工具是否需要逐次桌面确认（spec §6.2）：token 档免（持有 token 即主人）；
@@ -349,26 +380,27 @@ async fn tool_confirm(
     ident: &str,
     tool: &str,
 ) -> Result<bool, String> {
-    tool_confirm_with(app, bridge, ident, tool, TOOL_CONFIRM_TIMEOUT).await
+    use tauri::Emitter;
+    tool_confirm_with(bridge, ident, tool, TOOL_CONFIRM_TIMEOUT, |payload| {
+        app.emit_to("main", "mcp://tool-approval", payload)
+            .map_err(|e| e.to_string())
+    })
+    .await
 }
 
-/// tool_confirm 注入窗口的测试变体：生产走 tool_confirm 固定 60s
+/// tool_confirm 注入 emit 的测试变体（生产走 tool_confirm 固定 60s + 真实 emit）：
+/// emit 失败回收表项并 fail-closed，其后等待+解析同 await_confirm_response
 async fn tool_confirm_with(
-    app: &tauri::AppHandle,
     bridge: &BridgeShared,
     ident: &str,
     tool: &str,
     timeout: Duration,
+    emit: impl FnOnce(serde_json::Value) -> Result<(), String>,
 ) -> Result<bool, String> {
-    use tauri::Emitter;
     let id = bridge.alloc_id();
     let (tx, rx) = oneshot::channel();
     bridge.insert(id, tx);
-    if let Err(e) = app.emit_to(
-        "main",
-        "mcp://tool-approval",
-        serde_json::json!({ "id": id, "ident": ident, "tool": tool }),
-    ) {
+    if let Err(e) = emit(serde_json::json!({ "id": id, "ident": ident, "tool": tool })) {
         bridge.take(id);
         return Err(format!("confirm dialog unavailable: {e}"));
     }
@@ -1027,6 +1059,31 @@ pub fn mcp_revoke_approvals(state: State<'_, McpState>) -> u32 {
     state.revoke_approvals()
 }
 
+/// mcp_approval_response 的 match 本体（tauri::State 不可构造，抽收 &GateSessions 与
+/// 配置文件路径的自由函数直测）：deny=冷却 60s；once=15 分钟内放行；trust=写白名单并持久化
+fn handle_approval_response(
+    sessions: &GateSessions,
+    settings_file: &std::path::Path,
+    ident: &str,
+    action: &str,
+) -> Result<(), String> {
+    match action {
+        "deny" => {
+            sessions.mark_denied(ident);
+            Ok(())
+        }
+        "once" => {
+            sessions.grant_once(ident.to_string());
+            Ok(())
+        }
+        "trust" => {
+            let mut cfg = load_mcp_config_inner(settings_file);
+            add_whitelist_inner(settings_file, &mut cfg, ident)
+        }
+        other => Err(format!("unknown action: {other}")),
+    }
+}
+
 /// 前端审批对话框回执：deny=冷却 60s；once=15 分钟内放行；trust=写白名单并持久化
 #[tauri::command]
 pub fn mcp_approval_response(
@@ -1034,20 +1091,20 @@ pub fn mcp_approval_response(
     ident: String,
     action: String,
 ) -> Result<(), String> {
-    match action.as_str() {
-        "deny" => {
-            state.sessions.mark_denied(&ident);
-            Ok(())
-        }
-        "once" => {
-            state.sessions.grant_once(ident);
-            Ok(())
-        }
-        "trust" => {
-            let mut cfg = load_mcp_config_inner(&state.settings_file);
-            add_whitelist_inner(&state.settings_file, &mut cfg, &ident)
-        }
-        _ => Err(format!("unknown action: {action}")),
+    handle_approval_response(&state.sessions, &state.settings_file, &ident, &action)
+}
+
+/// mcp_respond 的载荷组装（可测核心）：ok 无 result → "empty result"；
+/// ok=false 无 error → "unknown error"（error 在场时 result 被忽略）
+fn bridge_respond_payload(
+    ok: bool,
+    result: Option<serde_json::Value>,
+    error: Option<String>,
+) -> Result<serde_json::Value, String> {
+    if ok {
+        result.ok_or_else(|| "empty result".to_string())
+    } else {
+        Err(error.unwrap_or_else(|| "unknown error".into()))
     }
 }
 
@@ -1060,12 +1117,9 @@ pub fn mcp_respond(
     result: Option<serde_json::Value>,
     error: Option<String>,
 ) {
-    let payload = if ok {
-        result.ok_or_else(|| "empty result".to_string())
-    } else {
-        Err(error.unwrap_or_else(|| "unknown error".into()))
-    };
-    let _ = state.bridge.respond(id, payload);
+    let _ = state
+        .bridge
+        .respond(id, bridge_respond_payload(ok, result, error));
 }
 
 /// 生命周期：enabled=false 或停不下来时只停；enabled=true 先停后起（端口/token 变更重绑）。
@@ -1122,10 +1176,24 @@ pub fn start_server(
     result
 }
 
-fn start_server_inner(
-    app: &AppHandle,
-    state: &State<'_, McpState>,
+/// serve 任务组装通道（注入以剥离 AppHandle）：入参为已过前置校验的 listener、停机信号
+/// 接收端与取消令牌；生产装配 serve_forever 任务，测试装配挂等停机信号的桩任务
+type SpawnServe = Box<
+    dyn FnOnce(
+        std::net::TcpListener,
+        tokio::sync::watch::Receiver<bool>,
+        tokio_util::sync::CancellationToken,
+    ) -> tauri::async_runtime::JoinHandle<()>,
+>;
+
+/// start_server 主体（State/AppHandle 剥离后的可测核心）：
+/// 空 token fail-closed 拒启（不 bind）→ bind（失败即 Err，未入槽的 tx 随局部变量 drop，
+/// 槽保持 None 无僵尸停机通道，审查 I-1/I-2）→ set_nonblocking → spawn serve 任务 → 停机槽入位。
+/// serve 任务内的运行态回写（异常退出 mark_start_failed）属装配细节，随 spawn_serve 注入
+fn start_server_with(
     cfg: &McpConfig,
+    slot: &Mutex<Option<ShutdownSlot>>,
+    spawn_serve: SpawnServe,
 ) -> Result<(), String> {
     // 审查修复（Finding 2 收敛）：空 token 的生成+落盘入口在 init_state_and_autostart
     // （启动期）与 mcp_set_config（设置页保存，终审修复补回），此处不再生成。空 token
@@ -1152,34 +1220,51 @@ fn start_server_inner(
         drop(tx);
         return Err(format!("set_nonblocking failed: {e}"));
     }
+    let handle = spawn_serve(listener, rx, cancellation_token.clone());
+    *slot.lock().map_err(|_| "lock poisoned")? = Some((tx, cancellation_token, handle));
+    Ok(())
+}
+
+fn start_server_inner(
+    app: &AppHandle,
+    state: &State<'_, McpState>,
+    cfg: &McpConfig,
+) -> Result<(), String> {
+    // serve 任务装配（注入闭包）：异常退出不再吞掉——进程外可见的最小日志（本 crate 无
+    // tracing）+ 同步写运行态/last_error，服务中途异常退出（罕见：runtime 崩溃）设置页也能对账
     let app = app.clone();
     let bridge = state.bridge.clone();
     let sessions = state.sessions.clone();
     let settings_file = state.settings_file.clone();
-    // 终态错误不再吞掉：进程外可见的最小日志（本 crate 无 tracing）；
-    // 同步写运行态+last_error——服务中途异常退出（罕见：runtime 崩溃）设置页也能对账
-    let serve_token = cancellation_token.clone();
-    let handle = tauri::async_runtime::spawn(async move {
-        if let Err(e) = serve_forever(
-            app.clone(),
-            bridge,
-            sessions,
-            cfg,
-            settings_file,
-            rx,
-            listener,
-            serve_token,
-        )
-        .await
-        {
-            eprintln!("[mcp] server terminated: {e}");
-            use tauri::Manager;
-            app.state::<McpState>()
-                .mark_start_failed(format!("服务异常退出: {e}"));
-        }
-    });
-    *state.shutdown.lock().map_err(|_| "lock poisoned")? = Some((tx, cancellation_token, handle));
-    Ok(())
+    let cfg = cfg.clone();
+    let cfg_for_spawn = cfg.clone();
+    start_server_with(
+        &cfg,
+        &state.shutdown,
+        Box::new(move |listener, rx, cancellation_token| {
+            let on_err_app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = serve_forever(
+                    app,
+                    bridge,
+                    sessions,
+                    cfg_for_spawn,
+                    settings_file,
+                    rx,
+                    listener,
+                    cancellation_token,
+                )
+                .await
+                {
+                    eprintln!("[mcp] server terminated: {e}");
+                    use tauri::Manager;
+                    on_err_app
+                        .state::<McpState>()
+                        .mark_start_failed(format!("服务异常退出: {e}"));
+                }
+            })
+        }),
+    )
 }
 
 /// 无头模式 CLI 内存覆盖（验收条目13）：仅本次运行生效，不回写 settings.json。
@@ -1463,6 +1548,149 @@ mod tests {
         assert!(bridge.take(id).is_none(), "超时后 pending 表项必须已清理");
         // 对外语义固定 60s（比现有 5s 桥超时延长，spec §6.2）
         assert_eq!(TOOL_CONFIRM_TIMEOUT, Duration::from_secs(60));
+    }
+
+    // ==== bridge_call 超时/回收语义（盘点 B42；emit 注入后 emit 失败分支亦直测）====
+
+    /// 从 emit 桩收到的 payload 抽回 id（payload 携带 {id, tool, args}）
+    fn payload_id(payload: &serde_json::Value) -> u64 {
+        payload["id"].as_u64().expect("payload 必须携带 id")
+    }
+
+    #[tokio::test]
+    async fn bridge_call_with_timeout_reclaims_and_reports_busy() {
+        let bridge = BridgeShared::default();
+        let pending_id = std::sync::Arc::new(std::sync::Mutex::new(None::<u64>));
+        let capture = pending_id.clone();
+        // emit 桩只记录 id 不回传 → 模拟前端挂起（app busy 场景）
+        let r = bridge_call_with(
+            &bridge,
+            "main",
+            "get_code",
+            serde_json::json!({}),
+            Duration::from_millis(50),
+            |_, payload| {
+                *capture.lock().unwrap() = Some(payload_id(&payload));
+                Ok(())
+            },
+        )
+        .await;
+        assert_eq!(
+            r,
+            Err("app busy".to_string()),
+            "5s 超时回 app busy（设计 §4）"
+        );
+        let id = pending_id.lock().unwrap().expect("emit 桩必须被调用");
+        assert!(bridge.take(id).is_none(), "超时后 pending 表项必须回收");
+    }
+
+    #[tokio::test]
+    async fn bridge_call_with_emit_failure_reclaims_and_reports() {
+        let bridge = BridgeShared::default();
+        let pending_id = std::sync::Arc::new(std::sync::Mutex::new(None::<u64>));
+        let capture = pending_id.clone();
+        let r = bridge_call_with(
+            &bridge,
+            "main",
+            "get_code",
+            serde_json::json!({}),
+            Duration::from_secs(1),
+            |_, payload| {
+                *capture.lock().unwrap() = Some(payload_id(&payload));
+                Err("no webview".into())
+            },
+        )
+        .await;
+        assert_eq!(r, Err("emit failed: no webview".to_string()));
+        let id = pending_id.lock().unwrap().expect("emit 桩必须被调用");
+        assert!(
+            bridge.take(id).is_none(),
+            "emit 失败必须回收表项（无僵尸 pending）"
+        );
+    }
+
+    #[tokio::test]
+    async fn bridge_call_with_reports_frontend_drop() {
+        let bridge = std::sync::Arc::new(BridgeShared::default());
+        let pending_id: std::sync::Arc<std::sync::Mutex<Option<u64>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
+        let capture = pending_id.clone();
+        let task = {
+            let bridge = bridge.clone();
+            tokio::spawn(async move {
+                bridge_call_with(
+                    &bridge,
+                    "main",
+                    "get_code",
+                    serde_json::json!({}),
+                    Duration::from_secs(5),
+                    |_, payload| {
+                        *capture.lock().unwrap() = Some(payload_id(&payload));
+                        Ok(())
+                    },
+                )
+                .await
+            })
+        };
+        // 等待 emit 发生（pending 表出现 id），再取走发送端弃掉 → 模拟前端 drop 请求
+        let id = loop {
+            if let Some(id) = *pending_id.lock().unwrap() {
+                break id;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        };
+        drop(bridge.take(id).expect("请求须仍登记在 pending 表"));
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), task)
+                .await
+                .expect("前端 drop 后必须立即返回而非等满超时")
+                .unwrap(),
+            Err("frontend dropped the request".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn bridge_call_with_returns_frontend_result() {
+        let bridge = BridgeShared::default();
+        let r = bridge_call_with(
+            &bridge,
+            "main",
+            "get_code",
+            serde_json::json!({"account_id": "a1"}),
+            Duration::from_secs(1),
+            |_, payload| {
+                // 前端经 mcp_respond 回传 Ok(result)
+                bridge
+                    .respond(
+                        payload_id(&payload),
+                        Ok(serde_json::json!({"code": "123456"})),
+                    )
+                    .unwrap();
+                Ok(())
+            },
+        )
+        .await;
+        assert_eq!(r.unwrap()["code"], "123456");
+    }
+
+    // tool_confirm 的 emit 失败分支（盘点 B41 唯一未覆盖处）：fail-closed + 表项回收
+    #[tokio::test]
+    async fn tool_confirm_emit_failure_fails_closed_and_reclaims() {
+        let bridge = BridgeShared::default();
+        let r = tool_confirm_with(
+            &bridge,
+            "claude",
+            "trigger_sync",
+            Duration::from_secs(1),
+            |_| Err("no webview".into()),
+        )
+        .await;
+        assert_eq!(
+            r,
+            Err("confirm dialog unavailable: no webview".to_string()),
+            "确认弹层不可用必须 fail-closed"
+        );
+        assert!(bridge.take(0).is_none(), "emit 失败必须回收 pending 表项");
     }
 
     // ==== Task 4：触发器工具定义（spec §6.1）====
@@ -2175,6 +2403,143 @@ mod tests {
             validate_port(1023).is_err(),
             "0-1023 特权端口一律拒绝（与前端 1024-65535 同口径）"
         );
+    }
+
+    // ==== mcp_approval_response / mcp_respond 命令层 match（盘点 B47/B48）====
+    // State 不可构造，抽收 &GateSessions/&BridgeShared 的自由函数直测
+
+    #[test]
+    fn approval_response_deny_once_trust_and_unknown() {
+        let p = tmp_path("approval-response");
+        let sessions = GateSessions::default();
+        // deny → 冷却记账（60s 内 denied_recently）
+        handle_approval_response(&sessions, &p, "claude", "deny").unwrap();
+        assert!(sessions.denied_recently("claude"), "deny 必须进入冷却");
+        assert!(!sessions.denied_recently("other"), "冷却不跨 ident");
+        // once → 15 分钟内放行
+        handle_approval_response(&sessions, &p, "cursor", "once").unwrap();
+        assert!(sessions.once_valid("cursor"), "once 必须记账放行");
+        // trust → 写白名单并持久化（读盘对账）
+        handle_approval_response(&sessions, &p, "Zed*", "trust").unwrap();
+        assert!(
+            load_mcp_config_inner(&p)
+                .whitelist
+                .contains(&"Zed*".to_string()),
+            "trust 必须把 ident 写入白名单文件"
+        );
+        // 未知 action → Err
+        assert_eq!(
+            handle_approval_response(&sessions, &p, "claude", "forever").unwrap_err(),
+            "unknown action: forever"
+        );
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn respond_payload_shapes_and_late_reply_silently_dropped() {
+        // ok + result：透传
+        assert_eq!(
+            bridge_respond_payload(true, Some(serde_json::json!(true)), None).unwrap(),
+            serde_json::json!(true)
+        );
+        // ok 无 result → "empty result"
+        assert_eq!(
+            bridge_respond_payload(true, None, None).unwrap_err(),
+            "empty result"
+        );
+        // ok=false + error → 透传 error
+        assert_eq!(
+            bridge_respond_payload(false, None, Some("boom".into())).unwrap_err(),
+            "boom"
+        );
+        // ok=false 无 error → "unknown error"
+        assert_eq!(
+            bridge_respond_payload(false, None, None).unwrap_err(),
+            "unknown error"
+        );
+        // 迟到回传静默丢弃：id 已被超时回收（未知 id）→ respond Err，命令层 `let _` 忽略
+        let bridge = BridgeShared::default();
+        let payload = bridge_respond_payload(true, Some(serde_json::json!(true)), None).unwrap();
+        assert!(
+            bridge.respond(42, Ok(payload)).is_err(),
+            "迟到回传必须被静默忽略"
+        );
+    }
+
+    // ==== start_server_with：空 token fail-closed / bind 失败无僵尸通道 / 成功入槽（盘点 B50）====
+    // State/AppHandle 剥离后直测；serve 任务以桩注入
+
+    #[test]
+    fn start_server_with_empty_token_fails_closed_without_binding() {
+        let slot: Mutex<Option<ShutdownSlot>> = Mutex::new(None);
+        let err = start_server_with(
+            &McpConfig::default(), // token 空
+            &slot,
+            Box::new(|_, _, _| unreachable!("空 token 不得走到 bind/spawn")),
+        )
+        .unwrap_err();
+        assert!(err.contains("token 为空"), "fail-closed 拒启文案: {err}");
+        assert!(slot.lock().unwrap().is_none(), "拒启不得留下停机通道");
+    }
+
+    #[test]
+    fn start_server_with_bind_failure_reports_and_leaves_no_slot() {
+        // 占住一个端口（port 0 先 bind 取实际端口号），再以同端口启动 → AddrInUse
+        let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = occupied.local_addr().unwrap().port();
+        let cfg = McpConfig {
+            token: "t".into(),
+            port,
+            ..McpConfig::default()
+        };
+        let slot: Mutex<Option<ShutdownSlot>> = Mutex::new(None);
+        let err = start_server_with(
+            &cfg,
+            &slot,
+            Box::new(|_, _, _| unreachable!("bind 失败不得走到 spawn")),
+        )
+        .unwrap_err();
+        assert!(err.contains("bind"), "端口占用须以 bind 错误回传: {err}");
+        assert!(
+            slot.lock().unwrap().is_none(),
+            "bind 失败不得入槽（无僵尸停机通道，审查 I-1/I-2）"
+        );
+    }
+
+    #[tokio::test]
+    async fn start_server_with_success_assembles_slot_and_shutdown_signal() {
+        let cfg = McpConfig {
+            token: "t".into(),
+            port: 0, // 随机空闲端口
+            ..McpConfig::default()
+        };
+        let slot: Mutex<Option<ShutdownSlot>> = Mutex::new(None);
+        let bound: std::sync::Arc<Mutex<Option<std::net::SocketAddr>>> =
+            std::sync::Arc::new(Mutex::new(None));
+        let capture = bound.clone();
+        start_server_with(
+            &cfg,
+            &slot,
+            Box::new(move |listener, mut rx, _token| {
+                *capture.lock().unwrap() = Some(listener.local_addr().unwrap());
+                // 桩 serve 任务：挂等停机信号即退出（验证槽内信号通路）
+                tauri::async_runtime::spawn(async move {
+                    let _ = rx.changed().await;
+                })
+            }),
+        )
+        .expect("port 0 bind 必须成功");
+        // 停机槽已入位且 listener 真实绑到随机端口
+        let (tx, token, handle) = slot
+            .lock()
+            .unwrap()
+            .take()
+            .expect("成功启动必须把停机槽入位");
+        assert!(bound.lock().unwrap().is_some());
+        // 经槽取消 + watch 信号 → 桩任务有限时间退出（stop_server 语义的前半段）
+        token.cancel();
+        let _ = tx.send(true);
+        let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
     }
 
     // ==== 审查 I-3：GET SSE 长连接下的停机集成测试 ====
