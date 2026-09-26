@@ -17,6 +17,16 @@ const OTPAUTH_MENU_ID = 'otpauth-add'
 /** 右键菜单 id：识别图片中的 otpauth 二维码（C4，activeTab 随右键授予，零新增权限） */
 const QR_IMAGE_MENU_ID = 'qr-decode-image'
 
+/** 桌面通知单点（R16⑪ 三连收敛）：basic 通知样式恒同（图标/标题），仅 message 差异 */
+function notify(message: string): void {
+  void ext!.notifications.create({
+    type: 'basic',
+    iconUrl: '/icon/128.png',
+    title: 'TOTP 验证码工具',
+    message,
+  })
+}
+
 /** 确保 offscreen document 存在：每扩展仅允许一个，重复 createDocument 会抛错，捕获即「已存在」 */
 async function ensureOffscreenDocument(): Promise<void> {
   try {
@@ -87,21 +97,11 @@ export default defineBackground(() => {
         uri = await decodeImageBytesToUri(new Uint8Array(await res.arrayBuffer()))
       } catch { uri = null }
       if (uri === null) {
-        void ext!.notifications.create({
-          type: 'basic',
-          iconUrl: '/icon/128.png',
-          title: 'TOTP 验证码工具',
-          message: '图中未识别到有效的 otpauth 二维码',
-        })
+        notify('图中未识别到有效的 otpauth 二维码')
         return
       }
       await ext!.storage.local.set({ [PENDING_OTPAUTH_KEY]: uri })
-      void ext!.notifications.create({
-        type: 'basic',
-        iconUrl: '/icon/128.png',
-        title: 'TOTP 验证码工具',
-        message: '已识别验证码二维码，点扩展图标查看并保存',
-      })
+      notify('已识别验证码二维码，点扩展图标查看并保存')
       return
     }
     if (info.menuItemId !== OTPAUTH_MENU_ID) return
@@ -114,12 +114,7 @@ export default defineBackground(() => {
       } catch { /* 落入下方提示 */ }
     }
     if (!valid) {
-      void ext!.notifications.create({
-        type: 'basic',
-        iconUrl: '/icon/128.png',
-        title: 'TOTP 验证码工具',
-        message: '选中文本不是有效的 otpauth 链接',
-      })
+      notify('选中文本不是有效的 otpauth 链接')
       return
     }
     void ext!.storage.local
