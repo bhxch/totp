@@ -393,13 +393,15 @@ mod tests {
     }
 
     // serde 直接反序列化通道的字段级 default 函数（#[serde(default = ...)] 引用；
-    // 读取主路径 from_settings_text 为手写解析不经此处，此通道供未来直用 serde 的调用方）
+    // 读取主路径 from_settings_text 为手写解析不经此处，此通道供未来直用 serde 的调用方。
+    // 注意：本 struct 无 rename_all，serde 直反序列化的键为 snake_case（非 settings.json
+    // 的 camelCase——那是手写解析读取的键名）
     #[test]
     fn serde_deserialize_uses_field_defaults() {
         let c: ReleasePolicyConfig = serde_json::from_str("{}").unwrap();
         assert_eq!(c, ReleasePolicyConfig::default());
         let c: ReleasePolicyConfig =
-            serde_json::from_str(r#"{"pauseMinutes":7,"lockOnPause":true}"#).unwrap();
+            serde_json::from_str(r#"{"pause_minutes":7,"lock_on_pause":true}"#).unwrap();
         assert_eq!(c.pause_minutes, 7);
         assert!(c.lock_on_pause);
         assert_eq!(c.destroy_minutes, 30);
