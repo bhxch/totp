@@ -1,14 +1,23 @@
 /**
- * desktop 安全平台工厂（P4 自 App.vue 抽出，纯搬移行为不变）：security 闭包绑 store；
- * dpapi=OS 自动解锁通道（三平台统一，见 lib.rs os_auto_protect/unprotect）；剪贴板开关走
- * settings+commitSettings；desktop 无 popup，不提供 popupCloseDelayMs；passkey(PRF)：WebAuthn
- * 交互（创建/求值）经 ui prf.ts，绑定落盘走 store 的 prf 源 op。
- * plan16 T11 审查四项：changePassphrase opts 透传（漏接=档位切换误触发全库轮换）、kdfProfile、
- * passwordChangedAt、lockPrefs——.vue 无 typecheck 对 platform 成员的覆盖，漏接无编译信号，全量接线。
+ * desktop 安全平台工厂(R4 改造:security 闭包/剪贴板/锁定策略等两端同型装配下沉 @totp/ui host
+ * ——createSecurityOpsFromStore,overrides 差异清单见其文件头;本模块保留 desktop 独有差异通道,
+ * 导出面 createSecurityPlatform 与 SecurityPlatformDeps 不变,App.vue 零改动):
+ * - dpapi=OS 自动解锁通道(已核准 desktop 独有差异,三平台统一,见 lib.rs os_auto_protect/unprotect);
+ * - unlockNaming:解锁方式按端命名(naming 调用时求值——保持 locale 响应式);
+ * - lockPrefsUnsupported:lockPrefsUnsupportedKeys(ua)——系统锁屏事件源仅 Windows(lock_events
+ *   WTS),非 Windows 追加声明 lockOnSystemLock,SecurityCard 隐藏无效开关(审查 I10);
+ * - 剪贴板开关走 settings+commitSettings(host 内置);desktop 无 popup,不提供 popup 通道;
+ * - passkey(PRF):WebAuthn 交互(创建/求值)经 ui prf.ts,绑定落盘走 store 的 prf 源 op(host 内置)。
+ * plan16 T11 审查四项(changePassphrase opts 透传/kdfProfile/passwordChangedAt/lockPrefs)由
+ * host 工厂全量接线(漏接无编译信号,工厂内置即唯一实现)。
+ * F3 迁移:历史 wrappedDekD(无应用附加熵的旧格式)在下一次成功解锁后重包为 v2 应用熵绑定
+ * 格式(TOTPDEK1 前缀 + DPAPI(DEK, 熵),见 tauriSecurity 与 lib.rs dek 通道)。幂等(已是 v2 跳过);
+ * best-effort:失败仅告警——Rust 端旧格式 32B 兜底仍可解锁,下次成功解锁重试。
  */
 import { computed, type ComputedRef } from 'vue'
-import { randomBytes } from '@totp/core'
-import { createPrfCredential, prfSupported, type DpapiUnlockOps, type SecurityPlatform, type VueStore } from '@totp/ui'
+import type { DpapiUnlockOps, SecurityPlatform, VueStore } from '@totp/ui'
+// host 工厂经 '@totp/ui/host' 子出口导入(理由同 host/index.ts 头注释:宿主 mock 拦截点唯一)
+import { createSecurityOpsFromStore } from '@totp/ui/host'
 import { lockPrefsUnsupportedKeys } from './lockPrefs'
 import { isEntropyBoundDekWrap, osAutoForgetOs, osAutoProtectOs, osAutoUnprotectOs } from './tauriSecurity'
 import { techSuffixFor, type DesktopUaFlags, type UnlockNaming } from './unlockNaming'
@@ -38,9 +47,7 @@ export interface DesktopSecurityPlatform {
   platform: ComputedRef<SecurityPlatform | null>
   /** OS 自动解锁通道（SecurityCard「启用/移除」与 LockScreen「挂载静默解锁」共用同一对象） */
   dpapi: DpapiUnlockOps
-  /** F3 迁移：历史 wrappedDekD（无应用附加熵的旧格式）在下一次成功解锁后重包为 v2 应用熵绑定
-   *  格式（TOTPDEK1 前缀 + DPAPI(DEK, 熵)，见 tauriSecurity 与 lib.rs dek 通道）。幂等（已是 v2 跳过）；
-   *  best-effort：失败仅告警——Rust 端旧格式 32B 兜底仍可解锁，下次成功解锁重试 */
+  /** F3 迁移：历史 wrappedDekD(无应用附加熵的旧格式)在下一次成功解锁后重包为 v2 应用熵绑定格式 */
   migrateDekWrapToEntropyBound(): Promise<void>
 }
 
@@ -93,52 +100,14 @@ export function createSecurityPlatform(deps: SecurityPlatformDeps): DesktopSecur
   const securityPlatform = computed<SecurityPlatform | null>(() => {
     const s = deps.getStore()
     if (!s) return null
-    return {
-      security: {
-        locked: s.locked,
-        hasEncryption: s.hasEncryption,
-        enableEncryption: (pw) => s.enableEncryption(pw),
-        disableEncryption: () => s.disableEncryption(),
-        // opts 透传：档位切换走 { rotateDek: false, profile }（重 wrap 立即生效，不误触发全库轮换）
-        changePassphrase: (pw, opts) => s.changePassphrase(pw, opts),
-        kdfProfile: computed(() => s.securitySettings.value?.profile ?? 'balanced'),
-        passwordChangedAt: computed(() => s.securitySettings.value?.passwordChangedAt ?? null),
-        passkey: {
-          sources: computed(() => s.prfSources.value.map((p) => ({ credentialId: p.credentialId }))),
-          prfSupported: () => prfSupported(),
-          async add() {
-            // 绑定盐：注册期 create 与权威 get 均以该盐求值，解锁期用同一盐复现（同认证器+同盐→同输出）
-            const salt = randomBytes(32)
-            const created = await createPrfCredential('TOTP 验证码工具', salt, {
-              excludeCredentialIds: s.prfSources.value.map((p) => p.credentialId),
-            })
-            if (!created) return false
-            await s.addPrfSourceOp(created.credentialId, created.prfOutput, salt)
-            return true
-          },
-          remove: (credentialId) => s.removePrfSourceOp(credentialId),
-        },
-      },
+    return createSecurityOpsFromStore(s, {
       dpapi: dpapiOps,
       unlockNaming: deps.naming(),
-      clipboardClearEnabled: computed(() => s.settings.clipboardClearEnabled),
-      async setClipboardClear(v) {
-        s.settings.clipboardClearEnabled = v
-        await s.commitSettings()
-      },
-      // 锁定策略（plan16 T11）：三字段整体覆写进 settings 后持久化（core loadSettings 已归一化）。
       // 审查 I10：desktop 无会话级 DEK 存储 → lockOnRestart 全平台无实现支撑（重启必锁）；
       // 系统锁屏事件源仅 Windows（lock_events WTS），非 Windows 追加声明 lockOnSystemLock——
       // SecurityCard 按 unsupported 隐藏对应开关防无效设置
-      lockPrefs: {
-        get: () => ({ lockOnRestart: s.settings.lockOnRestart, lockIdleMinutes: s.settings.lockIdleMinutes, lockOnSystemLock: s.settings.lockOnSystemLock }),
-        set: (p) => {
-          Object.assign(s.settings, p)
-          void s.commitSettings()
-        },
-        unsupported: lockPrefsUnsupportedKeys(deps.ua),
-      },
-    }
+      lockPrefsUnsupported: lockPrefsUnsupportedKeys(deps.ua),
+    })
   })
 
   return { platform: securityPlatform, dpapi: dpapiOps, migrateDekWrapToEntropyBound }
