@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
-import { base32Decode, buildWinauthSequence, newEntryFromUri, type ImportScheme } from '@totp/core'
+import { base32Decode, buildWinauthSequence, createMemoryStorage, newEntryFromUri, type ImportScheme } from '@totp/core'
 import { zipSync, strToU8 } from 'fflate'
 import { createVueStore } from '../src/store'
 import ImportCard from '../src/components/ImportCard.vue'
@@ -12,16 +12,10 @@ async function pickOption(w: VueWrapper, ariaLabel: string, label: string): Prom
 }
 
 async function readyStore() {
-  const s = createVueStore(createMemoryStorageShim())
+  const s = createVueStore(createMemoryStorage())
   await s.initStore()
   await s.addEntryOp(newEntryFromUri('otpauth://totp/GitHub:me@x.com?secret=JBSWY3DPEHPK3PXP', 0))
   return s
-}
-
-// createMemoryStorage 直接自 @totp/core 取（避免与本文件其他导入混淆，独立 shim 包装）
-import { createMemoryStorage } from '@totp/core'
-function createMemoryStorageShim() {
-  return createMemoryStorage()
 }
 
 // ---------- WinAuth 口令加密 fixture（与 core test/winauthImport.test.ts 同构，零盐/零填充位保证确定性） ----------

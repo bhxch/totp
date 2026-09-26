@@ -1,5 +1,10 @@
 import { colsForCount, drawQrToCanvas, qrMatrix, type QrGrid } from '../src/qr/qrDraw'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+// getContext spy 逐用例统一还原（对齐 imageSource.pixels.test.ts 的文件级 afterEach 口径）
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 /** 记录调用的假 2d 上下文（不装 canvas 原生包）：fillRect/fillStyle 序列即绘制断言依据 */
 interface FakeCtx {
@@ -46,7 +51,6 @@ describe('drawQrToCanvas（绘制行为：假 2d context 调用序列）', () =>
     expect(ctx.styles.slice(1)).toEqual(['#000000', '#000000'])
     expect(blacks[0]).toEqual({ x: 24 + 6, y: 24, w: 6, h: 6 }) // (1,0)
     expect(blacks[1]).toEqual({ x: 24, y: 24 + 6, w: 6, h: 6 }) // (0,1)
-    vi.restoreAllMocks()
   })
 
   it('自定义 moduleSize/marginModules：总尺寸与模块坐标按换算平移', () => {
@@ -57,7 +61,6 @@ describe('drawQrToCanvas（绘制行为：假 2d context 调用序列）', () =>
     expect(canvas.width).toBe(2 * 4 + 2 * 2 * 4) // 8+16=24
     const blacks = ctx.fills.slice(1)
     expect(blacks[0]).toEqual({ x: 8 + 4, y: 8, w: 4, h: 4 })
-    vi.restoreAllMocks()
   })
 
   it('get 全 false：只有白底一笔，无黑模块', () => {
@@ -66,7 +69,6 @@ describe('drawQrToCanvas（绘制行为：假 2d context 调用序列）', () =>
     drawQrToCanvas(document.createElement('canvas'), { size: 2, get: () => false })
     expect(ctx.fills).toHaveLength(1)
     expect(ctx.styles).toEqual(['#ffffff'])
-    vi.restoreAllMocks()
   })
 
   it('jsdom 无 2d 上下文（ctx null）：防御早退不改画布', () => {
@@ -74,7 +76,6 @@ describe('drawQrToCanvas（绘制行为：假 2d context 调用序列）', () =>
     const canvas = document.createElement('canvas')
     drawQrToCanvas(canvas, grid)
     expect(canvas.width).toBe(300) // HTMLCanvasElement 缺省宽，未被触碰
-    vi.restoreAllMocks()
   })
 
   it('qrMatrix 与 drawQrToCanvas 串联：真实 URI 矩阵逐模块绘制（黑模块数一致）', () => {
@@ -86,6 +87,5 @@ describe('drawQrToCanvas（绘制行为：假 2d context 调用序列）', () =>
     for (let y = 0; y < g.size; y++) for (let x = 0; x < g.size; x++) if (g.get(x, y)) trueCount++
     expect(ctx.fills).toHaveLength(trueCount + 1) // +1 白底
     expect(colsForCount(1)).toBe(2) // 顺带锚定同模块导出可用
-    vi.restoreAllMocks()
   })
 })

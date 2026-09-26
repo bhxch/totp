@@ -58,13 +58,19 @@ describe('OtpListItem 分支补全', () => {
     }
   })
 
-  it('卸载时清理揭示计时器（onScopeDispose 分支不抛错）', () => {
+  it('卸载时清理揭示计时器（onScopeDispose 分支：clearTimeout 收回揭示定时）', () => {
     vi.useFakeTimers()
     try {
+      const setSpy = vi.spyOn(globalThis, 'setTimeout')
+      const clearSpy = vi.spyOn(globalThis, 'clearTimeout')
       const w = mount(OtpListItem, { global: { plugins: [createTestI18n()] }, props: { entry, ...base } })
       w.find('.otp-item').trigger('dblclick')
-      expect(() => w.unmount()).not.toThrow()
+      const handle = setSpy.mock.results[0]!.value // dblclick 启动的揭示定时器句柄
+      clearSpy.mockClear() // 排除揭示链内部 reset 的清除调用
+      w.unmount()
+      expect(clearSpy).toHaveBeenCalledWith(handle)
     } finally {
+      vi.restoreAllMocks()
       vi.useRealTimers()
     }
   })

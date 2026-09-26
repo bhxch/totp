@@ -1,7 +1,12 @@
 import { buildOtpUri, type OtpEntry } from '@totp/core'
 import { qrMatrix } from '../src/qr/qrDraw'
 import { renderQrSheet } from '../src/components/qrSheet'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+// getContext spy 逐用例统一还原（对齐 imageSource.pixels.test.ts 的文件级 afterEach 口径）
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 /** 记录调用的假 2d 上下文：fillRect/fillText/drawImage 序列即拼版绘制断言依据 */
 interface FakeCtx {
@@ -62,7 +67,6 @@ describe('renderQrSheet（拼版绘制：假 2d context 调用序列）', () => 
       expect(issuerText).toEqual({ text: e.issuer, x: cx + 130, y: cy + 214 })
       expect(labelText).toEqual({ text: e.label, x: cx + 130, y: cy + 236 })
     })
-    vi.restoreAllMocks()
   })
 
   it('长 URI 密度大：moduleSize 钳制下限 2 仍可扫（子画布不小于 size*2+16）', () => {
@@ -74,7 +78,6 @@ describe('renderQrSheet（拼版绘制：假 2d context 调用序列）', () => 
     expect(grid.size + 8).toBeGreaterThan(90) // 前提：floor(180/(size+8)) 已 <2 → 命中钳制
     const sub = ctx.draws[0]!.image
     expect(sub.width).toBe(grid.size * 2 + 8 * 2)
-    vi.restoreAllMocks()
   })
 
   it('jsdom 无 2d 上下文（ctx null）：仍回布局尺寸（防御早退）', () => {
@@ -83,6 +86,5 @@ describe('renderQrSheet（拼版绘制：假 2d context 调用序列）', () => 
     const layout = renderQrSheet(canvas, [entry(1)])
     expect(layout).toEqual({ cols: 2, cellPx: 260, width: 520, height: 260 })
     expect(canvas.width).toBe(520)
-    vi.restoreAllMocks()
   })
 })
