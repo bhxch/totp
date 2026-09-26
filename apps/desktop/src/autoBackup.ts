@@ -1,5 +1,9 @@
-import { createAutoRunScheduler, decideAutoRun, type AutoRunReason, type AutoRunScheduler } from '@totp/core'
-import type { BackupSourcesResult } from './backupService'
+import { createAutoRunScheduler, decideAutoRun, loadSources, sha256Hex, type AutoRunReason, type AutoRunScheduler, type StorageAdapter } from '@totp/core'
+import type { VueStore } from '@totp/ui'
+import { createBackupToSources, type BackupSourcesResult } from './backupService'
+import {
+  BACKUP_AUTO_STATUS_KEY, loadBackupPrefs, loadCloudPrefs, readLastBackupHash, recordAutoStatus, writeLastBackupHash,
+} from './desktopPrefs'
 
 /** 自动通道偏好（形态与 ui BackupAutoPrefs 一致；desktop 宿主经 loadBackupPrefs 提供） */
 export interface AutoChannelPrefs {
@@ -191,4 +195,47 @@ export function createDesktopAutoRunner(deps: AutoBackupDeps, opts?: { debounceM
     // reason 仅被 prefsGate 消费，跳过偏好门后无语义；执行体与守护与自动通道完全同一份
     runBackupNow,
   }
+}
+
+/** desktop 自动通道装配 deps（P4 自 App.vue 抽出）：store/adapter 闭包实时读取 + 云编排注入 */
+export interface DesktopAutoChannelsDeps {
+  getStore(): VueStore | null
+  getAdapter(): StorageAdapter | null
+  /** 云通道（Task 11 接入）：desktop 云多目标编排（createDesktopCloudSync 的 run），busy 防重入内建于 runner */
+  doCloudSync(): Promise<unknown>
+}
+
+/** desktop 自动备份双通道装配（P4 自 App.vue onMounted 前的 setup 段抽出，纯搬移行为不变）：
+ *  deps 闭包实时读 store/adapter/localStorage，store 未就绪时 isLocked 兜底 true →
+ *  decideAutoRun skip，保证锁定态/未初始化永不自动写 */
+export function createDesktopAutoChannels(deps: DesktopAutoChannelsDeps): DesktopAutoRunner {
+  function requireAdapter(): StorageAdapter {
+    const a = deps.getAdapter()
+    if (!a) throw new Error('数据尚未就绪')
+    return a
+  }
+  return createDesktopAutoRunner({
+    isLocked: () => deps.getStore()?.locked.value ?? true,
+    getSecret: () => deps.getStore()?.backupSecret.value ?? null,
+    getVaultJson: () => JSON.stringify(deps.getStore()?.vault ?? null),
+    backupPrefs: () => loadBackupPrefs(),
+    // 云通道偏好（Task 11 接入）：与 CloudCard autoPrefs 同一读写实现（cloudAutoPrefs 键）
+    cloudPrefs: () => loadCloudPrefs(),
+    getLastBackupHash: () => readLastBackupHash(),
+    setLastBackupHash: (h) => writeLastBackupHash(h),
+    doBackup: async (secret) => {
+      // plan16 T14：全部启用本地源各按 retention 落盘；审查 I8：返回结构化成败结果（部分失败
+      // 不推进基线）；审查 M3：vault 快照在此单次取得并随结果返回，runner 以落盘内容计基线 hash
+      const all = await loadSources(requireAdapter())
+      const vaultJson = JSON.stringify(deps.getStore()?.vault ?? null)
+      const profile = deps.getStore()?.settings.backupKdfProfile ?? 'balanced'
+      return createBackupToSources(all, vaultJson, secret, profile)
+    },
+    doCloudSync: () => deps.doCloudSync(),
+    // core sha256Hex 接收字节：vault JSON → UTF-8 编码后摘要
+    sha256Hex: (s) => sha256Hex(new TextEncoder().encode(s)),
+    // 「上次自动备份/同步」状态记录（design §4.1；Task 13 卡片渲染消费）
+    recordStatus: (ok, summary) => recordAutoStatus(BACKUP_AUTO_STATUS_KEY, ok, summary),
+    onError: (err, channel) => console.warn(`[autoBackup:${channel}]`, err),
+  })
 }

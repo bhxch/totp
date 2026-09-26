@@ -2,18 +2,13 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { base64ToBytes, bytesToBase64, loadSources, loadSyncState, saveSyncState, sha256Hex, type BackupSource, type KdfProfile, type StorageAdapter, type Vault } from '@totp/core'
+import { base64ToBytes, bytesToBase64, type StorageAdapter } from '@totp/core'
 import { createAppI18n, createClipboardClearer, createIconStore, createVueStore, LockScreen, NavigationShell, useTheme, type DevtoolsConfigDto, type DevtoolsPlatform, type IconStore, type McpConfigWithStatusDto, type McpPlatform, type ReleasePolicyDto, type ReleasePlatform, type VueStore } from '@totp/ui'
 import { computed, getCurrentInstance, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
-import { createDesktopAutoRunner } from './autoBackup'
+import { createDesktopAutoChannels } from './autoBackup'
 import { createBackupPlatform, createImportSchemesApi } from './backupPlatform'
 import { createCloudPlatform, createDesktopCloudSync } from './cloudPlatforms'
-import {
-  BACKUP_AUTO_STATUS_KEY, BACKUP_KEEP_N_KEY, BACKUP_MODE_KEY,
-  legacyRetention, loadBackupPrefs, loadCloudPrefs, persistBackupPrefs,
-  readLastBackupHash, recordAutoStatus, writeLastBackupHash,
-} from './desktopPrefs'
-import { createBackupToSources } from './backupService'
+import { BACKUP_KEEP_N_KEY, BACKUP_MODE_KEY, legacyRetention } from './desktopPrefs'
 import { createIdleLockExecutor } from './idleLock'
 import { BACKUP_DIR_KEY, migrateLegacyCloudSources, migrateLegacyLocalSource } from './legacyMigrate'
 import { createMcpApprovalQueue, isToolConfirmItem, type McpApprovalAction } from './mcpApprovalQueue'
@@ -80,46 +75,9 @@ const schemesApi = createImportSchemesApi({ getAdapter })
 
 const backupPlatform = createBackupPlatform({ getStore, getAdapter, tr })
 
-// 以下三个共用小助手仍被云平台/自动通道装配消费（阶段 A 后续抽工厂后随之移出）
-/** 全部源列表（云源+本地源；各消费方按 kind 过滤） */
-function loadAllSources(): Promise<BackupSource[]> {
-  return loadSources(requireAdapter())
-}
-
-/** 备份加密强度档位（plan16 T11.5）：本地备份/云上传 envelope 按此档位生成；store 未就绪兜底 balanced */
-function kdfProfileOf(): KdfProfile {
-  return store.value?.settings.backupKdfProfile ?? 'balanced'
-}
-
-// store 整体替换的唯一实现：cloudPlatform.persistDownloaded / 云 runner persistAdopted 共用
-async function replaceAllOps(v: Vault): Promise<void> {
-  await requireStore().replaceAllOp(v)
-}
-
-/** 自动备份 runner（D2）：backup/cloud 双通道。deps 闭包实时读 store/platform/localStorage，
- *  store 未就绪时 isLocked 兜底 true → decideAutoRun skip，保证锁定态/未初始化永不自动写 */
-const auto = createDesktopAutoRunner({
-  isLocked: () => store.value?.locked.value ?? true,
-  getSecret: () => store.value?.backupSecret.value ?? null,
-  getVaultJson: () => JSON.stringify(store.value?.vault ?? null),
-  backupPrefs: () => loadBackupPrefs(),
-  // 云通道偏好（Task 11 接入）：与 CloudCard autoPrefs 同一读写实现（cloudAutoPrefs 键）
-  cloudPrefs: () => loadCloudPrefs(),
-  getLastBackupHash: () => readLastBackupHash(),
-  setLastBackupHash: (h) => writeLastBackupHash(h),
-  doBackup: async (secret) => {
-    // plan16 T14：全部启用本地源各按 retention 落盘；审查 I8：返回结构化成败结果（部分失败
-    // 不推进基线）；审查 M3：vault 快照在此单次取得并随结果返回，runner 以落盘内容计基线 hash
-    return createBackupToSources(await loadAllSources(), JSON.stringify(store.value?.vault ?? null), secret, kdfProfileOf())
-  },
-  // Task 11：desktop 云多目标编排接入（cloudSync 在下方定义；busy 防重入内建于 runner）
-  doCloudSync: () => cloudSync.run(),
-  // core sha256Hex 接收字节：vault JSON → UTF-8 编码后摘要
-  sha256Hex: (s) => sha256Hex(new TextEncoder().encode(s)),
-  // 「上次自动备份/同步」状态记录（design §4.1；Task 13 卡片渲染消费）
-  recordStatus: (ok, summary) => recordAutoStatus(BACKUP_AUTO_STATUS_KEY, ok, summary),
-  onError: (err, channel) => console.warn(`[autoBackup:${channel}]`, err),
-})
+// 自动备份双通道装配（runner 本体与 deps 接线）抽至 autoBackup.ts createDesktopAutoChannels：
+// store 未就绪时 isLocked 兜底 true → decideAutoRun skip，保证锁定态/未初始化永不自动写
+const auto = createDesktopAutoChannels({ getStore, getAdapter, doCloudSync: () => cloudSync.run() })
 
 /**
  * 云同步平台与自动云 runner 装配抽至 cloudPlatforms.ts（createCloudPlatform/
