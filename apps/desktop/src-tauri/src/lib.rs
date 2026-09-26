@@ -830,23 +830,43 @@ fn list_backup_files_os(
     list_backup_files_granted(&grants, &dir_token)
 }
 
+/// 读取守护链公共段（is_file + dirToken 反查登记目录遏制，canonicalize 双侧防逃逸），
+/// 白名单由各命令按用途前置（read_text 大小写敏感、import 组大小写不敏感，语义各自保留），
+/// 返回经校验的路径供读取
+fn read_granted_file_core(
+    grants: &DialogGrants,
+    path: &str,
+    dir_token: &str,
+) -> Result<std::path::PathBuf, String> {
+    let p = std::path::Path::new(path);
+    if !p.is_file() {
+        return Err("not a file".into());
+    }
+    ensure_within(p, &grants.resolve(dir_token)?)?;
+    Ok(p.to_path_buf())
+}
+
+/// 命令本体抽 *_granted inner（tauri::State 单测无法构造，测试直打 inner，单一代码路径）：
+/// 本命令唯一用途是读取备份文件，限定 .totpbackup 防止被前端 XSS 当作任意文件读取原语
+fn read_text_file_granted(
+    grants: &DialogGrants,
+    path: &str,
+    dir_token: &str,
+) -> Result<String, String> {
+    if !path.ends_with(".totpbackup") {
+        return Err("invalid backup file extension".into());
+    }
+    let p = read_granted_file_core(grants, path, dir_token)?;
+    std::fs::read_to_string(p).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn read_text_file_os(
     grants: tauri::State<DialogGrants>,
     path: String,
     dir_token: String,
 ) -> Result<String, String> {
-    // 扩展名白名单：与写侧对齐；本命令唯一用途是读取备份文件，
-    // 限定 .totpbackup 防止被前端 XSS 当作任意文件读取原语
-    if !path.ends_with(".totpbackup") {
-        return Err("invalid backup file extension".into());
-    }
-    let p = std::path::Path::new(&path);
-    if !p.is_file() {
-        return Err("not a file".into());
-    }
-    ensure_within(p, &grants.resolve(&dir_token)?)?;
-    std::fs::read_to_string(p).map_err(|e| e.to_string())
+    read_text_file_granted(&grants, &path, &dir_token)
 }
 
 fn write_text_file_granted(
@@ -926,33 +946,38 @@ fn write_bytes_file_os(
 // 与 read_text_file_os 同构：信任边界一致（路径经 pick_open_file_os 的登记授权，dirToken 反查登记目录遏制），
 // 扩展名白名单限定导入用途，防止被前端 XSS 当作任意文件读取原语。
 
+/// 命令本体抽 *_granted inner：导入文本读取。WinAuth(.wauth/.xml)、Aegis(.json/.aegis)、
+/// 纯文本 URI 批量(.txt)——白名单大小写不敏感（与写侧 EXPORT_EXTENSIONS 同口径）
+fn read_import_file_granted(
+    grants: &DialogGrants,
+    path: &str,
+    dir_token: &str,
+) -> Result<String, String> {
+    const IMPORT_EXTENSIONS: [&str; 5] = [".json", ".wauth", ".xml", ".txt", ".aegis"];
+    let lower = path.to_lowercase();
+    if !IMPORT_EXTENSIONS.iter().any(|ext| lower.ends_with(ext)) {
+        return Err("invalid import file extension".into());
+    }
+    let p = read_granted_file_core(grants, path, dir_token)?;
+    std::fs::read_to_string(p).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn read_import_file_os(
     grants: tauri::State<DialogGrants>,
     path: String,
     dir_token: String,
 ) -> Result<String, String> {
-    // WinAuth(.wauth/.xml)、Aegis(.json/.aegis)、纯文本 URI 批量(.txt)
-    const IMPORT_EXTENSIONS: [&str; 5] = [".json", ".wauth", ".xml", ".txt", ".aegis"];
-    let lower = path.to_lowercase();
-    if !IMPORT_EXTENSIONS.iter().any(|ext| lower.ends_with(ext)) {
-        return Err("invalid import file extension".into());
-    }
-    let p = std::path::Path::new(&path);
-    if !p.is_file() {
-        return Err("not a file".into());
-    }
-    ensure_within(p, &grants.resolve(&dir_token)?)?;
-    std::fs::read_to_string(p).map_err(|e| e.to_string())
+    read_import_file_granted(&grants, &path, &dir_token)
 }
 
-// 导入文件字节读取（SQLite 等二进制格式，ImportCard 字节入口）：与 read_import_file_os 同构，
-// 白名单在其基础上加 .db/.sqlitedb/.sqlite 与 AP 加密 zip 的 .zip；返回原始字节（invoke JSON 数组），不经 UTF-8 文本管道
-#[tauri::command]
-fn read_import_file_bytes_os(
-    grants: tauri::State<DialogGrants>,
-    path: String,
-    dir_token: String,
+/// 命令本体抽 *_granted inner：导入文件字节读取（SQLite 等二进制格式，ImportCard 字节入口），
+/// 白名单在文本导入组基础上加 .db/.sqlitedb/.sqlite 与 AP 加密 zip 的 .zip；
+/// 返回原始字节（invoke JSON 数组），不经 UTF-8 文本管道
+fn read_import_file_bytes_granted(
+    grants: &DialogGrants,
+    path: &str,
+    dir_token: &str,
 ) -> Result<Vec<u8>, String> {
     const IMPORT_BYTE_EXTENSIONS: [&str; 9] = [
         ".json",
@@ -972,12 +997,17 @@ fn read_import_file_bytes_os(
     {
         return Err("invalid import file extension".into());
     }
-    let p = std::path::Path::new(&path);
-    if !p.is_file() {
-        return Err("not a file".into());
-    }
-    ensure_within(p, &grants.resolve(&dir_token)?)?;
+    let p = read_granted_file_core(grants, path, dir_token)?;
     std::fs::read(p).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn read_import_file_bytes_os(
+    grants: tauri::State<DialogGrants>,
+    path: String,
+    dir_token: String,
+) -> Result<Vec<u8>, String> {
+    read_import_file_bytes_granted(&grants, &path, &dir_token)
 }
 
 // ---------- DPAPI 解密命令的通用门控（F3） ----------
@@ -2132,5 +2162,82 @@ mod tests {
         dek_slot_clear(&slot);
         dek_slot_clear(&slot);
         assert!(slot.lock().unwrap().is_none());
+    }
+
+    // ---- 读取命令白名单与遏制（盘点 B23/B25：read_text/import/bytes 全零测试补齐）----
+    // 照 remove_backup_file_granted 模式直测 inner：白名单 → is_file → dirToken 遏制 → 读取
+
+    /// 建临时登记目录并写入测试文件，返回 (grants, 文件路径, dir_token)
+    fn granted_dir_with_file(
+        dir: &str,
+        name: &str,
+        contents: &[u8],
+    ) -> (DialogGrants, String, String) {
+        let allowed = std::env::temp_dir().join(dir).join("allowed");
+        std::fs::create_dir_all(&allowed).unwrap();
+        let p = allowed.join(name);
+        std::fs::write(&p, contents).unwrap();
+        let grants = DialogGrants::default();
+        let token = grants.register(std::fs::canonicalize(&allowed).unwrap());
+        (grants, p.to_str().unwrap().to_string(), token)
+    }
+
+    #[test]
+    fn read_text_file_granted_whitelists_totpbackup_only() {
+        // 白名单内：读取成功
+        let (grants, p, token) = granted_dir_with_file(
+            "totp_read_text_test",
+            "vault-20260916-120000.totpbackup",
+            b"cipher",
+        );
+        assert_eq!(
+            read_text_file_granted(&grants, &p, &token).unwrap(),
+            "cipher"
+        );
+        // 白名单外（导入侧合法扩展名亦拒）：本命令仅用于备份读取
+        let (g2, txt, t2) = granted_dir_with_file("totp_read_text_test", "batch.txt", b"x");
+        assert!(read_text_file_granted(&g2, &txt, &t2).is_err());
+        // 未知 token（未授权句柄）拒绝
+        assert!(read_text_file_granted(&grants, &p, "forged").is_err());
+        std::fs::remove_dir_all(std::env::temp_dir().join("totp_read_text_test")).ok();
+    }
+
+    #[test]
+    fn read_import_file_granted_whitelist_and_bytes_superset() {
+        // 文本导入组白名单（大小写不敏感）
+        let (grants, aegis, token) =
+            granted_dir_with_file("totp_read_import_test", "backup.AEGIS", b"{\"db\":{}}");
+        assert_eq!(
+            read_import_file_granted(&grants, &aegis, &token).unwrap(),
+            "{\"db\":{}}"
+        );
+        // .totpbackup 不在导入白名单（备份读取走 read_text_file_os，各命令白名单独立）
+        let (_, bak, _) = granted_dir_with_file("totp_read_import_test", "v.totpbackup", b"x");
+        assert!(read_import_file_granted(&grants, &bak, &token).is_err());
+        // 字节组是文本导入组的超集：.zip/.db 可读且字节保真
+        let (_, zip, _) =
+            granted_dir_with_file("totp_read_import_test", "ap.zip", &[0x50, 0x4B, 3, 4]);
+        assert_eq!(
+            read_import_file_bytes_granted(&grants, &zip, &token).unwrap(),
+            vec![0x50, 0x4B, 3, 4]
+        );
+        let (_, db, _) = granted_dir_with_file("totp_read_import_test", "s.db", &[1, 2]);
+        assert!(read_import_file_bytes_granted(&grants, &db, &token).is_ok());
+        // 非白名单扩展名两组同拒
+        let (_, exe, _) = granted_dir_with_file("totp_read_import_test", "evil.exe", b"x");
+        assert!(read_import_file_granted(&grants, &exe, &token).is_err());
+        assert!(read_import_file_bytes_granted(&grants, &exe, &token).is_err());
+        // 目标不存在 → not a file
+        assert!(
+            read_import_file_granted(&grants, "no/such/file.json", &token)
+                .unwrap_err()
+                .contains("not a file")
+        );
+        // 登记目录之外（合法扩展名）：遏制拒绝且不读取
+        let base = std::env::temp_dir().join("totp_read_import_test");
+        let outside_file = base.join("leak.json");
+        std::fs::write(&outside_file, "x").unwrap();
+        assert!(read_import_file_granted(&grants, outside_file.to_str().unwrap(), &token).is_err());
+        std::fs::remove_dir_all(&base).ok();
     }
 }
