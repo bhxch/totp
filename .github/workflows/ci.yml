@@ -82,7 +82,9 @@ jobs:
         with: { workspaces: apps/desktop/src-tauri }
       # 原始口径 gate（2026-09-26 实测 71.56% lines / 54.69% branches，Branches 426 总量）
       # 减边际定值；豁免口径（排除 main.rs / lib.rs run() / lock_events.rs）为 73.50/58.75，
-      # 设计目标 90/85 属豁免区结构性不可达，随 seam 抽取按豁免口径逐步收紧
-      # （stable 下 rustc-wrapper 失效，恒用 --no-rustc-wrapper；本地同款命令见 coverage-design §2）
-      - run: cargo llvm-cov --no-rustc-wrapper --branch --summary-only --fail-under-lines 71 --fail-under-branches 54
-        working-directory: apps/desktop/src-tauri
+      # 设计目标 90/85 属豁免区结构性不可达，随 seam 抽取按豁免口径逐步收紧。
+      # 分支 gate 经脚本解析 llvm-cov export JSON 实现（--fail-under-branches 非 cargo-llvm-cov
+      # 选项，0.9.1 实测 invalid option，run 36224456089 首跑实证）；参数等价性同本地脚本
+      # （+nightly / --no-rustc-wrapper / --branch，stable 下 rustc-wrapper 失效）。
+      # 脚本自解析仓库根，勿设 working-directory；windows runner 预装 Node 无需 setup-node
+      - run: node scripts/rust-coverage.mjs --fail-under-lines 71 --fail-under-branches 54
