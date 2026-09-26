@@ -11,7 +11,7 @@ import { randomBytes } from '@totp/core'
 import { createPrfCredential, prfSupported, type DpapiUnlockOps, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { lockPrefsUnsupportedKeys } from './lockPrefs'
 import { isEntropyBoundDekWrap, osAutoForgetOs, osAutoProtectOs, osAutoUnprotectOs } from './tauriSecurity'
-import type { DesktopUaFlags, UnlockNaming } from './unlockNaming'
+import { techSuffixFor, type DesktopUaFlags, type UnlockNaming } from './unlockNaming'
 
 export interface SecurityPlatformDeps {
   /** store 浅包装实时读取（App.vue setup 期传入 () => store.value；未就绪 null → 卡片不渲染/报错） */
@@ -57,7 +57,7 @@ export function createSecurityPlatform(deps: SecurityPlatformDeps): DesktopSecur
   const dpapiOps: DpapiUnlockOps = {
     // getter：读取时取词（SecurityCard/LockScreen 渲染期读取，晚于 i18n 装入；?? 回退防未来分支为 null）
     get label() { return deps.naming().osAutoLabel ?? tr('desktop.unlockWindows') },
-    techSuffix: flags.isWin ? '（DPAPI）' : flags.isMac ? '（Keychain）' : '（Secret Service）',
+    techSuffix: techSuffixFor(flags),
     source: computed(() => deps.getStore()?.dpapiSource.value ?? null),
     getCurrentDek: () => deps.getStore()?.getCurrentDek() ?? null,
     protect: (dek) => osAutoProtectOs(dek),
