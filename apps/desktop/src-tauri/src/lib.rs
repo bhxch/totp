@@ -1396,6 +1396,23 @@ pub fn run() {
     };
     let headless = cli.headless_mcp;
     let mut builder = tauri::Builder::default();
+    // B22（E2E 2026-09-26）：单实例判定必须是第一个注册的 plugin——主实例运行时启动第二实例
+    // （含 headless 探针）曾因全局快捷键 ALT+SHIFT+T 已注册在 global_shortcut 初始化 panic
+    // （exit 101）。插件层检测到已有实例即干净退出（exit 0），回调聚焦既有主窗；headless 主
+    // 实例不弹窗（无人值守语义：连接信息只经 stdout/托盘，窗口隐藏存活）。注：「GUI 主实例 +
+    // 独立 headless MCP 探针」并行在本修复前即不可用（同快捷键 panic），非回退
+    builder = builder.plugin(tauri_plugin_single_instance::init(
+        move |app, _argv, _cwd| {
+            if headless {
+                return;
+            }
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        },
+    ));
     // 真机 E2E 基建：debug 构建装配 mcp-bridge（仅绑 127.0.0.1）供 tauri-mcp 驱动 UI；release 不编译
     #[cfg(debug_assertions)]
     {

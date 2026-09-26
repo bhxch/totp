@@ -17,6 +17,10 @@ tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-global-shortcut = "2"
+# B22 双实例启动 panic（E2E 2026-09-26）：主实例运行时启动第二实例，全局快捷键 ALT+SHIFT+T
+# 已注册致 tauri_plugin_global_shortcut 初始化 panic（exit 101）。单实例判定在插件层：第二实例
+# 干净退出（exit 0）并回调聚焦既有主窗；必须注册为第一个 plugin（官方要求，尽早退出）
+tauri-plugin-single-instance = "2"
 # 真机 E2E 基建：tauri-mcp 驱动 UI 用；Rust 侧 cfg(debug_assertions) 门控注册，release 不激活
 tauri-plugin-mcp-bridge = "0.13"
 serde = { version = "1", features = ["derive"] }
