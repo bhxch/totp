@@ -108,3 +108,35 @@
 - spec 勘误 7 处:§1.2(SourceSyncState 实形态+内容门宿主级单键)、§1.3(keep 源 readPath
   读写分离语义)、§1.4(见上)、§2(primaryRev 删除+replica 两方合并)、§3(pick 侧 null=确认
   删除)、§6.2(5s/60s 双通道并存+挂起征询超时约束推广)、验收口径 3(动作文案映射)。
+
+# 覆盖率全面提升批次 backlog(2026-09-26,范围 5d6b83d..HEAD)
+
+来源:2026-09-25 覆盖率方案(P0-P6,docs/plans/2026-09-25-coverage-design.md)实施期间的补测
+锚定与审查发现。补测把若干**现状缺陷**按现状写进了断言(锚定),这些行为修复需连同锚定断言
+一起改,故单独归档。B10/B11 建议下批优先(影响用户可感知行为);B12-B17 为一致性/卫生类;
+B18/B19 为测试基建与稳健性。
+
+## 行为缺陷类(修复需同步改锚定断言)
+
+| # | 项 | 说明 | 建议 | 出处 |
+|---|---|---|---|---|
+| B10 | 远端 sync:settings 坏 JSON 原样写入本端 | mergeRemoteSettingsKeepingLocalSyncEnabled 的 catch 把解析失败的 remoteRaw 原串返回,上游整体采用写盘——本端 settings 被坏串替换。正确语义应放弃 merge、保留本端。现状已被测试按现状锚定(syncEngine.test.ts:542,断言 :555) | 修 catch 分支返回本端原串(读失败时才退化采用远端),改锚定断言;行为变更属用户可感知,建议下批优先 | apps/extension/src/syncEngine.ts:94-106 |
+| B11 | popup onSave type 变更路径表单 period 被静默重置 | `period: carried?.period ?? 30` 在 carried 失效(type 变更)时恒落 30,覆盖表单提交值(编辑同路径同样受害);digits 已改用 `?? toOtpDigits(...)` 收口,period 漏改 | 一行修复 `?? data.period ?? 30` + 同步改两处锚定断言(popupApp.test.ts:835 同 type 恒 30 处、:856 type 变更现状锚定处) | apps/extension/entrypoints/popup/App.vue:298 |
+
+## 一致性/卫生类
+
+| # | 项 | 说明 | 建议 | 出处 |
+|---|---|---|---|---|
+| B12 | core export droppedTagCount 恒 0 | AegisExportReport.droppedTagCount 仅初始化为 0,无任何递增点(Aegis 导出 tag 全保真,本就无丢弃),BackupCard「已导出,N 个多余标签未导出」提示分支不可达(死分支) | 二选一:删死字段+UI 分支;或确需统计时补递增点 | packages/core/src/export/aegisVault.ts:19,75,100;packages/ui/src/components/BackupCard.vue:190-194 |
+| B13 | MdSwitch 失败回滚视觉脱钩 | onChange 先改内部 checked 再 emit,父层拒绝/回滚(modelValue 未变)时开关视觉停留在新态,与真实状态脱钩;watch 只兜 modelValue 外部变更 | 受控化小改:视觉纯由 props.modelValue 派生(:checked 直接绑定),change 只 emit 不落内部态 | packages/ui/src/components/md/MdSwitch.vue |
+| B14 | offscreen ack 同步 try/catch 包异步 sendMessage | `try { sendMessage({type:'clear-clipboard-ack'}) } catch {}` 捕获不到 promise rejection,MV3 SW 未就绪时 unhandled rejection | 改 `void ext!.runtime.sendMessage(...).catch(() => {})` | apps/extension/entrypoints/offscreen/offscreen.ts:26-28 |
+| B15 | clearClipboardWithRetry 外层 catch 死防御 | ensureOffscreenDocument 内层已吞一切(含 ext.offscreen 缺失的同步 TypeError),外层 `try/catch { return }` 永不可达 | 删外层 try/catch,或令内层真抛(把「已存在」判定收敛到调用方) | apps/extension/entrypoints/background.ts:21-31,41-45 |
+| B16 | ReleasePolicyConfig derive(Deserialize) 死代码 | 解析全手工 camelCase(from_settings_text 逐字段 get),derive 的 serde 通道(snake_case)与文件格式双轨且无调用方;serde default 属性同属死通道 | 删 derive 与 serde 属性(口径唯一),或改 rename_all+from_str 真用 derive(二选一,倾向删) | apps/desktop/src-tauri/src/release_policy.rs:5-19 |
+| B17 | 释放策略默认值双轨维护 | serde default fns(5/30)与 Default impl(5/30)两处同值手工维护,改默认值要改两处 | Default impl 改调 default_pause_minutes()/default_destroy_minutes() | apps/desktop/src-tauri/src/release_policy.rs:23-30,33-42 |
+
+## 测试基建/稳健性类
+
+| # | 项 | 说明 | 建议 | 出处 |
+|---|---|---|---|---|
+| B18 | ui 测试 platform fake 重复 9 份 | `function makePlatform(over)` 在 BackupCard/backupCard.sources/backupCard.profile/CloudCard/cloudCard.sources/cloudCard.plaintextHttp/SecurityCard/securityCard.plan16/SecurityPage 九个测试文件各自手写 | 提取 test/helpers/fakes.ts 统一工厂(desktop 侧 apps/desktop/test/mocks/tauri.ts 已有先例) | packages/ui/test/*(makePlatform 定义 9 处) |
+| B19 | ~~Rust 测试稳健性三处~~ | **已修复（2026-09-26 杂项清理，commit 25fc89b）**：① bridge_call 前端 drop 测试 emit 等待 loop 无上界 → 包 2s timeout（回归时失败而非挂起）；② devtools env 哨兵测试 panic 泄 env → EnvGuard(Drop) 恢复现场；③ start_server_with 冗余 cfg.clone() / start_server_inner 双克隆 → 收敛为一（闭包按值持有属任务存活期所需） | 原出处：apps/desktop/src-tauri/src/mcp_server.rs:1637-1642,1205,1239-1240;apps/desktop/src-tauri/src/lib.rs:2330-2360 |
