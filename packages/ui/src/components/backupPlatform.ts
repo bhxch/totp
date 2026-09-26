@@ -81,3 +81,21 @@ export interface BackupPlatform {
     set(p: KdfProfile): void | Promise<void>
   }
 }
+
+/** 自动偏好归一化（R14 单点，原 desktop loadChannelPrefs 与 extension optionsPlatforms 各持一份
+ *  15min 钳制同款实现靠注释同步）：布尔严格 === true 判定（防真值性误判，如 "true"/1）；
+ *  间隔非整数或低于 MIN_AUTO_INTERVAL_MINUTES 回落 fallback 间隔。x 为 JSON.parse 产物（unknown），
+ *  键缺失/坏 JSON 的兜底由调用方承担（存储通道各异：localStorage try/catch / storage.local null）。
+ *  约束用 BackupAutoPrefs 结构（CloudAutoPrefs 同构兼容），未知键经 fallback 展开自然忽略。 */
+export const MIN_AUTO_INTERVAL_MINUTES = 15
+
+export function normalizeAutoPrefs<P extends BackupAutoPrefs>(x: unknown, fallback: P): P {
+  const p = (typeof x === 'object' && x !== null ? x : {}) as Partial<P>
+  const minutes = Number(p.intervalMinutes)
+  return {
+    ...fallback,
+    onChange: p.onChange === true,
+    onInterval: p.onInterval === true,
+    intervalMinutes: Number.isInteger(minutes) && minutes >= MIN_AUTO_INTERVAL_MINUTES ? minutes : fallback.intervalMinutes,
+  }
+}

@@ -60,3 +60,5 @@ export type { ReleasePolicyDto, ReleasePlatform } from './components/releasePlat
 export { validateReleaseMinutes } from './components/releasePlatform'
 export type { DpapiUnlockOps, LockPrefs, PasskeyUnlockOps, SecurityOps, SecurityPlatform } from './components/securityPlatform'
 export type { SyncPlatform, SyncStatus } from './components/syncPlatform'
+// R14 跨端共享纯函数单点（normalizeAutoPrefs/formatAutoStatusText）：宿主偏好/状态实现委托入口
+export { MIN_AUTO_INTERVAL_MINUTES, normalizeAutoPrefs } from './components/backupPlatform'

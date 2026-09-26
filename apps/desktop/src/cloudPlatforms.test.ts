@@ -25,9 +25,13 @@ const ui = vi.hoisted(() => ({
   mergeConfirmMock: vi.fn(async (_preview?: unknown) => true),
   progressMock: vi.fn(),
 }))
-vi.mock('@totp/ui', async () => {
+vi.mock('@totp/ui', async (importOriginal) => {
+  // actual 展开兜底（R14：desktopPrefs 委托 ui normalizeAutoPrefs 后依赖出口完整性；
+  // 白名单式 mock 在 ui 出口扩展时静默碎裂——MiniApp.test/securityPlatform.test 同款先例）
+  const actual = await importOriginal<typeof import('@totp/ui')>()
   const { vi: v } = await import('vitest')
   return {
+    ...actual,
     createCloudSyncRunner: v.fn((deps: import('@totp/ui').CloudRunnerDeps) => {
       ui.runnerDeps = deps
       return { run: (mode?: string) => ui.runImpl(mode) }

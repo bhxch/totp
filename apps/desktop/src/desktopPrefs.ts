@@ -12,33 +12,25 @@
  * 本地偏好存桌面 localStorage；键常量集中于此防宿主各处漂移。
  */
 import type { Retention } from '@totp/core'
-import type { BackupAutoPrefs, CloudAutoPrefs } from '@totp/ui'
+import { normalizeAutoPrefs, type BackupAutoPrefs, type CloudAutoPrefs } from '@totp/ui'
 
 // ---------- 通道自动偏好（D2/Task 11，R13 参数化收敛）----------
 /** 通道自动偏好统一形态（偏好类型合一）：ui BackupAutoPrefs/CloudAutoPrefs 同构三字段，
- *  两键共用同一读写实现（loadChannelPrefs/persistChannelPrefs），15min 钳制仅此一份 */
+ *  两键共用同一读写实现（loadChannelPrefs/persistChannelPrefs）；归一化（15min 钳制）经
+ *  ui normalizeAutoPrefs 单点（R14），本模块只承担键绑定与存储兜底 */
 interface ChannelAutoPrefsShape {
   onChange: boolean
   onInterval: boolean
   intervalMinutes: number
 }
 
-/** 钳制下限：兜底最小 15 分钟——与 core 调度器 30s tick 粒度匹配，防误配置出低于 tick 语义的间隔 */
-const MIN_INTERVAL_MINUTES = 15
-
-/** 参数化偏好读取：键缺失/坏 JSON → 全默认；布尔严格 === true 判定；间隔非法回落默认（60） */
+/** 参数化偏好读取：键缺失/坏 JSON → 全默认；布尔严格 === true 判定；间隔非法回落默认（60）
+ *  （钳制下限 15min 与归一化规则走 ui normalizeAutoPrefs 单点，R14） */
 function loadChannelPrefs<T extends ChannelAutoPrefsShape>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key)
     if (!raw) return { ...fallback }
-    const p = JSON.parse(raw) as Partial<T>
-    const minutes = Number(p.intervalMinutes)
-    return {
-      ...fallback,
-      onChange: p.onChange === true,
-      onInterval: p.onInterval === true,
-      intervalMinutes: Number.isInteger(minutes) && minutes >= MIN_INTERVAL_MINUTES ? minutes : fallback.intervalMinutes,
-    }
+    return normalizeAutoPrefs(JSON.parse(raw), fallback)
   } catch {
     return { ...fallback }
   }
