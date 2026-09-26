@@ -20,6 +20,14 @@ export async function sha256Hex(data: string | Uint8Array): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
+/**
+ * 含 rev 的全量内容 hash（旧口径）。**生产零消费，仅测试用**（R15②）：同步链路的 vault 内容
+ * 比对与信封 baseContentHash 一律用 contentHashVault——rev 是 F8 水位（store 加密落盘恒推进），
+ * 属本端存储状态而非 vault 内容，参与 hash 会使采纳落盘后恒判「本地已动」。
+ *
+ * @deprecated 仅测试口径（ui CloudCard/cloudRunner 测试与本包 canonicalVaultHash 守卫仍消费）。
+ * 从 '@totp/core' 公共出口摘除待 ui 测试迁移后进行（消费方不在 R15 允许改动范围内）。
+ */
 export async function contentHash(vaultJson: string): Promise<string> {
   return sha256Hex(canonicalJson(JSON.parse(vaultJson)))
 }

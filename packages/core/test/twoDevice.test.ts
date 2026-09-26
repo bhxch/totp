@@ -22,7 +22,7 @@ import {
 import type { OtpEntry, Vault } from '../src/model'
 import type { BackupSource } from '../src/backup/sources'
 import type { CloudBackend } from '../src/cloud/backend'
-import { contentHash } from '../src/cloud/canonical'
+import { contentHashVault } from '../src/cloud/canonical'
 import { loadDeviceId, loadSyncState, saveSyncState, type SourceSyncState } from '../src/cloud/syncState'
 import { createMemoryStorage } from '../src/storage/memory'
 import { syncMultipleTargets, type MultiTargetSyncResult } from '../src/cloud/multiTarget'
@@ -80,7 +80,7 @@ async function seedCloudV3(backend: ReturnType<typeof fakeCloud>, rev: number, c
     rev,
     deviceId: 'seed',
     baseRev: rev - 1,
-    baseContentHash: await contentHash(content),
+    baseContentHash: await contentHashVault(content),
   })
   backend.store.set(path, ENC.encode(JSON.stringify(env)))
 }
@@ -216,8 +216,8 @@ describe('双设备收敛（共享云对象，primary 单目标 + state 幂等�
     expect(entriesOf(devA.local())).toEqual(expected)
     expect(entriesOf(devB.local())).toEqual(expected)
     expect(entriesOf(await cloudPlain(cloud))).toEqual(expected)
-    expect(await contentHash(devA.local())).toBe(await contentHash(devB.local()))
-    expect(await contentHash(devB.local())).toBe(await contentHash(await cloudPlain(cloud)))
+    expect(await contentHashVault(devA.local())).toBe(await contentHashVault(devB.local()))
+    expect(await contentHashVault(devB.local())).toBe(await contentHashVault(await cloudPlain(cloud)))
 
     // 云对象 rev 单调递增（seed rev1 经 store 直写不入 putRevs；同步写为 2、3）
     expect(cloud.putRevs).toEqual([2, 3])
@@ -271,7 +271,7 @@ describe('双设备收敛（共享云对象，primary 单目标 + state 幂等�
     expect(entriesOf(devA.local())).toEqual(expected)
     expect(entriesOf(devB.local())).toEqual(expected)
     expect(entriesOf(await cloudPlain(cloud))).toEqual(expected)
-    expect(await contentHash(devA.local())).toBe(await contentHash(devB.local()))
+    expect(await contentHashVault(devA.local())).toBe(await contentHashVault(devB.local()))
 
     // rev 单调：2（A 并发改动上传）→ 3（B 合并上传）→ 4（裁决重写上传）
     expect(cloud.putRevs).toEqual([2, 3, 4])
@@ -304,7 +304,7 @@ describe('双设备收敛（共享云对象，primary 单目标 + state 幂等�
       rev: 1,
       deviceId: devC.deviceId,
       baseRev: 0,
-      baseContentHash: await contentHash(v2Content),
+      baseContentHash: await contentHashVault(v2Content),
     })
 
     // 内容正确采纳：v2 云端的 a 与本地 b 两方并集，均不丢
@@ -358,7 +358,7 @@ describe('双设备收敛（共享云对象，primary 单目标 + state 幂等�
     const names = [...cloud.store.keys()].filter((p) => BACKUP_NAME_RE.test(p.split('/').pop() ?? '')).sort()
     expect(names.length).toBeGreaterThanOrEqual(3) // seed + A份 + B份（keep 形态多份共存，core 层不清理）
     expect(entriesOf(await cloudPlain(cloud, names[names.length - 1]!))).toEqual(expected)
-    expect(await contentHash(devA.local())).toBe(await contentHash(devB.local()))
+    expect(await contentHashVault(devA.local())).toBe(await contentHashVault(devB.local()))
 
     // rev 单调：2（A 上传）→ 3（B 合并上传），全程 v3
     expect(cloud.putRevs).toEqual([2, 3])
@@ -388,7 +388,7 @@ describe('双设备收敛（共享云对象，primary 单目标 + state 幂等�
     expect(entriesOf(devB.local())).toEqual(expected)
     expect(entriesOf(devC.local())).toEqual(expected)
     expect(entriesOf(await cloudPlain(cloud))).toEqual(expected)
-    expect(await contentHash(devA.local())).toBe(await contentHash(devC.local()))
+    expect(await contentHashVault(devA.local())).toBe(await contentHashVault(devC.local()))
 
     // rev 严格单调（多设备交替写不回退）
     expectRevMonotonic(cloud)
@@ -426,7 +426,7 @@ describe('双设备收敛（共享云对象，primary 单目标 + state 幂等�
     expect(entriesOf(devA.local())).toEqual(['a:base', 'y:from-b'])
     expect(entriesOf(devB.local())).toEqual(['a:base', 'y:from-b'])
     expect(entriesOf(await cloudPlain(cloud))).toEqual(['a:base', 'y:from-b'])
-    expect(await contentHash(devA.local())).toBe(await contentHash(devB.local()))
+    expect(await contentHashVault(devA.local())).toBe(await contentHashVault(devB.local()))
     // 回滚上传不产生冲突副本（非 merged 路径）
     expect(devB.copies()).toHaveLength(1) // 仅首轮 merged 的安全副本
     expectRevMonotonic(cloud)

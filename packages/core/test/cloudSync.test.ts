@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CloudBackend } from '../src/cloud/backend'
 import { CloudHttpError, cloudFetch, ensureHttpOk, isAuthError } from '../src/cloud/backend'
 import { createBackupEnvelope, createSyncEnvelope, openBackupEnvelope } from '../src/backup/envelope'
-import { contentHash, sha256Hex } from '../src/cloud/canonical'
+import { contentHashVault, sha256Hex } from '../src/cloud/canonical'
 import { syncWithCloudRev } from '../src/cloud/syncOrchestrator'
 import type { OtpEntry } from '../src/model'
 
@@ -66,7 +66,7 @@ function revVaultJson(entries: OtpEntry[], updatedAt: number): string {
 /** 以 v3 信封封存对端（dev-b）写入的内容；baseContentHash 可注入错误值以构造降级合并 */
 async function sealedRemote(rev: number, content: string, baseContentHash?: string): Promise<Uint8Array> {
   const env = await createSyncEnvelope(content, PASSWORD, 'balanced',
-    { rev, deviceId: DEV_B, baseRev: rev - 1, baseContentHash: baseContentHash ?? (await contentHash(content)) })
+    { rev, deviceId: DEV_B, baseRev: rev - 1, baseContentHash: baseContentHash ?? (await contentHashVault(content)) })
   return ENC.encode(JSON.stringify(env))
 }
 const revState = (lastKnownRemoteRev: number | null, baseSnapshot: string | null) => ({ lastKnownRemoteRev, baseSnapshot })
@@ -84,7 +84,7 @@ describe('syncWithCloudRev', () => {
     expect(backend.putCount).toBe(1)
     const stored = JSON.parse(new TextDecoder().decode(backend.store.get(PATH)!))
     expect(stored.v).toBe(3)
-    const baseHash = await contentHash(LOCAL_VAULT)
+    const baseHash = await contentHashVault(LOCAL_VAULT)
     expect(stored.sync).toMatchObject({ rev: 1, deviceId: DEV_A, baseRev: 0, baseContentHash: baseHash })
   })
 
@@ -137,9 +137,9 @@ describe('syncWithCloudRev', () => {
     const stored = JSON.parse(new TextDecoder().decode(backend.store.get(PATH)!))
     // §1.1：baseContentHash 指 baseRev 版本（远端旧内容）的规范化 hash——本用例不变量下
     // baseSnapshot==上次收敛内容==云端旧内容（LOCAL_VAULT），非本地新内容 hash
-    const baseHash = await contentHash(LOCAL_VAULT)
+    const baseHash = await contentHashVault(LOCAL_VAULT)
     expect(stored.sync).toMatchObject({ rev: 4, deviceId: DEV_A, baseRev: 3, baseContentHash: baseHash })
-    expect(await contentHash(local)).not.toBe(baseHash) // 确非本地新内容（旧实现固化的错误值）
+    expect(await contentHashVault(local)).not.toBe(baseHash) // 确非本地新内容（旧实现固化的错误值）
   })
 
   it('纯上传且无 baseSnapshot（状态部分缺失）→ sync 头 baseContentHash 回退远端内容 hash', async () => {
@@ -151,7 +151,7 @@ describe('syncWithCloudRev', () => {
     expect(r.action).toBe('uploaded')
     expect(r.newRev).toBe(4)
     const stored = JSON.parse(new TextDecoder().decode(backend.store.get(PATH)!))
-    expect(stored.sync.baseContentHash).toBe(await contentHash(LOCAL_VAULT))
+    expect(stored.sync.baseContentHash).toBe(await contentHashVault(LOCAL_VAULT))
   })
 
   it('同 rev 但云端内容≠baseSnapshot（无 CAS 碰撞）→ 视为已变：本地未动 → downloaded（审查 Critical-1）', async () => {
@@ -171,7 +171,7 @@ describe('syncWithCloudRev', () => {
     const base = revVaultJson([revEntry('a', { order: 1 })], 1)
     const ours = revVaultJson([revEntry('a', { order: 1 }), revEntry('b', { order: 2 })], 2)
     const theirs = revVaultJson([revEntry('a', { order: 1 }), revEntry('c', { order: 3 })], 3)
-    const backend = mockBackend(await sealedRemote(3, theirs, await contentHash(base)))
+    const backend = mockBackend(await sealedRemote(3, theirs, await contentHashVault(base)))
     const r = await syncWithCloudRev({
       backend, path: PATH, vaultJson: ours, password: PASSWORD,
       state: revState(3, base), deviceId: DEV_A,
@@ -230,7 +230,7 @@ describe('syncWithCloudRev', () => {
     const copyJson = await openBackupEnvelope(JSON.parse(new TextDecoder().decode(seen[0]!)), PASSWORD)
     expect(copyJson).toBe(ours)
     const stored = JSON.parse(new TextDecoder().decode(backend.store.get(PATH)!))
-    const theirsHash = await contentHash(theirs)
+    const theirsHash = await contentHashVault(theirs)
     expect(stored.sync).toMatchObject({ rev: 6, deviceId: DEV_A, baseRev: 5, baseContentHash: theirsHash })
   })
 
@@ -238,7 +238,7 @@ describe('syncWithCloudRev', () => {
     const base = revVaultJson([revEntry('a', { order: 1, label: 'old' })], 1)
     const ours = revVaultJson([revEntry('a', { order: 1, label: 'local-new', updatedAt: 2 }), revEntry('b', { order: 2 })], 2)
     const theirs = revVaultJson([revEntry('a', { order: 1, label: 'remote-new', updatedAt: 3 }), revEntry('c', { order: 3 })], 3)
-    const backend = mockBackend(await sealedRemote(5, theirs, await contentHash(base)))
+    const backend = mockBackend(await sealedRemote(5, theirs, await contentHashVault(base)))
     const r = await syncWithCloudRev({
       backend, path: PATH, vaultJson: ours, password: PASSWORD,
       state: revState(4, base), deviceId: DEV_A,

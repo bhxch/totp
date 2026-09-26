@@ -6,7 +6,7 @@ import type { BackupSource } from '../src/backup/sources'
 import type { SourceSyncState } from '../src/cloud/syncState'
 import type { CloudBackend } from '../src/cloud/backend'
 import { CloudHttpError } from '../src/cloud/backend'
-import { contentHash, sha256Hex } from '../src/cloud/canonical'
+import { contentHashVault, sha256Hex } from '../src/cloud/canonical'
 import { pushEnvelope, type RevSyncOutcome } from '../src/cloud/syncOrchestrator'
 import { syncMultipleTargets, type MultiTargetInput, type MultiTargetSyncResult, type TargetResult } from '../src/cloud/multiTarget'
 
@@ -63,7 +63,7 @@ function fakeBackend(initial?: Uint8Array): CloudBackend & { store: Map<string, 
 /** 以 v3 信封预置远端（他设备 dev-b 写入形态）；baseContentHash 可注入错误值构造降级合并 */
 async function sealedRemote(rev: number, content: string, baseContentHash?: string): Promise<Uint8Array> {
   const env = await createSyncEnvelope(content, PW, 'balanced',
-    { rev, deviceId: OTHER_DEV, baseRev: rev - 1, baseContentHash: baseContentHash ?? (await contentHash(content)) })
+    { rev, deviceId: OTHER_DEV, baseRev: rev - 1, baseContentHash: baseContentHash ?? (await contentHashVault(content)) })
   return ENC.encode(JSON.stringify(env))
 }
 
@@ -160,7 +160,7 @@ describe('syncMultipleTargets（primary 裁决 + replica 收敛复制）', () =>
     await expectOpensTo(rb.store.get(PATH)!, PW, A)
     const header = syncHeaderOf(rb.store.get(PATH)!)
     expect(header.v).toBe(3)
-    expect(header.sync).toMatchObject({ rev: 3, deviceId: DEV, baseRev: 2, baseContentHash: await contentHash(v([e('x')])) })
+    expect(header.sync).toMatchObject({ rev: 3, deviceId: DEV, baseRev: 2, baseContentHash: await contentHashVault(v([e('x')])) })
     // profile 缺省 balanced：推平信封按默认档位生成
     expect((JSON.parse(new TextDecoder().decode(rb.store.get(PATH)!)) as { kdf: { profile: string } }).kdf.profile).toBe('balanced')
     expect(r.states['rep']).toEqual({ lastKnownRemoteRev: 3, baseSnapshot: A })
@@ -247,7 +247,7 @@ describe('syncMultipleTargets（primary 裁决 + replica 收敛复制）', () =>
     const base = v([e('a', { label: 'old' })])
     const ours = v([e('a', { label: 'local', updatedAt: 2 }), e('b')])
     const theirs = v([e('a', { label: 'remote', updatedAt: 3 }), e('c')])
-    const pb = fakeBackend(await sealedRemote(5, theirs, await contentHash(base)))
+    const pb = fakeBackend(await sealedRemote(5, theirs, await contentHashVault(base)))
     const rb = fakeBackend()
     const copies: Array<{ key: string; bytes: Uint8Array }> = []
     const r = await syncMultipleTargets({
@@ -283,7 +283,7 @@ describe('syncMultipleTargets（primary 裁决 + replica 收敛复制）', () =>
     expect(find(r, 'rep').outcome!.remoteRev).toBeNull() // null=云端无对象，与 rev=0 不混用
     expect(find(r, 'rep').outcome!.newRev).toBe(1)
     const header = syncHeaderOf(rb.store.get(PATH)!)
-    expect(header.sync).toMatchObject({ rev: 1, baseRev: 0, deviceId: DEV, baseContentHash: await contentHash(A) })
+    expect(header.sync).toMatchObject({ rev: 1, baseRev: 0, deviceId: DEV, baseContentHash: await contentHashVault(A) })
     expect(r.states['rep']).toEqual({ lastKnownRemoteRev: 1, baseSnapshot: A })
   })
 
@@ -347,7 +347,7 @@ describe('syncMultipleTargets（primary 裁决 + replica 收敛复制）', () =>
     const base = v([e('a', { label: 'old' })])
     const ours = v([e('a', { label: 'local', updatedAt: 2 }), e('b')])
     const theirs = v([e('a', { label: 'remote', updatedAt: 3 }), e('c')])
-    const pb = fakeBackend(await sealedRemote(5, theirs, await contentHash(base)))
+    const pb = fakeBackend(await sealedRemote(5, theirs, await contentHashVault(base)))
     const events: string[] = []
     const copies: Array<{ key: string; bytes: Uint8Array }> = []
     const origPut = pb.put.bind(pb)
@@ -381,7 +381,7 @@ describe('syncMultipleTargets（primary 裁决 + replica 收敛复制）', () =>
     const base = v([e('a', { label: 'old' })])
     const ours = v([e('a', { label: 'local', updatedAt: 2 })])
     const theirs = v([e('a', { label: 'remote', updatedAt: 3 })])
-    const pb = fakeBackend(await sealedRemote(5, theirs, await contentHash(base)))
+    const pb = fakeBackend(await sealedRemote(5, theirs, await contentHashVault(base)))
     const r1 = await syncMultipleTargets({
       targets: [pri({ backend: pb, state: revState(4, base) })],
       vaultJson: ours, password: PW, deviceId: DEV,
@@ -519,7 +519,7 @@ describe('syncMultipleTargets（primary 裁决 + replica 收敛复制）', () =>
     const base = v([e('a', { label: 'old' })])
     const ours = v([e('a', { label: 'local', updatedAt: 2 }), e('b')])
     const theirs = v([e('a', { label: 'remote', updatedAt: 3 }), e('c')])
-    const pb = fakeBackend(await sealedRemote(5, theirs, await contentHash(base)))
+    const pb = fakeBackend(await sealedRemote(5, theirs, await contentHashVault(base)))
     const rb = fakeBackend() // replica 空云：验证 primary 失败不阻断 replica 首推
     const r = await syncMultipleTargets({
       targets: [pri({ backend: pb, state: revState(4, base) }), rep({ backend: rb })],

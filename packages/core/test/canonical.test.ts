@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canonicalJson, contentHash } from '../src/cloud/canonical'
+import { canonicalJson, contentHashVault } from '../src/cloud/canonical'
 
 describe('canonicalJson', () => {
   it('键序无关：相同对象不同插入序产出同一字符串', () => {
@@ -22,13 +22,15 @@ describe('canonicalJson', () => {
   })
 })
 
-describe('contentHash', () => {
+// R15②：contentHash（含 rev 旧口径）已 @deprecated 仅测试，通用语义用例迁同步链路统一口径
+// contentHashVault（本组用例 vault 均无顶层 rev，两口径值恒等，断言语义不变）
+describe('contentHashVault', () => {
   it('键序抖动不改变 hash（消除随机 IV/键序影响）', async () => {
     const a = JSON.stringify({ version: 2, entries: [], tags: [], updatedAt: 1 })
     const b = JSON.stringify({ updatedAt: 1, tags: [], entries: [], version: 2 })
-    expect(await contentHash(a)).toBe(await contentHash(b))
+    expect(await contentHashVault(a)).toBe(await contentHashVault(b))
   })
   it('内容不同 hash 不同', async () => {
-    expect(await contentHash('{"a":1}')).not.toBe(await contentHash('{"a":2}'))
+    expect(await contentHashVault('{"a":1}')).not.toBe(await contentHashVault('{"a":2}'))
   })
 })

@@ -37,7 +37,7 @@ describe('contentHashVault（剔除顶层 rev 的 vault 内容 hash）', () => {
     expect(await contentHashVault(withRev(1))).toBe(await contentHashVault(reordered))
   })
 
-  it('守卫：既有 contentHash 不动——rev 字段仍参与其 hash（旧口径可区分 rev）', async () => {
+  it('守卫：contentHash（@deprecated 仅测试，R15②）不动——rev 字段仍参与其 hash（旧口径可区分 rev）', async () => {
     expect(await contentHash(VAULT)).not.toBe(await contentHash(withRev(1)))
     expect(await contentHash(withRev(1))).not.toBe(await contentHash(withRev(2)))
   })
