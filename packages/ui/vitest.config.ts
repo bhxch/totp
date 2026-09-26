@@ -14,6 +14,11 @@ export default defineConfig({
       // - theme/generate.mjs：node 构建脚本（pnpm theme 生成 tokens-palettes.css），浏览器运行时不加载
       // - components/*Platform.ts：仅 interface/type 声明（宿主平台能力契约），零运行时可执行行；
       //   同目录 cloudPlatform.ts/releasePlatform.ts 含运行时函数，不在排除之列且已测
+      // - src/host/**：宿主装配工厂层（R4，f81a1dc）——设计上由宿主包测试覆盖（extension
+      //   cloudRunnerFactory/optionsApp/popupApp/revSeal、desktop cloudPlatforms/securityPlatform
+      //   链路经 '@totp/ui/host' 子出口真实执行），ui 包测试按 R4 裁定不经子出口加载 host
+      //   （避免宿主 '@totp/ui' mock 的 actual 绑定首载失效）；v8 跨包统计归属真空：
+      //   ui 测试进程不加载 → 计 0%，宿主报告 exclude node_modules → 不计——属归属噪音而非测试缺口
       // 保留 configDefaults 排除项（test/、coverage/ 等产物目录不参与统计）
       exclude: [
         ...(configDefaults.coverage.exclude ?? []),
@@ -23,6 +28,7 @@ export default defineConfig({
         'src/components/importPlatform.ts',
         'src/components/securityPlatform.ts',
         'src/components/syncPlatform.ts',
+        'src/host/**',
       ],
     },
   },

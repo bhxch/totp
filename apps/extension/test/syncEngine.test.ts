@@ -461,6 +461,28 @@ describe('pullSyncIfNewer（经 pullOnce）', () => {
     expect(local.data[SYNC_STATUS_KEY]).toMatchObject({ state: 'error' })
   })
 
+  it('密文 vault 且 sync:security 在场 → 密文分支一并应用：vault 覆盖为密文、security 随批落 local', async () => {
+    const encryptedPayload = JSON.stringify({ v: 1, enc: true, dataNonce: 'n0nce', ciphertext: 'c1ph3r' })
+    const sec = '{"wrapped":"kek","nonce":"n"}'
+    const { local } = installChrome(
+      {
+        [VAULT_KEY]: JSON.stringify({ entries: ['old'] }),
+        [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }),
+        [APPLIED_REV_KEY]: 1,
+      },
+      // 远端密文分片与 sync:security 齐备：一致性成立，vault+security 成对落 local（密文分支不门控：
+      // payload 不透明且无 DEK 无法伪造，解密采纳面由 store.replaceVault 校验覆盖）
+      { ...remotePush(encryptedPayload, 2), 'sync:security': sec },
+    )
+
+    await pullSyncIfNewer()
+
+    expect(local.data[VAULT_KEY]).toBe(encryptedPayload)
+    expect(local.data[SECURITY_KEY]).toBe(sec)
+    expect(local.data[APPLIED_REV_KEY]).toBe(2)
+    expect(local.data[SYNC_STATUS_KEY]).toMatchObject({ state: 'ok' })
+  })
+
   it('pull 端 sync 区读取抛错（IO 故障）→ error 状态不向上抛', async () => {
     const shim = installChrome(
       { [VAULT_KEY]: JSON.stringify({ entries: ['old'] }), [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }) },

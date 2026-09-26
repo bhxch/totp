@@ -132,3 +132,55 @@ describe('extension store 冲突裁决 badge 即时对账（badge 滞后修复�
     expect(s.conflictCount.value).toBe(0)
   })
 })
+
+describe('sync-push 推送调度（scheduleSyncPush 三路径）与具名 commitSettings', () => {
+  const spySendMessage = (c: ReturnType<typeof installChromeShim>) =>
+    vi.spyOn(c.chrome.runtime as { sendMessage: (msg: unknown) => Promise<unknown> }, 'sendMessage')
+
+  it('syncEnabled=false（默认）：写路径落盘但短路不发 sync-push', async () => {
+    const c = installChrome()
+    const s = createExtensionStore('test')
+    await s.initStore()
+    await s.enableEncryption('masterpw')
+    const spy = spySendMessage(c)
+    expect(s.settings.syncEnabled).toBe(false)
+    await s.saveSourceCredOp('src-1', WEBDAV) // onCommitted → scheduleSyncPush 短路
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it('syncEnabled=true：onCommitted 立即发 {type:"sync-push"}（sendMessage reject 静默不冒泡）', async () => {
+    const c = installChrome()
+    const s = createExtensionStore('test')
+    await s.initStore()
+    await s.enableEncryption('masterpw')
+    // 无 onMessage listener 时 shim 的 sendMessage 返回 rejected promise（Receiving end does not
+    // exist，与 Chrome 一致）——.catch(() => {}) 必须吞掉，不得产生 unhandled rejection
+    const spy = spySendMessage(c)
+    s.settings.syncEnabled = true
+    await s.saveSourceCredOp('src-1', WEBDAV)
+    expect(spy).toHaveBeenCalledWith({ type: 'sync-push' })
+  })
+
+  it('扩展上下文失效（sendMessage 同步抛错）→ 吞掉不向上抛，写路径本身不受影响', async () => {
+    const c = installChrome()
+    const s = createExtensionStore('test')
+    await s.initStore()
+    await s.enableEncryption('masterpw')
+    ;(c.chrome.runtime as { sendMessage: () => Promise<unknown> }).sendMessage = () => {
+      throw new Error('Extension context invalidated')
+    }
+    s.settings.syncEnabled = true
+    await expect(s.saveSourceCredOp('src-1', WEBDAV)).resolves.not.toThrow()
+  })
+
+  it('具名 commitSettings（popup 单例路径）：未初始化场景不可达不测；落盘后调度 sync-push', async () => {
+    const c = installChrome()
+    const ops = await import('../src/store')
+    await ops.initStore()
+    await ops.enableEncryption('masterpw')
+    const spy = spySendMessage(c)
+    ops.settings.syncEnabled = true
+    await ops.commitSettings()
+    expect(spy).toHaveBeenCalledWith({ type: 'sync-push' })
+  })
+})

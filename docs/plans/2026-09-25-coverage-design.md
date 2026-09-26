@@ -77,6 +77,8 @@ P0-P6 全部完成。各包最终实测与 gate 定值（gate = 实测 -0.5pp �
 | src-tauri on_window_event 主体 | 窗口事件接线 |
 | apps/extension popup/main.ts、options/main.ts | createApp 入口 |
 | packages/ui theme/generate.mjs、纯类型 interface 文件（*Platform.ts 等） | 构建脚本/无运行时逻辑 |
+| apps/extension src/env.d.ts | 纯 `declare module` 类型声明，零运行时逻辑（同 core model.ts、ui *Platform.ts 先例；2026-09-27 终验补登记） |
+| packages/ui src/host/** | 宿主装配工厂层（R4）：设计上由宿主包测试经 '@totp/ui/host' 真实执行（extension cloudRunnerFactory/optionsApp/popupApp/revSeal、desktop cloudPlatforms/securityPlatform 链路），ui 包测试按 R4 裁定不经子出口加载（保宿主 mock 拦截点唯一）；v8 跨包统计归属真空（ui 计 0%、宿主 exclude node_modules 不计），属归属噪音而非测试缺口（2026-09-27 终验补登记） |
 
 **两个重要的不豁免**：
 - `background.ts` 不豁免——`defineBackground` 打 stub 后消息路由/右键菜单/alarm 全部可单测（现 0%，最大洼地）；

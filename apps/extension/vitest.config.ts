@@ -21,6 +21,7 @@ export default defineConfig({
         'vitest.config.ts',
         'entrypoints/popup/main.ts', // 豁免清单（coverage-design §1.3）：createApp 三行入口
         'entrypoints/options/main.ts',
+        'src/env.d.ts', // 豁免清单（coverage-design §1.3）：纯 declare module 类型声明，零运行时逻辑（同 core model.ts、ui *Platform.ts 先例；2026-09-27 终验补登记）
       ],
     },
   },
