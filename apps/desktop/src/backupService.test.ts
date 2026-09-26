@@ -43,12 +43,14 @@ const sources: BackupSourceInput[] = [
 ]
 
 beforeEach(() => {
+  // 写侧 mock 一律 mockReset（清实现）而非 mockClear（只清调用）：「全部失败」用例的
+  // mockRejectedValue 曾残留到后续用例（首个写默认目录的用例会误吃 disk full），R10 守卫暴露
   invokeMock.mockReset()
-  fsMocks.mkdir.mockClear()
+  fsMocks.mkdir.mockReset()
   fsMocks.readDir.mockReset().mockResolvedValue([])
   fsMocks.readTextFile.mockReset().mockResolvedValue('')
-  fsMocks.rename.mockClear()
-  fsMocks.writeTextFile.mockClear()
+  fsMocks.rename.mockReset()
+  fsMocks.writeTextFile.mockReset()
   envMock().mockClear()
 })
 
@@ -283,6 +285,60 @@ describe('readBackupByName（按 sourceId 读取）', () => {
     expect(text).toBe('envelope-text')
     await expect(readBackupByName('a', 'conflict-2dc4bf8a-5ca7-4087-8b3e-2f1a4d5c6b7e-20260918-024714.totpbackup', sources)).resolves.toBe('envelope-text')
     await expect(readBackupByName('a', '../evil.totpbackup', sources)).rejects.toThrow('invalid backup name')
+  })
+})
+
+describe('R10 守卫：os 授权目录/默认目录读写路径（双通道行为锚点）', () => {
+  it('默认目录 keep 滚动删除：plugin-fs readDir 列表经滚动策略删最旧（n=1：3 取 1 留最新删 2），conflict/陌生名不参与（BACKUP_NAME_RE 收口）', async () => {
+    fsMocks.readDir.mockResolvedValue([
+      { name: 'vault-20260916-120000.totpbackup' },
+      { name: 'vault-20260916-120001.totpbackup' },
+      { name: 'vault-20260916-120002.totpbackup' },
+      { name: 'conflict-20260916-120000.totpbackup' },
+      { name: 'notes.txt' },
+    ])
+    await createBackupToSources([{ id: 'b', name: '办公室', dir: null, retention: { type: 'keep', n: 1 }, enabled: true }], '{}', 'pw')
+    // 默认分支不用 os 命令：仅 remove_backup_file（删两个较旧 vault 名，保留 vault-120002），conflict/notes.txt 不误删
+    expect(invokeMock).toHaveBeenCalledTimes(2)
+    expect(invokeMock).toHaveBeenCalledWith('remove_backup_file', { name: 'vault-20260916-120000.totpbackup' })
+    expect(invokeMock).toHaveBeenCalledWith('remove_backup_file', { name: 'vault-20260916-120001.totpbackup' })
+    expect(invokeMock).not.toHaveBeenCalledWith('remove_backup_file', { name: 'vault-20260916-120002.totpbackup' })
+    expect(invokeMock).not.toHaveBeenCalledWith('remove_backup_file', { name: 'conflict-20260916-120000.totpbackup' })
+    expect(invokeMock).not.toHaveBeenCalledWith('remove_backup_file', { name: 'notes.txt' })
+  })
+
+  it('os 分支列表现状口径（R10 对齐前）：Rust 白名单（前缀+后缀，中段不限）放行的宽中段名原样透出，TS 侧不再过滤', async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'dir_token_os') return 'tok'
+      if (cmd === 'list_backup_files_os') {
+        // 模拟 Rust list_backup_files_granted 输出（已升序）：vault-notes / conflict-Weird_Name
+        // 均为「前缀+.totpbackup 后缀即放行」的宽口径名，READABLE_BACKUP_RE 会拒绝
+        return ['vault-20260916-120000.totpbackup', 'vault-notes.totpbackup', 'conflict-Weird_Name.totpbackup']
+      }
+      return null
+    })
+    const list = await listBackupsFromSources([{ ...sources[0]! }])
+    // 聚合列表倒序展示：vault-notes > vault-120000 > conflict-*（码点序）
+    expect(list.map((e) => e.name)).toEqual([
+      'vault-notes.totpbackup',
+      'vault-20260916-120000.totpbackup',
+      'conflict-Weird_Name.totpbackup',
+    ])
+  })
+
+  it('os 分支滚动删除：列表宽口径名不参与删除候选（selectBackupsToKeep 仅认 vault 时间戳名）', async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'dir_token_os') return 'tok'
+      if (cmd === 'list_backup_files_os') {
+        return ['vault-20260916-120000.totpbackup', 'vault-20260916-120001.totpbackup', 'vault-notes.totpbackup', 'conflict-Weird_Name.totpbackup']
+      }
+      return null
+    })
+    await createBackupToSources([{ ...sources[0]! }], '{}', 'pw', 'balanced')
+    expect(invokeMock).toHaveBeenCalledWith('remove_backup_file_os', {
+      path: 'C:\\bkA\\vault-20260916-120000.totpbackup',
+      dirToken: 'tok',
+    })
   })
 })
 
