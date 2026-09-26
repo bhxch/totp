@@ -15,6 +15,7 @@ import type { SyncPlatform } from '../components/syncPlatform'
 import type { IconStore } from '../iconStore'
 import type { VueStore } from '../store'
 import { NAV_ICONS } from './navIcons'
+import { navRoutes, pagePropsBuilders, type PagePropsByName } from './routes'
 
 /** 窄窗断点查询串（<600px）：isNarrow 初值测量与 change 监听共用同一 Media Query */
 const NARROW_MQ = '(max-width: 599px)'
@@ -60,13 +61,11 @@ const pageListeners = computed(() =>
   route.name === 'codes' ? { copy: (code: string) => emit('copy', code) } : {},
 )
 
-const navItems = computed<{ name: string; label: string; icon: string; to: string }[]>(() => [
-  { name: 'codes', label: t('nav.codes'), icon: NAV_ICONS.codes, to: '/codes' },
-  { name: 'import', label: t('nav.import'), icon: NAV_ICONS.import, to: '/import' },
-  { name: 'sync', label: t('nav.sync'), icon: NAV_ICONS.sync, to: '/sync' },
-  { name: 'security', label: t('nav.security'), icon: NAV_ICONS.security, to: '/security' },
-  { name: 'settings', label: t('nav.settings'), icon: NAV_ICONS.settings, to: '/settings' },
-])
+// R16③：导航项由 routes.ts 的 themeRoutes 派生（navRoutes），文案/图标在此按约定填充
+// （label=i18n nav.<name>，icon=NAV_ICONS[name]）；computed 保持 locale 切换后 Rail/Tabs 文案联动
+const navItems = computed<{ name: string; label: string; icon: string; to: string }[]>(() =>
+  navRoutes.map((r) => ({ name: r.name, label: t(`nav.${r.name}`), icon: NAV_ICONS[r.name], to: r.path })),
+)
 
 const active = computed(() => String(route.name ?? ''))
 
@@ -89,18 +88,11 @@ function onSelect(name: string) {
   if (item) void router.push(item.to)
 }
 
-/** 按路由名精确分发页面 props(与 Task 9-11 各页真实现的 prop 签名一一对应) */
-const pageProps = computed<Record<string, unknown>>(() => {
-  const p = props
-  switch (route.name) {
-    // saveImageFile（批① §2.5 多选拼版保存）随备份平台分发到 codes 页；宿主未实现时 undefined → CodesPage 隐藏「保存图片」
-    case 'codes': return { store: p.store, icons: p.icons, saveImage: p.platform?.saveImageFile?.bind(p.platform) }
-    case 'import': return { store: p.store, platform: p.platform, schemesApi: p.schemesApi }
-    case 'sync': return { store: p.store, platform: p.platform, cloudPlatform: p.cloudPlatform, syncPlatform: p.syncPlatform, cloudAuthFailed: p.cloudAuthFailed }
-    case 'security': return { securityPlatform: p.securityPlatform }
-    case 'settings': return { store: p.store, securityPlatform: p.securityPlatform, showDesktop: (p.railActions?.length ?? 0) > 0, showExtension: p.syncPlatform != null, mcpPlatform: p.mcpPlatform ?? null, devtoolsPlatform: p.devtoolsPlatform ?? null, releasePlatform: p.releasePlatform ?? null }
-    default: return {}
-  }
+/** 按路由名精确分发页面 props（R16③：装配表与每页 props 类型随 routes.ts 单点登记，
+ *  映射类型 pagePropsBuilders 恢复逐页形状检查；未知路由名（redirect/catch-all）→ 空对象） */
+const pageProps = computed<Partial<PagePropsByName>>(() => {
+  const build = pagePropsBuilders[route.name as keyof PagePropsByName]
+  return build ? build(props) : {}
 })
 </script>
 <template>

@@ -9,7 +9,7 @@ import NavigationShell from '../src/pages/NavigationShell.vue'
 import SecurityPage from '../src/pages/SecurityPage.vue'
 import SyncPage from '../src/pages/SyncPage.vue'
 import SettingsPage from '../src/pages/SettingsPage.vue'
-import { themeRoutes } from '../src/pages/routes'
+import { navRoutes, pagePropsBuilders, themeRoutes } from '../src/pages/routes'
 import { createVueStore, type VueStore } from '../src/store'
 import { createTestI18n } from './helpers/i18n'
 
@@ -36,6 +36,21 @@ function fullCloudFake(): Record<string, unknown> {
     autoPrefs: { get: () => ({ onChange: false, onInterval: false, intervalMinutes: 60 }), set: () => {} },
   }
 }
+
+describe('页面注册表单点化（R16③：navRoutes/pagePropsBuilders 均派生自 themeRoutes）', () => {
+  it('navRoutes 恰为五页导航目的地（顺序随路由表；redirect/catch-all 不进 nav）', () => {
+    expect(navRoutes.map((r) => r.name)).toEqual(['codes', 'import', 'sync', 'security', 'settings'])
+    expect(navRoutes.map((r) => r.path)).toEqual(['/codes', '/import', '/sync', '/security', '/settings'])
+    // 与 themeRoutes 同源：navRoutes 每项都能在路由表中找到同名带 component 的条目
+    for (const nav of navRoutes) {
+      const r = themeRoutes.find((x) => x.name === nav.name)
+      expect(r && 'component' in r && r.component).toBeTruthy()
+    }
+  })
+  it('pagePropsBuilders 键与 navRoutes 一一对应（每页均有装配函数）', () => {
+    expect(Object.keys(pagePropsBuilders).sort()).toEqual([...navRoutes.map((r) => r.name)].sort())
+  })
+})
 
 describe('NavigationShell pageProps 精确分发（五路由全走查，真实 store）', () => {
   it.each([
