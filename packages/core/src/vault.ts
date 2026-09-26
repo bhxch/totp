@@ -1,5 +1,5 @@
 import type { OtpEntry, Tag, Vault } from './model'
-import { toOtpDigits } from './import/normalize'
+import { toOtpDigits } from './otp/typeProfiles'
 import { parseOtpUri } from './otp/uri'
 
 export function createVault(): Vault {
@@ -13,7 +13,17 @@ function withVault(v: Vault, patch: Partial<Vault>): Vault {
 export function addEntry(v: Vault, entry: OtpEntry): Vault {
   const maxOrder = v.entries.reduce((m, e) => Math.max(m, e.order), -1)
   return withVault(v, {
-    entries: [...v.entries, { ...entry, order: maxOrder + 1, updatedAt: entry.updatedAt ?? entry.createdAt }],
+    entries: [
+      ...v.entries,
+      {
+        ...entry,
+        // R3：入库边界统一收口 digits（查 descriptor.forcedDigits：steam=5、yandex=8、其余 6/7/8；
+        // 幂等）——UI/导入路径的前置收口移除后由本边界兜底，防非法 digits 落盘被 loadVault 整体拒绝
+        digits: toOtpDigits(entry.digits, entry.type),
+        order: maxOrder + 1,
+        updatedAt: entry.updatedAt ?? entry.createdAt,
+      },
+    ],
   })
 }
 
@@ -69,7 +79,8 @@ export function newEntryFromUri(uri: string, nowMs: number = Date.now()): OtpEnt
     label: p.label,
     secret: p.secret,
     algorithm: p.algorithm,
-    digits: toOtpDigits(p.digits, p.type),
+    // R3：parseOtpUri 已按 typeProfile 收口并校验（OtpUriParams.digits 类型即 OtpDigits），无需再收口
+    digits: p.digits,
     period: p.period,
     ...(p.counter !== undefined ? { counter: p.counter } : {}),
     ...(p.pin !== undefined ? { pin: p.pin } : {}),

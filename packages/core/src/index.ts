@@ -8,6 +8,18 @@ export * from './otp/steam'
 export * from './otp/yandex'
 export * from './otp/entryCode'
 export * from './otp/uri'
+// R3：OTP 类型注册表。toOtpDigits 不在此导出——经 './import/normalize' re-export（保持既有导入面），
+// 两处 `export *` 同名会触发 TS2308 重名冲突，故本模块用显式清单
+export {
+  TYPE_PROFILES,
+  defaultDigitsFor,
+  otpTypeForHost,
+} from './otp/typeProfiles'
+export type {
+  TypeProfile,
+  CodeComputeInput,
+  CodeComputeResult,
+} from './otp/typeProfiles'
 export * from './model'
 export * from './vault'
 export * from './merge/vaultMerge'
