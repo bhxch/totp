@@ -2157,6 +2157,19 @@ mod tests {
     // ---- DEK 暂存槽三命令语义（盘点 B7：stash 只进槽 / take 取即清 / clear 恒清）----
     // 以局部 Mutex 实例直测，不触碰全局 static（并行安全）
 
+    // 命令本体直测（无 State 参数可直接调用）：进程内唯一触碰全局 STASHED_DEK 的用例，
+    // 无并行竞态；覆盖命令层真实入口与槽操作的一致性
+    #[test]
+    fn stashed_dek_commands_roundtrip_on_global_slot() {
+        assert_eq!(take_stashed_dek(), None, "无暂存返回 None（前端收 null）");
+        stash_dek("dek".into());
+        assert_eq!(take_stashed_dek(), Some("dek".to_string()), "取即清");
+        assert_eq!(take_stashed_dek(), None, "二次取为空");
+        stash_dek("again".into());
+        clear_stashed_dek();
+        assert_eq!(take_stashed_dek(), None, "clear 后无残留");
+    }
+
     #[test]
     fn dek_slot_semantics_stash_take_clear() {
         let slot: Mutex<Option<String>> = Mutex::new(None);
