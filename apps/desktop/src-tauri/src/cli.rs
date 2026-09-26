@@ -81,6 +81,13 @@ mod tests {
         assert!(parse_args(&s(&["--mcp-port"])).is_err()); // 缺值
     }
 
+    // 规格 review 补口：--mcp-token 带 token 值但不带 --headless-mcp → Err
+    // （parse_args 尾部守卫的 token 侧反例；port 侧反例见上）
+    #[test]
+    fn rejects_mcp_token_without_headless() {
+        assert!(parse_args(&s(&["--mcp-token", "0123456789abcdef"])).is_err());
+    }
+
     // 缺值与非数字端口分支（盘点 B1-2）：CLI 错误须显式 Err（run 里 stderr+exit(2)）
     #[test]
     fn rejects_missing_token_value_and_non_numeric_port() {
