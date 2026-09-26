@@ -55,50 +55,38 @@ const importPlan = ref<ImportPlan | null>(null)
 const inFileMerged = ref(0)
 const suspectChoices = ref<Map<number, SuspectChoice>>(new Map())
 
-const FORMAT_LABEL: Record<ManualFormat, string> = {
-  aegis: t('importCard.fmtAegis'),
-  winauth: t('importCard.fmtWinauth'),
-  uriBatch: t('importCard.fmtUriBatch'),
-  generic: t('importCard.fmtGeneric'),
-  twoFas: t('importCard.fmtTwoFas'),
-  bitwarden: t('importCard.fmtBitwarden'),
-  proton: t('importCard.fmtProton'),
-  stratum: t('importCard.fmtStratum'),
-  freeOtp: t('importCard.fmtFreeOtp'),
-  freeOtpLegacy: t('importCard.fmtFreeOtpLegacy'),
-  totpAuthenticator: t('importCard.fmtTotpAuthenticator'),
-  andOtp: t('importCard.fmtAndOtp'),
-  foxauth: t('importCard.fmtFoxauth'),
-  authenticatorPlus: t('importCard.fmtAuthenticatorPlus'),
-  authy: t('importCard.fmtAuthy'),
-  battleNet: t('importCard.fmtBattleNet'),
-  duo: t('importCard.fmtDuo'),
-  msAuth: t('importCard.fmtMsAuth'),
-  sqlite: t('importCard.fmtSqlite'),
-}
+// R16⑪ 合一：格式登记单一来源——每格式一行登记 picked 页展示（fmt*）与手动下拉（manual*）
+// 两个 i18n key，FORMAT_LABEL 与 MANUAL_OPTIONS 均由此派生；键完整性由 satisfies 编译期锁定
+// （新增格式漏登任何一侧即类型报错），行序=手动下拉项顺序（freeOtpPlus 与 freeOtp 同 parser 不单列）
+const FORMAT_DEFS = {
+  uriBatch: { fmt: 'importCard.fmtUriBatch', manual: 'importCard.manualUriBatch' },
+  aegis: { fmt: 'importCard.fmtAegis', manual: 'importCard.manualAegis' },
+  winauth: { fmt: 'importCard.fmtWinauth', manual: 'importCard.manualWinauth' },
+  generic: { fmt: 'importCard.fmtGeneric', manual: 'importCard.manualGeneric' },
+  twoFas: { fmt: 'importCard.fmtTwoFas', manual: 'importCard.manualTwoFas' },
+  bitwarden: { fmt: 'importCard.fmtBitwarden', manual: 'importCard.manualBitwarden' },
+  proton: { fmt: 'importCard.fmtProton', manual: 'importCard.manualProton' },
+  stratum: { fmt: 'importCard.fmtStratum', manual: 'importCard.manualStratum' },
+  freeOtp: { fmt: 'importCard.fmtFreeOtp', manual: 'importCard.manualFreeOtp' },
+  freeOtpLegacy: { fmt: 'importCard.fmtFreeOtpLegacy', manual: 'importCard.manualFreeOtpLegacy' },
+  totpAuthenticator: { fmt: 'importCard.fmtTotpAuthenticator', manual: 'importCard.manualTotpAuthenticator' },
+  andOtp: { fmt: 'importCard.fmtAndOtp', manual: 'importCard.manualAndOtp' },
+  foxauth: { fmt: 'importCard.fmtFoxauth', manual: 'importCard.manualFoxauth' },
+  authenticatorPlus: { fmt: 'importCard.fmtAuthenticatorPlus', manual: 'importCard.manualAuthenticatorPlus' },
+  authy: { fmt: 'importCard.fmtAuthy', manual: 'importCard.manualAuthy' },
+  battleNet: { fmt: 'importCard.fmtBattleNet', manual: 'importCard.manualBattleNet' },
+  duo: { fmt: 'importCard.fmtDuo', manual: 'importCard.manualDuo' },
+  msAuth: { fmt: 'importCard.fmtMsAuth', manual: 'importCard.manualMsAuth' },
+  sqlite: { fmt: 'importCard.fmtSqlite', manual: 'importCard.manualSqlite' },
+} satisfies { [K in ManualFormat]: { fmt: string; manual: string } }
 
-/** picked 页手动指定格式下拉（嗅探失败/误判时自选；freeOtpPlus 与 freeOtp 同 parser 不单列） */
-const MANUAL_OPTIONS: Array<{ value: ManualFormat; label: string }> = [
-  { value: 'uriBatch', label: t('importCard.manualUriBatch') },
-  { value: 'aegis', label: t('importCard.manualAegis') },
-  { value: 'winauth', label: t('importCard.manualWinauth') },
-  { value: 'generic', label: t('importCard.manualGeneric') },
-  { value: 'twoFas', label: t('importCard.manualTwoFas') },
-  { value: 'bitwarden', label: t('importCard.manualBitwarden') },
-  { value: 'proton', label: t('importCard.manualProton') },
-  { value: 'stratum', label: t('importCard.manualStratum') },
-  { value: 'freeOtp', label: t('importCard.manualFreeOtp') },
-  { value: 'freeOtpLegacy', label: t('importCard.manualFreeOtpLegacy') },
-  { value: 'totpAuthenticator', label: t('importCard.manualTotpAuthenticator') },
-  { value: 'andOtp', label: t('importCard.manualAndOtp') },
-  { value: 'foxauth', label: t('importCard.manualFoxauth') },
-  { value: 'authenticatorPlus', label: t('importCard.manualAuthenticatorPlus') },
-  { value: 'authy', label: t('importCard.manualAuthy') },
-  { value: 'battleNet', label: t('importCard.manualBattleNet') },
-  { value: 'duo', label: t('importCard.manualDuo') },
-  { value: 'msAuth', label: t('importCard.manualMsAuth') },
-  { value: 'sqlite', label: t('importCard.manualSqlite') },
-]
+const FORMAT_LABEL = Object.fromEntries(
+  (Object.keys(FORMAT_DEFS) as ManualFormat[]).map((k) => [k, t(FORMAT_DEFS[k].fmt)]),
+) as Record<ManualFormat, string>
+
+/** picked 页手动指定格式下拉（嗅探失败/误判时自选） */
+const MANUAL_OPTIONS: Array<{ value: ManualFormat; label: string }> =
+  (Object.keys(FORMAT_DEFS) as ManualFormat[]).map((k) => ({ value: k, label: t(FORMAT_DEFS[k].manual) }))
 
 /** 实际生效格式：手动选择覆盖嗅探结果（auto 时用嗅探值，可能为 null=未识别） */
 const effectiveFormat = computed<ManualFormat | null>(() => (manual.value === 'auto' ? format.value : manual.value))
@@ -545,18 +533,16 @@ async function nextFromPicked(): Promise<void> {
   await parseAndConfirm(TEXT_PARSERS[f])
 }
 
-/** 当前路径输入 → RowMapping（留空字段不带，走 core 默认值）；secret 未填返回 null */
+/** 当前路径输入 → RowMapping（留空字段不带，走 core 默认值）；secret 未填返回 null。
+ *  R16⑪：非必填字段沿既有 FIELDS 循环装配（新字段只登记 FIELDS 一处；键序=FIELDS 序，
+ *  与原 if 链逐字同语义：secret 走 trim 必填守卫，其余按 truthy 携带） */
 function buildMapping(): RowMapping | null {
   if (!paths.value.secret.trim()) return null
   const mapping: RowMapping = { secret: { path: paths.value.secret } }
-  if (paths.value.issuer) mapping.issuer = { path: paths.value.issuer }
-  if (paths.value.label) mapping.label = { path: paths.value.label }
-  if (paths.value.type) mapping.type = { path: paths.value.type }
-  if (paths.value.algorithm) mapping.algorithm = { path: paths.value.algorithm }
-  if (paths.value.digits) mapping.digits = { path: paths.value.digits }
-  if (paths.value.period) mapping.period = { path: paths.value.period }
-  if (paths.value.counter) mapping.counter = { path: paths.value.counter }
-  if (paths.value.note) mapping.note = { path: paths.value.note }
+  for (const f of FIELDS) {
+    if (f.key === 'secret' || !paths.value[f.key]) continue
+    mapping[f.key] = { path: paths.value[f.key] }
+  }
   return mapping
 }
 
