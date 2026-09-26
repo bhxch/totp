@@ -1,5 +1,7 @@
 # 批⑧ 八项改进真机测试记录（2026-09-23 首轮 + 2026-09-24 解锁复测）
 
+> **已归档（2026-09-26）**：E2E 测试的活文档为 **`docs/e2e-test.md`**（其 §4/§5 已收录本批结果与缺陷处置），后续扩充在该文档进行。
+
 - 环境：Windows 10.0.26200 x64，debug 构建（`tauri dev` / `target/debug/totp-desktop.exe`），tauri-plugin-mcp-bridge 0.13（仅 debug）
 - 前置：完整 e2e 已全绿（core 734 / ui 823 / desktop 128 / extension 108 前端用例 + cargo 75；双目标构建产物断言；README 链接校验 29×2；四包 typecheck；cargo clippy 0 告警）
 - 执行方式：tauri-mcp driver-session（9223）+ headless MCP（curl JSON-RPC）
