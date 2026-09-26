@@ -181,12 +181,14 @@ ipc-execute-command 带参不兼容坑）+ curl JSON-RPC（Streamable HTTP，`PO
    因全局快捷键 ALT+SHIFT+T 已注册，tauri_plugin_global_shortcut 初始化 panic（exit 101，
    "HotKey already registered"），非优雅的"已在运行"提示。建议 backlog（低）：单实例检测或
    快捷键注册失败的降级处理。注：batch8 的 headless 用例均在无主实例时执行，未暴露此路径。
-2. **[缺陷候选·中] MCP 工具确认在连续请求下异常**：Deny 第一个工具确认后立即发起第二个
+2. **[已修复+真机复验 ✅ 2026-09-26] MCP 工具确认在连续请求下异常**：Deny 第一个工具确认后立即发起第二个
    trigger_backup，第二个请求未等用户操作即返回 `tool confirmation timed out or failed`
    （预期应挂起等待审批）；且积压的旧确认框首次 Allow/Deny 点击不生效（响应迟到被静默忽略），
    需二次点击才前进。单发路径（请求→弹窗→Allow）完全正常。建议代码级 triage：
    mcpApprovalQueue 队列 churn 与 Rust pending 回收时序（复现序列：连续两次 tools/call
    trigger_backup，间隔 <2s，第一次点 Deny 后立刻观察第二次响应）。
+   修复后真机复验（同序列）：callA=「tool call denied by user」、callB 挂起等待用户
+   Allow 后返回 {"triggered":true}、对话框干净前进——两症状均消除。commit 91abb0c/763184d。
 3. **[平台行为·注记] Windows 多层端口绑定**：0.0.0.0:48215 通配占用不阻塞 127.0.0.1:48215
    具体绑定（反之亦然需 SO_EXCLUSIVEADDRUSE）。应用「连接行仅真实监听成功后输出」的承诺未被
    违反（headless 实例确实绑定成功），但 D7-③ 类测试必须用 127.0.0.1 精确占用才能构造 AddrInUse。
