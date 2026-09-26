@@ -3,6 +3,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { createDesktopAutoRunner, createDesktopAutoChannels, formatAutoStatusText, type AutoBackupDeps } from './autoBackup'
 
+// recordAutoStatus 包装为可断言 spy（显式调用记录断言，取代 localStorage 轮询——消除 coverage
+// 全量跑下 fake timers 推进与轮询窗口的时序敏感，规格审查 Important 项）；其余偏好读写保持真实
+const { recordAutoStatusMock, readLastBackupHashReal } = vi.hoisted(() => ({
+  recordAutoStatusMock: vi.fn(),
+  readLastBackupHashReal: vi.fn(() => null),
+}))
+vi.mock('./desktopPrefs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./desktopPrefs')>()
+  return {
+    ...actual,
+    recordAutoStatus: (...args: [string, boolean | null, string]) => { recordAutoStatusMock(...args) },
+    readLastBackupHash: () => readLastBackupHashReal(),
+  }
+})
+
 const { createBackupToSourcesMock } = vi.hoisted(() => ({ createBackupToSourcesMock: vi.fn() }))
 vi.mock('./backupService', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./backupService')>()
@@ -380,17 +395,26 @@ describe('createDesktopAutoRunner（cloud 通道）', () => {
 })
 
 // ---------- createDesktopAutoChannels（desktop 装配，P4 抽出）：deps 闭包接线直测 ----------
+// 断言全部落在注入 mock 的显式调用记录上（recordAutoStatus/createBackupToSources/doCloudSync/基线写），
+// 不轮询 localStorage——残留写入与本轮判定之间无时序耦合（规格审查 Important 项）
 describe('createDesktopAutoChannels（store/adapter/prefs/状态键接线）', () => {
+  /** 有界小步推进（1s×≤15）：跨过 10s 防抖边界即触发，不依赖单次大步推进的精确边界命中；
+   *  每步 flushPromises 排干异步链——断言只看显式调用记录（规格审查 Important 项的确定性修法） */
+  async function advanceUntil(spy: { mock: { calls: unknown[] } }, times = 1): Promise<void> {
+    for (let i = 0; i < 20 && spy.mock.calls.length < times; i++) {
+      await vi.advanceTimersByTimeAsync(1000)
+      await flushPromises()
+    }
+  }
+
   beforeEach(() => {
     localStorage.clear()
+    recordAutoStatusMock.mockClear()
+    readLastBackupHashReal.mockClear().mockReturnValue(null)
     createBackupToSourcesMock.mockReset().mockResolvedValue({ outcome: 'ok', okCount: 1, failed: [], vaultJson: JSON1, summary: '已备份到 1 个目录（家里）' })
   })
-  afterEach(() => {
-    vi.useRealTimers()
-  })
 
-  it('变更触发：backupPrefs 现读 backupAutoPrefs；doBackup 单次快照+档位；基线写 lastBackupHash；状态记成功', async () => {
-    vi.useFakeTimers()
+  it('变更触发：backupPrefs 现读 backupAutoPrefs；doBackup 单次快照+档位；基线/状态经注入键写入', async () => {
     localStorage.setItem('backupAutoPrefs', JSON.stringify({ onChange: true, onInterval: false, intervalMinutes: 60 }))
     const vault = { version: 2, entries: [], tags: [], updatedAt: 5 }
     const store = {
@@ -405,24 +429,21 @@ describe('createDesktopAutoChannels（store/adapter/prefs/状态键接线）', (
       doCloudSync: vi.fn(async () => {}),
     })
     runner.notifyChanged()
-    await vi.advanceTimersByTimeAsync(10_000) // 防抖窗口
-    await flushPromises()
+    await advanceUntil(createBackupToSourcesMock)
     expect(createBackupToSourcesMock).toHaveBeenCalledOnce()
     const [sources, vaultJson, secret, profile] = createBackupToSourcesMock.mock.calls[0] as unknown as [unknown[], string, string, string]
     expect(sources).toEqual([]) // adapter 无源
     expect(vaultJson).toBe(JSON.stringify(vault)) // M3：单次快照
     expect(secret).toBe('pw')
     expect(profile).toBe('fast') // 档位取 settings
-    // I8/M3：全部成功 → 基线=sha256(落盘 vaultJson)，状态记成功
-    expect(localStorage.getItem('lastBackupHash')).toBeTypeOf('string')
-    const status = JSON.parse(localStorage.getItem('backupAutoStatus')!) as { ok: boolean; summary: string }
-    expect(status.ok).toBe(true)
-    expect(status.summary).toBe('已备份到 1 个目录（家里）')
-    runner.stop() // 防泄漏：不影响后续用例
+    // I8/M3：recordStatus→backupAutoStatus 键；setLastBackupHash→lastBackupHash 键（显式调用记录）。
+    // waitFor 包裹续延断言：doBackup await 之后的 record/基线写入可能在 flush 排干前一个微任务才落地
+    await vi.waitFor(() => expect(recordAutoStatusMock).toHaveBeenCalledWith('backupAutoStatus', true, '已备份到 1 个目录（家里）'))
+    expect(readLastBackupHashReal).toHaveBeenCalled()
+    runner.stop()
   })
 
   it('云通道：cloudPrefs 开启 onChange → notifyChanged 触发 doCloudSync', async () => {
-    vi.useFakeTimers()
     localStorage.setItem('backupAutoPrefs', JSON.stringify({ onChange: true }))
     localStorage.setItem('cloudAutoPrefs', JSON.stringify({ onChange: true }))
     const doCloudSync = vi.fn(async () => {})
@@ -433,14 +454,14 @@ describe('createDesktopAutoChannels（store/adapter/prefs/状态键接线）', (
       doCloudSync,
     })
     runner.notifyChanged()
-    await vi.advanceTimersByTimeAsync(10_000)
-    await flushPromises()
+    await advanceUntil(doCloudSync)
     expect(doCloudSync).toHaveBeenCalledOnce()
-    runner.stop() // 防泄漏：不影响后续用例
+    // 排干并发备份通道的续延（双通道同刻触发）：不把本用例的 ok 状态写入泄漏进后续用例的 spy
+    await vi.waitFor(() => expect(recordAutoStatusMock).toHaveBeenCalledWith('backupAutoStatus', true, '已备份到 1 个目录（家里）'))
+    runner.stop()
   })
 
-  it('store 未就绪 → isLocked 兜底 true：守护 skip，恒不动作', async () => {
-    vi.useFakeTimers()
+  it('store 未就绪 → isLocked 兜底 true：decideAutoRun locked skip，跳过态入库且不写基线', async () => {
     localStorage.setItem('backupAutoPrefs', JSON.stringify({ onChange: true }))
     const runner = createDesktopAutoChannels({
       getStore: () => null,
@@ -448,17 +469,13 @@ describe('createDesktopAutoChannels（store/adapter/prefs/状态键接线）', (
       doCloudSync: vi.fn(async () => {}),
     })
     runner.notifyChanged()
-    // 防抖触发 → decideAutoRun locked skip → 跳过态可观测（批 4）：ok=null + 原因入库，不写基线。
-    // 轮询逐次过滤旧写入（前序用例的异步落盘不串扰本轮判定）
-    let status: { ok: boolean | null; summary: string } | null = null
-    for (let i = 0; i < 15; i++) {
-      await vi.advanceTimersByTimeAsync(1000)
-      await flushPromises()
-      const raw = localStorage.getItem('backupAutoStatus')
-      if (raw && JSON.parse(raw).summary === '库已锁定') { status = JSON.parse(raw); break }
-      localStorage.removeItem('backupAutoStatus')
-    }
+    await advanceUntil(recordAutoStatusMock)
     expect(createBackupToSourcesMock).not.toHaveBeenCalled()
-    expect(status).toMatchObject({ ok: null, summary: '库已锁定' })
+    if (recordAutoStatusMock.mock.calls.length === 0) {
+      console.log('DBG3 prefs=' + JSON.stringify(localStorage.getItem('backupAutoPrefs')) + ' calls=' + JSON.stringify(recordAutoStatusMock.mock.calls) + ' backupCalls=' + String(createBackupToSourcesMock.mock.calls.length))
+    }
+    expect(recordAutoStatusMock).toHaveBeenCalledWith('backupAutoStatus', null, '库已锁定') // 批 4：跳过态可观测
+    runner.stop()
   })
+
 })

@@ -234,6 +234,19 @@ describe('MCP 桥与审批事件接线（B8）', () => {
     expect(tauriMock.calls('mcp_approval_response')[0]!.args).toEqual({ ident: 'conn-9', action: 'deny' })
     expect(deps.approvalQueue.current.value).toBeNull()
   })
+
+  it('onConsentClose：队首为工具确认 → resolveTool(id,false)（拒绝统一 result:false）', async () => {
+    const { deps } = await initShell()
+    tauriMock.emit('mcp://tool-approval', { id: 21, ident: 'conn-21', tool: 'write_y' })
+    await flushPromises()
+    const flow = createMcpConsentFlow(deps.approvalQueue)
+    flow.onConsentClose() // 工具确认通道：回 onDecide(false) → mcp_respond result:false
+    await flushPromises()
+    expect(tauriMock.calls('mcp_approval_response')).toHaveLength(0) // 不走首连回执
+    expect(tauriMock.calls('mcp_respond')).toHaveLength(1)
+    expect(tauriMock.calls('mcp_respond')[0]!.args).toEqual({ id: 21, ok: true, result: false, error: null })
+    expect(deps.approvalQueue.current.value).toBeNull()
+  })
 })
 
 describe('dispose：卸载清算', () => {
@@ -298,6 +311,51 @@ describe('MCP 触发器前置判定接线（B8.28，受理即返回）', () => {
     await vi.waitFor(() => expect(auto.runBackupNow).toHaveBeenCalled()) // fire-and-forget 通道已启动
     const respond = tauriMock.calls('mcp_respond')[0]!.args as { result: Record<string, unknown> }
     expect(Object.keys(respond.result)).toEqual(['triggered']) // 绝不携带 vault 数据
+  })
+})
+
+describe('MCP 触发器前置判定：no backup secret（解锁但未设口令）', () => {
+  it('trigger_sync → 结构化拒绝 {triggered:false, reason:no backup secret}', async () => {
+    const { store, auto } = await initShell() // 未加密库默认解锁、backupSecret=null
+    tauriMock.emit('mcp://req', { id: 8, tool: 'trigger_sync', args: {} })
+    await vi.waitFor(() => expect(tauriMock.calls('mcp_respond')).toHaveLength(1))
+    expect(tauriMock.calls('mcp_respond')[0]!.args).toMatchObject({ id: 8, ok: true, result: { triggered: false, reason: 'no backup secret' } })
+    expect(auto.runBackupNow).not.toHaveBeenCalled()
+  })
+})
+
+describe('createLegacyMigrations：本地源迁移成功删旧键', () => {
+  it('backupSources 缺失 → 迁移默认本地源并删除 localStorage backupMode/backupKeepN（幂等出口不动键）', async () => {
+    localStorage.setItem('backupMode', 'overwrite')
+    localStorage.setItem('backupKeepN', '5')
+    const store = fakeStore()
+    const adapter = memoryAdapter()
+    const run = createLegacyMigrations({
+      getStore: () => store,
+      getAdapter: () => adapter,
+      migrateDekWrapToEntropyBound: async () => {},
+    })
+    await run()
+    expect(store.migrateLegacySecrets).toHaveBeenCalled() // 编排第一步
+    const sourcesRaw = await adapter.get('backupSources')
+    expect(JSON.parse(sourcesRaw!)[0]).toMatchObject({ id: 'local-default', dir: null, retention: { type: 'overwrite' } }) // 旧 backupMode=overwrite
+    expect(localStorage.getItem('backupMode')).toBeNull() // 迁移成功才删旧键
+    expect(localStorage.getItem('backupKeepN')).toBeNull()
+  })
+
+  it('backupSources 已存在 → skipped 幂等出口，旧 localStorage 键保留（删除仅在 migrated 分支）', async () => {
+    localStorage.setItem('backupMode', 'overwrite')
+    const adapter = memoryAdapter()
+    await adapter.set('backupSources', JSON.stringify([{ id: 'x', kind: 'local', name: '已有', retention: { type: 'overwrite' }, enabled: true, role: 'replica' }]))
+    const store = fakeStore()
+    const run = createLegacyMigrations({
+      getStore: () => store,
+      getAdapter: () => adapter,
+      migrateDekWrapToEntropyBound: async () => {},
+    })
+    await run()
+    expect(localStorage.getItem('backupMode')).toBe('overwrite') // skipped 分支不删键
+    expect(store.migrateLegacySecrets).toHaveBeenCalled()
   })
 })
 
