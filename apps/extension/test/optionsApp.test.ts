@@ -15,20 +15,23 @@
  * - createOptionsSchemesApi：load 容错回空表/save 落键；
  * - createFollowScheduler：3min tick 轮询、onAuthFailed 停轮询置位（T4 防风暴）、
  *   popup 形态 intervalMs null 不轮询。
- * App.vue 生命周期编排（onMounted 挂载序列/旧数据迁移提示/badge 对账）不再在本文件覆盖——
- * 装配抽出走本文件直测后，编排行为归真机 E2E（docs/e2e-test.md 惯例）；runner 装配接线
+ * App.vue 生命周期编排（onMounted 挂载序列/旧数据迁移提示/badge 对账/卸载停 watcher）由文末
+ * 「App.vue 挂载冒烟」薄 mount 用例承载（终审修复回补：R4 改写曾删 8 项编排断言且 E2E 文档
+ * 未承接，现以薄 mount 保留单测覆盖——壳组件 stub，只验编排不重复平台语义）；runner 装配接线
  * （deps 逐成员/run 包装）由 cloudRunnerFactory.test.ts 承载，syncScheduler 本体由
  * syncScheduler.test.ts 承载。
  *
- * mock 策略：../src/store 只 mock storageAdapter（内存键值，真实模块 import 期即建 popup
- * store 单例必须拦下）；extApi 走惰性桥 mock + installChromeShim 逐用例注入；
- * syncEngine/conflictBadge 替身（宿主只断言接线）；core/cloudCredStore/conflictCopies/
- * syncScheduler 走真实实现（纯调度与纯函数），装配断言覆盖「deps 形状正确 + 真实运转」两端。
+ * mock 策略：../src/store mock storageAdapter（内存键值，真实模块 import 期即建 popup
+ * store 单例必须拦下）并另备 createExtensionStore 工厂替身（仅挂载冒烟消费，直测不经它）；
+ * extApi 走惰性桥 mock + installChromeShim 逐用例注入；syncEngine/conflictBadge 替身（宿主只
+ * 断言接线）；core/cloudCredStore（迁移两点除外）/conflictCopies/syncScheduler 走真实实现
+ * （纯调度与纯函数），装配断言覆盖「deps 形状正确 + 真实运转」两端；cloudRunnerFactory/
+ * dekSession/lockEnforcer 替身亦仅挂载冒烟消费（本体各有直测文件）。
  */
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises } from '@vue/test-utils'
-import { reactive, ref } from 'vue'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { reactive, ref, type Ref } from 'vue'
 import type { BackupSource } from '@totp/core'
 import type { CloudPlatform, SecurityPlatform } from '@totp/ui'
 
@@ -37,19 +40,95 @@ const testScope = vi.hoisted(() => ({
   adapterData: {} as Record<string, string>,
   markSyncOff: vi.fn(async () => {}),
   setConflictBadge: vi.fn(),
+  /** 挂载冒烟替身：createExtensionCloudRunner.run 汇聚点（首拉 pull/自动/手动三通道） */
+  runMock: vi.fn(async (_mode?: 'auto' | 'manual' | 'pull') => {}),
+  /** 挂载冒烟替身：createIdleLockWatcher 产物（宿主只断言 start/stop 接线） */
+  lockWatcher: { start: vi.fn(), stop: vi.fn() },
 }))
 
-vi.mock('../src/store', () => ({
-  storageAdapter: {
-    get: vi.fn(async (key: string) => testScope.adapterData[key] ?? null),
-    set: vi.fn(async (key: string, value: string) => {
-      testScope.adapterData[key] = value
-    }),
-    delete: vi.fn(async (key: string) => {
-      delete testScope.adapterData[key]
-    }),
-  },
-}))
+vi.mock('../src/store', async () => {
+  const { reactive, ref } = await import('vue')
+  // 挂载冒烟用宿主 store 替身：App.vue 经 createExtensionStore('options', …) 自建 store，
+  // 工厂替身返回同一单例；直测用例不经它（各自 makeStore）。形状完整防 TypeError 假绿。
+  const settings = reactive({
+    locale: 'zh',
+    rememberTagFilter: false,
+    lastTagFilterIds: [] as string[],
+    tagFilterMode: 'all',
+    urlFilterEnabled: false,
+    popupCloseDelayMs: 3000,
+    clipboardClearEnabled: false,
+    themeMode: 'auto',
+    themeColor: 'blue',
+    syncEnabled: false,
+    syncPrefs: { autoFollow: true },
+    backupKdfProfile: 'balanced',
+    lockOnRestart: true,
+    lockIdleMinutes: 0,
+    lockOnSystemLock: true,
+  })
+  const vault = reactive({ entries: [] as unknown[], tags: [] as unknown[] })
+  const locked = ref(false)
+  const hasEncryption = ref(false)
+  const hostStore = {
+    settings, vault, locked, hasEncryption,
+    backupSecret: ref<string | null>('pw'),
+    credsCache: ref({} as Record<string, unknown>),
+    securitySettings: ref(null as { profile?: string; passwordChangedAt?: number } | null),
+    prfSources: ref([] as Array<{ credentialId: string }>),
+    conflictCount: { value: 0 },
+    initStore: vi.fn(async () => {}),
+    registerStorageSync: vi.fn(),
+    commitSettings: vi.fn(async () => {}),
+    commit: vi.fn(async () => {}),
+    lock: vi.fn(),
+    unlock: vi.fn(async () => {}),
+    enableEncryption: vi.fn(async () => {}),
+    disableEncryption: vi.fn(async () => {}),
+    changePassphrase: vi.fn(async () => {}),
+    addPrfSourceOp: vi.fn(async () => ({})),
+    removePrfSourceOp: vi.fn(async () => {}),
+    replaceAllOp: vi.fn(async () => {}),
+    saveSourceCredOp: vi.fn(async () => {}),
+    removeSourceCredOp: vi.fn(async () => {}),
+    migrateLegacySecrets: vi.fn(async () => {}),
+    addMergeConflictsOp: vi.fn(async () => {}),
+    saveMergeConflictsOp: vi.fn(async () => {}),
+    resolveMergeConflictOp: vi.fn(async () => {}),
+    sealWithDek: vi.fn(async () => null as string | null),
+    unsealWithDek: vi.fn(async () => null as string | null),
+  }
+  return {
+    createExtensionStore: vi.fn(() => hostStore),
+    storageAdapter: {
+      get: vi.fn(async (key: string) => testScope.adapterData[key] ?? null),
+      set: vi.fn(async (key: string, value: string) => {
+        testScope.adapterData[key] = value
+      }),
+      delete: vi.fn(async (key: string) => {
+        delete testScope.adapterData[key]
+      }),
+    },
+    store: hostStore,
+    settings, vault, locked, hasEncryption,
+    backupSecret: hostStore.backupSecret,
+    credsCache: hostStore.credsCache,
+    initStore: hostStore.initStore,
+    registerStorageSync: hostStore.registerStorageSync,
+    commitSettings: hostStore.commitSettings,
+    unlock: hostStore.unlock,
+    lock: hostStore.lock,
+    enableEncryption: hostStore.enableEncryption,
+    disableEncryption: hostStore.disableEncryption,
+    changePassphrase: hostStore.changePassphrase,
+    prfSources: hostStore.prfSources,
+    addPrfSourceOp: hostStore.addPrfSourceOp,
+    removePrfSourceOp: hostStore.removePrfSourceOp,
+    replaceAllOp: hostStore.replaceAllOp,
+    sealWithDek: hostStore.sealWithDek,
+    unsealWithDek: hostStore.unsealWithDek,
+  }
+})
 
 vi.mock('../src/extApi', async () => (await import('./helpers/extApiMock')).extApiMock())
 vi.mock('../src/syncEngine', () => ({
@@ -61,6 +140,26 @@ vi.mock('../src/syncEngine', () => ({
   SYNC_STATUS_KEY: 'sync:status',
 }))
 vi.mock('../src/conflictBadge', () => ({ setConflictBadge: testScope.setConflictBadge }))
+
+// ---- 挂载冒烟专用替身（直测不经这些模块面；本体语义各有直测文件，宿主只断言编排接线）----
+vi.mock('../src/cloudRunnerFactory', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/cloudRunnerFactory')>()), // revSeal 保持真实
+  createExtensionCloudRunner: vi.fn(() => ({ run: testScope.runMock })),
+}))
+vi.mock('../src/cloudCredStore', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/cloudCredStore')>()),
+  // 迁移编排与旧键检测替身（本体 cloudCredStore.test.ts 直测；此处断言宿主编排接线）
+  migrateLegacySources: vi.fn(async () => 0),
+  hasLegacyCloudKeys: vi.fn(async () => false),
+}))
+vi.mock('../src/dekSession', () => ({
+  // 真实实现读写 ext.storage.session——宿主只断言 options 独立 store 携带 dekPersist（工厂吞参）
+  createDekSession: () => ({ get: async () => null, set: async () => {}, clear: async () => {} }),
+}))
+vi.mock('../src/lockEnforcer', () => ({
+  // watcher 内部语义（idle 钳制/降级）由 lockEnforcer.test.ts 直测；宿主只断言 start/stop 接线
+  createIdleLockWatcher: vi.fn(() => testScope.lockWatcher),
+}))
 
 import { installChromeShim, type ChromeShim } from './helpers/chromeShim'
 import {
@@ -513,5 +612,165 @@ describe('scheduleClipboardClear（popup/options 逐字共用）', () => {
     shim.chrome.offscreen = {} // offscreen 能力注入
     scheduleClipboardClear(store.settings)
     expect(sendSpy).toHaveBeenCalledWith({ type: 'schedule-clipboard-clear', delayMs: 30_000 })
+  })
+})
+
+// ============================================================
+// App.vue 挂载冒烟（终审修复回补：R4 改写删去的 8 项编排断言在此以薄 mount 承接——壳组件
+// stub、平台装配/调度器本体语义由上方直测与各自测试文件承载，此处只验生命周期编排）。
+// 沿基线 mount 版同款 mock 拓扑：store 工厂替身 + cloudRunnerFactory/lockEnforcer/dekSession
+// 替身 + cloudCredStore 迁移两点替身；core createAutoRunScheduler 与 createFollowScheduler
+// 走真实（调度器 start 经 runMock 侧证）。
+// ============================================================
+import App from '../entrypoints/options/App.vue'
+import { createTestI18n } from './helpers/i18n'
+import { initStore, locked, registerStorageSync, settings, store as hostStore } from '../src/store'
+import { hasLegacyCloudKeys, migrateLegacySources } from '../src/cloudCredStore'
+
+/** NavigationShell 桩：仅标记 shell 渲染与否（与锁定分支互斥的探针） */
+const NavStub = { name: 'NavigationShellStub', template: '<div data-test="shell" />' }
+/** LockScreen 桩：click 即 emit unlocked（解锁回调补跑迁移的触发通道） */
+const LockScreenStub = {
+  name: 'LockScreenStub',
+  emits: ['unlocked'],
+  template: '<button data-test="lock-stub" @click="$emit(\'unlocked\')">lock</button>',
+}
+
+// 真实导出为 Ref/ComputedRef（类型只读口径）；mock 模块内是可写 ref，测试经断言直写（基线同款）
+const lockedRef = locked as unknown as Ref<boolean>
+
+describe('App.vue 挂载冒烟（编排覆盖回补）', () => {
+  let wrapper: VueWrapper | null = null
+
+  /** 逐用例单实例：先卸载上一个 App（共享 mock settings，多实例共存会交叉触发调度器） */
+  async function mountApp(local: Record<string, string> = {}): Promise<VueWrapper> {
+    if (wrapper) {
+      wrapper.unmount()
+      wrapper = null
+      await flushPromises()
+    }
+    Object.assign(testScope.adapterData, local)
+    wrapper = mount(App, {
+      global: { plugins: [createTestI18n()], stubs: { LockScreen: LockScreenStub, NavigationShell: NavStub } },
+    })
+    await flushPromises()
+    return wrapper
+  }
+
+  beforeEach(() => {
+    lockedRef.value = false
+    settings.syncPrefs.autoFollow = true
+    vi.mocked(initStore).mockReset().mockResolvedValue(undefined)
+    vi.mocked(registerStorageSync).mockReset()
+    testScope.runMock.mockReset()
+    testScope.lockWatcher.start.mockReset()
+    testScope.lockWatcher.stop.mockReset()
+    // 迁移替身默认值（mockReset 清调用历史+实现，防用例间累计计数；本体语义另有直测文件）
+    vi.mocked(migrateLegacySources).mockReset().mockResolvedValue(0)
+    vi.mocked(hasLegacyCloudKeys).mockReset().mockResolvedValue(false)
+  })
+
+  afterEach(async () => {
+    wrapper?.unmount()
+    wrapper = null
+    await flushPromises()
+  })
+
+  it('挂载序列：initStore→registerStorageSync→迁移→lockWatcher.start；首拉 run("pull")；badge 真值对账', async () => {
+    const order: string[] = []
+    vi.mocked(initStore).mockImplementation(async () => { order.push('initStore') })
+    vi.mocked(registerStorageSync).mockImplementation(() => { order.push('registerStorageSync') })
+    vi.mocked(migrateLegacySources).mockImplementation(async () => { order.push('migrateLegacySources'); return 0 })
+    testScope.lockWatcher.start.mockImplementation(() => { order.push('lockWatcher.start') })
+
+    await mountApp({ cloudConflictCount: '"3"' })
+
+    // 主干序列（autoRunScheduler/followScheduler.start 为真实对象，经下方 runMock 侧证）
+    expect(order).toEqual(['initStore', 'registerStorageSync', 'migrateLegacySources', 'lockWatcher.start'])
+    // 打开即首拉一次（gate 开：解锁 + autoFollow），pull-only 只读形态
+    expect(testScope.runMock).toHaveBeenCalledTimes(1)
+    expect(testScope.runMock).toHaveBeenCalledWith('pull')
+    // T11 badge 初始对账：cloudConflictCount 持久计数真值恢复「!」标记
+    expect(testScope.setConflictBadge).toHaveBeenCalledWith(3)
+  })
+
+  it('badge 坏值对账 0：非法 JSON（catch 路径）与非有限数值（NaN 路径）均清空', async () => {
+    await mountApp({ cloudConflictCount: '{bad json' })
+    expect(testScope.setConflictBadge).toHaveBeenCalledWith(0)
+
+    await mountApp({ cloudConflictCount: '"oops"' }) // JSON.parse 成功、Number() → NaN
+    expect(testScope.setConflictBadge).toHaveBeenLastCalledWith(0)
+  })
+
+  it('initStore 失败：loadError 横幅，不注册存储、不迁移、不启动调度器、不对账 badge', async () => {
+    vi.mocked(initStore).mockRejectedValueOnce(new Error('vault corrupted'))
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const w = await mountApp()
+
+    expect(w.find('.error').exists()).toBe(true)
+    expect(w.find('.error').text()).toContain('本地数据读取失败')
+    expect(w.find('.error').text()).toContain('vault corrupted')
+    expect(registerStorageSync).not.toHaveBeenCalled()
+    expect(migrateLegacySources).not.toHaveBeenCalled()
+    expect(testScope.lockWatcher.start).not.toHaveBeenCalled()
+    expect(testScope.runMock).not.toHaveBeenCalled()
+    expect(testScope.setConflictBadge).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
+  })
+
+  it('卸载：lockWatcher 停止；卸载后解锁翻转不再触发拉取（零网络承诺保持）', async () => {
+    lockedRef.value = true
+    await mountApp()
+    expect(testScope.lockWatcher.start).toHaveBeenCalledTimes(1)
+    expect(testScope.lockWatcher.stop).not.toHaveBeenCalled()
+
+    wrapper!.unmount()
+    wrapper = null
+    expect(testScope.lockWatcher.stop).toHaveBeenCalledTimes(1)
+
+    // 跟随调度的解锁边沿 watch 随组件卸载失效：锁定翻转不再有网络动作
+    lockedRef.value = false
+    await flushPromises()
+    expect(testScope.runMock).not.toHaveBeenCalled()
+  })
+
+  it('迁移 N>0：migrateNote 提示展示；旧键已清（hasLegacy false）→ 无 legacyNote', async () => {
+    vi.mocked(migrateLegacySources).mockResolvedValue(2)
+    const w = await mountApp()
+    expect(w.find('.migrate-note').text()).toContain('2')
+    expect(w.findAll('.migrate-note')).toHaveLength(1)
+  })
+
+  it('迁移跳过/失败且旧键仍在：legacyNote 提示（审查 I6：未启用加密必须有用户可见出口）', async () => {
+    vi.mocked(migrateLegacySources).mockRejectedValue(new Error('vault locked'))
+    vi.mocked(hasLegacyCloudKeys).mockResolvedValue(true)
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const w = await mountApp()
+
+    expect(w.findAll('.migrate-note')).toHaveLength(1)
+    expect(w.find('.migrate-note').text()).toContain('检测到旧版云同步配置')
+    warnSpy.mockRestore()
+  })
+
+  it('迁移失败但旧键已清（hasLegacy false）：两类提示均不出现', async () => {
+    vi.mocked(migrateLegacySources).mockRejectedValue(new Error('boom'))
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const w = await mountApp()
+    expect(w.findAll('.migrate-note')).toHaveLength(0)
+    warnSpy.mockRestore()
+  })
+
+  it('锁定态：迁移跳过 + LockScreen 渲染；解锁回调补跑迁移（幂等）', async () => {
+    lockedRef.value = true
+    const w = await mountApp()
+    expect(w.find('[data-test="lock-stub"]').exists()).toBe(true)
+    expect(w.find('[data-test="shell"]').exists()).toBe(false)
+    expect(migrateLegacySources).not.toHaveBeenCalled() // 锁定态 runLegacyMigrations 短路
+
+    lockedRef.value = false
+    await w.find('[data-test="lock-stub"]').trigger('click') // unlocked 事件（DOM 重渲前触发）
+    await flushPromises()
+    expect(migrateLegacySources).toHaveBeenCalledTimes(1) // 解锁后补跑
+    expect(w.find('[data-test="shell"]').exists()).toBe(true)
   })
 })
