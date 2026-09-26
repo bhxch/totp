@@ -32,6 +32,8 @@ import { bytesToBase64 } from '../crypto/aesgcm'
 // blowfishEcbEncrypt/Decrypt 测试锚点 re-export 维持既有导入面（winauthImport.test 与 '@totp/core' 消费方不变）
 import { blowfishDecipherBlock, blowfishEncipherBlock, blowfishKeySchedule, readU32be, writeU32be } from '../crypto/blowfish'
 export { blowfishEcbDecrypt, blowfishEcbEncrypt } from '../crypto/blowfish'
+// R12：mini XML 解析拆 import/miniXml.ts（实体反转义复用 miscApps xmlUnescape 单点）
+import { child, parseXml, type MiniXmlNode } from './miniXml'
 import type { ImportResult, ParsedEntry } from './types'
 
 // 局部 hexToBytes：抛 '非法 hex'，让 failureMessage 走 MSG_PASSWORD 归类
@@ -67,10 +69,8 @@ function bytesToHex(bytes: Uint8Array): string {
   return s
 }
 
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', bytes as BufferSource)
-  return bytesToHex(new Uint8Array(digest))
-}
+// R12/R15③ 协调：本模块原私有一份 sha256Hex（全仓第 4 处定义）——改导入 canonical.ts 单点实现
+import { sha256Hex } from '../cloud/canonical'
 
 const textEncoder = new TextEncoder()
 const textDecoder = new TextDecoder()
@@ -200,12 +200,6 @@ async function decryptSequence(dataHex: string, encrypted: string | undefined, o
 }
 
 /**
- * 按 EncryptSequence 布局构造密文序列（无 DPAPI/YubiKey 层，测试构造 fixture 用）：
- * HEADER + hex(salt 8B) + hex(SHA256(salt||payload)) + payload，payload 按 encrypted 串做口令层
- * （Authenticator.cs Encrypt(plain, password)：hex(salt) + hex(Blowfish(ISO10126 填充))；
- * 随机盐与随机填充位取 0，保证 fixture 确定性）。
- */
-/**
  * 按 EncryptSequence（Authenticator.cs L1114-1184）布局构造密文序列（无 DPAPI/YubiKey 层，测试构造 fixture 用）：
  * HEADER + hex(salt 8B) + hex(SHA256(salt‖明文hex)) + payload，payload 按 encrypted 串做口令层
  * （L1192-1211 Encrypt(plain, password)：hex(salt)+hex(Blowfish(ISO10126 填充))；
@@ -238,80 +232,6 @@ export async function buildWinauthSequence(payloadHex: string, encrypted: string
     payload = bytesToHex(innerSalt) + bytesToHex(out)
   }
   return (ENCRYPTION_HEADER + saltHex + hash + payload).toUpperCase()
-}
-
-// ---------- 极简 XML 解析（WinAuth 导出为良构 XML，无需完整 XML 解析器） ----------
-
-interface MiniXmlNode {
-  name: string
-  attrs: Record<string, string>
-  text: string
-  children: MiniXmlNode[]
-}
-
-function decodeXmlEntities(s: string): string {
-  return s.replace(/&(amp|lt|gt|quot|apos|#\d+|#x[0-9A-Fa-f]+);/g, (m, e: string) => {
-    switch (e) {
-      case 'amp':
-        return '&'
-      case 'lt':
-        return '<'
-      case 'gt':
-        return '>'
-      case 'quot':
-        return '"'
-      case 'apos':
-        return "'"
-      default: {
-        const code = e.startsWith('#x') ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10)
-        return Number.isFinite(code) ? String.fromCodePoint(code) : m
-      }
-    }
-  })
-}
-
-const ATTR_RE = /([A-Za-z_][\w.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g
-
-function parseAttrs(raw: string): Record<string, string> {
-  const attrs: Record<string, string> = {}
-  ATTR_RE.lastIndex = 0
-  let m: RegExpExecArray | null
-  while ((m = ATTR_RE.exec(raw)) !== null) attrs[m[1]!] = decodeXmlEntities(m[2] ?? m[3] ?? '')
-  return attrs
-}
-
-function parseXml(input: string): MiniXmlNode {
-  let s = input.replace(/^\uFEFF/, '')
-  s = s.replace(/<\?[\s\S]*?\?>/g, '').replace(/<!--[\s\S]*?-->/g, '').replace(/<!DOCTYPE[^>[]*(\[[\s\S]*?\])?[^>]*>/gi, '')
-  const doc: MiniXmlNode = { name: '#doc', attrs: {}, text: '', children: [] }
-  const stack: MiniXmlNode[] = [doc]
-  const tokenRe = /<([A-Za-z_][\w.:-]*)((?:\s+[\w.:-]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>|<\/([A-Za-z_][\w.:-]*)\s*>|<!\[CDATA\[([\s\S]*?)\]\]>/g
-  let pos = 0
-  let m: RegExpExecArray | null
-  while ((m = tokenRe.exec(s)) !== null) {
-    const top = stack[stack.length - 1]!
-    top.text += decodeXmlEntities(s.slice(pos, m.index))
-    pos = m.index + m[0].length
-    if (m[1] !== undefined) {
-      // 开始标签
-      const node: MiniXmlNode = { name: m[1], attrs: parseAttrs(m[2] ?? ''), text: '', children: [] }
-      top.children.push(node)
-      if (m[3] !== '/') stack.push(node)
-    } else if (m[4] !== undefined) {
-      // 结束标签
-      if (stack.length <= 1 || stack.pop()!.name !== m[4]) throw new Error('XML 标签不匹配')
-    } else if (m[5] !== undefined) {
-      top.text += m[5] // CDATA 原文
-    }
-  }
-  if (stack.length !== 1) throw new Error('XML 未闭合')
-  doc.text += decodeXmlEntities(s.slice(pos))
-  if (doc.children.length !== 1) throw new Error('XML 必须有唯一根元素')
-  return doc.children[0]!
-}
-
-function child(node: MiniXmlNode, name: string): MiniXmlNode | undefined {
-  return node.children.find((c) => c.name === name)
 }
 
 // ---------- 条目映射（WinAuth JSON/secretdata → ParsedEntry） ----------

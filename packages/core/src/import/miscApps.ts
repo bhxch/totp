@@ -104,7 +104,7 @@ export function importFreeOtp(text: string): ImportResult {
 // Android SharedPreferences XML 为机器生成（属性恒 name="..."），正则提取即可（winauth.ts 的
 // 嵌套加密结构需其内置 mini XML parser，此处扁平 <map> 格式用正则足够）。
 
-/** Android shared_prefs XML 实体反转义（导出供 sqlite.ts 的 Authy/BattleNet XML 入口复用） */
+/** Android shared_prefs XML 实体反转义（导出供 sqlite.ts 的 Authy/BattleNet XML 入口与 miniXml.ts 复用） */
 export function xmlUnescape(s: string): string {
   return s.replace(/&(amp|lt|gt|quot|apos|#\d+|#x[0-9A-Fa-f]+);/g, (m, e: string) => {
     switch (e) {
