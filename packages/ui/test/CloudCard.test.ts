@@ -13,7 +13,7 @@ vi.mock('../src/components/cloudPlatform', async (importOriginal) => {
   return { ...actual, createCloudBackend: vi.fn(actual.createCloudBackend) }
 })
 
-import { contentHash, pushEnvelope, syncMultipleTargets, type BackupSource, type CloudBackend, type CloudCred, type EntryConflict, type SourceSyncState } from '@totp/core'
+import { contentHashVault, pushEnvelope, syncMultipleTargets, type BackupSource, type CloudBackend, type CloudCred, type EntryConflict, type SourceSyncState } from '@totp/core'
 import { createCloudBackend } from '../src/components/cloudPlatform'
 import { createCloudSyncRunner } from '../src/components/cloudRunner'
 import CloudCard from '../src/components/CloudCard.vue'
@@ -689,17 +689,18 @@ describe('CloudCard（多源）', () => {
     await w.find('button.cloud-reset').trigger('click')
     expect(w.text()).toContain('将用当前备份口令重新加密并覆盖云端源「WebDAV」的对象，云端旧数据将被替换。确认重置？')
     await w.findAll('button').find((b) => b.text() === '确认重置')!.trigger('click')
-    // 新 rev 通道链路含 crypto.subtle（contentHash）原生 promise：单拍 flushPromises 不保证落定，
+    // 新 rev 通道链路含 crypto.subtle（contentHashVault）原生 promise：单拍 flushPromises 不保证落定，
     // waitFor 等 pushEnvelope 真实到达后再断言
     await vi.waitFor(() => expect(mockedPush).toHaveBeenCalledTimes(1))
     await flushPromises()
     expect(vi.mocked(createCloudBackend)).toHaveBeenCalledWith(WEBDAV_CRED)
-    // T9 后重置走新 rev 通道：信封带 v3 sync 头（rev=已知远端 rev+1，base 声明同 core uploaded 分支）
+    // T9 后重置走新 rev 通道：信封带 v3 sync 头（rev=已知远端 rev+1，base 声明同 core uploaded 分支；
+    // hash 断言用 contentHashVault 同生产写入口径 CloudCard.vue reset 分支）
     expect(mockedPush.mock.calls[0]![0]).toMatchObject({
       path: 'totp-backup.totpbackup',
       vaultJson: VALID_VAULT,
       password: 'pw',
-      sync: { rev: 1, baseRev: 0, baseContentHash: await contentHash(VALID_VAULT) },
+      sync: { rev: 1, baseRev: 0, baseContentHash: await contentHashVault(VALID_VAULT) },
     })
     expect(p.saveSourceState).toHaveBeenLastCalledWith('s-webdav', { lastKnownRemoteRev: 1, baseSnapshot: VALID_VAULT })
     expect(w.text()).toContain('已重置')

@@ -58,7 +58,9 @@ export * from './import/zipAes'
 export * from './import/zipRead'
 export * from './import/authenticatorPlus'
 export * from './icons/registry'
-export * from './cloud/canonical'
+// contentHash（含 rev 旧口径，@deprecated 仅测试）不在公共出口：R15② 摘除，仅本包守卫测试
+// 经相对导入消费（终审修复收尾；ui 测试已迁 contentHashVault 同步链路口径）
+export { canonicalJson, sha256Hex, contentHashVault } from './cloud/canonical'
 export * from './cloud/backend'
 export * from './cloud/retention'
 export * from './cloud/targetPath'

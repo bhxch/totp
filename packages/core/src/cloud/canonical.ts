@@ -25,8 +25,9 @@ export async function sha256Hex(data: string | Uint8Array): Promise<string> {
  * 比对与信封 baseContentHash 一律用 contentHashVault——rev 是 F8 水位（store 加密落盘恒推进），
  * 属本端存储状态而非 vault 内容，参与 hash 会使采纳落盘后恒判「本地已动」。
  *
- * @deprecated 仅测试口径（ui CloudCard/cloudRunner 测试与本包 canonicalVaultHash 守卫仍消费）。
- * 从 '@totp/core' 公共出口摘除待 ui 测试迁移后进行（消费方不在 R15 允许改动范围内）。
+ * @deprecated 仅测试口径（本包 canonicalVaultHash 守卫测试经相对导入消费）。
+ * 已从 '@totp/core' 公共出口摘除（终审修复收尾：ui CloudCard/cloudRunner 测试已迁
+ * contentHashVault 同步链路口径，两口径在无顶层 rev 的 vault 上值恒等）。
  */
 export async function contentHash(vaultJson: string): Promise<string> {
   return sha256Hex(canonicalJson(JSON.parse(vaultJson)))

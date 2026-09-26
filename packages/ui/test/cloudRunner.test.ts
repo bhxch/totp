@@ -3,7 +3,7 @@
  *  原 apply 通道用例语义平移保留。新增键文案断言用 LOCAL_T 兜底（资源键随 commit E 落 zh/en，值一致） */
 import { describe, expect, it, vi } from 'vitest'
 import {
-  CloudHttpError, contentHash, contentHashVault, createSyncEnvelope,
+  CloudHttpError, contentHashVault, createSyncEnvelope,
   type BackupSource, type CloudBackend, type CloudCred, type SourceSyncState,
 } from '@totp/core'
 import { createCloudSyncRunner, type CloudRunnerDeps, type ManualMergePreview } from '../src/components/cloudRunner'
@@ -35,10 +35,11 @@ const source = (id: string, over: Partial<BackupSource> = {}): BackupSource => (
 })
 const revState = (lastKnownRemoteRev: number | null, baseSnapshot: string | null): SourceSyncState => ({ lastKnownRemoteRev, baseSnapshot })
 
-/** 以 v3 信封预置远端（他设备写入形态）；baseContentHash 可注入错误值构造降级合并 */
+/** 以 v3 信封预置远端（他设备写入形态；hash 用 contentHashVault=生产写入口径，终审修复前为
+ *  contentHash 旧口径——两口径在无顶层 rev 的 vault 上值恒等，断言语义不变） */
 async function sealedRemote(rev: number, content: string, baseContentHash?: string): Promise<Uint8Array> {
   const env = await createSyncEnvelope(content, PW, 'balanced',
-    { rev, deviceId: 'dev-other', baseRev: rev - 1, baseContentHash: baseContentHash ?? (await contentHash(content)) })
+    { rev, deviceId: 'dev-other', baseRev: rev - 1, baseContentHash: baseContentHash ?? (await contentHashVault(content)) })
   return bytesOf(JSON.stringify(env))
 }
 
@@ -308,7 +309,7 @@ describe('createCloudSyncRunner', () => {
   it('⑩成功 summary：逐源 `id: 中文动作` 拼接；冲突副本回调带源 id 透传', async () => {
     // 双方都动（本地 AB 相对基线 A 已改、云端被 dev-other 改写 AC，且其 base 声明=A）→ merged：副本先行、合并结果上传
     const ac = JSON.stringify({ version: 2, entries: [{ uuid: 'a', label: 'A' }, { uuid: 'c', label: 'C' }], tags: [], updatedAt: 5 })
-    const b = fakeBackend(await sealedRemote(5, ac, await contentHash(A))) // baseOk=true 非降级
+    const b = fakeBackend(await sealedRemote(5, ac, await contentHashVault(A))) // baseOk=true 非降级
     const { deps, recordStatus, saveConflictBackup } = makeDeps({
       getVaultJson: () => AB,
       loadSources: vi.fn(async () => [{ source: source('s1'), cred: WEBDAV_CRED }]),
@@ -342,7 +343,7 @@ describe('createCloudSyncRunner', () => {
     // 双方改成不同内容（id 'a'）→ updatedAt 新者为主体、另一方入冲突记录
     const ac = JSON.stringify({ version: 2, entries: [{ uuid: 'a', label: 'A-other', updatedAt: 9 }], tags: [], updatedAt: 5 })
     const onMergeConflicts = vi.fn()
-    const remote = await sealedRemote(5, ac, await contentHash(A))
+    const remote = await sealedRemote(5, ac, await contentHashVault(A))
     const { deps, onConflicts } = makeDeps({
       getVaultJson: () => JSON.stringify({ version: 2, entries: [{ uuid: 'a', label: 'A-local', updatedAt: 1 }], tags: [], updatedAt: 3 }),
       loadSources: vi.fn(async () => [{ source: source('s1'), cred: WEBDAV_CRED }]),
@@ -804,7 +805,7 @@ describe('manual 预览确认（spec §4）', () => {
   /** 双方都动场景：云端 AC（base 声明=A）、本地 AB → merged */
   const mergedFixture = async (over: Partial<CloudRunnerDeps> = {}) => {
     const ac = JSON.stringify({ version: 2, entries: [{ uuid: 'a', label: 'A' }, { uuid: 'c', label: 'C' }], tags: [], updatedAt: 5 })
-    const b = fakeBackend(await sealedRemote(5, ac, await contentHash(A)))
+    const b = fakeBackend(await sealedRemote(5, ac, await contentHashVault(A)))
     const d = makeDeps({
       getVaultJson: () => AB,
       loadSources: vi.fn(async () => [{ source: source('s1'), cred: WEBDAV_CRED }]),
@@ -880,7 +881,7 @@ describe('逐源进度（spec §6 ⑥）', () => {
 describe('跟随拉取 pull-only 通道（syncWithCloudRev 只读形态）', () => {
   it('核心验收：云端较新且本地也变 → 合并结果被采纳（persistAdopted），但云端零写（pull-only）', async () => {
     const ac = JSON.stringify({ version: 2, entries: [{ uuid: 'a', label: 'A' }, { uuid: 'c', label: 'C' }], tags: [], updatedAt: 5 })
-    const b = fakeBackend(await sealedRemote(5, ac, await contentHash(A)))
+    const b = fakeBackend(await sealedRemote(5, ac, await contentHashVault(A)))
     const { deps, persistAdopted, saveSyncState, saveConflictBackup, recordStatus } = makeDeps({
       getVaultJson: () => AB, // 本地相对基线 A 也动过
       loadSources: vi.fn(async () => [{ source: source('s1'), cred: WEBDAV_CRED }]),
@@ -945,7 +946,7 @@ describe('跟随拉取 pull-only 通道（syncWithCloudRev 只读形态）', () 
     // state{known:1, base:A}：远端 B(rev3) 可解时走 downloaded；口令不对时解密失败仅记失败
     const states = new Map<string, SourceSyncState>([['s1', revState(1, A)]])
     const remote = bytesOf(JSON.stringify(await createSyncEnvelope(B, '另一个口令', 'balanced',
-      { rev: 3, deviceId: 'dev-other', baseRev: 2, baseContentHash: await contentHash(B) })))
+      { rev: 3, deviceId: 'dev-other', baseRev: 2, baseContentHash: await contentHashVault(B) })))
     const b = fakeBackend(remote)
     const { deps, saveSyncState, persistAdopted, recordStatus } = makeDeps({
       getVaultJson: () => A,
@@ -985,8 +986,8 @@ describe('跟随拉取 pull-only 通道（syncWithCloudRev 只读形态）', () 
 
   it('keep 源：listBackups 取时间戳最新份拉取；pull-only 零新增时间戳文件', async () => {
     const b = fakeBackend()
-    b.store.set('dir/vault-20260101-000000.totpbackup', bytesOf(JSON.stringify(await createSyncEnvelope(A, PW, 'balanced', { rev: 1, deviceId: 'o', baseRev: 0, baseContentHash: await contentHash(A) }))))
-    b.store.set('dir/vault-20260202-000000.totpbackup', bytesOf(JSON.stringify(await createSyncEnvelope(B, PW, 'balanced', { rev: 2, deviceId: 'o', baseRev: 1, baseContentHash: await contentHash(A) }))))
+    b.store.set('dir/vault-20260101-000000.totpbackup', bytesOf(JSON.stringify(await createSyncEnvelope(A, PW, 'balanced', { rev: 1, deviceId: 'o', baseRev: 0, baseContentHash: await contentHashVault(A) }))))
+    b.store.set('dir/vault-20260202-000000.totpbackup', bytesOf(JSON.stringify(await createSyncEnvelope(B, PW, 'balanced', { rev: 2, deviceId: 'o', baseRev: 1, baseContentHash: await contentHashVault(A) }))))
     b.listBackups = async () => [...b.store.keys()]
     const { deps, persistAdopted } = makeDeps({
       getVaultJson: () => A,
