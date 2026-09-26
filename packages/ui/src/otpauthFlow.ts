@@ -1,4 +1,4 @@
-import { normalizeExtOtpauth, parseOtpUri, toOtpDigits, type OtpEntry } from '@totp/core'
+import { normalizeExtOtpauth, parseOtpUri, type OtpEntry } from '@totp/core'
 
 export { normalizeExtOtpauth }
 
@@ -20,7 +20,8 @@ export function parseUriToEntryData(uri: string): ParseUriResult {
         label: p.label,
         secret: p.secret,
         algorithm: p.algorithm,
-        digits: toOtpDigits(p.digits, p.type),
+        // R3：parseOtpUri 已按 typeProfile 收口并校验（OtpUriParams.digits 类型即 OtpDigits），无需前置收口
+        digits: p.digits,
         period: p.period,
         ...(p.counter !== undefined ? { counter: p.counter } : {}),
         ...(p.pin !== undefined ? { pin: p.pin } : {}),

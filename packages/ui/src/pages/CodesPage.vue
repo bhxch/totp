@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { buildOtpUri, filterByTags, getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
+import { buildOtpUri, defaultDigitsFor, filterByTags, getBuiltinIcons, type OtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useOtpCodes } from '../composables/useOtpCodes'
@@ -133,20 +133,21 @@ watch(
 async function onSave(data: EntryFormData) {
   if (editing.value) {
     // 表单已显式提交完整字段；不覆盖（用户在表单内可选的 digits/algorithm/period/counter 全部生效）。
-    // digits 经 toOtpDigits 收口 number→OtpDigits：表单提交校验（steam=5、其余 6/7/8）已保证合法值，
-    // 此处恒等回传，不改运行时行为；?? 默认仅兜 EntryFormData.digits 可选的类型口径（运行时表单恒携带）
+    // digits 缺省回落 defaultDigitsFor（查 core typeProfiles：steam=5、其余=6）；number→OtpDigits 为
+    // 类型口径断言：表单提交校验（steam=5、其余 6/7/8）已保证合法值——R3 起 toOtpDigits 前置收口
+    // 已移除（幂等），收口统一由边界承担（addEntry 落库 / parseOtpUri 解析）
     await props.store.updateEntryOp(editing.value.uuid, {
       ...data,
-      digits: toOtpDigits(data.digits ?? (data.type === 'steam' ? 5 : 6), data.type),
+      digits: (data.digits ?? defaultDigitsFor(data.type)) as OtpDigits,
     })
   } else {
     // 新建：表单未提供的字段用模型默认值；digits/algorithm/period 来自表单（type 切换时表单已自动重算）
-    const { algorithm = 'SHA1', digits = data.type === 'steam' ? 5 : 6, period = 30, counter } = data
+    const { algorithm = 'SHA1', digits = defaultDigitsFor(data.type), period = 30, counter } = data
     await props.store.addEntryOp({
       ...data,
       uuid: crypto.randomUUID(),
       algorithm,
-      digits: toOtpDigits(digits, data.type),
+      digits: digits as OtpDigits, // 表单校验保证 5/6/7/8；落库经 vault.addEntry 边界再收口（幂等兜底）
       period,
       ...(data.type === 'hotp' && counter !== undefined ? { counter } : {}),
       order: 0,

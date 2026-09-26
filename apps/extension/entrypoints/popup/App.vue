@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { buildOtpUri, getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
+import { buildOtpUri, defaultDigitsFor, getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
 import { BatchPastePanel, CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, MdButton, MdCheckbox, MdIconButton, MdMenu, MdSegmentedButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, OtpQrDialog, parseUriToEntryData, resolvePopupVisible, SearchBar, TagFilterRow, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -273,13 +273,14 @@ function onBatchAdded(): void {
 async function onSave(data: EntryFormData) {
   if (editing.value) {
     // type 变更时重算 digits（steam→其他保持 5 会显示错位数）；type 未变沿用表单值。
+    // R3：重算默认值改查 core typeProfiles.defaultDigitsFor，表单层不自写类型分支。
     // digits 经 toOtpDigits 收口 number→OtpDigits：表单提交校验（steam=5、其余 6/7/8）已保证
     // 合法值，此处恒等回传不改运行时行为；?? 默认仅兜 EntryFormData.digits 可选的类型口径
     // （运行时表单恒携带），替代此前 `{ ...data } as EntryFormData & { digits?: number }` 断言
     await updateEntryOp(editing.value.uuid, {
       ...data,
       digits: toOtpDigits(
-        data.type !== editing.value.type ? (data.type === 'steam' ? 5 : 6) : (data.digits ?? 6),
+        data.type !== editing.value.type ? defaultDigitsFor(data.type) : (data.digits ?? 6),
         data.type,
       ),
     })
