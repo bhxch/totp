@@ -125,7 +125,7 @@ fn persist_grants(app: &tauri::AppHandle) {
 fn valid_backup_name(name: &str) -> bool {
     // 白名单：vault- 前缀、.totpbackup 后缀、不含路径分隔符与 ..，防路径穿越
     name.starts_with("vault-")
-        && name.ends_with(".totpbackup")
+        && name.ends_with(BACKUP_EXTENSION)
         && !name.contains('/')
         && !name.contains('\\')
         && !name.contains("..")
@@ -140,6 +140,46 @@ fn ensure_within(path: &std::path::Path, allowed_dir: &std::path::Path) -> Resul
     let abs_allowed = std::fs::canonicalize(allowed_dir).map_err(|e| e.to_string())?;
     if !abs_parent.starts_with(&abs_allowed) {
         return Err("path outside allowed dir".into());
+    }
+    Ok(())
+}
+
+// ---------- 扩展名白名单（R11 单点：5 个文件命令共用 ensure_extension，白名单按命令用途分组） ----------
+
+/// 备份文件扩展名（valid_backup_name 与读备份白名单共用）
+const BACKUP_EXTENSION: &str = ".totpbackup";
+
+/// 导出写白名单（批① §2.3）：备份 .totpbackup + otpauth 文本 .txt + Aegis JSON .json
+const EXPORT_EXTENSIONS: [&str; 3] = [".totpbackup", ".json", ".txt"];
+
+/// 二进制导出白名单（批① §2.5 多选二维码拼版 PNG）：不复用文本侧、也不并入文本命令
+/// ——文本写 PNG 必然损坏，各命令用途与白名单一一对应
+const IMAGE_EXTENSIONS: [&str; 1] = [".png"];
+
+/// 导入文本组（R11 单点）：Aegis(.json/.aegis)、WinAuth(.wauth/.xml)、纯文本 URI 批量(.txt)、
+/// generic JSON/JSONL(.jsonl——core import/generic.ts 支持 JSONL 行解析)。与 extension 端
+/// options App.vue 的 accept 派生常量经下方镜像断言互验，防三端漂移
+const IMPORT_TEXT_EXTENSIONS: [&str; 6] = [".json", ".jsonl", ".wauth", ".xml", ".txt", ".aegis"];
+
+/// 导入二进制组（字节通道专用）：SQLite(.db/.sqlitedb/.sqlite) 与 AP 加密 zip(.zip)
+const IMPORT_BINARY_EXTENSIONS: [&str; 4] = [".db", ".sqlitedb", ".sqlite", ".zip"];
+
+/// 字节组白名单 = 文本组 + 二进制组拼接派生（R11：原为 9 项手工罗列的超集，与文本组
+/// 各自维护已发生漂移——.jsonl 只在 extension 侧有；派生后文本组增删自动跟随）
+fn import_byte_extensions() -> Vec<&'static str> {
+    IMPORT_TEXT_EXTENSIONS
+        .into_iter()
+        .chain(IMPORT_BINARY_EXTENSIONS)
+        .collect()
+}
+
+/// 扩展名白名单守护（R11 抽取，5 个文件命令共用）：exts 任一后缀命中即放行，否则报 msg。
+/// 仅守护骨架（白名单步骤）——写盘通道各命令保持有意不同（text=write_text_atomic 原子写、
+/// bytes=std::fs::write 直写，不得统一）。大小写敏感性由调用方以传入形态决定：
+/// 读备份传原样（既有大小写敏感语义），导出/导入组传 to_lowercase（既有大小写不敏感语义）
+fn ensure_extension(path: &str, exts: &[&str], msg: &str) -> Result<(), String> {
+    if !exts.iter().any(|ext| path.ends_with(ext)) {
+        return Err(msg.into());
     }
     Ok(())
 }
@@ -336,9 +376,7 @@ fn read_text_file_granted(
     path: &str,
     dir_token: &str,
 ) -> Result<String, String> {
-    if !path.ends_with(".totpbackup") {
-        return Err("invalid backup file extension".into());
-    }
+    ensure_extension(path, &[BACKUP_EXTENSION], "invalid backup file extension")?;
     let p = read_granted_file_core(grants, path, dir_token)?;
     std::fs::read_to_string(p).map_err(|e| e.to_string())
 }
@@ -364,17 +402,18 @@ fn write_text_file_granted(
     // 扩展名白名单：本命令用途是备份导出（.totpbackup）与文本导出（批① §2.3：otpauth 文本
     // .txt / Aegis JSON .json，均经 pick_save_file_os 对话框授权）；CSP 为 null 的现状下，
     // 任意路径+任意内容写入等于 XSS 任意文件覆写原语，故仍限定扩展名集合
-    const EXPORT_EXTENSIONS: [&str; 3] = [".totpbackup", ".json", ".txt"];
-    let lower = path.to_lowercase();
-    if !EXPORT_EXTENSIONS.iter().any(|ext| lower.ends_with(ext)) {
-        return Err("invalid export file extension".into());
-    }
+    ensure_extension(
+        &path.to_lowercase(),
+        &EXPORT_EXTENSIONS,
+        "invalid export file extension",
+    )?;
     let p = std::path::Path::new(&path);
     if p.is_dir() {
         return Err("path is a directory".into());
     }
     ensure_within(p, &grants.resolve(dir_token)?)?;
-    // 原子写（同审查 I-5 口径）：备份/文本导出写一半崩溃不再留半截文件
+    // 原子写（同审查 I-5 口径）：备份/文本导出写一半崩溃不再留半截文件。
+    // 写盘通道有意与 bytes 通道不同（原子写 vs 直写），不得随守护链收敛统一（R11）
     write_text_atomic(std::path::Path::new(&path), &contents).map_err(|e| e.to_string())
 }
 
@@ -402,16 +441,17 @@ fn write_bytes_file_granted(
     if path.is_empty() {
         return Err("empty path".into());
     }
-    const IMAGE_EXTENSIONS: [&str; 1] = [".png"];
-    let lower = path.to_lowercase();
-    if !IMAGE_EXTENSIONS.iter().any(|ext| lower.ends_with(ext)) {
-        return Err("invalid image file extension".into());
-    }
+    ensure_extension(
+        &path.to_lowercase(),
+        &IMAGE_EXTENSIONS,
+        "invalid image file extension",
+    )?;
     let p = std::path::Path::new(&path);
     if p.is_dir() {
         return Err("path is a directory".into());
     }
     ensure_within(p, &grants.resolve(dir_token)?)?;
+    // 直写通道（与 text 侧原子写有意不同）：PNG 等二进制不经 UTF-8 管道，rename 亦无增益
     std::fs::write(path, contents).map_err(|e| e.to_string())
 }
 
@@ -429,18 +469,18 @@ pub fn write_bytes_file_os(
 // 与 read_text_file_os 同构：信任边界一致（路径经 pick_open_file_os 的登记授权，dirToken 反查登记目录遏制），
 // 扩展名白名单限定导入用途，防止被前端 XSS 当作任意文件读取原语。
 
-/// 命令本体抽 *_granted inner：导入文本读取。WinAuth(.wauth/.xml)、Aegis(.json/.aegis)、
-/// 纯文本 URI 批量(.txt)——白名单大小写不敏感（与写侧 EXPORT_EXTENSIONS 同口径）
+/// 命令本体抽 *_granted inner：导入文本读取。白名单=IMPORT_TEXT_EXTENSIONS（R11 单点），
+/// 大小写不敏感（与写侧 EXPORT_EXTENSIONS 同口径）
 fn read_import_file_granted(
     grants: &DialogGrants,
     path: &str,
     dir_token: &str,
 ) -> Result<String, String> {
-    const IMPORT_EXTENSIONS: [&str; 5] = [".json", ".wauth", ".xml", ".txt", ".aegis"];
-    let lower = path.to_lowercase();
-    if !IMPORT_EXTENSIONS.iter().any(|ext| lower.ends_with(ext)) {
-        return Err("invalid import file extension".into());
-    }
+    ensure_extension(
+        &path.to_lowercase(),
+        &IMPORT_TEXT_EXTENSIONS,
+        "invalid import file extension",
+    )?;
     let p = read_granted_file_core(grants, path, dir_token)?;
     std::fs::read_to_string(p).map_err(|e| e.to_string())
 }
@@ -455,31 +495,18 @@ pub fn read_import_file_os(
 }
 
 /// 命令本体抽 *_granted inner：导入文件字节读取（SQLite 等二进制格式，ImportCard 字节入口），
-/// 白名单在文本导入组基础上加 .db/.sqlitedb/.sqlite 与 AP 加密 zip 的 .zip；
+/// 白名单=文本导入组+二进制组拼接派生（import_byte_extensions，R11）；
 /// 返回原始字节（invoke JSON 数组），不经 UTF-8 文本管道
 fn read_import_file_bytes_granted(
     grants: &DialogGrants,
     path: &str,
     dir_token: &str,
 ) -> Result<Vec<u8>, String> {
-    const IMPORT_BYTE_EXTENSIONS: [&str; 9] = [
-        ".json",
-        ".wauth",
-        ".xml",
-        ".txt",
-        ".aegis",
-        ".db",
-        ".sqlitedb",
-        ".sqlite",
-        ".zip",
-    ];
-    let lower = path.to_lowercase();
-    if !IMPORT_BYTE_EXTENSIONS
-        .iter()
-        .any(|ext| lower.ends_with(ext))
-    {
-        return Err("invalid import file extension".into());
-    }
+    ensure_extension(
+        &path.to_lowercase(),
+        &import_byte_extensions(),
+        "invalid import file extension",
+    )?;
     let p = read_granted_file_core(grants, path, dir_token)?;
     std::fs::read(p).map_err(|e| e.to_string())
 }
@@ -797,10 +824,12 @@ mod tests {
         std::fs::remove_dir_all(std::env::temp_dir().join("totp_read_text_test")).ok();
     }
 
-    // ---- R11 守卫（先于收敛锁定现状）：5 个文件命令 × 扩展名 允许/拒绝矩阵 ----
+    // ---- R11 守卫：5 个文件命令 × 扩展名 允许/拒绝矩阵 ----
     // 各命令白名单互不互通（写 text/bytes、读备份/导入文本/导入字节），矩阵以字面量
     // 锁定成员与大小写语义（读备份大小写敏感、导出/导入组大小写不敏感），收敛
     // ensure_extension 时矩阵必须保持不变（除显式记录的白名单成员变更）。
+    // 显式契约变更（R11 镜像对齐）：导入文本组/字节组补 .jsonl——extension accept 与
+    // core generic.ts 均已支持 JSONL，此前仅 Rust 白名单缺失（三端漂移），补齐而非裁剪。
     #[test]
     fn file_command_extension_allow_deny_matrix_locks_current_contract() {
         // 矩阵覆盖三类成员：导入组现有成员、白名单外交互样本、他命令专属成员
@@ -808,11 +837,14 @@ mod tests {
             ".json", ".jsonl", ".wauth", ".xml", ".txt", ".aegis", ".db", ".sqlitedb", ".sqlite",
             ".zip", ".totpbackup", ".png", ".exe",
         ];
-        // 现状允许集合（字面量快照）
+        // 允许集合（字面量快照）
         const READ_TEXT_OK: [&str; 1] = [".totpbackup"];
-        const READ_IMPORT_TEXT_OK: [&str; 5] = [".json", ".wauth", ".xml", ".txt", ".aegis"];
-        const READ_IMPORT_BYTES_OK: [&str; 9] = [
-            ".json", ".wauth", ".xml", ".txt", ".aegis", ".db", ".sqlitedb", ".sqlite", ".zip",
+        const READ_IMPORT_TEXT_OK: [&str; 6] = [
+            ".json", ".jsonl", ".wauth", ".xml", ".txt", ".aegis",
+        ];
+        const READ_IMPORT_BYTES_OK: [&str; 10] = [
+            ".json", ".jsonl", ".wauth", ".xml", ".txt", ".aegis", ".db", ".sqlitedb", ".sqlite",
+            ".zip",
         ];
         const WRITE_TEXT_OK: [&str; 3] = [".totpbackup", ".json", ".txt"];
         const WRITE_BYTES_OK: [&str; 1] = [".png"];
@@ -881,6 +913,64 @@ mod tests {
         assert!(
             read_import_file_granted(&g2, &p2, &t2).is_ok(),
             "导入组白名单必须保持大小写不敏感"
+        );
+    }
+
+    // 字节组 = 文本组 + 二进制组拼接派生（R11）：以字面量锁定派生源与顺序，防手工罗列回潮
+    #[test]
+    fn import_byte_group_derives_from_text_plus_binary() {
+        assert_eq!(
+            import_byte_extensions(),
+            vec![
+                ".json", ".jsonl", ".wauth", ".xml", ".txt", ".aegis", ".db", ".sqlitedb",
+                ".sqlite", ".zip",
+            ]
+        );
+    }
+
+    // ---- R11 镜像断言：Rust 导入白名单与 extension 端 accept 派生常量集合一致（防三端漂移）----
+
+    /// 从 TS 源码提取 `const NAME = ['..', ..] as const` 数组的字符串字面量项
+    /// （App.vue 的导入扩展名两段派生常量与 Rust 白名单互验）
+    fn ts_const_string_array(source: &str, name: &str) -> Vec<String> {
+        let marker = format!("const {name}");
+        let start = source.find(&marker).unwrap_or_else(|| {
+            panic!("extension App.vue 缺 {name} 常量（R11 镜像断言要求单一派生常量）")
+        });
+        let open = start
+            + source[start..]
+                .find('[')
+                .unwrap_or_else(|| panic!("{name} 定义缺数组开括号"));
+        let close = open
+            + source[open..]
+                .find(']')
+                .unwrap_or_else(|| panic!("{name} 定义缺数组闭括号"));
+        source[open + 1..close]
+            .split(',')
+            .map(|s| {
+                s.trim()
+                    .trim_matches('\'')
+                    .trim_matches('"')
+                    .to_string()
+            })
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+
+    // include_str! 编译期内嵌 App.vue：文件缺失/常量改名/扩展名增删任一侧不同步即测试失败。
+    // 集合比较（排序后全等）不依赖两侧书写顺序
+    #[test]
+    fn import_whitelist_mirrors_extension_accept_constants() {
+        const APP_VUE: &str = include_str!("../../../extension/entrypoints/options/App.vue");
+        let mut ts: Vec<String> = ts_const_string_array(APP_VUE, "IMPORT_TEXT_EXTENSIONS");
+        ts.extend(ts_const_string_array(APP_VUE, "IMPORT_BINARY_EXTENSIONS"));
+        ts.sort();
+        let mut rs: Vec<String> =
+            import_byte_extensions().into_iter().map(String::from).collect();
+        rs.sort();
+        assert_eq!(
+            ts, rs,
+            "extension accept 与 Rust 导入白名单漂移（两侧须集合一致）"
         );
     }
 

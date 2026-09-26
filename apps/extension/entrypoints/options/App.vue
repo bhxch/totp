@@ -205,6 +205,14 @@ function pickFile(accept: string): Promise<File | null> {
 
 const pickBackupFile = (): Promise<File | null> => pickFile('.totpbackup')
 
+// R11/R16⑪：导入扩展名单一派生来源（此前两处内联 accept 字面量，同集合不同排序）。
+// 文本组+二进制组两段与 Rust 侧 apps/desktop/src-tauri/src/dialog_grants.rs 的
+// IMPORT_TEXT_EXTENSIONS/IMPORT_BINARY_EXTENSIONS 一一对应，由该文件测试模块的镜像断言
+// （include_str! 提取本文件同名常量）锁定集合一致，防三端漂移
+const IMPORT_TEXT_EXTENSIONS = ['.json', '.jsonl', '.wauth', '.xml', '.txt', '.aegis'] as const
+const IMPORT_BINARY_EXTENSIONS = ['.db', '.sqlitedb', '.sqlite', '.zip'] as const
+const IMPORT_ACCEPT = [...IMPORT_TEXT_EXTENSIONS, ...IMPORT_BINARY_EXTENSIONS].join(',')
+
 // 最后一次导入选择的 File（模块级缓存）：SQLite 字节入口复用，避免同一文件二次弹窗
 let lastImportFile: File | null = null
 
@@ -315,7 +323,7 @@ const backupPlatform: BackupPlatform = {
   replaceAllOp: (v) => replaceAllOp(v),
   // 导入：浏览器 input file 读取文本；无 DPAPI 能力，WinAuth DPAPI 条目由 core 逐条 failure「请用桌面版」
   async readImportFile() {
-    const file = await pickFile('.json,.jsonl,.wauth,.txt,.aegis,.xml,.db,.sqlitedb,.sqlite,.zip')
+    const file = await pickFile(IMPORT_ACCEPT)
     if (!file) return null
     lastImportFile = file
     return { text: await file.text(), name: file.name }
@@ -323,7 +331,7 @@ const backupPlatform: BackupPlatform = {
   // SQLite 字节入口：文本管道会损坏二进制，复用最近一次选择的文件（File.arrayBuffer 原生读字节）；
   // 无最近选择时补弹选择器
   async readImportFileBytes() {
-    const file = lastImportFile ?? (await pickFile('.db,.sqlitedb,.sqlite,.json,.jsonl,.txt,.xml,.wauth,.aegis,.zip'))
+    const file = lastImportFile ?? (await pickFile(IMPORT_ACCEPT))
     if (!file) return null
     lastImportFile = file
     return { bytes: new Uint8Array(await file.arrayBuffer()), name: file.name }
