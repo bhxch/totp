@@ -1,8 +1,12 @@
 /** 备份源统一模型（设计 §3）：云后端与桌面本地目录同构为「源」，同 kind 可多条，每源独立保留策略。
  *  元数据（本模块）明文存 settings 域；凭据是秘密，存 DEK 保管区（secretBag.ts）按 id 关联。 */
+import type { CloudBackend } from '../cloud/backend'
 import type { StorageAdapter } from '../storage/adapter'
 
-export type SourceKind = 'webdav' | 's3' | 'gist' | 'gdrive' | 'onedrive' | 'local'
+/** 源 kind 联合由 CloudBackend['id'] 派生（R14，原为手写平行联合）：backend.ts 增删云后端后
+ *  本联合自动跟进——原形态漏改时新 kind 源经 isBackupSource 的 KINDS 过滤被运行时静默丢弃；
+ *  local=桌面本地目录源（desktop BackupCard 通道，不参与云同步）。 */
+export type SourceKind = 'local' | CloudBackend['id']
 export type Retention = { type: 'overwrite' } | { type: 'keep'; n: number }
 export type SourceRole = 'primary' | 'replica'
 
@@ -23,7 +27,19 @@ export interface BackupSource {
 export const SOURCES_KEY = 'backupSources'
 export const SOURCE_REVS_KEY = 'sourceRevs'
 
-const KINDS: readonly SourceKind[] = ['webdav', 's3', 'gist', 'gdrive', 'onedrive', 'local']
+/** kind 全集登记表（isBackupSource 白名单）：键集经 satisfies Record<SourceKind, boolean> 与
+ *  派生联合双向锁定——增删后端后漏登记（缺键）或残留（多键）均编译期报错，取代原数组与联合
+ *  「注释性同步」（数组 satisfies 只能防非法值、防不了漏项，漏项即上面的静默丢源）。 */
+const KIND_TABLE = {
+  webdav: true,
+  s3: true,
+  gist: true,
+  gdrive: true,
+  onedrive: true,
+  local: true,
+} satisfies Record<SourceKind, boolean>
+
+const KINDS = Object.keys(KIND_TABLE) as SourceKind[]
 
 export function normalizeRetention(x: unknown): Retention {
   const r = x as { type?: unknown; n?: unknown } | null
