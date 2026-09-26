@@ -1,0 +1,142 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`sniffFormat 判定顺序（R5 注册表迁移守卫） > 全序快照：注册表化迁移后顺序任何变化在此显式 diff 1`] = `
+[
+  {
+    "format": "aegis",
+    "name": "aegis 明文（db 对象）",
+  },
+  {
+    "format": "aegis",
+    "name": "aegis 明文（header 键，明文 slots 空数组）",
+  },
+  {
+    "format": "aegis",
+    "name": "aegis 加密（db 密文串，嗅探同判 aegis，加密区分走 sniffAegis）",
+  },
+  {
+    "format": "twoFas",
+    "name": "twoFas 典型",
+  },
+  {
+    "format": "twoFas",
+    "name": "twoFas 空 services（显式走 twoFas，importTwoFas 给「无条目」错误）",
+  },
+  {
+    "format": "bitwarden",
+    "name": "bitwarden 明文（items + login.totp）",
+  },
+  {
+    "format": "bitwarden",
+    "name": "bitwarden 密码保护导出（顶层 encrypted 键）",
+  },
+  {
+    "format": "proton",
+    "name": "proton（entries + content 对象）",
+  },
+  {
+    "format": "stratum",
+    "name": "stratum（Authenticators 数组）",
+  },
+  {
+    "format": "freeOtp",
+    "name": "freeOtp（tokens + issuerExt + secret 字节数组）",
+  },
+  {
+    "format": "foxauth",
+    "name": "foxauth（isEncrypted 布尔 + accountInfos）",
+  },
+  {
+    "format": "aegis",
+    "name": "对象族顺序：aegis > twoFas",
+  },
+  {
+    "format": "twoFas",
+    "name": "对象族顺序：twoFas > bitwarden",
+  },
+  {
+    "format": "bitwarden",
+    "name": "对象族顺序：bitwarden > proton",
+  },
+  {
+    "format": "proton",
+    "name": "对象族顺序：proton > stratum",
+  },
+  {
+    "format": "stratum",
+    "name": "对象族顺序：stratum > freeOtp",
+  },
+  {
+    "format": "freeOtp",
+    "name": "对象族顺序：freeOtp > foxauth",
+  },
+  {
+    "format": "generic",
+    "name": "对象族兜底：无特征键单对象 → generic",
+  },
+  {
+    "format": "andOtp",
+    "name": "andOtp（type/algorithm/label/secret 全字符串）",
+  },
+  {
+    "format": "totpAuthenticator",
+    "name": "totpAuthenticator（base 整数 + key 字符串）",
+  },
+  {
+    "format": "andOtp",
+    "name": "数组族顺序：andOtp > totpAuthenticator",
+  },
+  {
+    "format": "generic",
+    "name": "数组族兜底：无特征数组 → generic",
+  },
+  {
+    "format": "generic",
+    "name": "JSONL 多行对象 → generic",
+  },
+  {
+    "format": null,
+    "name": "JSONL 单行标量不判 generic → null",
+  },
+  {
+    "format": "winauth",
+    "name": "winauth（< 开头 + winauth 字样）",
+  },
+  {
+    "format": "freeOtpLegacy",
+    "name": "freeOtpLegacy（tokenOrder）",
+  },
+  {
+    "format": "freeOtpLegacy",
+    "name": "freeOtpLegacy（转义 issuerExt）",
+  },
+  {
+    "format": "uriBatch",
+    "name": "uriBatch（含 otpauth://）",
+  },
+  {
+    "format": "winauth",
+    "name": "文本族顺序：winauth > freeOtpLegacy",
+  },
+  {
+    "format": "freeOtpLegacy",
+    "name": "文本族顺序：freeOtpLegacy > uriBatch",
+  },
+  {
+    "format": "uriBatch",
+    "name": "非法 JSON 对象含 otpauth 回落文本族 → uriBatch",
+  },
+  {
+    "format": null,
+    "name": "乱文本 → null",
+  },
+  {
+    "format": null,
+    "name": "无特征 XML → null",
+  },
+  {
+    "format": null,
+    "name": "空白 → null",
+  },
+]
+`;
