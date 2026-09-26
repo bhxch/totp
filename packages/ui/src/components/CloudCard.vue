@@ -4,9 +4,12 @@ import { contentHashVault, pushEnvelope, resolveObjectPath, resolveTimestampPath
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { VueStore } from '../store'
-import { blankCred, hasPlaintextUrl, isBlankCred } from './cardShared'
+import { useConfirmPattern } from '../composables/confirmPattern'
+import { useAsyncMessage } from '../composables/useAsyncMessage'
+import { useAutoPrefs } from '../composables/useAutoPrefs'
+import { blankCred, hasPlaintextUrl, intervalOptions, isBlankCred, newSourceId, retentionOptions } from './cardShared'
 import { createCloudBackend } from './cloudPlatform'
-import type { CloudAutoPrefs, CloudPlatform } from './cloudPlatform'
+import type { CloudPlatform } from './cloudPlatform'
 import { actionStatusLabelKey, allTargetsSettled, buildSyncTargets, runExclusive, runKeepRetention } from './cloudSyncShared'
 import { pendingMergeConfirm, requestMergeConfirm, settleMergeConfirm, syncProgressState } from './cloudSyncBridge'
 import CloudCredFields from './CloudCredFields.vue'
@@ -49,9 +52,8 @@ const credDrafts = ref<Record<string, CloudCred>>({})
 /** 当前展开配置的源索引（-1=全部收起；同时只展开一个） */
 const expanded = ref(-1)
 
-const busy = ref(false)
-const msg = ref('')
-const msgKind = ref<'ok' | 'err' | 'hint'>('ok')
+// busy/三态消息基建收共享组合式（R7，原卡内 busy/msg/msgKind/fail 四件）
+const { busy, msg, msgKind, fail } = useAsyncMessage()
 
 /** 各源最近一次手动同步结果文本（键=sourceId） */
 const statusMap = ref<Record<string, string>>({})
@@ -145,18 +147,18 @@ const pendingConfirm = pendingMergeConfirm()
 const progress = syncProgressState()
 onUnmounted(() => settleMergeConfirm(false))
 
-/** 已解密待确认覆盖的远端 vault JSON（两步确认防误覆盖，沿用旧卡行内确认交互） */
-const pendingAdopt = ref<string | null>(null)
-/** 采纳源待确认的基线 hash：「采用云端」确认成功后才落盘；取消则不写（下次同步重新下载提示） */
+// 行内两步确认挂起态组（R7 收 confirmPattern）：adopt=待采纳 vault JSON（同步结果发起，绕过
+// ask 直接赋值）、reset/remove=待确认重置/移除的源 id；ask 互斥=同时至多一个确认行展开
+const { slots: confirmSlots, ask: askConfirm, cancel: cancelConfirm, anyPending: confirmPending } =
+  useConfirmPattern(['adopt', 'reset', 'remove'])
+const pendingAdopt = confirmSlots.adopt
+const pendingReset = confirmSlots.reset
+const pendingRemove = confirmSlots.remove
 /** 采纳源 rev 基线延后至「采用云端」确认成功才落盘（取消则不写，下次同步重新下载提示） */
 const pendingStates = ref<Array<[string, SourceSyncState]>>([])
 
 /** 同步报「口令不匹配」的源 id（换口令后云端为旧口令信封）：提供行内重置救济入口 */
 const resettableBackends = ref<string[]>([])
-/** 待确认重置的源 id（行内两步确认，同 pendingAdopt 模式；挂起期间同步按钮禁用） */
-const pendingReset = ref<string | null>(null)
-/** 待确认移除的源 id（行内两步确认，同 pendingReset 模式；挂起期间同步按钮禁用） */
-const pendingRemove = ref<string | null>(null)
 
 /** 确认行文案用的源名（按 id 解析；行内确认挂起期间该源仍在列表）；迁移默认名按当前语言回落 */
 function sourceName(id: string): string {
@@ -164,10 +166,15 @@ function sourceName(id: string): string {
   return s !== undefined ? displaySourceName(s.name, t) : ''
 }
 
-/** 自动触发偏好（卡内编辑副本，挂载时读初值；每次变更整体回写） */
-const autoPrefs = ref<CloudAutoPrefs>({ onChange: false, onInterval: false, intervalMinutes: 60 })
-/** 「上次自动同步」状态文本（宿主 loadAutoStatus 提供；缺省显示「暂无」） */
-const autoStatus = ref<string | null>(null)
+// 自动触发偏好三件套（R7 收 useAutoPrefs）：platform.autoPrefs {get,set} 通道直连；偏好编辑副本
+// 挂载时读初值、任一变更整体回写；「上次自动同步」状态文本宿主 loadAutoStatus 提供（缺省「暂无」）
+const {
+  autoPrefs, autoStatus, load: loadAutoPrefs, refreshStatus: refreshAutoStatus,
+  onAutoOnChange, onAutoIntervalToggle, onIntervalChange,
+} = useAutoPrefs(
+  () => props.platform?.autoPrefs ?? null,
+  { onError: fail, loadStatus: () => props.platform?.loadAutoStatus?.() ?? null },
+)
 
 /** 「添加源」菜单（plan16：同类型可多份，不再按已存在过滤，菜单恒列全部五种云后端） */
 const addableBackends = BACKENDS
@@ -184,10 +191,7 @@ function openAddMenu(e: MouseEvent): void {
   addMenuOpen.value = true
 }
 
-/** 源 id 工厂：优先 crypto.randomUUID（宿主安全上下文），jsdom 等缺失环境回落时间戳+随机段 */
-function newSourceId(): string {
-  return globalThis.crypto?.randomUUID?.() ?? `src-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
-}
+/** 源 id 工厂 newSourceId 收共享模块 cardShared（R7，与 BackupCard 同款实现单点化） */
 
 /** 添加源：生成 uuid 源（name 默认后端名、覆盖策略、enabled 开）+ 空白凭据副本，并展开其配置 */
 function addTarget(b: BackendId): void {
@@ -198,11 +202,8 @@ function addTarget(b: BackendId): void {
   addMenuOpen.value = false
 }
 
-/** 保留策略二选（MdSegmentedButton 选项） */
-const RETENTION_OPTIONS = [
-  { value: 'overwrite', label: t('cloudCard.retentionOverwrite') },
-  { value: 'keep', label: t('cloudCard.retentionKeep') },
-]
+/** 保留策略二选（MdSegmentedButton 选项；R7 收 cardShared 选项工厂） */
+const RETENTION_OPTIONS = retentionOptions(t, 'cloudCard')
 /** keep 份数输入 → 源 retention：空串/非数字回落 3（与本地源默认一致），数字钳下限 1 */
 function onKeepN(s: BackupSource, v: string | number): void {
   const parsed = v === '' ? NaN : Number(v)
@@ -240,13 +241,12 @@ function askRemove(id: string): void {
     removeTarget(id)
     return
   }
-  pendingRemove.value = id
-  pendingReset.value = null // 三态互斥：同时只有一个行内确认挂起
+  askConfirm('remove', id) // 三态互斥在槽组内（ask 先清同组其余槽）
 }
 
 /** 取消移除：本地存储与列表均不动 */
 function onCancelRemove(): void {
-  pendingRemove.value = null
+  cancelConfirm('remove')
 }
 
 /**
@@ -272,11 +272,6 @@ async function onConfirmRemove(): Promise<void> {
     fail(e)
   }
   pendingRemove.value = null
-}
-
-function fail(e: unknown): void {
-  msg.value = e instanceof Error ? e.message : String(e)
-  msgKind.value = 'err'
 }
 
 /** 源列表是否已从平台装载成功：孤儿对账的前置条件（loadSources 失败按空列表回落时无权威可依，绝不对账） */
@@ -313,18 +308,7 @@ onMounted(async () => {
     credDrafts.value[s.id] = saved ? { ...saved } : blankCred(s.kind as BackendId)
   }
   void reconcileOrphanCreds() // 挂载时已解锁（creds 已装载）即对账；锁定态 creds 为空自然跳过
-  if (p.autoPrefs) {
-    try {
-      autoPrefs.value = { ...(await p.autoPrefs.get()) } // await 兼容同步返回（desktop）
-    } catch { /* 读取失败保持默认 */ }
-  }
-  if (p.loadAutoStatus) {
-    try {
-      autoStatus.value = await p.loadAutoStatus()
-    } catch {
-      autoStatus.value = null
-    }
-  }
+  await loadAutoPrefs() // 自动偏好初值+状态文本（R7 收 useAutoPrefs；await 兼容同步返回并保持既有装载时序）
   void refreshConflictCopies() // extension 冲突副本列表回填（desktop 无此平台能力 → 恒空不渲染）
 })
 
@@ -486,11 +470,7 @@ async function onSync(): Promise<void> {
         },
         (id) => { statusMap.value[id] += t('cloudCard.retentionFailed') },
       )
-      if (p.loadAutoStatus) {
-        try {
-          autoStatus.value = await p.loadAutoStatus() // 手动完成后刷新自动状态行
-        } catch { /* 状态读取失败不影响同步 */ }
-      }
+      await refreshAutoStatus() // 手动完成后刷新自动状态行（读取失败保持旧值，不影响同步）
       void refreshConflictCopies() // 手动同步可能新增冲突副本：刷新列表（extension）
       // 跨端同步审查 I1：全部目标成功（共享谓词 allTargetsSettled：无目标级失败/收敛失败）才算
       // 「手动同步成功」——通知宿主复位云凭据失效警示并重启跟随轮询（重新授权闭环）；部分失败
@@ -542,13 +522,12 @@ function onCancelAdopt(): void {
 
 /** 口令不匹配救济第一步：进入行内两步确认（挂起期间同步/重置按钮禁用，同 pendingAdopt 模式） */
 function askReset(id: string): void {
-  pendingReset.value = id
-  pendingRemove.value = null // 三态互斥：同时只有一个行内确认挂起
+  askConfirm('reset', id) // 三态互斥在槽组内（ask 先清同组其余槽）
 }
 
 /** 取消重置：不触碰云端，仅退出确认行 */
 function onCancelReset(): void {
-  pendingReset.value = null
+  cancelConfirm('reset')
 }
 
 /**
@@ -600,33 +579,8 @@ async function onConfirmReset(): Promise<void> {
   }
 }
 
-/** 以卡内最新偏好整体回写平台（每次展开完整对象，连续切换不丢字段）；回写失败走 msg 通道而非静默+未处理 rejection */
-async function syncAutoPrefs(): Promise<void> {
-  try {
-    await props.platform?.autoPrefs.set({ ...autoPrefs.value })
-  } catch (e) {
-    fail(e)
-  }
-}
-function onAutoOnChange(v: boolean): void {
-  autoPrefs.value = { ...autoPrefs.value, onChange: v }
-  void syncAutoPrefs()
-}
-function onAutoIntervalToggle(v: boolean): void {
-  autoPrefs.value = { ...autoPrefs.value, onInterval: v }
-  void syncAutoPrefs()
-}
-/** 定时同步间隔选项（value=分钟数，number 直传回写不再经字符串转换；F6 收口换 MdSelect） */
-const INTERVAL_OPTIONS = [
-  { value: 15, label: t('cloudCard.interval15m') },
-  { value: 60, label: t('cloudCard.interval1h') },
-  { value: 360, label: t('cloudCard.interval6h') },
-  { value: 1440, label: t('cloudCard.intervalDaily') },
-]
-function onIntervalChange(v: string | number): void {
-  autoPrefs.value = { ...autoPrefs.value, intervalMinutes: Number(v) }
-  void syncAutoPrefs()
-}
+/** 定时同步间隔选项（value=分钟数，number 直传回写不再经字符串转换；F6 收口换 MdSelect；R7 收 cardShared 选项工厂） */
+const INTERVAL_OPTIONS = intervalOptions(t, 'cloudCard')
 /** 同 (kind, name) 组内出现重复名称才提示（审查 Minor）：同名源无法凭名称区分需改名；
  *  不同 kind 同名/各源异名均无需提示（原判定「任两源不同名即提示」与文案语义相反） */
 const hasDuplicateNames = computed(() => {
@@ -710,7 +664,8 @@ const hasDuplicateNames = computed(() => {
         :label="t('cloudCard.plaintextAckLabel')" :aria-label="t('cloudCard.plaintextAckLabel')" @update:model-value="plaintextAck = $event"
       />
       <MdButton class="creds-save" :disabled="busy" @click="onSaveCreds">{{ t('cloudCard.saveCreds') }}</MdButton>
-      <MdButton class="cloud-sync" :disabled="busy || !sessionSecret || pendingAdopt !== null || pendingReset !== null || pendingRemove !== null" @click="onSync">{{ t('cloudCard.syncNow') }}</MdButton>
+      <!-- 挂起禁用收 confirmPattern.anyPending（R7）：adopt/reset/remove 任一确认行展开即禁用 -->
+      <MdButton class="cloud-sync" :disabled="busy || !sessionSecret || confirmPending" @click="onSync">{{ t('cloudCard.syncNow') }}</MdButton>
     </div>
     <!-- 逐源进度（spec §5 ⑥，T11）：宿主 runner onProgress 经 cloudSyncBridge 驱动；
          done<total 才显示（轮末 (total,total) 自动隐藏），自动/跟随轮与手动预览轮同样可见 -->

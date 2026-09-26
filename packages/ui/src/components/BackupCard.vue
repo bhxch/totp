@@ -401,9 +401,9 @@ const {
 } = useAutoPrefs(
   () => {
     const p = props.platform
-    return p?.getAutoPrefs
-      ? { get: () => p.getAutoPrefs(), set: (x: BackupAutoPrefs) => p.setAutoPrefs?.(x) }
-      : null
+    if (!p?.getAutoPrefs) return null
+    const getAutoPrefs = p.getAutoPrefs // 属性收窄不入闭包：get 捕获局部常量
+    return { get: () => getAutoPrefs(), set: (x: BackupAutoPrefs) => p.setAutoPrefs?.(x) }
   },
   { onError: fail, loadStatus: () => props.platform?.getAutoStatus?.() ?? null },
 )

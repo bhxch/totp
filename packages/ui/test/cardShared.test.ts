@@ -20,7 +20,7 @@ function stubRandomUUID(v: (() => string) | undefined): () => void {
 
 afterEach(() => {
   // 防御：个别用例的 stub 未还原时不串扰后续文件
-  Reflect.deleteProperty(globalThis.crypto as Record<string, unknown>, 'randomUUID')
+  Reflect.deleteProperty(globalThis.crypto, 'randomUUID')
 })
 
 describe('cardShared', () => {
