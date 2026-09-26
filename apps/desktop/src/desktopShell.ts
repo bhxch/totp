@@ -25,7 +25,7 @@ import { createMcpApprovalQueue, isToolConfirmItem, type McpApprovalAction } fro
 import { createMcpTriggers, startMcpBridge, type McpBridgeDeps } from './mcpBridge'
 import { createTauriFs } from './tauriFs'
 import { legacyRetention, BACKUP_MODE_KEY, BACKUP_KEEP_N_KEY } from './desktopPrefs'
-import { requireAdapter, requireStore, storeGuards } from './storeAccess'
+import { DisposableBag, requireAdapter, requireStore, safeListen, storeGuards } from './storeAccess'
 
 /** MCP 首连审批队列类型（createMcpApprovalQueue 返回形状） */
 export type McpApprovalQueue = ReturnType<typeof createMcpApprovalQueue>
@@ -212,16 +212,11 @@ export interface DesktopShellController {
 }
 
 export function createDesktopShell(deps: DesktopShellDeps): DesktopShellController {
-  // 释放策略联动监听（Task 14）：force-lock=暂停/销毁锁库；stash-dek-request=销毁不锁库路径先上报 DEK
-  let unlistenFocus: (() => void) | null = null
-  let unlistenForceLock: (() => void) | null = null
-  let unlistenStashDek: (() => void) | null = null
-  let unlistenApproval: (() => void) | null = null
-  let unlistenToolApproval: (() => void) | null = null
-  let mcpStop: (() => void) | null = null
-  // 系统锁屏：Rust lock_events 模块（Windows WTS）广播 system-lock（mac/Linux 挂账，事件恒不触发
-  // 自然降级）；回调实时读 settings（不缓存快照），开关变更即时生效；store.lock() 幂等。
-  let unlistenSystemLock: (() => void) | null = null
+  // 七处可空 unlisten（system-lock/失焦/force-lock/stash-dek/MCP stop/审批/工具确认）统一计收
+  // （R13 DisposableBag）：dispose 按登记顺序排干清算，排干后重复调用安全（幂等）。原手工
+  // let 变量 + `?.()` 逐个清算的样板收敛于此；登记顺序=注册顺序，与原逐个清算仅次序不同
+  // （各退订相互独立，无时序耦合）。
+  const unlistens = new DisposableBag()
 
   // 空闲超时：与 extension lockEnforcer（chrome.idle 版）语义一致的原生实现——document 级
   // pointerdown/keydown 节流刷新活动时间戳，30s tick 用 core shouldLockNow 判定（idleLock.ts）；
@@ -236,9 +231,10 @@ export function createDesktopShell(deps: DesktopShellDeps): DesktopShellControll
 
   async function init(): Promise<void> {
     // 系统锁屏事件（plan16 T15）：WTS_SESSION_LOCK → system-lock 广播 → 按设置锁定
-    unlistenSystemLock = await listen('system-lock', () => {
+    // （注册不容错：失败随主 try 进 loadError——与原行为一致）
+    unlistens.track(await listen('system-lock', () => {
       if (deps.store.value?.settings.lockOnSystemLock) deps.store.value?.lock()
-    })
+    }))
     // 空闲锁定执行器：活动监听 + 30s tick（锁定延迟最长一个 tick 粒度）
     document.addEventListener('pointerdown', onUserActivity, { passive: true })
     document.addEventListener('keydown', onUserActivity)
@@ -248,7 +244,7 @@ export function createDesktopShell(deps: DesktopShellDeps): DesktopShellControll
     const un = await win.onFocusChanged(({ payload: focused }) => {
       if (!focused && deps.store.value?.settings.blurHideEnabled && win.label === 'main') void win.hide()
     })
-    unlistenFocus = un
+    unlistens.track(un)
     try {
       const adapter = await createTauriFs()
       deps.setAdapter(adapter)
@@ -262,15 +258,15 @@ export function createDesktopShell(deps: DesktopShellDeps): DesktopShellControll
       })
       await s.initStore()
       // 释放策略联动（spec 批⑧ §7.4-7.5，Task 14）：锁库事件 + 不锁库路径的 DEK 暂存回注。
-      // 监听容错注册（失败仅该联动降级，不放大为整屏 loadError）
-      unlistenForceLock = await listen('force-lock', () => {
+      // 监听容错注册（safeListen：失败仅该联动降级，不放大为整屏 loadError）
+      unlistens.track(await safeListen('force-lock', () => {
         deps.store.value?.lock()
-      }).catch(() => null)
-      unlistenStashDek = await listen('stash-dek-request', () => {
+      }))
+      unlistens.track(await safeListen('stash-dek-request', () => {
         // getCurrentDek：解锁态返回本窗口 DEK，锁定/未启用返回 null（锁库路径自然不上报）
         const dek = deps.store.value?.getCurrentDek()
         if (dek) void invoke('stash_dek', { dek: bytesToBase64(dek) }).catch(() => {})
-      }).catch(() => null)
+      }))
       // 重建/冷启动回注（store 初始化后、首个页面渲染前）：有暂存 DEK 则恢复解锁态
       // （store.unlockWithDek 等价解锁后状态：写 dekByWin/dekPersist + 刷新 vault + 退出锁定 + 重装载保管区）；
       // 锁库路径无暂存（锁库时 Rust 侧清槽），DEK 失效（换库/损坏）抛错保持锁定页，自然兜底
@@ -303,15 +299,16 @@ export function createDesktopShell(deps: DesktopShellDeps): DesktopShellControll
     // 关键初始化失败时 MCP 仍可装配（requireEntries 闭包惰性读 store，未就绪报 vault locked）
     try {
       // 只主窗口装配（本文件即 main；mini 另案）；锁定门控在 requireEntries 抛错（'vault locked' 文案直达 AI 客户端）
-      mcpStop = await startMcpBridge(deps.mcpDeps, { listen, invoke: (c, a) => invoke(c, a as never).then(() => {}) })
+      unlistens.track(await startMcpBridge(deps.mcpDeps, { listen, invoke: (c, a) => invoke(c, a as never).then(() => {}) }))
     } catch (e) {
       console.warn('[mcp] MCP 桥装配失败，已降级跳过（不影响应用主流程）', e)
     }
     // 首连审批事件监听注册同理单独容错：事件入审批队列（同 ident 10s 去重见 mcpApprovalQueue.ts）
+    // （保留 try/warn 而非 safeListen：注册失败需告警留痕，见 desktopShell.test 三段独立容错）
     try {
-      unlistenApproval = await listen<{ ident: string; tool: string }>('mcp://approval', (e) => {
+      unlistens.track(await listen<{ ident: string; tool: string }>('mcp://approval', (e) => {
         deps.approvalQueue.enqueue(e.payload)
-      })
+      }))
     } catch (e) {
       console.warn('[mcp] MCP 审批监听注册失败，已降级跳过（不影响应用主流程）', e)
     }
@@ -319,13 +316,13 @@ export function createDesktopShell(deps: DesktopShellDeps): DesktopShellControll
     // 裁定后经既有 mcp_respond 回 {id, ok:true, result:allow, error:null}（allow=result true，
     // 拒绝统一 result:false）。60s 无响应由 Rust 侧超时兜底 fail-closed，回执失败仅告警
     try {
-      unlistenToolApproval = await listen<{ id: number; ident: string; tool: string }>('mcp://tool-approval', (e) => {
+      unlistens.track(await listen<{ id: number; ident: string; tool: string }>('mcp://tool-approval', (e) => {
         deps.approvalQueue.queueToolConfirmation(e.payload, (allow) => {
           void invoke('mcp_respond', { id: e.payload.id, ok: true, result: allow, error: null }).catch((err) =>
             console.warn('[mcp] mcp_respond(tool confirm) failed', err),
           )
         })
-      })
+      }))
     } catch (e) {
       console.warn('[mcp] MCP 工具确认监听注册失败，已降级跳过（不影响应用主流程）', e)
     }
@@ -333,13 +330,7 @@ export function createDesktopShell(deps: DesktopShellDeps): DesktopShellControll
 
   function dispose(): void {
     deps.auto.stop()
-    mcpStop?.()
-    unlistenApproval?.()
-    unlistenToolApproval?.()
-    unlistenFocus?.()
-    unlistenSystemLock?.()
-    unlistenForceLock?.()
-    unlistenStashDek?.()
+    unlistens.dispose()
     idleLock.stop()
     // 卸载清算（T7）：未决工具确认立即回 result:false（Rust oneshot 不悬挂等 60s 超时兜底）
     deps.approvalQueue.dispose()

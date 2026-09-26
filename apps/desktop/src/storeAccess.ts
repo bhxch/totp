@@ -8,6 +8,7 @@
  * - kdfProfileOf：备份加密档位读取（store 未就绪兜底 balanced）。
  * 仅类型依赖 @totp/core|ui（运行时零导入，宿主测试对 '@totp/ui' 的窄 mock 不受影响）。
  */
+import { listen, type EventCallback, type UnlistenFn } from '@tauri-apps/api/event'
 import type { KdfProfile, StorageAdapter } from '@totp/core'
 import type { VueStore } from '@totp/ui'
 
@@ -51,4 +52,24 @@ export function storeGuards(getStore: () => VueStore | null): StoreGuards {
 /** 备份加密强度档位（plan16 T11.5）：本地备份/云上传 envelope 按此档位生成；store 未就绪兜底 balanced */
 export function kdfProfileOf(getStore: () => VueStore | null): KdfProfile {
   return getStore()?.settings.backupKdfProfile ?? 'balanced'
+}
+
+/** 可空 unlisten/stop 计收（desktopShell 七处事件监听统一清算）：track 登记可空退订函数
+ *  （容错注册失败返回 null 时为 no-op），dispose 按登记顺序排干清算——排干后重复调用安全 */
+export class DisposableBag {
+  private items: Array<() => void> = []
+
+  track(dispose: (() => void) | null | undefined): void {
+    if (dispose) this.items.push(dispose)
+  }
+
+  dispose(): void {
+    for (const dispose of this.items.splice(0)) dispose()
+  }
+}
+
+/** 容错事件注册：注册失败返回 null（该联动降级，不放大为整屏 loadError）——
+ *  收敛既有 listen(...).catch(() => null) 样板（错误不吞不报，与原行为一致） */
+export function safeListen<T>(event: string, handler: EventCallback<T>): Promise<UnlistenFn | null> {
+  return listen<T>(event, handler).catch(() => null)
 }
