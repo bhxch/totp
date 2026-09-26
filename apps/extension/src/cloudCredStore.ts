@@ -64,12 +64,12 @@ export async function hasLegacyCloudKeys(adapter: StorageAdapter): Promise<boole
 
 // ---------- 冲突副本命名 / 自动状态格式化（本任务不变面） ----------
 
-/** 多目标冲突副本名：conflict-{backendKey}-{yyyyMMdd-HHmmss}.totpbackup——与 desktop backupService
- *  同构（core conflictBackupFileName 取 conflict- 后缀段拼接），匹配 READABLE_BACKUP_RE 的可选
- *  backend 段，跨宿主备份列表均可恢复；sourceId/缺省保持旧名格式（T13 起参数语义=源 id，仅用于文件名区分） */
+/** 多目标冲突副本名：conflict-{sourceId}-{yyyyMMdd-HHmmss}.totpbackup——命名走 core
+ *  conflictBackupFileName 单点（R14：原与 desktop backupService 各拼一份后缀段），匹配
+ *  READABLE_BACKUP_RE 的可选中间段，跨宿主备份列表均可恢复；缺省保持旧名格式
+ *  （T13 起参数语义=源 id，仅用于文件名区分） */
 export function conflictBackupName(backendKey: string | undefined, now: Date): string {
-  const base = conflictBackupFileName(now)
-  return backendKey ? `conflict-${backendKey}-${base.slice('conflict-'.length)}` : base
+  return conflictBackupFileName(now, backendKey)
 }
 
 /** 自动状态 JSON → 卡片展示文本（design §4.1）：委托 ui formatAutoStatusText 单点（R14，

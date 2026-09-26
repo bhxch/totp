@@ -10,9 +10,13 @@ export function backupFileName(now: Date): string {
   return `vault-${stamp(now)}${BACKUP_EXT}`
 }
 
-/** 云同步冲突副本文件名（conflict 前缀，与常规备份区分；不参与滚动删除） */
-export function conflictBackupFileName(now: Date): string {
-  return `conflict-${stamp(now)}${BACKUP_EXT}`
+/** 云同步冲突副本文件名（conflict 前缀，与常规备份区分；不参与滚动删除）。
+ *  sourceId 可选（R14 单点化：desktop backupService 与 extension cloudCredStore 原各拼一份
+ *  `conflict-{id}-{ts}`，跨端命名一致才能被 READABLE_BACKUP_RE 识别恢复）：提供时产
+ *  conflict-{sourceId}-{ts}（多源副本按源区分，中间段形态受 READABLE_BACKUP_RE 的
+ *  (?:[a-z0-9]+-)* 段约束），缺省保持历史 conflict-{ts} 名 */
+export function conflictBackupFileName(now: Date, sourceId?: string): string {
+  return `conflict-${sourceId ? `${sourceId}-` : ''}${stamp(now)}${BACKUP_EXT}`
 }
 
 export const BACKUP_NAME_RE = /^vault-\d{8}-\d{6}\.totpbackup$/

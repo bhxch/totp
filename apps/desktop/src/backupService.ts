@@ -200,11 +200,10 @@ export async function createBackupToSources(sources: BackupSourceInput[], vaultJ
 }
 
 /** 云同步冲突副本：本地 vault JSON 字节写 backups/conflict-{ts}.totpbackup（不参与滚动删除），返回文件名。
- *  多源场景带 sourceId 区分来源（conflict-{sourceId}-{ts}.totpbackup，desktop 侧拼接——
- *  core conflictBackupFileName(now) 无第二参）；缺省保持历史名。恒写默认 backups 目录（源模型后无单一「自选目录」） */
+ *  多源场景带 sourceId 区分来源（conflict-{sourceId}-{ts}.totpbackup，命名走 core
+ *  conflictBackupFileName 单点，R14）；缺省保持历史名。恒写默认 backups 目录（源模型后无单一「自选目录」） */
 export async function saveConflictBackupToDir(bytes: Uint8Array, dirOverride: string | null = null, sourceId?: string): Promise<string> {
-  const base = conflictBackupFileName(new Date())
-  const name = sourceId ? `conflict-${sourceId}-${base.slice('conflict-'.length)}` : base
+  const name = conflictBackupFileName(new Date(), sourceId)
   const contents = new TextDecoder().decode(bytes)
   await sinkFor(dirOverride).write(name, contents)
   return name
