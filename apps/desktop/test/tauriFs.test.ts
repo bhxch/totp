@@ -8,16 +8,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { tauriMock } from './mocks/tauri'
 import { createTauriFs } from '../src/tauriFs'
+import { rustKeys } from './helpers/settingsFixture'
 
 vi.mock('@tauri-apps/plugin-fs', async () => (await import('./mocks/tauri')).fsModule())
-
-/** 模拟 Rust 侧写入的外来配置（与 tauriFsSettings.test.ts 同款样本） */
-const rustKeys = {
-  shortcutToggleMini: 'alt+shift+t',
-  devtools: { enabled: true, port: 9222 },
-  releasePolicy: { pauseMinutes: 10, destroyMinutes: 30, lockOnPause: true, lockOnDestroy: false },
-  mcp: { enabled: true, mode: 'wildcard', port: 47215, token: 'x', whitelist: [], exposedTools: [] },
-}
 
 /** 原子写序断言：先写 tmp 再 rename（写一半崩溃不得损坏目标文件） */
 function expectTmpBeforeRename(): void {
