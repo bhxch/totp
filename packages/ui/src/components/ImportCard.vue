@@ -9,6 +9,7 @@ import {
 } from '@totp/core'
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useAsyncMessage } from '../composables/useAsyncMessage'
 import { openSqlite } from '../sqliteLoader'
 import type { VueStore } from '../store'
 import MdButton from './md/MdButton.vue'
@@ -36,9 +37,8 @@ type ManualFormat = ImportFormat | 'authy' | 'battleNet' | 'duo' | 'authenticato
 type DirectFormat = Exclude<ManualFormat, 'generic' | 'aegis' | 'winauth' | 'authy' | 'authenticatorPlus' | 'msAuth' | 'sqlite'>
 
 const step = ref<Step>('idle')
-const busy = ref(false)
-const msg = ref('')
-const msgKind = ref<'ok' | 'err' | 'hint'>('ok')
+// busy/三态消息基建收共享组合式（R7，原卡内 busy/msg/msgKind/fail 四件）
+const { busy, msg, msgKind, fail } = useAsyncMessage()
 const fileName = ref('')
 const fileText = ref('')
 /** 字节通道缓存：start() 文本管道读失败的二进制文件（AP 加密 zip）经 readImportFileBytes 兜底缓存 */
@@ -281,11 +281,6 @@ const report = ref<{
   conflictSkipped: number; conflictReplaced: number; conflictMerged: number; inFileMerged: number
   failures: ImportResult['failures']
 } | null>(null)
-
-function fail(e: unknown): void {
-  msg.value = e instanceof Error ? e.message : String(e)
-  msgKind.value = 'err'
-}
 
 function reset(): void {
   step.value = 'idle'

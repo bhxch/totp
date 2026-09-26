@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useAsyncMessage } from '../composables/useAsyncMessage'
 import type { SyncPlatform, SyncStatus } from './syncPlatform'
 import MdButton from './md/MdButton.vue'
 import MdCheckbox from './md/MdCheckbox.vue'
@@ -12,17 +13,11 @@ const props = defineProps<{
 
 const { t } = useI18n()
 
-const busy = ref(false)
-const msg = ref('')
-const msgKind = ref<'ok' | 'err' | 'hint'>('ok')
+// busy/三态消息基建收共享组合式（R7，原卡内 busy/msg/msgKind/fail 四件）
+const { busy, msg, msgKind, fail } = useAsyncMessage()
 // 用 SyncStatus 而非手写 { state; at }：漏掉 pct 会使 usageText 读 s.pct 时被类型层截掉
 const status = ref<SyncStatus | null>(null)
 let pollTimer: ReturnType<typeof setInterval> | null = null
-
-function fail(e: unknown): void {
-  msg.value = e instanceof Error ? e.message : String(e)
-  msgKind.value = 'err'
-}
 
 /** 读取状态快照；读取异常按同步出错呈现（下次轮询/手动刷新自愈） */
 async function refreshStatus(): Promise<void> {

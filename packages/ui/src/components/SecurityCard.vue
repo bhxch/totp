@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { KdfProfile } from '@totp/core'
+import { useAsyncMessage } from '../composables/useAsyncMessage'
 import type { LockPrefs, SecurityPlatform } from './securityPlatform'
 import MdButton from './md/MdButton.vue'
 import MdCheckbox from './md/MdCheckbox.vue'
@@ -20,9 +21,8 @@ const password = ref('')
 const confirmPw = ref('')
 const newPw = ref('')
 const newPwConfirm = ref('')
-const busy = ref(false)
-const msg = ref('')
-const msgKind = ref<'ok' | 'err' | 'hint'>('ok')
+// busy/三态消息基建收共享组合式（R7，原卡内 busy/msg/msgKind/fail/run 五件）
+const { busy, msg, msgKind, fail, run } = useAsyncMessage()
 /** 关闭加密的两步确认（警示明文存储） */
 const confirmDisable = ref(false)
 
@@ -104,33 +104,11 @@ function shortId(id: string): string {
   return id.length > 16 ? id.slice(0, 6) + '…' + id.slice(-6) : id
 }
 
-function fail(e: unknown): void {
-  msg.value = e instanceof Error ? e.message : String(e)
-  msgKind.value = 'err'
-}
-
 /** 口令校验：非空且两次一致（启用/换口令共用） */
 function validatePw(a: string, b: string): string | null {
   if (!a) return t('securityCard.passphraseRequired')
   if (a !== b) return t('securityCard.passphraseMismatch')
   return null
-}
-
-/** busy/消息统一包装（同 BackupCard 模式） */
-async function run(fn: () => Promise<void>, okMsg: string): Promise<boolean> {
-  busy.value = true
-  msg.value = ''
-  try {
-    await fn()
-    msg.value = okMsg
-    msgKind.value = 'ok'
-    return true
-  } catch (e) {
-    fail(e)
-    return false
-  } finally {
-    busy.value = false
-  }
 }
 
 async function onEnable(): Promise<void> {

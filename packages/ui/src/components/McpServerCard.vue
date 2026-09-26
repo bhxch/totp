@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useAsyncMessage } from '../composables/useAsyncMessage'
 import type { McpConfigWithStatusDto, McpPlatform } from './mcpCard'
 import { connectionSnippet, DEFAULT_EXPOSED_TOOLS, MCP_MODE_OPTIONS, MCP_TOOLS, randomDynamicPort, sanitizeExposedTools, serverStatus } from './mcpCard'
 import MdButton from './md/MdButton.vue'
@@ -18,8 +19,9 @@ const props = defineProps<{
 }>()
 
 const cfg = ref<McpConfigWithStatusDto | null>(null)
-const busy = ref(false)
-const error = ref('')
+// busy/消息基建收共享组合式（R7，原卡内 busy/error 两件）；消息串带「MCP 错误：」前缀属本卡
+// 展示差异，fail 保留卡内，经改名复用共享 msg ref
+const { busy, msg: error } = useAsyncMessage()
 // ---------- 端口：update:model-value 逐键只改显示，change（失焦/回车）校验 1024–65535 后提交 ----------
 const portText = ref('')
 const portError = ref('')
