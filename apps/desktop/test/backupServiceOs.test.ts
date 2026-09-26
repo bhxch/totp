@@ -102,6 +102,15 @@ describe('pickBackupSaveOs / pickBackupOpenOs（F4 对话框授权句柄）', ()
     ])
   })
 
+  it('pickBackupSaveOs：取消（Rust null）→ null（调用方据此中断，不做 KDF）', async () => {
+    const filters = [{ name: 'TOTP 备份', extensions: ['totpbackup'] }]
+    tauriMock.onReturn('pick_save_file_os', null)
+    expect(await pickBackupSaveOs('vault-backup.totpbackup', filters)).toBeNull()
+    expect(tauriMock.calls('pick_save_file_os')).toEqual([
+      { command: 'pick_save_file_os', args: { defaultName: 'vault-backup.totpbackup', filters } },
+    ])
+  })
+
   it('pickBackupOpenOs：filters 透传；取消（Rust null）→ null（调用方据此中断流程）', async () => {
     const filters = [{ name: 'TOTP 备份', extensions: ['totpbackup'] }]
     tauriMock.onReturn('pick_open_file_os', { path: 'C:\\imp\\b.totpbackup', dirToken: 'tok-9' })
