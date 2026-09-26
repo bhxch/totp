@@ -1,4 +1,4 @@
-import { importTwoFas, parsePastedText, asObject, type OtpDigits, type ParsedEntry, type OtpEntry } from '@totp/core'
+import { importTwoFas, parsePastedText, asObject, toOtpDigits, type ParsedEntry, type OtpEntry } from '@totp/core'
 import { parseUriToEntryData } from './otpauthFlow'
 
 /** 手动填写页「从剪贴板导入」（spec 批⑧ §6）：读剪贴板快照 + 文本意图分流。
@@ -89,9 +89,11 @@ function prefillFromParsed(e: ParsedEntry): OtpEntry {
     label: e.label,
     secret: e.secret,
     algorithm: e.algorithm,
-    // digits：importer 侧已按 typeProfile 收口（steam=5、yandex=8、其余 6/7/8 兜底 6），此处仅
-    // number→OtpDigits 类型口径断言——R3 起 toOtpDigits 前置收口移除，落库经 vault.addEntry 边界统一再收口
-    digits: e.digits as OtpDigits,
+    // digits 经 toOtpDigits 收口（R3 评审修复保留，非幂等点）：aegis/jsonApps/miscApps/generic 等
+    // importer 的 digits 是 toPositiveNumber 原始输出（值域任意正数，importer 内无 toOtpDigits 收口，
+    // 收口在下游 newEntryFromParsed 与本处）——(4,'totp')→6 非恒等，不收口则预填 digits=4 被共享
+    // EntryForm 的 [6,7,8] 提交校验拒绝（原行为静默修正为 6 导入成功）
+    digits: toOtpDigits(e.digits, e.type),
     period: e.period,
     ...(e.counter !== undefined ? { counter: e.counter } : {}),
     ...(e.pin !== undefined ? { pin: e.pin } : {}),

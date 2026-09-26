@@ -163,4 +163,16 @@ describe('R3 评审修复:totp/hotp URI digits=5 全链收口为 6(非幂等点�
     const v = addEntry(createVault(), { ...entry, digits: 5 })
     expect(v.entries[0]!.digits).toBe(6)
   })
+
+  // R3 二轮评审修复守卫：粘贴导入链（clipboardImport.prefillFromParsed）同构非幂等——
+  // aegis/jsonApps/miscApps/generic 的 ParsedEntry.digits 是 toPositiveNumber 原始输出
+  // （aegis.ts:87、jsonApps.ts:109/121、miscApps.ts:61/337、generic.ts:157-160，值域任意正数，
+  // importer 内无 toOtpDigits 收口），prefill 直传表单会被共享 EntryForm 的 [6,7,8] 校验拒绝，
+  // 故该处 toOtpDigits 前置收口必须保留；此处锁定其收口语义依据（含 5-8 之外的宽值域输入）。
+  it('粘贴导入链同构:importer 宽值域 digits(4/12 等)经 toOtpDigits 收口(4→6,steam/yandex 恒强制值)', () => {
+    expect(toOtpDigits(4, 'totp')).toBe(6)
+    expect(toOtpDigits(12, 'hotp')).toBe(6)
+    expect(toOtpDigits(4, 'steam')).toBe(5)
+    expect(toOtpDigits(4, 'yandex')).toBe(8)
+  })
 })
