@@ -4,6 +4,7 @@
  *   ui BackupCard（经 backupPlatform 工厂）与自动备份 runner deps 共用的唯一读写实现；
  * - loadCloudPrefs/persistCloudPrefs：云同步自动偏好（cloudAutoPrefs 键，同口径钳制）——
  *   ui CloudCard（经 cloudPlatform 工厂）与云 runner deps 共用；
+ *   （R13：两键读写经 loadChannelPrefs/persistChannelPrefs 参数化收敛，钳制/归一化仅此一份）
  * - legacyRetention：旧 backupMode/backupKeepN 键迁移读取（→ 默认本地源 retention，宿主删除旧键）；
  * - recordAutoStatus/readAutoStatusText：自动通道状态键 {at, ok, summary} 写入与卡片展示文本
  *   （readAutoStatusText 委托 formatAutoStatusText 三态格式化纯函数，本体在本模块）；
@@ -13,33 +14,55 @@
 import type { Retention } from '@totp/core'
 import type { BackupAutoPrefs, CloudAutoPrefs } from '@totp/ui'
 
+// ---------- 通道自动偏好（D2/Task 11，R13 参数化收敛）----------
+/** 通道自动偏好统一形态（偏好类型合一）：ui BackupAutoPrefs/CloudAutoPrefs 同构三字段，
+ *  两键共用同一读写实现（loadChannelPrefs/persistChannelPrefs），15min 钳制仅此一份 */
+interface ChannelAutoPrefsShape {
+  onChange: boolean
+  onInterval: boolean
+  intervalMinutes: number
+}
+
+/** 钳制下限：兜底最小 15 分钟——与 core 调度器 30s tick 粒度匹配，防误配置出低于 tick 语义的间隔 */
+const MIN_INTERVAL_MINUTES = 15
+
+/** 参数化偏好读取：键缺失/坏 JSON → 全默认；布尔严格 === true 判定；间隔非法回落默认（60） */
+function loadChannelPrefs<T extends ChannelAutoPrefsShape>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return { ...fallback }
+    const p = JSON.parse(raw) as Partial<T>
+    const minutes = Number(p.intervalMinutes)
+    return {
+      ...fallback,
+      onChange: p.onChange === true,
+      onInterval: p.onInterval === true,
+      intervalMinutes: Number.isInteger(minutes) && minutes >= MIN_INTERVAL_MINUTES ? minutes : fallback.intervalMinutes,
+    }
+  } catch {
+    return { ...fallback }
+  }
+}
+
+/** 参数化偏好写入：持久化失败静默（不影响功能） */
+function persistChannelPrefs(key: string, p: ChannelAutoPrefsShape): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(p))
+  } catch { /* 偏好持久化失败不影响功能 */ }
+}
+
 // ---------- 自动备份偏好（D2）----------
 export const BACKUP_AUTO_PREFS_KEY = 'backupAutoPrefs'
 export const LAST_BACKUP_HASH_KEY = 'lastBackupHash'
 const DEFAULT_AUTO_PREFS: BackupAutoPrefs = { onChange: false, onInterval: false, intervalMinutes: 60 }
 
-/** Task 7（BackupCard）与 Task 10（自动备份 runner deps）共用的唯一读写实现，避免两处漂移 */
+/** Task 7（BackupCard）与 Task 10（自动备份 runner deps）共用的唯一读写实现（backupAutoPrefs 键绑定） */
 export function loadBackupPrefs(): BackupAutoPrefs {
-  try {
-    const raw = localStorage.getItem(BACKUP_AUTO_PREFS_KEY)
-    if (!raw) return { ...DEFAULT_AUTO_PREFS }
-    const p = JSON.parse(raw) as Partial<BackupAutoPrefs>
-    const minutes = Number(p.intervalMinutes)
-    return {
-      onChange: p.onChange === true,
-      onInterval: p.onInterval === true,
-      // 兜底最小 15 分钟：与 core 调度器 30s tick 粒度匹配，防误配置出低于 tick 语义的间隔
-      intervalMinutes: Number.isInteger(minutes) && minutes >= 15 ? minutes : DEFAULT_AUTO_PREFS.intervalMinutes,
-    }
-  } catch {
-    return { ...DEFAULT_AUTO_PREFS }
-  }
+  return loadChannelPrefs(BACKUP_AUTO_PREFS_KEY, DEFAULT_AUTO_PREFS)
 }
 
 export function persistBackupPrefs(p: BackupAutoPrefs): void {
-  try {
-    localStorage.setItem(BACKUP_AUTO_PREFS_KEY, JSON.stringify(p))
-  } catch { /* 偏好持久化失败不影响功能 */ }
+  persistChannelPrefs(BACKUP_AUTO_PREFS_KEY, p)
 }
 
 // ---------- 旧备份偏好迁移读取（plan16 T14）----------
@@ -71,33 +94,18 @@ export function writeLastBackupHash(h: string): void {
 }
 
 // ---------- 云同步自动偏好（Task 11）----------
-/** 云同步自动触发偏好：localStorage 键 cloudAutoPrefs，与 loadBackupPrefs 同风格、独立实现（键不同） */
+/** 云同步自动触发偏好：localStorage 键 cloudAutoPrefs（与 backup 偏好同一参数化实现，键不同） */
 export const CLOUD_AUTO_PREFS_KEY = 'cloudAutoPrefs'
 /** 云同步 auto 内容门持久基线（spec §1.3）：localStorage 键 cloudContentHash（runner loadContentHash/saveContentHash 消费） */
 export const CLOUD_CONTENT_HASH_KEY = 'cloudContentHash'
 const DEFAULT_CLOUD_AUTO_PREFS: CloudAutoPrefs = { onChange: false, onInterval: false, intervalMinutes: 60 }
 
 export function loadCloudPrefs(): CloudAutoPrefs {
-  try {
-    const raw = localStorage.getItem(CLOUD_AUTO_PREFS_KEY)
-    if (!raw) return { ...DEFAULT_CLOUD_AUTO_PREFS }
-    const p = JSON.parse(raw) as Partial<CloudAutoPrefs>
-    const minutes = Number(p.intervalMinutes)
-    return {
-      onChange: p.onChange === true,
-      onInterval: p.onInterval === true,
-      // 与 backup 偏好同口径兜底最小 15 分钟：匹配 core 调度器 30s tick 粒度
-      intervalMinutes: Number.isInteger(minutes) && minutes >= 15 ? minutes : DEFAULT_CLOUD_AUTO_PREFS.intervalMinutes,
-    }
-  } catch {
-    return { ...DEFAULT_CLOUD_AUTO_PREFS }
-  }
+  return loadChannelPrefs(CLOUD_AUTO_PREFS_KEY, DEFAULT_CLOUD_AUTO_PREFS)
 }
 
 export function persistCloudPrefs(p: CloudAutoPrefs): void {
-  try {
-    localStorage.setItem(CLOUD_AUTO_PREFS_KEY, JSON.stringify(p))
-  } catch { /* 偏好持久化失败不影响功能 */ }
+  persistChannelPrefs(CLOUD_AUTO_PREFS_KEY, p)
 }
 
 /** 内容门持久基线读写（spec §1.3）：null=删键；基线落盘失败仅影响去重，不阻塞 */
