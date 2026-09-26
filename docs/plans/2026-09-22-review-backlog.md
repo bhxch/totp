@@ -142,3 +142,10 @@ B18/B19 为测试基建与稳健性。
 | B19 | ~~Rust 测试稳健性三处~~ | **已修复（2026-09-26 杂项清理，commit 25fc89b）**：① bridge_call 前端 drop 测试 emit 等待 loop 无上界 → 包 2s timeout（回归时失败而非挂起）；② devtools env 哨兵测试 panic 泄 env → EnvGuard(Drop) 恢复现场；③ start_server_with 冗余 cfg.clone() / start_server_inner 双克隆 → 收敛为一（闭包按值持有属任务存活期所需） | 原出处：apps/desktop/src-tauri/src/mcp_server.rs:1637-1642,1205,1239-1240;apps/desktop/src-tauri/src/lib.rs:2330-2360 |
 | B20 | ~~autoBackup「store 未就绪→isLocked 兜底」负载型 flaky~~ | **已修复（2026-09-26，commit 6f50fa0）**：runBackup 链上的 crypto.subtle.digest 走 libuv 线程池、真实耗时不定，旧 advanceUntil 固定 20 步（≈10ms）轮询在 CI 负载下于链收敛前放弃（CI run 36224456089 实证 recordAutoStatus 0 调用）；改 fireDebounceAndWait——advanceTimersByTimeAsync(10_000) 精确跨防抖窗 + vi.waitFor（安全真实 timer 轮询、每步推进 fake 时钟，断言即等待条件），同悬崖 3 处一并收口；desktop 全量 5 连绿（与 Rust 覆盖率编译并发负载下） | 原出处：apps/desktop/src/autoBackup.test.ts（createDesktopAutoChannels describe 三处 advanceUntil） |
 | B21 | core 与 ui 并发时 core 2 例偶败 | 最终审查实测一次：多包并发负载下 core 2 用例各偶败一次（单包复跑全绿，负载型，未捕获用例名）；与既有观察「desktop mcpBridge.test.ts 全仓并发偶发」同类 | 独立排查确定性化（fake timer 收口/隔离共享时间源）；复现手法：根 pnpm test 多包并发或 CI 口径（coverage+4 核 runner），参照 B20 手法收口 | 复现条件：根 pnpm run test / test:coverage 并发负载 |
+
+## E2E 真机测试发现（2026-09-26，覆盖率批次）
+
+| # | 项 | 说明 | 建议 | 出处 |
+|---|---|---|---|---|
+| B22 | 双实例启动 panic 而非优雅提示 | 主实例运行时启动第二实例（含 headless 探针），tauri_plugin_global_shortcut 初始化因 ALT+SHIFT+T 已注册直接 panic（exit 101,"HotKey already registered"）；batch8 headless 用例均在无主实例时执行未暴露 | 单实例检测（tauri-plugin-single-instance）或快捷键注册失败降级为无快捷键运行+告警 | apps/desktop/src-tauri/src/lib.rs（run 装配全局快捷键段）；实证 docs/review/2026-09-26-coverage-e2e-checklist.md 四-1 |
+| B23 | MCP 工具确认连续请求队列异常 | Deny 第一个工具确认后立即发起第二个 tools/call，第二个未等用户操作即返回 "tool confirmation timed out or failed"（预期挂起等待）；且积压旧确认框首次 Allow/Deny 点击不生效（响应迟到被忽略），需二次点击。单发路径完全正常 | 代码级 triage：mcpApprovalQueue 队列 churn（dispose/replace 语义）与 Rust pending 表回收时序的交互；复现：连续两次 tools/call trigger_backup 间隔 <2s，第一次点 Deny | apps/desktop/src/mcpApprovalQueue.ts + apps/desktop/src-tauri/src/mcp_server.rs（tool_confirm/await_confirm_response）；实证 docs/review/2026-09-26-coverage-e2e-checklist.md 四-2 |

@@ -1,6 +1,7 @@
 # 覆盖率 E2E 真机兜底清单（2026-09-26）
 
-状态：**清单已录，真机执行待人工/后续会话执行**。本清单承接
+状态：**桌面 7 条已于 2026-09-26 执行完毕（6 条自动化通过、1 条人工项登记；详见「三、执行记录」）**。
+扩展 6 条保持 **[手测]** 待人工。本清单承接
 `docs/plans/2026-09-25-coverage-design.md` §4（L3 集成胶水层不折算百分比，以真机场景清单管理），
 执行记录沿用 `docs/review/2026-09-23-batch8-real-machine-test.md` 的惯例
 （逐项「方法/结果」留档，发现缺陷当批修复并回写）。
@@ -9,6 +10,7 @@
   标注 **[可自动化]**；托盘点击/系统锁屏等少数子步骤需人工配合，在条目内注明。
 - 扩展 6 条：Chrome + Firefox 双浏览器 **[手测]**。
 - 每条含：前置条件 / 操作步骤 / 预期行为 / 对应源码位置。
+- 截图与原始日志存 `.temp/e2e/` 与 `E:\tmp\cc\totp-e2e\`（不入库）。
 
 ## 一、desktop（tauri-mcp 驱动）
 
@@ -149,3 +151,44 @@
 
 执行后在本文件追加「三、执行记录」节：逐项「方法/结果/截图（assets/）」，发现缺陷当批修复并
 在「四、发现与处置」登记（对齐 batch8 文档结构）。
+
+## 三、执行记录（2026-09-26，debug 构建 target/debug/totp-desktop.exe，bridge 0.13.0 @ 9223）
+
+环境：Windows 10.0.26200 x64；测试金库 `%APPDATA%\com.totp.desktop`（口令 Test-Pw!234，
+解锁后 9 条目）；MCP wildcard 48215 + settings 内 token + 白名单 ['mcp-e2e']。
+驱动方式：tauri-mcp driver-session（webview JS `__TAURI__.invoke` 直驱命令，绕开
+ipc-execute-command 带参不兼容坑）+ curl JSON-RPC（Streamable HTTP，`POST /mcp`）。
+
+| # | 项 | 方法 | 结果 |
+| --- | --- | --- | --- |
+| D1 | 释放策略三档 | ①DEK 暂存回环：`ipc-emit-event stash-dek-request` → 前端自动 `stash_dek` → JS `take_stashed_dek` 返回 44 字符 base64（=32B DEK）→ 二次 take 返回 null（取即清）✅ ②Pause 档（1/0/lockOnPause=true）：`release_policy_set` → JS 隐藏双窗 → 90s 后库自动锁定（唯一锁定源=force-lock；空闲锁定为 0 关闭）✅ ③Destroy 档（0/1/lockOnDestroy=false）：隐藏 95s 后 **webview 全销毁（totalCount:0）+ 进程存活**（与批⑧ Task13 一致）✅ | **通过**（托盘重建回注与 destroy 失败回滚为人工子项/P5 单测覆盖；TrySuspend 挂起为 WebView2 内部行为本机 JS 仍可执行，未单独观测） |
+| D2 | 剪贴板 stage/clear | 复制验证码 → PowerShell Get-Clipboard 读回 `370477` ✅ → 等 30s+ → 剪贴板为空 ✅ | **通过**（第三方占用分支的 fail-safe 语义由 P5 `should_clear_clipboard` 单测覆盖，占用工具构造留人工可选） |
+| D3 | 锁屏广播 | 未执行：Win+L/LockWorkStation 锁的是整个交互会话，自动化触发会把使用者锁在会话外 | **登记人工项**（lock_events 消息泵为豁免区；接线语义有 system-lock→lock 的前端单测兜底） |
+| D4 | MCP 审批全链 | curl JSON-RPC initialize→initialized→tools/call：①curl-probe 首连弹审批框（Client/Requested tool 文案正确）✅ ②Deny→60s 内重连 `approval denied; try again in about a minute` ✅ ③60s 过期后重新弹窗 ✅ ④Allow once→list_accounts 返回 9 条目 ✅（once=15min 会话授权，窗口内重连免弹窗为设计语义）⑤新 ident curl-probe-2→Add to whitelist→立即放行+白名单落盘 ✅ ⑥重启后 curl-probe-2 直连成功无弹窗（持久化）✅ ⑦工具确认两键（trigger_backup，exposedTools 临时加入）：弹「Allow trigger_backup?」Deny/Allow；Deny→`tool confirmation timed out or failed` fail-closed ✅；干净单发 Allow→`{"triggered":true}` ✅ | **通过**（连续请求下队列异常→见四-2 缺陷候选） |
+| D5 | 自动备份语义 | 设会话备份口令（remember→secretBag.json 落盘）→ 开 Back up on change → 编辑条目提交 → 10s 防抖后 `vault-20260926-194859.totpbackup` 落盘 + lastBackupHash 基线 + 状态「已备份到 1 个目录」✅ → 内容未变 trigger_backup（runBackupNow 绕偏好、守护照常）→ 静默跳过（无新文件、基线/状态不动）✅ → 删除备份文件→再改库→`vault-20260926-200334.totpbackup` 重写 ✅ | **通过**（落盘文件经「导入」通道还原需本地文件选择器，envelope 往返已有单测，留人工可选） |
+| D6 | DPAPI 跨会话 | Security→Enable Windows auto-unlock（os_auto_protect）→ 卡片出现「Windows auto-unlock（DPAPI）/Remove」✅ → 重启应用 → **直达 Codes 页无锁定页**（DPAPI 免口令解锁）✅ | **通过**（跨用户会话拒绝为人工项，DPAPI 用户态绑定由 OS 保证） |
+| D7 | 端口冲突 | ①devtools_set_config 端口=MCP 端口 48215 → `ERR:端口 48215 已被 MCP 服务器占用（两者同绑 127.0.0.1）` ✅ ②合法端口 disabled=true → OK ✅ ③headless 实例 vs 127.0.0.1:48215 被占 → `autostart failed: bind ... (os error 10048)` + exit=2 ✅ | **通过**（注记：python http.server 绑 0.0.0.0 不阻塞 127.0.0.1 具体绑定——Windows 通配/具体多层绑定语义，复测本条需用 127.0.0.1 精确占用，见四-3） |
+
+**扩展 E1-E6**：保持手测（SW 停启、协议处理器、Firefox 双渠道、storage 配额构造均为浏览器人工域，
+本会话未自动化），步骤与预期已在上文列全，可独立执行。
+
+**测试遗留痕迹**（沿用批⑧惯例保留）：vault 含 E2ED5 测试条目；`mcp.whitelist` 含 curl-probe-2；
+`backups/` 保留一份 20260926 备份；`releasePolicy` 已恢复默认 {5,30,false,true}；exposedTools 已复位只读档。
+
+## 四、发现与处置
+
+1. **[平台行为·注记] 双实例启动 panic**：主实例运行时再启动第二实例（含 headless 探针），
+   因全局快捷键 ALT+SHIFT+T 已注册，tauri_plugin_global_shortcut 初始化 panic（exit 101，
+   "HotKey already registered"），非优雅的"已在运行"提示。建议 backlog（低）：单实例检测或
+   快捷键注册失败的降级处理。注：batch8 的 headless 用例均在无主实例时执行，未暴露此路径。
+2. **[缺陷候选·中] MCP 工具确认在连续请求下异常**：Deny 第一个工具确认后立即发起第二个
+   trigger_backup，第二个请求未等用户操作即返回 `tool confirmation timed out or failed`
+   （预期应挂起等待审批）；且积压的旧确认框首次 Allow/Deny 点击不生效（响应迟到被静默忽略），
+   需二次点击才前进。单发路径（请求→弹窗→Allow）完全正常。建议代码级 triage：
+   mcpApprovalQueue 队列 churn 与 Rust pending 回收时序（复现序列：连续两次 tools/call
+   trigger_backup，间隔 <2s，第一次点 Deny 后立刻观察第二次响应）。
+3. **[平台行为·注记] Windows 多层端口绑定**：0.0.0.0:48215 通配占用不阻塞 127.0.0.1:48215
+   具体绑定（反之亦然需 SO_EXCLUSIVEADDRUSE）。应用「连接行仅真实监听成功后输出」的承诺未被
+   违反（headless 实例确实绑定成功），但 D7-③ 类测试必须用 127.0.0.1 精确占用才能构造 AddrInUse。
+4. **[观察] TrySuspend 未观测**：Pause 档触发后 webview JS 仍可执行（本机非锁屏环境），
+   WebView2 挂起语义未直接观测（批⑧曾在锁屏环境观察到等效挂起）。锁库语义不受影响。
