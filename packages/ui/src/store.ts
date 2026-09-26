@@ -468,18 +468,18 @@ export function createVueStore(
   }
 }
 
-  async function commitSettings(): Promise<void> {
-    queue = queue.then(async () => {
+  /** settings 落盘（R6①：改走 enqueue，消除与 commit 并存的第二套手写入队——
+   *  串行/单任务失败不传染/onCommitted 触发语义由 enqueue 单点保证）。任务内吞掉
+   *  saveSettings 的 IO 错误（与原实现一致：落盘失败不 reject 调用方，仅记日志） */
+  function commitSettings(): Promise<void> {
+    return enqueue(async () => {
       try {
         lastSelfWrite.settings = Date.now()
         await saveSettings(adapter, toRaw(settings) as AppSettings)
       } catch (e) {
         console.error('[store] saveSettings failed:', e)
       }
-      // 与 enqueue 的 onCommitted 语义对齐：commitSettings 未走 enqueue，需单独触发
-      opts.onCommitted?.()
     })
-    return queue
   }
 
   function registerStorageSync(): void {
@@ -759,56 +759,46 @@ export function createVueStore(
     await applyDekAndUnlock(key, gen)
   }
 
+  /** KEK 来源 op 统一安全写协议（R6①）：队列串行 → 锁定/未启用双守卫 → transform 求新
+   *  security → 内存缓存前进 → 自写窗口 → SECURITY_KEY 落盘。原 4 个 op（prf/dpapi 各
+   *  增/删）逐行近同、仅 transform 一行不同，收敛后新增来源类型只写 transform。
+   *  needDek：绑定类 op 的 transform 需解包用 DEK（core 重包裹 DEK 本体），守卫要求
+   *  「security 与 DEK 双在」；移除类 op 不触碰 DEK，守卫止步于 security（与原实现一致，
+   *  锁定态由前一条 'vault locked' 守卫先行拒绝） */
+  function mutateSecurityOp(
+    needDek: boolean,
+    transform: (s: SecuritySettings, dek: Uint8Array) => SecuritySettings | Promise<SecuritySettings>,
+  ): Promise<void> {
+    return enqueue(async () => {
+      if (lockedByWin.get(windowId)) throw new Error('vault locked')
+      if (!security.value || (needDek && !dekByWin.get(windowId))) throw new Error('encryption not enabled')
+      security.value = await transform(security.value, dekByWin.get(windowId)!)
+      // security 键写入复用 vault 自写窗口抑制（onChanged 无 security 通道，与 changePassphrase 一致）
+      lastSelfWrite.vault = Date.now()
+      await adapter.set(SECURITY_KEY, JSON.stringify(security.value))
+    })
+  }
+
   /** 绑定 passkey 解锁（已解锁态）：salt 由调用方生成并在创建凭据时用于 PRF 求值，
    *  prfOutput 为该盐的权威求值输出——同盐可复现，构成绑定语义。
    *  core addPrfSource 重包裹 DEK（同 credentialId 替换语义）→ security 经队列写盘 */
   function addPrfSourceOp(credentialId: string, prfOutput: Uint8Array, salt: Uint8Array): Promise<void> {
-    return enqueue(async () => {
-      if (lockedByWin.get(windowId)) throw new Error('vault locked')
-      if (!security.value || !dekByWin.get(windowId)) throw new Error('encryption not enabled')
-      const next = await addPrfSource(security.value, dekByWin.get(windowId)!, credentialId, prfOutput, bytesToBase64(salt))
-      security.value = next
-      // security 键写入复用 vault 自写窗口抑制（onChanged 无 security 通道，与 changePassphrase 一致）
-      lastSelfWrite.vault = Date.now()
-      await adapter.set(SECURITY_KEY, JSON.stringify(next))
-    })
+    return mutateSecurityOp(true, (s, dek) => addPrfSource(s, dek, credentialId, prfOutput, bytesToBase64(salt)))
   }
 
   /** 移除指定 passkey 解锁来源（core 守卫：移除后无任何来源时抛「至少保留一种解锁方式」） */
   function removePrfSourceOp(credentialId: string): Promise<void> {
-    return enqueue(async () => {
-      if (lockedByWin.get(windowId)) throw new Error('vault locked')
-      if (!security.value) throw new Error('encryption not enabled')
-      const next = removeKekSource(security.value, 'prf', { credentialId })
-      security.value = next
-      lastSelfWrite.vault = Date.now()
-      await adapter.set(SECURITY_KEY, JSON.stringify(next))
-    })
+    return mutateSecurityOp(false, (s) => removeKekSource(s, 'prf', { credentialId }))
   }
 
   /** 绑定 DPAPI 解锁来源（已解锁态）：wrappedDekD 为宿主 DPAPI 包装的 DEK（base64；T1 裁定直接包裹 DEK 本体） */
   function addDpapiSourceOp(wrappedDekD: string): Promise<void> {
-    return enqueue(async () => {
-      if (lockedByWin.get(windowId)) throw new Error('vault locked')
-      if (!security.value || !dekByWin.get(windowId)) throw new Error('encryption not enabled')
-      const next = withDpapiSource(security.value, wrappedDekD)
-      security.value = next
-      // security 键写入复用 vault 自写窗口抑制（onChanged 无 security 通道，与 changePassphrase 一致）
-      lastSelfWrite.vault = Date.now()
-      await adapter.set(SECURITY_KEY, JSON.stringify(next))
-    })
+    return mutateSecurityOp(true, (s) => withDpapiSource(s, wrappedDekD))
   }
 
   /** 移除 DPAPI 解锁来源（core 守卫：移除后无任何来源时抛「至少保留一种解锁方式」） */
   function removeDpapiSourceOp(): Promise<void> {
-    return enqueue(async () => {
-      if (lockedByWin.get(windowId)) throw new Error('vault locked')
-      if (!security.value) throw new Error('encryption not enabled')
-      const next = removeKekSource(security.value, 'dpapi')
-      security.value = next
-      lastSelfWrite.vault = Date.now()
-      await adapter.set(SECURITY_KEY, JSON.stringify(next))
-    })
+    return mutateSecurityOp(false, (s) => removeKekSource(s, 'dpapi'))
   }
 
   /** 当前解锁态持有的 DEK（DPAPI 启用包装用；锁定/未启用返回 null） */
