@@ -1,6 +1,8 @@
 import { base32Decode, base32Encode } from '../encoding/base32'
 import { base64ToBytes } from '../crypto/aesgcm'
 import type { ImportResult, ParsedEntry } from './types'
+// R12：asObject/collectEntries 逐字副本删除，改导入 normalize 单点（「禁本地重定义」准入检查项）
+import { asObject, collectEntries, parseJson } from './normalize'
 import { XML_STRING_RE, hexToBytes, xmlUnescape } from './miscApps'
 
 // SQLite 类 App 导入（计划 8 Task 3）。字段口径以 Aegis 官方 Importer 源码为准
@@ -13,13 +15,7 @@ import { XML_STRING_RE, hexToBytes, xmlUnescape } from './miscApps'
 //   非 SQLCipher；明文导出即 URI 文本，由 uriBatch 覆盖，按裁定不实现 authPlusRowsToEntries
 // 错误契约与 jsonApps.ts 一致：结构级错误 throw；单条损坏进 failures 不阻断。
 
-// ---------- 共享辅助（与 jsonApps.ts/miscApps.ts 口径一致） ----------
-
-function asObject(raw: unknown): Record<string, unknown> | null {
-  return raw !== null && typeof raw === 'object' && !Array.isArray(raw)
-    ? (raw as Record<string, unknown>)
-    : null
-}
+// ---------- 共享辅助（与 jsonApps.ts/miscApps.ts 口径一致；asObject/collectEntries 已收敛 normalize） ----------
 
 /** Java org.json optString：null/缺失 → ''，其余 toString */
 function optString(raw: unknown): string {
@@ -29,17 +25,6 @@ function optString(raw: unknown): string {
 /** Aegis JsonUtils.optString：缺失/JSON null → null（Authy sanitize 依赖 null 判定） */
 function jsonOptString(raw: unknown): string | null {
   return typeof raw === 'string' ? raw : null
-}
-
-function collectEntries(rows: unknown[], parse: (row: unknown, index: number) => ParsedEntry | { error: string }): ImportResult {
-  const entries: ParsedEntry[] = []
-  const failures: ImportResult['failures'] = []
-  rows.forEach((row, index) => {
-    const res = parse(row, index)
-    if ('error' in res) failures.push({ index, message: res.error })
-    else entries.push(res)
-  })
-  return { entries, failures }
 }
 
 // ---------- Microsoft Authenticator（MicrosoftAuthImporter.java：SQLite accounts 表） ----------
@@ -140,12 +125,7 @@ export function duoRowsToEntries(rows: Array<Record<string, unknown>>): ImportRe
 
 /** Duo 导入（files/duokit/accounts.json 明文 JSON 数组；DuoImporter.read：JSONArray 解析失败 → 结构级错误） */
 export function importDuo(text: string): ImportResult {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    throw new Error('Duo 文件结构非法：不是合法 JSON')
-  }
+  const parsed = parseJson(text, 'Duo')
   if (!Array.isArray(parsed)) throw new Error('Duo 文件结构非法：顶层不是 JSON 数组')
   return duoRowsToEntries(parsed)
 }

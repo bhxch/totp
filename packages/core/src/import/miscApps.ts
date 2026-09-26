@@ -2,8 +2,8 @@ import { base32Decode, base32Encode } from '../encoding/base32'
 import { base64ToBytes } from '../crypto/aesgcm'
 import { hexToBytes } from '../encoding/hex'
 import {
-  asObject, collectEntries, normalizeAlgorithm, normalizeSecret, steamEntry,
-  toNonNegativeNumber, toPositiveNumber,
+  asObject, collectEntries, isBase32, normalizeAlgorithm, normalizeSecret, parseJson,
+  steamEntry, toNonNegativeNumber, toPositiveNumber,
 } from './normalize'
 import type { ImportResult, ParsedEntry } from './types'
 
@@ -15,15 +15,7 @@ import type { ImportResult, ParsedEntry } from './types'
 // - importers/AndOtpImporter.java（明文 = 顶层 JSON 数组）
 // 错误契约与 jsonApps.ts 一致：结构级错误 throw；单条损坏进 failures 不阻断。
 
-// ---------- 共享辅助（多数已迁出至 ./normalize） ----------
-
-function isBase32(raw: string): boolean {
-  try {
-    return base32Decode(raw).length > 0
-  } catch {
-    return false
-  }
-}
+// ---------- 共享辅助（isBase32/parseJsonText 已于 R12 收敛至 ./normalize 单点） ----------
 
 // ---------- FreeOTP+ / 旧版 FreeOTP 共用条目转换（FreeOtpImporter.java DecryptedStateV1.convertEntry） ----------
 // 源码口径：
@@ -77,17 +69,9 @@ function convertFreeOtpEntry(obj: Record<string, unknown>): ParsedEntry | { erro
   return { error: `不支持的 type: ${obj.type ?? ''}` }
 }
 
-function parseJsonText(text: string, label: string): unknown {
-  try {
-    return JSON.parse(text)
-  } catch {
-    throw new Error(`${label} 文件结构非法：不是合法 JSON`)
-  }
-}
-
 /** FreeOTP+ JSON 导出导入（FreeOtpPlusImporter.java：顶层 {tokens: [...]}，tokenOrder 仅展示顺序，忽略） */
 export function importFreeOtp(text: string): ImportResult {
-  const obj = asObject(parseJsonText(text, 'FreeOTP+'))
+  const obj = asObject(parseJson(text, 'FreeOTP+'))
   if (!obj) throw new Error('FreeOTP+ 文件结构非法：顶层不是 JSON 对象')
   if (!Array.isArray(obj.tokens)) throw new Error('FreeOTP+ 文件结构非法：缺少 tokens 数组')
   return collectEntries(obj.tokens, (raw, index) => {
@@ -228,13 +212,7 @@ function parseTotpAuthenticatorArray(parsed: unknown): ImportResult {
  * 独立导出供粘贴分发（import/paste.ts 的同步契约）使用；importTotpAuthenticator 明文分支委托此处。
  */
 export function importTotpAuthenticatorPlaintext(text: string): ImportResult {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(text.trim())
-  } catch {
-    throw new Error('TOTP Authenticator 文件结构非法：不是合法 JSON')
-  }
-  return parseTotpAuthenticatorArray(parsed)
+  return parseTotpAuthenticatorArray(parseJson(text.trim(), 'TOTP Authenticator'))
 }
 
 /**
@@ -358,12 +336,7 @@ export function importAndOtp(text: string): ImportResult {
   if (!trimmed.startsWith('[')) {
     throw new Error('andOTP 加密备份暂不支持：请用明文导出（JSON 数组）')
   }
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(trimmed)
-  } catch {
-    throw new Error('andOTP 文件结构非法：不是合法 JSON')
-  }
+  const parsed = parseJson(trimmed, 'andOTP')
   if (!Array.isArray(parsed)) throw new Error('andOTP 文件结构非法：顶层不是 JSON 数组')
   return collectEntries(parsed, (raw, index) => {
     const entry = asObject(raw)

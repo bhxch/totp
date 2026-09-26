@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  asObject, collectEntries, normalizeAlgorithm, normalizeSecret, normalizeType, steamEntry,
-  toNonNegativeNumber, toOtpDigits, toPositiveNumber,
+  asObject, collectEntries, isBase32, normalizeAlgorithm, normalizeSecret, normalizeType,
+  parseJson, parseJsonObject, steamEntry, toNonNegativeNumber, toOtpDigits, toPositiveNumber,
 } from '../src/import/normalize'
 import type { ImportResult, ParsedEntry } from '../src/import/types'
 
@@ -91,5 +91,28 @@ describe('normalize helpers', () => {
       type: 'steam', issuer: 'Steam', label: 'Steam account', secret: 'ABCDEF',
       algorithm: 'SHA1', digits: 5, period: 30,
     })
+  })
+
+  // R12 收敛单点的直接锚点：isBase32/parseJson/parseJsonObject 此前散在
+  // jsonApps/miscApps（逐字副本）与各 importer 内联变体，行为契约由此锁定
+  it('isBase32: 可解码非空即合法；空串/单字符/非法字符为假', () => {
+    expect(isBase32('JBSWY3DPEHPK3PXP')).toBe(true)
+    expect(isBase32('jbswy3dpehpk3pxp')).toBe(true) // base32Decode 大小写兼容
+    expect(isBase32('ABC')).toBe(true) // ≥2 个合法字符不足 8bit 也解出 1 字节
+    expect(isBase32('')).toBe(false) // 空串：base32Decode 抛 invalid input
+    expect(isBase32('A')).toBe(false) // 单字符：不足编码 1 字节，base32Decode 抛错
+    expect(isBase32('not-base32!')).toBe(false) // 非法字符抛错（'-'/' ' 被清洗，'!' 不会）
+  })
+
+  it('parseJson: 解析失败抛「{label} 文件结构非法：不是合法 JSON」', () => {
+    expect(parseJson('{"a":1}', 'X')).toEqual({ a: 1 })
+    expect(() => parseJson('{oops}', 'FreeOTP+')).toThrow('FreeOTP+ 文件结构非法：不是合法 JSON')
+  })
+
+  it('parseJsonObject: 顶层非对象（数组/标量/null）抛「顶层不是 JSON 对象」', () => {
+    expect(parseJsonObject('{"a":1}', '2FAS')).toEqual({ a: 1 })
+    expect(() => parseJsonObject('[1,2]', '2FAS')).toThrow('2FAS 文件结构非法：顶层不是 JSON 对象')
+    expect(() => parseJsonObject('42', 'Bitwarden')).toThrow('Bitwarden 文件结构非法：顶层不是 JSON 对象')
+    expect(() => parseJsonObject('null', 'Stratum')).toThrow('Stratum 文件结构非法：顶层不是 JSON 对象')
   })
 })

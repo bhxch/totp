@@ -1,3 +1,4 @@
+import { base32Decode } from '../encoding/base32'
 import { TYPE_PROFILES } from '../otp/typeProfiles'
 import type { ImportResult, ParsedEntry } from './types'
 
@@ -52,6 +53,32 @@ export function asObject(raw: unknown): Record<string, unknown> | null {
   return raw !== null && typeof raw === 'object' && !Array.isArray(raw)
     ? (raw as Record<string, unknown>)
     : null
+}
+
+/** base32 可解码性判定：解码成功且非空即合法（R12 自 jsonApps/miscApps 各自本地副本收敛单点） */
+export function isBase32(raw: string): boolean {
+  try {
+    return base32Decode(raw).length > 0
+  } catch {
+    return false
+  }
+}
+
+/** JSON.parse 样板收敛（R12，jsonApps.parseJsonText/miscApps.parseJsonText 及各 importer 内联变体统一）：
+ *  解析失败抛「{label} 文件结构非法：不是合法 JSON」；返回值交调用方自行收口形态（对象/数组）。 */
+export function parseJson(text: string, label: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new Error(`${label} 文件结构非法：不是合法 JSON`)
+  }
+}
+
+/** parseJson + 顶层对象收口（R12，jsonApps.parseJson 变体单点化）：非对象抛「顶层不是 JSON 对象」 */
+export function parseJsonObject(text: string, label: string): Record<string, unknown> {
+  const obj = asObject(parseJson(text, label))
+  if (!obj) throw new Error(`${label} 文件结构非法：顶层不是 JSON 对象`)
+  return obj
 }
 
 /** 逐行调用 parse 回调 → { entries, failures }；错误行不阻断 */

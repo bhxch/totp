@@ -1,8 +1,7 @@
-import { base32Decode } from '../encoding/base32'
 import { parseOtpUri } from '../otp/uri'
 import {
-  asObject, collectEntries, normalizeAlgorithm, normalizeSecret, steamEntry,
-  toNonNegativeNumber, toPositiveNumber,
+  asObject, collectEntries, isBase32, normalizeAlgorithm, normalizeSecret, parseJsonObject,
+  steamEntry, toNonNegativeNumber, toPositiveNumber,
 } from './normalize'
 import type { ImportResult, ParsedEntry } from './types'
 
@@ -16,27 +15,8 @@ import type { ImportResult, ParsedEntry } from './types'
 // （Ente Auth 不在此处：明文导出即 otpauth URI 行，由 uriBatch 覆盖；加密导出检测亦内建于
 // uriBatch——原 importEnte 已并入，见 uriBatch.ts。）
 
-// ---------- 共享辅助（与 generic.ts/aegis.ts 口径一致 — 多数已迁出至 ./normalize） ----------
-
-function parseJson(text: string, label: string): Record<string, unknown> {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    throw new Error(`${label} 文件结构非法：不是合法 JSON`)
-  }
-  const obj = asObject(parsed)
-  if (!obj) throw new Error(`${label} 文件结构非法：顶层不是 JSON 对象`)
-  return obj
-}
-
-function isBase32(raw: string): boolean {
-  try {
-    return base32Decode(raw).length > 0
-  } catch {
-    return false
-  }
-}
+// ---------- 共享辅助（与 generic.ts/aegis.ts 口径一致 — 多数已迁出至 ./normalize；
+// ---------- R12：parseJson→parseJsonObject 与 isBase32 本地副本删除，改导入 normalize 单点） ----------
 
 /** steam://<base32 secret>（非特殊 scheme，URL 解析 host 不可靠，手动截取 authority） */
 function steamAuthority(uri: string): string {
@@ -54,7 +34,7 @@ function steamAuthority(uri: string): string {
 
 /** 2FAS 明文导出导入；加密导出（servicesEncrypted）与 schemaVersion>4 抛结构级错误 */
 export function importTwoFas(text: string): ImportResult {
-  const obj = parseJson(text, '2FAS')
+  const obj = parseJsonObject(text, '2FAS')
 
   const version = Number(obj.schemaVersion)
   if (Number.isFinite(version) && version > 4) {
@@ -143,7 +123,7 @@ export function importTwoFas(text: string): ImportResult {
 
 /** Bitwarden JSON 导出导入；totp 支持 otpauth URI / steam:// / 裸 base32 secret */
 export function importBitwarden(text: string): ImportResult {
-  const obj = parseJson(text, 'Bitwarden')
+  const obj = parseJsonObject(text, 'Bitwarden')
   if (obj.encrypted === true) {
     throw new Error('该 Bitwarden 导出已加密，请使用明文（JSON）导出后重试')
   }
@@ -211,7 +191,7 @@ export function importBitwarden(text: string): ImportResult {
 
 /** Proton Authenticator 明文导出导入；加密导出（salt+content）抛结构级错误 */
 export function importProton(text: string): ImportResult {
-  const obj = parseJson(text, 'Proton Authenticator')
+  const obj = parseJsonObject(text, 'Proton Authenticator')
   if (typeof obj.salt === 'string' && typeof obj.content === 'string') {
     throw new Error('Proton Authenticator 加密导出不支持：请使用明文导出')
   }
@@ -256,7 +236,7 @@ const STRATUM_ALGORITHMS: ParsedEntry['algorithm'][] = ['SHA1', 'SHA256', 'SHA51
 
 /** Stratum JSON 明文导出导入；二进制加密导出经 JSON.parse 失败 → 结构级报错 */
 export function importStratum(text: string): ImportResult {
-  const obj = parseJson(text, 'Stratum')
+  const obj = parseJsonObject(text, 'Stratum')
   if (!Array.isArray(obj.Authenticators)) {
     throw new Error('Stratum 文件结构非法：缺少 Authenticators 数组')
   }
@@ -323,7 +303,7 @@ export function importStratum(text: string): ImportResult {
 // 比对/解密口令即其解码明文；解密见 decryptFoxauth（参数依据 spec 加密参数附录）。
 // 官方另支持口令仅存 sessionStorage（文件无 encryptPassword，结构合法）→ 此时提示无法解密。
 export async function importFoxauth(text: string, password?: string): Promise<ImportResult> {
-  const obj = parseJson(text, 'FoxAuth')
+  const obj = parseJsonObject(text, 'FoxAuth')
   // 加密判定先于 accountInfos 形态检查：未给口令时应报「需要口令」而非「缺少 accountInfos」
   const encrypted = obj.isEncrypted === true
   if (encrypted) {
@@ -382,7 +362,7 @@ function parseFoxauthPlaintextObject(obj: Record<string, unknown>): ImportResult
  * 导入页口令通道，不经此处。
  */
 export function importFoxauthPlaintext(text: string): ImportResult {
-  return parseFoxauthPlaintextObject(parseJson(text, 'FoxAuth'))
+  return parseFoxauthPlaintextObject(parseJsonObject(text, 'FoxAuth'))
 }
 
 function collectFoxauthRows(rows: unknown): ImportResult {
