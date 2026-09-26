@@ -11,4 +11,8 @@ describe('settings.themeContrast', () => {
     expect((await loadSettings(adapterWith({ themeContrast: 'high' }))).themeContrast).toBe('standard')
     expect((await loadSettings(adapterWith({ themeContrast: 'amoled' }))).themeContrast).toBe('amoled')
   })
+  it('R16⑦：非法值兜底与 DEFAULT_SETTINGS.themeContrast 同源（不硬编码字面量，改默认不漂移）', async () => {
+    expect((await loadSettings(adapterWith({ themeContrast: 42 }))).themeContrast).toBe(DEFAULT_SETTINGS.themeContrast)
+    expect((await loadSettings(adapterWith({}))).themeContrast).toBe(DEFAULT_SETTINGS.themeContrast)
+  })
 })

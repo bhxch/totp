@@ -174,33 +174,45 @@ function normalizeSyncPrefs(v: unknown): SyncPrefs {
   return { autoFollow: p.autoFollow === false ? false : true }
 }
 
+// R16⑦：per-field 校验器描述表——「非法/缺失回 DEFAULT_SETTINGS 同名字段」的单点描述。
+// 新增 settings 字段 = 加一行校验器（映射类型缺行即编译错误）；合法值透传，兜底恒取
+// DEFAULT_SETTINGS（themeContrast 此前硬编码 'standard' 绕开 DEFAULT，一并归位）。
+// syncPrefs 为归一化行（逐位回默认），非「整体回默认」形态。
+const SETTINGS_VALIDATORS: { [K in keyof AppSettings]: (v: unknown) => AppSettings[K] } = {
+  urlFilterEnabled: (v) => (typeof v === 'boolean' ? v : DEFAULT_SETTINGS.urlFilterEnabled),
+  blurHideEnabled: (v) => (typeof v === 'boolean' ? v : DEFAULT_SETTINGS.blurHideEnabled),
+  clipboardClearEnabled: (v) => (typeof v === 'boolean' ? v : DEFAULT_SETTINGS.clipboardClearEnabled),
+  popupCloseDelayMs: (v) => (typeof v === 'number' ? v : DEFAULT_SETTINGS.popupCloseDelayMs),
+  syncEnabled: (v) => (typeof v === 'boolean' ? v : DEFAULT_SETTINGS.syncEnabled),
+  themeMode: (v) => (v === 'light' || v === 'dark' || v === 'auto' ? v : DEFAULT_SETTINGS.themeMode),
+  themeColor: (v) => (typeof v === 'string' && v.length > 0 && v.length <= 32 ? v : DEFAULT_SETTINGS.themeColor),
+  lockOnRestart: (v) => (typeof v === 'boolean' ? v : DEFAULT_SETTINGS.lockOnRestart),
+  lockIdleMinutes: (v) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : DEFAULT_SETTINGS.lockIdleMinutes),
+  lockOnSystemLock: (v) => (typeof v === 'boolean' ? v : DEFAULT_SETTINGS.lockOnSystemLock),
+  backupKdfProfile: (v) => (isKdfProfile(v) ? v : DEFAULT_SETTINGS.backupKdfProfile),
+  tagFilterMode: (v) => (v === 'any' || v === 'all' ? v : DEFAULT_SETTINGS.tagFilterMode),
+  rememberTagFilter: (v) => (typeof v === 'boolean' ? v : DEFAULT_SETTINGS.rememberTagFilter),
+  lastTagFilterIds: (v) => (Array.isArray(v) && v.every((x) => typeof x === 'string') ? (v as string[]) : DEFAULT_SETTINGS.lastTagFilterIds),
+  locale: (v) => (v === 'zh' || v === 'en' || v === 'auto' ? v : DEFAULT_SETTINGS.locale),
+  themeContrast: (v) => (v === 'amoled' ? v : DEFAULT_SETTINGS.themeContrast),
+  syncPrefs: (v) => normalizeSyncPrefs(v),
+}
+
+function settingsFromParsed(parsed: Record<string, unknown>): AppSettings {
+  // 等价于旧「{...DEFAULT, ...parsed} 后逐字段校验」：合法值透传，非法/缺失走 DEFAULT；
+  // 表外键一律丢弃（旧盘多余字段不透传）。parsed 非对象（null/标量）由 try/catch 兜底回默认。
+  const out = {} as AppSettings
+  for (const k of Object.keys(SETTINGS_VALIDATORS) as Array<keyof AppSettings>) {
+    out[k] = SETTINGS_VALIDATORS[k](parsed[k])
+  }
+  return out
+}
+
 export async function loadSettings(adapter: StorageAdapter): Promise<AppSettings> {
   const raw = await adapter.get(SETTINGS_KEY)
   if (raw === null) return { ...DEFAULT_SETTINGS }
   try {
-    // M4：合并 DEFAULT_SETTINGS 兜底 — 新增 settings 字段时无需同步更新此处的逐字段默认值，
-    // 仅需保证类型安全（typeof 校验），类型不匹配字段自动回退到 DEFAULT。
-    const parsed = JSON.parse(raw) as Record<string, unknown>
-    const merged: Record<string, unknown> = { ...DEFAULT_SETTINGS, ...parsed }
-    return {
-      urlFilterEnabled: typeof merged.urlFilterEnabled === 'boolean' ? (merged.urlFilterEnabled as boolean) : DEFAULT_SETTINGS.urlFilterEnabled,
-      blurHideEnabled: typeof merged.blurHideEnabled === 'boolean' ? (merged.blurHideEnabled as boolean) : DEFAULT_SETTINGS.blurHideEnabled,
-      clipboardClearEnabled: typeof merged.clipboardClearEnabled === 'boolean' ? (merged.clipboardClearEnabled as boolean) : DEFAULT_SETTINGS.clipboardClearEnabled,
-      popupCloseDelayMs: typeof merged.popupCloseDelayMs === 'number' ? (merged.popupCloseDelayMs as number) : DEFAULT_SETTINGS.popupCloseDelayMs,
-      syncEnabled: typeof merged.syncEnabled === 'boolean' ? (merged.syncEnabled as boolean) : DEFAULT_SETTINGS.syncEnabled,
-      themeMode: merged.themeMode === 'light' || merged.themeMode === 'dark' || merged.themeMode === 'auto' ? merged.themeMode : DEFAULT_SETTINGS.themeMode,
-      themeColor: typeof merged.themeColor === 'string' && merged.themeColor.length > 0 && merged.themeColor.length <= 32 ? merged.themeColor : DEFAULT_SETTINGS.themeColor,
-      lockOnRestart: typeof merged.lockOnRestart === 'boolean' ? (merged.lockOnRestart as boolean) : DEFAULT_SETTINGS.lockOnRestart,
-      lockIdleMinutes: typeof merged.lockIdleMinutes === 'number' && Number.isInteger(merged.lockIdleMinutes) && merged.lockIdleMinutes >= 0 ? (merged.lockIdleMinutes as number) : DEFAULT_SETTINGS.lockIdleMinutes,
-      lockOnSystemLock: typeof merged.lockOnSystemLock === 'boolean' ? (merged.lockOnSystemLock as boolean) : DEFAULT_SETTINGS.lockOnSystemLock,
-      backupKdfProfile: isKdfProfile(merged.backupKdfProfile) ? merged.backupKdfProfile : DEFAULT_SETTINGS.backupKdfProfile,
-      tagFilterMode: merged.tagFilterMode === 'any' || merged.tagFilterMode === 'all' ? merged.tagFilterMode : DEFAULT_SETTINGS.tagFilterMode,
-      rememberTagFilter: typeof merged.rememberTagFilter === 'boolean' ? (merged.rememberTagFilter as boolean) : DEFAULT_SETTINGS.rememberTagFilter,
-      lastTagFilterIds: Array.isArray(merged.lastTagFilterIds) && merged.lastTagFilterIds.every((x) => typeof x === 'string') ? (merged.lastTagFilterIds as string[]) : DEFAULT_SETTINGS.lastTagFilterIds,
-      locale: merged.locale === 'zh' || merged.locale === 'en' || merged.locale === 'auto' ? merged.locale : DEFAULT_SETTINGS.locale,
-      themeContrast: merged.themeContrast === 'amoled' ? merged.themeContrast : 'standard',
-      syncPrefs: normalizeSyncPrefs(merged.syncPrefs),
-    }
+    return settingsFromParsed(JSON.parse(raw) as Record<string, unknown>)
   } catch {
     return { ...DEFAULT_SETTINGS }
   }
