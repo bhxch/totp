@@ -6,13 +6,12 @@
  *   ui CloudCard（经 cloudPlatform 工厂）与云 runner deps 共用；
  * - legacyRetention：旧 backupMode/backupKeepN 键迁移读取（→ 默认本地源 retention，宿主删除旧键）；
  * - recordAutoStatus/readAutoStatusText：自动通道状态键 {at, ok, summary} 写入与卡片展示文本
- *   （readAutoStatusText 委托 autoBackup.formatAutoStatusText 三态格式化纯函数）；
+ *   （readAutoStatusText 委托 formatAutoStatusText 三态格式化纯函数，本体在本模块）；
  * - lastBackupHash/cloudContentHash：自动通道基线键读写（null=删键）。
  * 本地偏好存桌面 localStorage；键常量集中于此防宿主各处漂移。
  */
 import type { Retention } from '@totp/core'
 import type { BackupAutoPrefs, CloudAutoPrefs } from '@totp/ui'
-import { formatAutoStatusText } from './autoBackup'
 
 // ---------- 自动备份偏好（D2）----------
 export const BACKUP_AUTO_PREFS_KEY = 'backupAutoPrefs'
@@ -126,7 +125,25 @@ export function recordAutoStatus(key: AutoStatusKey, ok: boolean | null, summary
   } catch { /* 状态记录失败不影响主流程 */ }
 }
 
-/** 状态 JSON → 卡片展示文本：读 backupAutoStatus/cloudAutoStatus 键后委托 autoBackup.formatAutoStatusText
+/** 状态 JSON → 卡片展示文本（design §4.1）：「YYYY-MM-DD HH:mm 成功/失败/跳过：summary」；
+ *  缺字段/坏 JSON/null → null（卡片显示「暂无」）。ok=null 渲染「跳过」（写侧 summary 仅存原因，
+ *  前缀由本函数拼装）；旧 JSON 的 ok 恒为 true/false，照常渲染成功/失败。
+ *  纯函数导出：autoBackup.ts 以 re-export 兼容既有导入面，供三态单测（审查 Minor-2） */
+export function formatAutoStatusText(raw: string | null): string | null {
+  if (!raw) return null
+  try {
+    const s = JSON.parse(raw) as { at?: unknown; ok?: unknown; summary?: unknown }
+    if (typeof s.at !== 'number' || typeof s.summary !== 'string' || s.summary === '') return null
+    const d = new Date(s.at)
+    const p = (n: number) => String(n).padStart(2, '0')
+    const label = s.ok === null ? '跳过' : s.ok === true ? '成功' : '失败'
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} ${label}：${s.summary}`
+  } catch {
+    return null
+  }
+}
+
+/** 状态 JSON → 卡片展示文本：读 backupAutoStatus/cloudAutoStatus 键后委托 formatAutoStatusText
  *  （三态格式化纯函数，单测覆盖；审查 Minor-2 抽出） */
 export function readAutoStatusText(key: AutoStatusKey): string | null {
   try {

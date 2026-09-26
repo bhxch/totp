@@ -51,23 +51,9 @@ export interface DesktopAutoRunner {
 
 const DEFAULT_DEBOUNCE_MS = 10_000
 
-/** 自动状态 JSON → 卡片展示文本（design §4.1）：「YYYY-MM-DD HH:mm 成功/失败/跳过：summary」；
- *  缺字段/坏 JSON/null → null（卡片显示「暂无」）。ok=null 渲染「跳过」（写侧 summary 仅存原因，
- *  前缀由本函数拼装）；旧 JSON 的 ok 恒为 true/false，照常渲染成功/失败。
- *  纯函数导出：App.vue readAutoStatusText 委托实现，抽出供三态单测（审查 Minor-2） */
-export function formatAutoStatusText(raw: string | null): string | null {
-  if (!raw) return null
-  try {
-    const s = JSON.parse(raw) as { at?: unknown; ok?: unknown; summary?: unknown }
-    if (typeof s.at !== 'number' || typeof s.summary !== 'string' || s.summary === '') return null
-    const d = new Date(s.at)
-    const p = (n: number) => String(n).padStart(2, '0')
-    const label = s.ok === null ? '跳过' : s.ok === true ? '成功' : '失败'
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} ${label}：${s.summary}`
-  } catch {
-    return null
-  }
-}
+// 格式化纯函数本体已移入 desktopPrefs.ts（状态键所有权归其处，消除与本模块的循环导入）；
+// 此处 re-export 兼容既有导入面（autoBackup.test 等三态单测）
+export { formatAutoStatusText } from './desktopPrefs'
 
 /** desktop 自动备份 runner（D2）：backup/cloud 双通道各挂一个 core 调度器。
  *  锁定/无 secret/unchanged 的守护全部收敛在 core decideAutoRun（调度触发永不绕过） */

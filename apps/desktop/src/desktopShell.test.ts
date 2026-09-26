@@ -45,9 +45,9 @@ function makeDeps() {
   return { deps, store, loadError, auto }
 }
 
-async function initShell(over?: Partial<Record<string, unknown>>) {
+async function initShell() {
   const ctx = makeDeps()
-  const shell = createDesktopShell({ ...ctx.deps, ...over } as DesktopShellDeps)
+  const shell = createDesktopShell(ctx.deps)
   const init = shell.init()
   await flushPromises()
   await init
@@ -427,7 +427,7 @@ describe('init 内三段独立容错（降级不放大）', () => {
 
   it('工具确认回执失败 → onDecide invoke 拒绝仅告警', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const ctx = await (async () => makeDeps())()
+    const ctx = makeDeps()
     const shell = createDesktopShell(ctx.deps)
     await shell.init()
     await flushPromises()

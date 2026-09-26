@@ -78,12 +78,12 @@ describe('securityPlatform computed（store 未就绪 null；成员接线）', (
     expect(sec.passwordChangedAt.value).toBe(12345)
   })
 
-  it('passkey.sources 映射 credentialId；prfSupported 委托', () => {
+  it('passkey.sources 映射 credentialId；prfSupported 委托', async () => {
     const { f, store } = makeFactory()
     store.prfSources.value = [{ credentialId: 'abc' }, { credentialId: 'def' }]
     const sec = f.platform.value!.security!
     expect(sec.passkey!.sources.value).toEqual([{ credentialId: 'abc' }, { credentialId: 'def' }])
-    void expect(sec.passkey!.prfSupported()).resolves.toBe(true)
+    await expect(sec.passkey!.prfSupported()).resolves.toBe(true)
   })
 
   it('passkey.add：取消 → false 不落盘；成功 → 同盐绑定 addPrfSourceOp（32B 盐/exclude 现有凭据）', async () => {

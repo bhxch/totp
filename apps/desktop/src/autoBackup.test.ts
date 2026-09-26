@@ -471,11 +471,7 @@ describe('createDesktopAutoChannels（store/adapter/prefs/状态键接线）', (
     runner.notifyChanged()
     await advanceUntil(recordAutoStatusMock)
     expect(createBackupToSourcesMock).not.toHaveBeenCalled()
-    if (recordAutoStatusMock.mock.calls.length === 0) {
-      console.log('DBG3 prefs=' + JSON.stringify(localStorage.getItem('backupAutoPrefs')) + ' calls=' + JSON.stringify(recordAutoStatusMock.mock.calls) + ' backupCalls=' + String(createBackupToSourcesMock.mock.calls.length))
-    }
     expect(recordAutoStatusMock).toHaveBeenCalledWith('backupAutoStatus', null, '库已锁定') // 批 4：跳过态可观测
     runner.stop()
   })
-
 })
