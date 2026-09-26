@@ -43,18 +43,20 @@ export interface McpApprovalQueueDeps {
 /** 首连审批队列（原 App.vue 单槽位 approval 的并发根修）：对话框打开期间第二个不同
  *  ident 的审批事件曾直接覆盖前者，前者未获裁定可反复抢回，多客户端并发时弹窗乒乓；
  *  改为 FIFO 队列后每份审批都依次获得裁定。语义自原实现迁移：
- * - 同 ident 10s 去重：窗口内重复事件只就地更新已排队项（不重复入队、不抢位次）；
- *   已裁定离队后的窗口内重试同样被挡（过窗口期的重试可再入队，仍给用户裁定机会）。
- *   去重键按通道隔离（T7）：首连批准后立即调用 action 工具是主流程，跨通道共享窗口
- *   会吞掉首次工具确认致其 Rust 侧 60s 超时
+ * - 同 ident 10s 去重（仅首连审批）：窗口内重复事件只就地更新已排队项（不重复入队、
+ *   不抢位次）；已裁定离队后的窗口内重试同样被挡（过窗口期的重试可再入队，仍给用户
+ *   裁定机会）。工具确认不做去重（见 queueToolConfirmation，B23）
  * - 先弹出队首再回执（清窗防连点重复回执）
  * - 关闭=deny 回执进 Rust 侧 DENY_COOLDOWN 60s 冷却，不是静默丢弃——否则 "approval
  *   pending" 诱导 AI 每 10s 重试、对话框反复重开抢焦点
  * - 审批无会话无 TTL；回执失败仅告警不中断（客户端重试会再次弹审批窗，用户可再裁定）
  *
- * 工具级确认（spec §6.2，T7）共用同一 FIFO 与 10s 同 ident 去重口径，差异仅在：
- * 回执走 onDecide(allow)（宿主转 mcp_respond），close=deny 即 allow=false，逐次即焚；
- * 就地更新顶掉旧确认时旧 id 立即回 false 快速失败（Rust oneshot 不悬挂等 60s 超时） */
+ * 工具级确认（spec §6.2，T7）共用同一 FIFO，差异仅在：回执走 onDecide(allow)（宿主转
+ * mcp_respond），close=deny 即 allow=false，逐次即焚；不走 10s 同 ident 去重——id 是 Rust
+ * BridgeShared oneshot 键，一次 tools/call 唯一对应一次确认，同 ident 先后两次调用是两个
+ * 独立请求而非重试（B23：按 ident 合并会把第一份确认顶掉自动拒绝、第二份离队窗口内被挡
+ * 也被自动拒绝，均未等用户裁定）；防高频轰炸由「单对话框串行 + Rust 60s 超时 fail-closed +
+ * dispose 清算」承担，逐次裁定语义不变 */
 export function createMcpApprovalQueue(deps: McpApprovalQueueDeps) {
   const now = deps.now ?? Date.now
   // shallowRef + 整组替换（storeWrap 教训：深 ref 会对值做 reactive 深代理，成员 ref 语义全失）
@@ -63,60 +65,40 @@ export function createMcpApprovalQueue(deps: McpApprovalQueueDeps) {
   const current = computed(() => queue.value[0] ?? null)
   /** 排队中的待裁定数（含队首） */
   const size = computed(() => queue.value.length)
-  // 去重键 = 通道前缀 + ident：各通道各自独立 10s 窗口（原单 map 按 ident 在 A/B 交错时
-  // 会串窗口，跨通道共享更会吞主流程首次工具确认）
+  // 去重键 = 通道前缀 + ident：首连审批各自独立 10s 窗口（原单 map 按 ident 在 A/B 交错时
+  // 会串窗口）；仅作用于首连审批（工具确认不进去重，见 queueToolConfirmation）
   const lastSeen = new Map<string, number>()
-  /** 工具确认裁定回调登记（按 id）：入队登记、裁定/顶替/清算时消费恰一次 */
+  /** 工具确认裁定回调登记（按 id）：入队登记、裁定/清算时消费恰一次 */
   const pendingDecide = new Map<number, McpToolDecide>()
 
-  const dedupeKey = (e: McpConsentItem): string => ('id' in e ? `tool:${e.ident}` : `conn:${e.ident}`)
+  const dedupeKey = (e: McpConsentItem): string => `conn:${e.ident}`
 
-  /** 通用入队：同键 10s 窗口内 → 就地更新已排队项（onDisplaced 收到被顶掉的旧载荷，
-   *  供工具确认对旧 id 快速回执）；窗口外 → 追加队尾。返回是否实际入队（窗口内重试
-   *  且已离队被挡 → false，调用方需自行收敛该载荷的待决状态，见 Minor 1） */
-  function upsert(item: McpConsentItem, onDisplaced?: (old: McpConsentItem) => void): boolean {
+  /** 首连审批入队：同 ident 10s 窗口内 → 就地更新已排队项（保持位次、刷新窗口）；
+   *  已裁定离队后的窗口内重试被挡（原语义：忽略，过窗口期可再入队） */
+  function enqueue(event: McpApprovalEvent): void {
     const t = now()
-    const key = dedupeKey(item)
+    const key = dedupeKey(event)
     const last = lastSeen.get(key)
     if (last !== undefined && t - last < MCP_APPROVAL_DEDUPE_MS) {
-      // 窗口内重复：仅更新已排队项载荷（保持位次、刷新窗口）；已离队的重试被窗口挡下（原语义：忽略）
-      const idx = queue.value.findIndex((e) => dedupeKey(e) === key)
+      const idx = queue.value.findIndex((e) => !('id' in e) && e.ident === event.ident)
       if (idx >= 0) {
-        const old = queue.value[idx]!
         const next = [...queue.value]
-        next[idx] = item
+        next[idx] = { ...event }
         queue.value = next
         lastSeen.set(key, t)
-        onDisplaced?.(old)
-        return true
       }
-      return false
+      return
     }
     lastSeen.set(key, t)
-    queue.value = [...queue.value, item]
-    return true
+    queue.value = [...queue.value, { ...event }]
   }
 
-  /** 审批事件入队：同 ident 10s 窗口内 → 就地更新已排队项；窗口外 → 追加队尾 */
-  function enqueue(event: McpApprovalEvent): void {
-    upsert({ ...event })
-  }
-
-  /** 工具级确认入队（spec §6.2）：与首连审批同一 FIFO/10s 去重口径；同 ident 窗口内
-   *  重复事件就地更新（被顶掉的旧 id 立即回调 false 快速失败）；窗口内重试且已离队被挡
-   *  时新 id 也立即回 false（审查 Minor 1：否则 onDecide 闭包泄漏且该 id 白等 Rust 60s 超时） */
+  /** 工具级确认入队（spec §6.2）：与首连审批同一 FIFO 串行（单对话框防互相抢位），但不做
+   *  同 ident 去重——每次 tools/call 的 id 唯一（Rust alloc_id），逐次两键裁定语义要求每份
+   *  确认都获得用户裁定（B23 回归）；裁定经 resolveTool 恰一次回执，迟到 id no-op */
   function queueToolConfirmation(payload: McpToolConfirmEvent, onDecide: McpToolDecide): void {
     pendingDecide.set(payload.id, onDecide)
-    const queued = upsert({ ...payload }, (old) => {
-      if (!('id' in old)) return
-      const displaced = pendingDecide.get(old.id)
-      pendingDecide.delete(old.id)
-      if (displaced) safeDecide(displaced, false)
-    })
-    if (!queued) {
-      pendingDecide.delete(payload.id)
-      safeDecide(onDecide, false)
-    }
+    queue.value = [...queue.value, { ...payload }]
   }
 
   /** 裁定回调安全执行：同步调用恰一次（与 respond 同时机）；同步抛错或返回 Promise 拒绝

@@ -109,28 +109,56 @@ describe('createMcpApprovalQueue', () => {
 })
 
 describe('createMcpApprovalQueue 工具级确认（spec §6.2，T7）', () => {
-  it('工具确认：FIFO 顺序决定并回调；同 ident 10s 去重（就地更新，被顶掉旧 id 立即回 false）', () => {
-    const { q, advance } = harness()
+  it('工具确认：FIFO 顺序决定并回调；同 ident 不同 id 各自独立入队（B23，不去重不顶替）', () => {
+    const { q } = harness()
     const decided: Array<{ id: number; allow: boolean }> = []
     const record = (id: number) => (allow: boolean) => {
       decided.push({ id, allow })
     }
     q.queueToolConfirmation({ id: 1, ident: 'a', tool: 'trigger_sync' }, record(1))
     q.queueToolConfirmation({ id: 2, ident: 'b', tool: 'trigger_backup' }, record(2))
-    advance(5_000)
+    // 同 ident 窗口内的新确认（曾按 ident 顶替 id 1）：独立入队，无自动拒绝
     q.queueToolConfirmation({ id: 3, ident: 'a', tool: 'trigger_sync' }, record(3))
-    // 同 ident 窗口内重复：不重复入队；被顶掉的 id 1 立即回 false 快速失败（不悬挂等 Rust 60s 超时）
-    expect(decided).toEqual([{ id: 1, allow: false }])
-    expect(q.size.value).toBe(2)
-    expect(q.current.value).toEqual({ id: 3, ident: 'a', tool: 'trigger_sync' })
-    // FIFO：队首 id 3 先裁，队尾 id 2 后裁
-    q.resolveTool(2, true) // 非队首 id 不匹配 → no-op（防错位）
-    expect(decided).toEqual([{ id: 1, allow: false }])
+    expect(q.size.value).toBe(3)
+    expect(decided).toEqual([])
+    expect(q.current.value).toEqual({ id: 1, ident: 'a', tool: 'trigger_sync' })
+    // FIFO：队首 id 1 先裁；非队首 id no-op（防错位）
     q.resolveTool(3, true)
+    expect(decided).toEqual([])
+    q.resolveTool(1, true)
+    q.resolveTool(2, true)
+    q.resolveTool(3, true)
+    expect(decided).toEqual([
+      { id: 1, allow: true },
+      { id: 2, allow: true },
+      { id: 3, allow: true },
+    ])
+    expect(q.size.value).toBe(0)
+  })
+
+  it('B23 回归：同 ident 两个不同 id 工具确认 2s 内先后入队 → 各自独立裁定且回执 id 各自正确', () => {
+    const { q, advance } = harness()
+    const decided: Array<{ id: number; allow: boolean }> = []
+    const record = (id: number) => (allow: boolean) => {
+      decided.push({ id, allow })
+    }
+    // 同一客户端（ident 相同）2s 内连续两次 tools/call trigger_backup：两次是独立请求
+    // （Rust 侧各持独立 oneshot id），都应获得用户裁定，不得被 10s 同 ident 去重窗合并/顶替
+    q.queueToolConfirmation({ id: 1, ident: 'a', tool: 'trigger_backup' }, record(1))
+    advance(2_000)
+    q.queueToolConfirmation({ id: 2, ident: 'a', tool: 'trigger_backup' }, record(2))
+    // 两个确认都入队（FIFO），任何一方都不得被自动拒绝
+    expect(q.size.value).toBe(2)
+    expect(decided).toEqual([])
+    expect(q.current.value).toEqual({ id: 1, ident: 'a', tool: 'trigger_backup' })
+    // 裁定第一个（Deny）：只有 id 1 被回执，id 2 仍在队首等待
+    q.resolveTool(1, false)
+    expect(decided).toEqual([{ id: 1, allow: false }])
+    expect(q.current.value).toEqual({ id: 2, ident: 'a', tool: 'trigger_backup' })
+    // 裁定第二个（Allow）：id 2 正常回执
     q.resolveTool(2, true)
     expect(decided).toEqual([
       { id: 1, allow: false },
-      { id: 3, allow: true },
       { id: 2, allow: true },
     ])
     expect(q.size.value).toBe(0)
@@ -144,7 +172,7 @@ describe('createMcpApprovalQueue 工具级确认（spec §6.2，T7）', () => {
     })
     q.resolveTool(7, false)
     expect(decided).toEqual([false])
-    advance(10_000) // 过同 ident 去重窗口（离队后窗口内重试被挡是既有口径）
+    advance(10_000) // 推进时钟（工具确认不去重，此处仅模拟时间流逝）
     q.queueToolConfirmation({ id: 8, ident: 'a', tool: 'trigger_sync' }, (allow) => {
       decided.push(allow)
     })
@@ -153,7 +181,7 @@ describe('createMcpApprovalQueue 工具级确认（spec §6.2，T7）', () => {
     expect(q.size.value).toBe(0)
   })
 
-  it('去重键按通道隔离：首连审批裁定后 10s 内同 ident 工具确认照常入队（主流程不吞）', () => {
+  it('首连审批裁定后 10s 内同 ident 工具确认照常入队（主流程不吞）', () => {
     const { q } = harness()
     const decided: boolean[] = []
     q.enqueue(ev('a'))
@@ -205,7 +233,7 @@ describe('createMcpApprovalQueue 工具级确认（spec §6.2，T7）', () => {
     expect(q.current.value).toEqual({ id: 13, ident: 'a', tool: 'trigger_sync' })
   })
 
-  it('窗口内重试已离队被挡：新 id 立即回 false（审查 Minor 1，不泄漏 onDecide/白等 60s）', () => {
+  it('裁定离队后 10s 内同 ident 新工具确认照常入队（逐次即焚，每次调用都重新问）；迟到 resolveTool 双重消费被挡', () => {
     const { q, advance } = harness()
     const decided: Array<{ id: number; allow: boolean }> = []
     const record = (id: number) => (allow: boolean) => {
@@ -214,18 +242,21 @@ describe('createMcpApprovalQueue 工具级确认（spec §6.2，T7）', () => {
     q.queueToolConfirmation({ id: 20, ident: 'a', tool: 'trigger_sync' }, record(20))
     q.resolveTool(20, true)
     expect(decided).toEqual([{ id: 20, allow: true }])
-    advance(1_000) // 离队后 10s 窗口内重试：被去重挡下
+    advance(1_000) // 离队后 10s 窗口内（曾按 ident 去重挡下并自动拒绝，B23）：现在照常入队
     q.queueToolConfirmation({ id: 21, ident: 'a', tool: 'trigger_sync' }, record(21))
-    expect(q.size.value).toBe(0)
-    expect(decided).toEqual([
-      { id: 20, allow: true },
-      { id: 21, allow: false },
-    ])
-    // id 21 不在队也不在登记表：迟到的 resolveTool no-op（双重消费被挡）
+    expect(q.size.value).toBe(1)
+    expect(q.current.value).toEqual({ id: 21, ident: 'a', tool: 'trigger_sync' })
     q.resolveTool(21, true)
     expect(decided).toEqual([
       { id: 20, allow: true },
-      { id: 21, allow: false },
+      { id: 21, allow: true },
     ])
+    // id 21 已裁定消费：迟到的 resolveTool no-op（双重消费被挡）
+    q.resolveTool(21, false)
+    expect(decided).toEqual([
+      { id: 20, allow: true },
+      { id: 21, allow: true },
+    ])
+    expect(q.size.value).toBe(0)
   })
 })
