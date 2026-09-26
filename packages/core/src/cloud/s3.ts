@@ -1,17 +1,12 @@
 import type { CloudBackend, S3Cred } from './backend'
 import { cloudFetch, ensureHttpOk } from './backend'
 import { BACKUP_NAME_RE } from '../backup/policy'
+import { sha256Hex } from './canonical'
 import { resolveDirPath } from './targetPath'
 
 const LABEL = 'S3'
 /** SHA-256("")——SigV4 空 payload 的规范哈希。 */
 export const EMPTY_BODY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
-
-async function sha256Hex(data: string | Uint8Array): Promise<string> {
-  const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
-  const digest = await crypto.subtle.digest('SHA-256', bytes as BufferSource)
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
-}
 
 async function hmacSha256(key: Uint8Array | string, data: string): Promise<Uint8Array> {
   const raw = typeof key === 'string' ? new TextEncoder().encode(key) : key

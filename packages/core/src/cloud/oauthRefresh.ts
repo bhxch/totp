@@ -1,6 +1,6 @@
 import type { GDriveCred, OneDriveCred } from './backend'
 import { CloudHttpError } from './backend'
-import { sha256Hex } from './syncOrchestrator'
+import { sha256Hex } from './canonical'
 
 /**
  * GDrive/OneDrive OAuth refresh_token 自动刷新（spec §5⑦）。

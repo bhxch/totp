@@ -1,5 +1,7 @@
 /** 规范化 JSON 与内容 hash（spec §1.3 内容门）：对解密后 vault JSON 做稳定序列化再 sha256，
- *  消除键序抖动——「内容未变」判定与字节形态解耦。 */
+ *  消除键序抖动——「内容未变」判定与字节形态解耦。
+ *  R15③：sha256Hex 单点实现归位本模块（超集签名，一处吸收 s3/syncOrchestrator/winauth 三处
+ *  逐字副本与下方 contentHash×2 的内联摘要转换；oauthRefresh 改导入后不再反向依赖编排模块）。 */
 
 export function canonicalJson(x: unknown): string {
   if (x === null || typeof x !== 'object') return JSON.stringify(x) ?? 'null'
@@ -10,10 +12,16 @@ export function canonicalJson(x: unknown): string {
   return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson((x as Record<string, unknown>)[k])}`).join(',')}}`
 }
 
-export async function contentHash(vaultJson: string): Promise<string> {
-  const stable = canonicalJson(JSON.parse(vaultJson))
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(stable) as BufferSource)
+/** SHA-256 摘要转小写 hex（crypto.subtle）。string 入参按 UTF-8 编码（s3 SigV4 口径），
+ *  Uint8Array 原样摘要（同步链路/导入口令层口径）。 */
+export async function sha256Hex(data: string | Uint8Array): Promise<string> {
+  const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
+  const digest = await crypto.subtle.digest('SHA-256', bytes as BufferSource)
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+export async function contentHash(vaultJson: string): Promise<string> {
+  return sha256Hex(canonicalJson(JSON.parse(vaultJson)))
 }
 
 /**
@@ -30,7 +38,5 @@ export async function contentHashVault(vaultJson: string): Promise<string> {
   const parsed = JSON.parse(vaultJson) as Record<string, unknown>
   const stripped = { ...parsed }
   delete stripped.rev
-  const stable = canonicalJson(stripped)
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(stable) as BufferSource)
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
+  return sha256Hex(canonicalJson(stripped))
 }

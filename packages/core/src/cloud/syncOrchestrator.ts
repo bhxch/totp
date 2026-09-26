@@ -36,19 +36,13 @@ import {
   type KdfProfile,
 } from '../backup/envelope'
 import type { CloudBackend } from './backend'
-import { contentHashVault } from './canonical'
+import { contentHashVault, sha256Hex } from './canonical'
 import { mergeVaults, type EntryConflict } from '../merge/vaultMerge'
 import type { SourceSyncState } from './syncState'
 
 /** 冲突副本回调返回值：文件名（回填 outcome.conflictBackup）/ null（无副本）/ void（fire-and-forget），
  *  同步或经 Promise。此前在 syncOrchestrator / multiTarget / ui cloudRunner 三处逐字重复（T6 审查） */
 export type ConflictBackupResult = string | null | void | Promise<string | null | void>
-
-/** SHA-256 摘要转小写 hex（crypto.subtle）。 */
-export async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', bytes as BufferSource)
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
-}
 
 /**
  * 加密本地 vault → put → 回读 sha256 比对（不一致抛中文错误）。
