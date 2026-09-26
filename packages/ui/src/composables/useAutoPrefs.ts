@@ -36,12 +36,14 @@ export function useAutoPrefs<P extends AutoPrefsShape>(
   }
 
   /** 挂载装载：偏好读初值（读取失败保持默认）+ 状态初值。CloudCard await 以保持既有装载时序，
-   *  BackupCard 原为同步读+状态 .then，void 调用即可 */
+   *  BackupCard 原为同步读+状态 .then，void 调用即可。get 同步返回时在调用栈内同步落初值——
+   *  不留 await 微任务窗口，避免「初值回写覆盖用户挂载后立即做的内存改动」竞态 */
   async function load(): Promise<void> {
     const channel = getChannel()
     if (channel) {
       try {
-        autoPrefs.value = { ...(await channel.get()) } // await 兼容同步返回（desktop）
+        const v = channel.get()
+        autoPrefs.value = { ...(v instanceof Promise ? await v : v) }
       } catch { /* 读取失败保持默认 */ }
     }
     await refreshStatus()

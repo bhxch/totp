@@ -3,7 +3,10 @@ import type { KdfProfile, Vault } from '@totp/core'
 import { exportAegisEncrypted, exportAegisPlaintext, exportOtpauthText } from '@totp/core'
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useAsyncMessage } from '../composables/useAsyncMessage'
+import { useAutoPrefs } from '../composables/useAutoPrefs'
 import type { BackupAutoPrefs, BackupPlatform, LocalSourceView } from './backupPlatform'
+import { intervalOptions, newSourceId, retentionOptions } from './cardShared'
 import { parseVaultJson } from './parseVaultJson'
 import { displaySourceName } from './sourceDisplayNames'
 import MdButton from './md/MdButton.vue'
@@ -27,9 +30,8 @@ const props = defineProps<{
 /** remember-secret（批① §2.3）：Aegis 加密导出勾选「记住到保管区」时上抛口令，宿主接 store.setBackupSecret(pw, true) */
 const emit = defineEmits<{ 'remember-secret': [pw: string] }>()
 
-const busy = ref(false)
-const msg = ref('')
-const msgKind = ref<'ok' | 'err' | 'hint'>('ok')
+// busy/三态消息基建收共享组合式（R7，原卡内 busy/msg/msgKind/fail 四件）
+const { busy, msg, msgKind, fail } = useAsyncMessage()
 /** 聚合全部本地源的备份文件（sourceId 供恢复定位来源目录） */
 const backups = ref<Array<{ sourceId: string; name: string }>>([])
 
@@ -40,11 +42,6 @@ const pending = ref<Vault | null>(null)
 const showFallback = ref(false)
 const fallbackPw = ref('')
 const restoreReq = ref<{ kind: 'picker' | 'name'; sourceId?: string; name?: string } | null>(null)
-
-/** 自动备份偏好（D2）：卡内编辑副本，挂载时从平台读初值；每次变更整体回写 */
-const autoPrefs = ref<BackupAutoPrefs>({ onChange: false, onInterval: false, intervalMinutes: 60 })
-/** 「上次自动备份」状态文本（design §4.1）：挂载时读；读不到/为空显示「暂无」 */
-const autoStatus = ref<string | null>(null)
 
 /** 备份加密强度档位（plan16 T11.5）：null=未提供或初值未载入，载入前不渲染防闪烁（同 SecurityCard lockPrefs 模式） */
 const backupProfile = ref<KdfProfile | null>(null)
@@ -64,11 +61,6 @@ const canAddDir = ref(false)
 const expanded = ref<string | null>(null)
 /** 待确认移除的源 id（行内两步确认防误删，沿 CloudCard askRemove 模式） */
 const pendingRemove = ref<string | null>(null)
-
-function fail(e: unknown): void {
-  msg.value = e instanceof Error ? e.message : String(e)
-  msgKind.value = 'err'
-}
 
 /** 「立即备份」= 全部启用源（宿主遍历落盘）：展示宿主返回的中文摘要；空串兜底「未配置启用目录」 */
 async function onBackup(): Promise<void> {
@@ -214,10 +206,7 @@ async function refreshSources(): Promise<void> {
   }
 }
 
-/** 源 id 工厂：优先 crypto.randomUUID（宿主安全上下文），jsdom 等缺失环境回落时间戳+随机段 */
-function newSourceId(): string {
-  return globalThis.crypto?.randomUUID?.() ?? `src-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
-}
+/** 源 id 工厂 newSourceId 收共享模块（R7，与 CloudCard 同款实现单点化） */
 
 /** 目录显示名：末段（兼容 \ 与 / 分隔）；解析不出回落「本地备份」 */
 function dirLabelOf(dir: string): string {
@@ -263,11 +252,8 @@ function onNameCommit(s: LocalSourceView): void {
   void persistSource(s)
 }
 
-/** 保留策略二选（MdSegmentedButton 选项，沿 T8 CloudCard 口径） */
-const RETENTION_OPTIONS = [
-  { value: 'overwrite', label: t('backupCard.retentionOverwrite') },
-  { value: 'keep', label: t('backupCard.retentionKeep') },
-]
+/** 保留策略二选（MdSegmentedButton 选项，沿 T8 CloudCard 口径；R7 收 cardShared 选项工厂） */
+const RETENTION_OPTIONS = retentionOptions(t, 'backupCard')
 function onRetentionType(s: LocalSourceView, v: string | number): void {
   s.retention = v === 'keep' ? { type: 'keep', n: 3 } : { type: 'overwrite' }
   void persistSource(s)
@@ -321,12 +307,8 @@ onMounted(() => {
   canAddDir.value = typeof p.pickBackupDir === 'function'
   if (hasSources.value) void refreshSources()
   if (p.listBackups) void refreshList()
-  // getAutoPrefs 可能同步返回：onMounted 直接读初值（无则保留默认）
-  if (p.getAutoPrefs) {
-    const v = p.getAutoPrefs()
-    if (v) autoPrefs.value = { ...v }
-  }
-  if (p.getAutoStatus) void p.getAutoStatus().then((s) => { autoStatus.value = s }).catch(() => { autoStatus.value = null })
+  // 自动偏好初值+状态文本（R7 收 useAutoPrefs；getAutoPrefs 同步返回亦兼容，读失败保持默认）
+  void loadAutoPrefs()
   // 备份档位异步读初值：载入完成前不渲染（防闪烁），失败按未提供处理（档位行不渲染）
   if (p.backupKdfProfile) {
     Promise.resolve(p.backupKdfProfile.get())
@@ -412,29 +394,21 @@ async function confirmRestore(): Promise<void> {
   }
 }
 
-/** 以卡内最新偏好整体回写平台（每次展开完整对象，连续切换不丢字段） */
-async function syncAutoPrefs(): Promise<void> {
-  await props.platform?.setAutoPrefs?.({ ...autoPrefs.value })
-}
-function onAutoOnChange(v: boolean): void {
-  autoPrefs.value = { ...autoPrefs.value, onChange: v }
-  void syncAutoPrefs()
-}
-function onAutoIntervalToggle(v: boolean): void {
-  autoPrefs.value = { ...autoPrefs.value, onInterval: v }
-  void syncAutoPrefs()
-}
-/** 定时备份间隔选项（value=分钟数，number 直传回写不再经字符串转换；F6 收口换 MdSelect） */
-const INTERVAL_OPTIONS = [
-  { value: 15, label: t('backupCard.interval15m') },
-  { value: 60, label: t('backupCard.interval1h') },
-  { value: 360, label: t('backupCard.interval6h') },
-  { value: 1440, label: t('backupCard.intervalDaily') },
-]
-function onIntervalChange(v: string | number): void {
-  autoPrefs.value = { ...autoPrefs.value, intervalMinutes: Number(v) }
-  void syncAutoPrefs()
-}
+// ---------- 自动备份偏好（D2；R7 收 useAutoPrefs：顶层 getAutoPrefs/setAutoPrefs 适配为 {get,set} 通道，读写失败口径与 CloudCard 对齐） ----------
+/** 偏好编辑副本/状态文本/变更 handler（任一变更整体回写；回写失败经 fail 走 msg 通道） */
+const {
+  autoPrefs, autoStatus, load: loadAutoPrefs, onAutoOnChange, onAutoIntervalToggle, onIntervalChange,
+} = useAutoPrefs(
+  () => {
+    const p = props.platform
+    return p?.getAutoPrefs
+      ? { get: () => p.getAutoPrefs(), set: (x: BackupAutoPrefs) => p.setAutoPrefs?.(x) }
+      : null
+  },
+  { onError: fail, loadStatus: () => props.platform?.getAutoStatus?.() ?? null },
+)
+/** 定时备份间隔选项（value=分钟数，number 直传回写不再经字符串转换；F6 收口换 MdSelect；R7 收 cardShared 选项工厂） */
+const INTERVAL_OPTIONS = intervalOptions(t, 'backupCard')
 
 /** 备份档位变更：内存即时前进 + 回写平台（后续备份/云上传 envelope 按新档位生成）；回写失败走 msg 通道而非静默 */
 function onBackupProfileChange(v: string | number): void {

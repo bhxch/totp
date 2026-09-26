@@ -56,6 +56,12 @@ describe('useAutoPrefs', () => {
     expect(c.autoPrefs.value).toEqual(PREFS)
   })
 
+  it('load 同步 get：调用栈内同步落初值（无 await 窗口），不与挂载后的立即操作竞态', () => {
+    const a = useAutoPrefs(() => channelOf({ get: () => ({ onChange: true, onInterval: false, intervalMinutes: 15 }) }))
+    void a.load()
+    expect(a.autoPrefs.value).toEqual({ onChange: true, onInterval: false, intervalMinutes: 15 })
+  })
+
   it('load/refreshStatus：loadStatus 失败保持旧值（初始 null），成功置文本', async () => {
     let status: string | null = null
     let boom = false
