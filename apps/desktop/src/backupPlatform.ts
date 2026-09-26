@@ -13,7 +13,7 @@
 import {
   backupFileName, base64ToBytes, createBackupEnvelope, loadSources, normalizeSchemes, openBackupEnvelope,
   saveSources, SCHEMES_KEY, sha256Hex,
-  type BackupSource, type ImportScheme, type KdfProfile, type StorageAdapter, type Vault,
+  type BackupSource, type ImportScheme, type StorageAdapter, type Vault,
 } from '@totp/core'
 import type { BackupPlatform, ImportSchemesApi, LocalSourceView, VueStore } from '@totp/ui'
 import {
@@ -25,6 +25,7 @@ import { decryptDpapiOs, pickImportFileOs, readImportFileBytesOs, readImportFile
 import {
   loadBackupPrefs, persistBackupPrefs, readAutoStatusText, writeLastBackupHash, BACKUP_AUTO_STATUS_KEY,
 } from './desktopPrefs'
+import { kdfProfileOf, requireAdapter, requireStore } from './storeAccess'
 
 export interface BackupPlatformDeps {
   /** store 浅包装实时读取（未就绪 null → 平台方法「数据尚未就绪」中文报错） */
@@ -35,22 +36,11 @@ export interface BackupPlatformDeps {
   tr(key: string, params?: Record<string, unknown>): string
 }
 
-/** platform 工厂共用的就绪断言：store/adapter 未就绪时统一中文报错（卡片展示） */
-function requireReady<T>(v: T | null): T {
-  if (!v) throw new Error('数据尚未就绪')
-  return v
-}
-
 /** core 本地源 → ui LocalSourceView（BackupCard 源列表区渲染/编辑用） */
 export function toLocalViews(list: BackupSource[]): LocalSourceView[] {
   return list
     .filter((s) => s.kind === 'local')
     .map(({ id, name, dir, retention, enabled }) => ({ id, name, dir: dir ?? null, retention, enabled }))
-}
-
-/** 备份加密强度档位（plan16 T11.5）：本地备份/云上传 envelope 按此档位生成；store 未就绪兜底 balanced */
-export function kdfProfileOf(deps: Pick<BackupPlatformDeps, 'getStore'>): KdfProfile {
-  return deps.getStore()?.settings.backupKdfProfile ?? 'balanced'
 }
 
 /** 直读写 adapter 的 SCHEMES_KEY（本地 AppData JSON）；load 容错：坏 JSON → 空表 */
@@ -67,7 +57,7 @@ export function createImportSchemesApi(deps: Pick<BackupPlatformDeps, 'getAdapte
       }
     },
     async save(list: ImportScheme[]): Promise<void> {
-      const adapter = requireReady(deps.getAdapter())
+      const adapter = requireAdapter(deps.getAdapter)
       await adapter.set(SCHEMES_KEY, JSON.stringify(list))
     },
   }
@@ -78,12 +68,12 @@ export function createBackupPlatform(deps: BackupPlatformDeps): BackupPlatform {
 
   /** 全部源列表（云源+本地源；各消费方按 kind 过滤） */
   async function loadAllSources(): Promise<BackupSource[]> {
-    return loadSources(requireReady(deps.getAdapter()))
+    return loadSources(requireAdapter(deps.getAdapter))
   }
 
   /** store 整体替换（恢复确认覆盖后由 BackupCard 调用，绑定 store.replaceAllOp） */
   async function replaceAllOps(v: Vault): Promise<void> {
-    await requireReady(deps.getStore()).replaceAllOp(v)
+    await requireStore(deps.getStore).replaceAllOp(v)
   }
 
   /** envelope 文本 → 解密出明文 vault JSON（口令错误/文件损坏由 openBackupEnvelope 抛错，卡片统一展示） */
@@ -110,7 +100,7 @@ export function createBackupPlatform(deps: BackupPlatformDeps): BackupPlatform {
     createBackup: async (vaultJson, password) => {
       // 审查 I8：按结构化结果如实提示；仅全部启用源成功才记录 lastBackupHash——
       // 部分失败推进基线会让自动通道按 unchanged 跳过后续重试（静默停摆），与自动通道同口径
-      const r = await createBackupToSources(await loadAllSources(), vaultJson, password, kdfProfileOf(deps))
+      const r = await createBackupToSources(await loadAllSources(), vaultJson, password, kdfProfileOf(deps.getStore))
       if (r.outcome === 'ok') {
         try {
           writeLastBackupHash(await sha256Hex(new TextEncoder().encode(vaultJson)))
@@ -120,7 +110,7 @@ export function createBackupPlatform(deps: BackupPlatformDeps): BackupPlatform {
     },
     listLocalSources: async () => toLocalViews(await loadAllSources()),
     async saveLocalSource(v) {
-      const adapter = requireReady(deps.getAdapter())
+      const adapter = requireAdapter(deps.getAdapter)
       const source: BackupSource = { ...v, kind: 'local', role: 'replica' }
       const list = await loadSources(adapter)
       const idx = list.findIndex((s) => s.id === v.id)
@@ -129,7 +119,7 @@ export function createBackupPlatform(deps: BackupPlatformDeps): BackupPlatform {
       await saveSources(adapter, list)
     },
     async removeLocalSource(id) {
-      const adapter = requireReady(deps.getAdapter())
+      const adapter = requireAdapter(deps.getAdapter)
       await saveSources(adapter, (await loadSources(adapter)).filter((s) => s.id !== id))
     },
     async exportToFile(vaultJson, password) {
@@ -137,7 +127,7 @@ export function createBackupPlatform(deps: BackupPlatformDeps): BackupPlatform {
       // 再做 Argon2id 加密写文件，省一次白跑的 KDF（档位随备份设置）
       const picked = await pickBackupSaveOs(backupFileName(new Date()), backupFileFilters())
       if (!picked) return false
-      const envelope = await createBackupEnvelope(vaultJson, password, kdfProfileOf(deps))
+      const envelope = await createBackupEnvelope(vaultJson, password, kdfProfileOf(deps.getStore))
       await writeBackupFileOs(picked, envelope)
       return true
     },
@@ -176,9 +166,9 @@ export function createBackupPlatform(deps: BackupPlatformDeps): BackupPlatform {
     replaceAllOp: async (v) => replaceAllOps(v),
     // 备份加密强度档位（plan16 T11.5）：settings 持久化（backupKdfProfile 字段 + commitSettings）
     backupKdfProfile: {
-      get: () => kdfProfileOf(deps),
+      get: () => kdfProfileOf(deps.getStore),
       set: (p) => {
-        const s = requireReady(deps.getStore())
+        const s = requireStore(deps.getStore)
         s.settings.backupKdfProfile = p
         void s.commitSettings()
       },

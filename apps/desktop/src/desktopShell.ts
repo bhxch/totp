@@ -25,6 +25,7 @@ import { createMcpApprovalQueue, isToolConfirmItem, type McpApprovalAction } fro
 import { createMcpTriggers, startMcpBridge, type McpBridgeDeps } from './mcpBridge'
 import { createTauriFs } from './tauriFs'
 import { legacyRetention, BACKUP_MODE_KEY, BACKUP_KEEP_N_KEY } from './desktopPrefs'
+import { requireAdapter, requireStore, storeGuards } from './storeAccess'
 
 /** MCP 首连审批队列类型（createMcpApprovalQueue 返回形状） */
 export type McpApprovalQueue = ReturnType<typeof createMcpApprovalQueue>
@@ -155,16 +156,6 @@ export interface LegacyMigrationsDeps {
  * LockScreen @unlocked（口令/PRF 解锁成功回调）。
  */
 export function createLegacyMigrations(deps: LegacyMigrationsDeps): () => Promise<void> {
-  function requireAdapter(): StorageAdapter {
-    const a = deps.getAdapter()
-    if (!a) throw new Error('数据尚未就绪')
-    return a
-  }
-  function requireStore(): VueStore {
-    const s = deps.getStore()
-    if (!s) throw new Error('数据尚未就绪')
-    return s
-  }
   return async function runLegacyMigrations(): Promise<void> {
     const s = deps.getStore()
     if (!s || s.locked.value) return
@@ -175,16 +166,16 @@ export function createLegacyMigrations(deps: LegacyMigrationsDeps): () => Promis
       // localStorage backupMode/backupKeepN + AppData backupDir → 默认本地源（backupSources 键已存在则跳过）
       let legacyDir: string | null = null
       try {
-        legacyDir = (await requireAdapter().get(BACKUP_DIR_KEY)) || null // 空串按无目录
+        legacyDir = (await requireAdapter(deps.getAdapter).get(BACKUP_DIR_KEY)) || null // 空串按无目录
       } catch { /* 读失败按无目录 */ }
-      const local = await migrateLegacyLocalSource(requireAdapter(), { retention: legacyRetention(), dir: legacyDir })
+      const local = await migrateLegacyLocalSource(requireAdapter(deps.getAdapter), { retention: legacyRetention(), dir: legacyDir })
       if (local === 'migrated') {
         try {
           localStorage.removeItem(BACKUP_MODE_KEY)
           localStorage.removeItem(BACKUP_KEEP_N_KEY)
         } catch { /* localStorage 不可用不影响迁移本身 */ }
       }
-      const n = await migrateLegacyCloudSources(requireAdapter(), { saveCred: (id, cred) => requireStore().saveSourceCredOp(id, cred) })
+      const n = await migrateLegacyCloudSources(requireAdapter(deps.getAdapter), { saveCred: (id, cred) => requireStore(deps.getStore).saveSourceCredOp(id, cred) })
       if (n > 0) console.info(`[migrate] 已迁移 ${n} 个云目标到新模型`)
     } catch (e) {
       console.warn('[migrate] 旧数据迁移失败（旧键保留，解锁后重试）', e)
@@ -234,10 +225,10 @@ export function createDesktopShell(deps: DesktopShellDeps): DesktopShellControll
 
   // 空闲超时：与 extension lockEnforcer（chrome.idle 版）语义一致的原生实现——document 级
   // pointerdown/keydown 节流刷新活动时间戳，30s tick 用 core shouldLockNow 判定（idleLock.ts）；
-  // deps 每 tick 现读 settings；store 未就绪时 isLocked 兜底 true（与 autoRunner 同口径）恒不动作。
+  // deps 每 tick 现读 settings；store 未就绪时 isLocked 兜底 true（storeGuards，与 autoRunner 同口径）恒不动作。
   const idleLock = createIdleLockExecutor({
     getIdleMinutes: () => deps.store.value?.settings.lockIdleMinutes ?? 0,
-    isLocked: () => deps.store.value?.locked.value ?? true,
+    isLocked: storeGuards(() => deps.store.value).isLocked,
     lock: () => deps.store.value?.lock(),
     now: () => Date.now(),
   })

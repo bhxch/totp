@@ -19,6 +19,7 @@ import type { DpapiUnlockOps, SecurityPlatform, VueStore } from '@totp/ui'
 // host 工厂经 '@totp/ui/host' 子出口导入(理由同 host/index.ts 头注释:宿主 mock 拦截点唯一)
 import { createSecurityOpsFromStore } from '@totp/ui/host'
 import { lockPrefsUnsupportedKeys } from './lockPrefs'
+import { requireStore } from './storeAccess'
 import { isEntropyBoundDekWrap, osAutoForgetOs, osAutoProtectOs, osAutoUnprotectOs } from './tauriSecurity'
 import { techSuffixFor, type DesktopUaFlags, type UnlockNaming } from './unlockNaming'
 
@@ -35,12 +36,7 @@ export interface SecurityPlatformDeps {
   ua: string
 }
 
-/** platform 工厂与迁移共用的就绪断言：store 未就绪时统一中文报错（卡片展示） */
-function requireStore(deps: SecurityPlatformDeps): VueStore {
-  const s = deps.getStore()
-  if (!s) throw new Error('数据尚未就绪')
-  return s
-}
+/** platform 工厂与迁移共用的就绪断言收敛至 storeAccess（未就绪统一中文报错） */
 
 export interface DesktopSecurityPlatform {
   /** 安全平台（computed：store 未就绪 null，SecurityCard 整卡不渲染） */
@@ -70,11 +66,11 @@ export function createSecurityPlatform(deps: SecurityPlatformDeps): DesktopSecur
     protect: (dek) => osAutoProtectOs(dek),
     unprotect: (wrapped) => osAutoUnprotectOs(wrapped),
     async add(wrappedDekD) {
-      const s = requireStore(deps)
+      const s = requireStore(deps.getStore)
       await s.addDpapiSourceOp(wrappedDekD)
     },
     async remove() {
-      const s = requireStore(deps)
+      const s = requireStore(deps.getStore)
       await s.removeDpapiSourceOp()
       // 审查 M1（C1 遗留）：移除成功后 best-effort 清 keyring DEK 条目（mac/Linux；Windows 为
       // 报错桩，静默忽略）。失败不影响移除主流程——security JSON 已更新，残留条目仅是 OS 凭据

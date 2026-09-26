@@ -1,16 +1,13 @@
 import { createAutoRunScheduler, decideAutoRun, loadSources, sha256Hex, type AutoRunReason, type AutoRunScheduler, type StorageAdapter } from '@totp/core'
-import type { VueStore } from '@totp/ui'
+import type { BackupAutoPrefs, VueStore } from '@totp/ui'
 import { createBackupToSources, type BackupSourcesResult } from './backupService'
 import {
   BACKUP_AUTO_STATUS_KEY, loadBackupPrefs, loadCloudPrefs, readLastBackupHash, recordAutoStatus, writeLastBackupHash,
 } from './desktopPrefs'
+import { kdfProfileOf, requireAdapter, storeGuards } from './storeAccess'
 
-/** 自动通道偏好（形态与 ui BackupAutoPrefs 一致；desktop 宿主经 loadBackupPrefs 提供） */
-export interface AutoChannelPrefs {
-  onChange: boolean
-  onInterval: boolean
-  intervalMinutes: number
-}
+/** 自动通道偏好（R13 偏好类型合一：与 ui CloudAutoPrefs 同构，直接派生 ui BackupAutoPrefs 单点） */
+export type AutoChannelPrefs = BackupAutoPrefs
 
 export interface AutoBackupDeps {
   /** 锁定态（decideAutoRun 的 locked 守护源） */
@@ -192,18 +189,14 @@ export interface DesktopAutoChannelsDeps {
 }
 
 /** desktop 自动备份双通道装配（P4 自 App.vue onMounted 前的 setup 段抽出，纯搬移行为不变）：
- *  deps 闭包实时读 store/adapter/localStorage，store 未就绪时 isLocked 兜底 true →
- *  decideAutoRun skip，保证锁定态/未初始化永不自动写 */
+ *  deps 闭包实时读 store/adapter/localStorage，store 未就绪时守护闭包（storeGuards）isLocked
+ *  兜底 true → decideAutoRun skip，保证锁定态/未初始化永不自动写 */
 export function createDesktopAutoChannels(deps: DesktopAutoChannelsDeps): DesktopAutoRunner {
-  function requireAdapter(): StorageAdapter {
-    const a = deps.getAdapter()
-    if (!a) throw new Error('数据尚未就绪')
-    return a
-  }
+  const guards = storeGuards(deps.getStore)
   return createDesktopAutoRunner({
-    isLocked: () => deps.getStore()?.locked.value ?? true,
-    getSecret: () => deps.getStore()?.backupSecret.value ?? null,
-    getVaultJson: () => JSON.stringify(deps.getStore()?.vault ?? null),
+    isLocked: guards.isLocked,
+    getSecret: guards.getSecret,
+    getVaultJson: guards.getVaultJson,
     backupPrefs: () => loadBackupPrefs(),
     // 云通道偏好（Task 11 接入）：与 CloudCard autoPrefs 同一读写实现（cloudAutoPrefs 键）
     cloudPrefs: () => loadCloudPrefs(),
@@ -212,10 +205,8 @@ export function createDesktopAutoChannels(deps: DesktopAutoChannelsDeps): Deskto
     doBackup: async (secret) => {
       // plan16 T14：全部启用本地源各按 retention 落盘；审查 I8：返回结构化成败结果（部分失败
       // 不推进基线）；审查 M3：vault 快照在此单次取得并随结果返回，runner 以落盘内容计基线 hash
-      const all = await loadSources(requireAdapter())
-      const vaultJson = JSON.stringify(deps.getStore()?.vault ?? null)
-      const profile = deps.getStore()?.settings.backupKdfProfile ?? 'balanced'
-      return createBackupToSources(all, vaultJson, secret, profile)
+      const all = await loadSources(requireAdapter(deps.getAdapter))
+      return createBackupToSources(all, guards.getVaultJson(), secret, kdfProfileOf(deps.getStore))
     },
     doCloudSync: () => deps.doCloudSync(),
     // core sha256Hex 接收字节：vault JSON → UTF-8 编码后摘要

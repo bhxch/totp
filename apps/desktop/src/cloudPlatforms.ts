@@ -24,6 +24,7 @@ import {
   CLOUD_AUTO_STATUS_KEY, loadCloudPrefs, persistCloudPrefs, readAutoStatusText, recordAutoStatus,
   readCloudContentHash, writeCloudContentHash,
 } from './desktopPrefs'
+import { requireAdapter } from './storeAccess'
 
 export interface CloudPlatformDeps {
   /** store 浅包装实时读取（未就绪 null → 平台方法「数据尚未就绪」中文报错） */
@@ -38,12 +39,7 @@ export interface CloudPlatformDeps {
  *  cloudSyncState 键,缺 seal 侧会把密文当明文 bag 互踩并泄漏 baseSnapshot) */
 export { createRevSeal as revSeal }
 
-/** saveSources 宿主实现共用的就绪断言(host 工厂内置 require 覆盖不到的 override 通道) */
-function requireAdapter(deps: CloudPlatformDeps): StorageAdapter {
-  const a = deps.getAdapter()
-  if (!a) throw new Error('数据尚未就绪')
-  return a
-}
+/** saveSources 宿主实现就绪断言收敛至 storeAccess(host 工厂内置 require 覆盖不到的 override 通道) */
 
 export function createCloudPlatform(deps: CloudPlatformDeps): CloudPlatform {
   return createStoreBackedCloudPlatform(
@@ -51,7 +47,7 @@ export function createCloudPlatform(deps: CloudPlatformDeps): CloudPlatform {
     () => deps.getAdapter(),
     {
       // 审查 I11：合并写入——保留并发改动中的本地源（BackupCard 通道），仅覆盖本卡提交的云源列表
-      saveSources: (list) => saveCloudSourcesPreservingLocal(requireAdapter(deps), list),
+      saveSources: (list) => saveCloudSourcesPreservingLocal(requireAdapter(deps.getAdapter), list),
       saveConflictBackup: async (bytes, sourceId) => saveConflictBackupToDir(bytes, null, sourceId),
       autoPrefs: {
         get: () => loadCloudPrefs(),
