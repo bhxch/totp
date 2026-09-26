@@ -33,23 +33,31 @@ static CLIPBOARD_STAGE: Mutex<Option<String>> = Mutex::new(None);
 /// 释放销毁档「不锁库」路径的 DEK 暂存槽（仅进程内存，不落盘）：destroy 前前端 stash，重建后前端 take 回注；锁库/退出时清除
 static STASHED_DEK: Mutex<Option<String>> = Mutex::new(None);
 
+/// CLIPBOARD_STAGE 清除判定（纯函数，四分支直测）：无暂存→false（不动剪贴板）；
+/// 读回==暂存→true（清空）；读回≠暂存（用户已复制外部内容）→false（不误清）；
+/// 读取失败→true（fail-safe，宁误清不残留种子）
+fn should_clear_clipboard(staged: Option<&str>, read: Result<&str, ()>) -> bool {
+    let Some(value) = staged else { return false };
+    match read {
+        Ok(current) => current == value,
+        Err(()) => true,
+    }
+}
+
 /// 托盘退出兜底与 clipboard_clear_if_staged 命令共用：仅当剪贴板内容仍为本应用最近一次复制的值时清空。
-/// 读取失败按 fail-safe 处理（宁误清不残留种子）；无暂存/内容已换则不动剪贴板。返回是否实际清空。
+/// 判定委托 should_clear_clipboard（读取失败按 fail-safe 处理，宁误清不残留种子）；
+/// 无暂存/内容已换则不动剪贴板。返回是否实际清空。
 fn clear_clipboard_if_staged<R: Runtime>(app: &AppHandle<R>) -> bool {
     let staged = CLIPBOARD_STAGE.lock().ok().and_then(|mut s| s.take());
     let Some(value) = staged else { return false };
-    let clipboard = app.clipboard();
-    match clipboard.read_text() {
-        Ok(current) if current == value => {
-            let _ = clipboard.write_text(String::new());
-            true
-        }
-        Ok(_) => false, // 用户已复制外部内容：保留，不误清
-        Err(_) => {
-            let _ = clipboard.write_text(String::new()); // 读回失败：fail-safe 清空
-            true
-        }
+    let clear = match app.clipboard().read_text() {
+        Ok(current) => should_clear_clipboard(Some(&value), Ok(current.as_str())),
+        Err(_) => should_clear_clipboard(Some(&value), Err(())),
+    };
+    if clear {
+        let _ = app.clipboard().write_text(String::new());
     }
+    clear
 }
 
 #[tauri::command]
@@ -68,18 +76,37 @@ fn clipboard_clear_if_staged(app: AppHandle) -> bool {
     clear_clipboard_if_staged(&app)
 }
 
+// ---- DEK 暂存槽操作（静态槽语义参数化：测试以局部 Mutex 实例直测，不触碰全局态）----
+
+/// 只进槽（stash-dek-request 事件后前端上报当前会话 DEK；仅进程内存）
+fn dek_slot_stash(slot: &Mutex<Option<String>>, dek: String) {
+    if let Ok(mut s) = slot.lock() {
+        *s = Some(dek);
+    }
+}
+
+/// 取即清（重建后前端启动期取回）；None=无暂存
+fn dek_slot_take(slot: &Mutex<Option<String>>) -> Option<String> {
+    slot.lock().ok().and_then(|mut s| s.take())
+}
+
+/// 恒清空（锁库即清口径：release_tick/destroy/托盘退出/前端 onLocked 共用）
+fn dek_slot_clear(slot: &Mutex<Option<String>>) {
+    if let Ok(mut s) = slot.lock() {
+        *s = None;
+    }
+}
+
 /// 前端在 stash-dek-request 事件后上报当前会话 DEK（base64）；只进内存槽
 #[tauri::command]
 fn stash_dek(dek: String) {
-    if let Ok(mut s) = STASHED_DEK.lock() {
-        *s = Some(dek);
-    }
+    dek_slot_stash(&STASHED_DEK, dek);
 }
 
 /// 重建后前端启动期取回暂存 DEK（取即清）；无暂存返回 null
 #[tauri::command]
 fn take_stashed_dek() -> Option<String> {
-    STASHED_DEK.lock().ok().and_then(|mut s| s.take())
+    dek_slot_take(&STASHED_DEK)
 }
 
 /// 锁库即清 DEK 暂存槽（Task 14 补口）：前端手动锁/空闲锁/系统锁走纯前端 store.lock()
@@ -88,9 +115,7 @@ fn take_stashed_dek() -> Option<String> {
 /// 与 Rust force-lock（release_tick/destroy_releasable_windows）及托盘退出的清槽口径对齐
 #[tauri::command]
 fn clear_stashed_dek() {
-    if let Ok(mut s) = STASHED_DEK.lock() {
-        *s = None;
-    }
+    dek_slot_clear(&STASHED_DEK);
 }
 
 // 桌面应用 settings.json：存于 app_data_dir（与前端 createTauriFs 的 baseDir 对齐）。
@@ -379,9 +404,7 @@ fn release_tick(app: &AppHandle) {
             if cfg.lock_on_pause {
                 let _ = app.emit("force-lock", ());
                 // 锁库即清 DEK 暂存槽（Task 14）：锁库路径绝不留跨重建的免解锁通道
-                if let Ok(mut s) = STASHED_DEK.lock() {
-                    *s = None;
-                }
+                dek_slot_clear(&STASHED_DEK);
             }
             for label in ["main", "mini"] {
                 try_suspend_window(app, label);
@@ -438,9 +461,7 @@ fn destroy_releasable_windows(app: &AppHandle, cfg: &release_policy::ReleasePoli
     if cfg.lock_on_destroy {
         let _ = app.emit("force-lock", ());
         // 锁库即清 DEK 暂存槽（Task 14）：同 release_tick Pause 分支，销毁锁库不留免解锁残留
-        if let Ok(mut s) = STASHED_DEK.lock() {
-            *s = None;
-        }
+        dek_slot_clear(&STASHED_DEK);
     } else {
         // 不锁库：给前端 1s 窗口执行 stash_dek（Task 14 的监听器），再销毁
         let _ = app.emit("stash-dek-request", ());
@@ -1491,9 +1512,7 @@ pub fn run() {
                         // 不会误清用户后续复制的外部内容；无暂存/内容已换则不动）
                         clear_clipboard_if_staged(app);
                         // 退出清 DEK 暂存槽（Task 14）：进程内存槽随退出失效，显式清空防语义歧义
-                        if let Ok(mut s) = STASHED_DEK.lock() {
-                            *s = None;
-                        }
+                        dek_slot_clear(&STASHED_DEK);
                         app.exit(0)
                     }
                     _ => {}
@@ -2078,5 +2097,40 @@ mod tests {
             ..Default::default()
         };
         assert!(ensure_devtools_port_free(&mcp_off, 9222).is_ok());
+    }
+
+    // ---- F16 剪贴板暂存清除判定（should_clear_clipboard 四分支；盘点 B5）----
+
+    #[test]
+    fn clipboard_clear_decision_four_branches() {
+        // 无暂存：不动剪贴板
+        assert!(!should_clear_clipboard(None, Ok("whatever")));
+        // 读回==暂存：清空
+        assert!(should_clear_clipboard(Some("seed"), Ok("seed")));
+        // 读回≠暂存（用户已复制外部内容）：保留不误清
+        assert!(!should_clear_clipboard(Some("seed"), Ok("external")));
+        // 读取失败：fail-safe 清空（宁误清不残留种子）
+        assert!(should_clear_clipboard(Some("seed"), Err(())));
+    }
+
+    // ---- DEK 暂存槽三命令语义（盘点 B7：stash 只进槽 / take 取即清 / clear 恒清）----
+    // 以局部 Mutex 实例直测，不触碰全局 static（并行安全）
+
+    #[test]
+    fn dek_slot_semantics_stash_take_clear() {
+        let slot: Mutex<Option<String>> = Mutex::new(None);
+        // 无暂存 take 返回 None（前端收到 null）
+        assert_eq!(dek_slot_take(&slot), None);
+        // stash 只进槽，不产生任何其他副作用
+        dek_slot_stash(&slot, "dek-base64".into());
+        assert_eq!(slot.lock().unwrap().as_deref(), Some("dek-base64"));
+        // take 取即清：第二次 take 回 None，槽不留残值（销毁重建回注通道的单次性）
+        assert_eq!(dek_slot_take(&slot), Some("dek-base64".to_string()));
+        assert_eq!(dek_slot_take(&slot), None);
+        // stash 后 clear 恒清空（锁库口径），重复 clear 幂等
+        dek_slot_stash(&slot, "again".into());
+        dek_slot_clear(&slot);
+        dek_slot_clear(&slot);
+        assert!(slot.lock().unwrap().is_none());
     }
 }
