@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { buildOtpUri, defaultDigitsFor, getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
-import { BatchPastePanel, CLIPBOARD_CLEAR_DELAY_MS, createIconStore, EntryForm, iconView, LockScreen, MdButton, MdCheckbox, MdIconButton, MdMenu, MdSegmentedButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, OtpQrDialog, parseUriToEntryData, resolvePopupVisible, SearchBar, TagFilterRow, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
+import { BatchPastePanel, createIconStore, EntryForm, iconView, LockScreen, MdButton, MdCheckbox, MdIconButton, MdMenu, MdSegmentedButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, OtpQrDialog, parseUriToEntryData, resolvePopupVisible, SearchBar, TagFilterRow, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
-import { canOffscreen, ext } from '../../src/extApi'
+import { ext } from '../../src/extApi'
 import { createExtensionCloudRunner } from '../../src/cloudRunnerFactory'
-import { createSyncScheduler } from '../../src/syncScheduler'
+import { createFollowScheduler, scheduleClipboardClear } from '../../src/optionsPlatforms'
 import { storageAdapter } from '../../src/store'
 import {
   addEntryOp, addTagOp, commitSettings, initStore, locked, registerStorageSync, removeEntryOp, settings, store, updateEntryOp, vault,
@@ -19,17 +19,15 @@ const { t } = useI18n()
 
 // ---------- 跟随拉取（跨端同步 T2）：popup 打开时/解锁时单次拉取云端更新，不轮询 ----------
 // runner 工厂与 options 共用（cloudRunnerFactory），差异仅 i18n 注入（useI18n t 的包装同签名）。
+// 调度装配（7 依赖同型 5）收敛至 optionsPlatforms.createFollowScheduler（R4，popup/options 共用），
+// popup 差异=intervalMs null 不轮询 + onAuthFailed 仅留痕。
 // 锁定态零网络：syncScheduler gate（isUnlocked && autoFollowEnabled）+ runner 内部 isLocked 守护双保险
 const cloudSync = createExtensionCloudRunner({ store, t: (key, params = {}) => t(key, params) })
-const syncFollow = createSyncScheduler({
-  isUnlocked: () => !locked.value,
-  onUnlocked: (cb) => watch(locked, (v) => { if (!v) cb() }),
+const syncFollow = createFollowScheduler(store, {
   // 跨端同步审查 C1：跟随走 pull-only 通道（下载后远端 hash 基线去重，零上传零副本）；
   // 旧实现走全量推拉 run()，本地零变化也每次打开重写云端（密文随机 IV 恒判本地较新）
   runPull: () => cloudSync.run('pull'),
-  autoFollowEnabled: () => settings.syncPrefs.autoFollow !== false, // T3 开关（设置页通用卡）
   intervalMs: () => null, // popup 不轮询
-  onError: (e) => console.warn('[syncFollow]', e),
   // T4：popup 无常驻 UI 通道，仅留痕（scheduler 内部已置位停动作资格）；options 经 SyncCard 渲染警示
   onAuthFailed: () => console.warn('[syncFollow] 云凭据失效（401/403），自动跟随已暂停'),
 })
@@ -173,7 +171,7 @@ async function contextCopyUri(entry: OtpEntry) {
       secret: entry.secret.replace(/\s+/g, ''), algorithm: entry.algorithm,
       digits: entry.digits, period: entry.period, counter: entry.counter, pin: entry.pin,
     }))
-    scheduleClipboardClear()
+    scheduleClipboardClear(settings)
     copied.value = true
   } catch {
     /* 剪贴板不可用时静默 */
@@ -312,15 +310,6 @@ function askRemove(uuid: string) {
   confirmTimer = setTimeout(() => (confirmingDelete.value = null), 3000)
 }
 
-/**
- * 30s 清剪贴板：popup 复制后即将关闭，本地定时器随窗口销毁不可靠——
- * Chromium（有 offscreen API）交由 background(alarms+offscreen) 承载；Firefox 无 offscreen 降级不调度
- */
-function scheduleClipboardClear(): void {
-  if (!settings.clipboardClearEnabled) return
-  if (!canOffscreen()) return
-  void ext!.runtime.sendMessage({ type: 'schedule-clipboard-clear', delayMs: CLIPBOARD_CLEAR_DELAY_MS }).catch(() => {})
-}
 const copied = ref(false) // 「已复制」横幅显隐
 const copyFailed = ref(false) // 复制失败横幅（真机发现：剪贴板被第三方进程独占时 writeText 拒绝，原实现静默无提示）
 let closeTimer: ReturnType<typeof setTimeout> | null = null
@@ -342,7 +331,7 @@ async function copy(entry: OtpEntry) {
     return
   }
   copyFailed.value = false
-  scheduleClipboardClear()
+  scheduleClipboardClear(settings)
   // HOTP：复制的是旧 counter 的码（RFC 语义），复制完成后再递增
   if (entry.type === 'hotp') await updateEntryOp(entry.uuid, { counter: (entry.counter ?? 0) + 1 })
   // 「已复制」反馈：横幅提示后按 popupCloseDelayMs 延迟关闭（简单实现：不重置，到点关闭）

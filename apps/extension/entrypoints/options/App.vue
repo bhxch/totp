@@ -1,17 +1,17 @@
 <script setup lang="ts">
-import { backupFileName, base64ToBytes, createAutoRunScheduler, createBackupEnvelope, loadDeviceId, loadSyncState, normalizeSchemes, openBackupEnvelope, OVERWRITE_NAME, randomBytes, saveSyncState, SCHEMES_KEY, type BackupEnvelope, type ImportScheme, type Retention, type Vault } from '@totp/core'
-import { CLIPBOARD_CLEAR_DELAY_MS, createAppI18n, createIconStore, createPrfCredential, LockScreen, NavigationShell, prfSupported, useTheme, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform, type SyncPlatform } from '@totp/ui'
-import { computed, getCurrentInstance, onMounted, onUnmounted, ref, watch } from 'vue'
-import { createExtensionCloudRunner, revSeal } from '../../src/cloudRunnerFactory'
-import { formatAutoStatusText, hasLegacyCloudKeys, loadSourcesImpl, migrateLegacySources, saveSourcesImpl } from '../../src/cloudCredStore'
+import { createAutoRunScheduler } from '@totp/core'
+import { createAppI18n, createIconStore, LockScreen, NavigationShell, useTheme } from '@totp/ui'
+import { getCurrentInstance, onMounted, onUnmounted, ref, watch } from 'vue'
+import { createExtensionCloudRunner } from '../../src/cloudRunnerFactory'
+import { hasLegacyCloudKeys, migrateLegacySources } from '../../src/cloudCredStore'
 import { setConflictBadge } from '../../src/conflictBadge'
-import { addConflictCopy, exportConflictCopy, listConflictCopies } from '../../src/conflictCopies'
-import { createSyncScheduler } from '../../src/syncScheduler'
-import { createDekSession } from '../../src/dekSession'
+import {
+  createCloudAutoPrefsChannel, createFollowScheduler, createOptionsBackupPlatform, createOptionsCloudPlatform,
+  createOptionsSchemesApi, createOptionsSecurityPlatform, createOptionsSyncPlatform, scheduleClipboardClear,
+} from '../../src/optionsPlatforms'
 import { createIdleLockWatcher } from '../../src/lockEnforcer'
+import { createDekSession } from '../../src/dekSession'
 import { createExtensionStore, storageAdapter } from '../../src/store'
-import { markSyncOff, SYNC_STATUS_KEY } from '../../src/syncEngine'
-import { canOffscreen, ext } from '../../src/extApi'
 
 // spec §7 末尾：options 窗口独立解锁——windowId='options' 与 popup 隔离，各持各的 DEK。
 // plan16 T12：dekPersist 接 ext.storage.session——解锁态 DEK 入会话存储，popup 经共享
@@ -28,34 +28,14 @@ const store = createExtensionStore('options', {
 const i18n = createAppI18n(store)
 getCurrentInstance()?.appContext.app.use(i18n)
 /** 壳层翻译（i18n.global.t 包装：overload 直赋 TranslateFn 不兼容，同 runner deps.t 既有包装口径；
- *  cloudCredStore 纯函数与 recordStatus 分隔符共用） */
+ *  平台装配与状态格式化共用） */
 const tr = (key: string, params: Record<string, unknown> = {}): string => i18n.global.t(key, params)
-const {
-  vault, initStore, registerStorageSync,
-  locked, hasEncryption, unlock, lock, enableEncryption, disableEncryption, changePassphrase,
-  prfSources, addPrfSourceOp, removePrfSourceOp, replaceAllOp, settings,
-} = store
-const commitSettings = store.commitSettings
+const { initStore, registerStorageSync, locked, hasEncryption, settings } = store
 
 const icons = createIconStore(storageAdapter)
 
-/**
- * 导入映射方案存取：直读写 storageAdapter 的 SCHEMES_KEY（跨端随 storage 同步）。
- * load 容错：坏 JSON/读失败 → 空表（core normalizeSchemes 兜底解析）。
- */
-const schemesApi: ImportSchemesApi = {
-  async load(): Promise<ImportScheme[]> {
-    try {
-      const raw = await storageAdapter.get(SCHEMES_KEY)
-      return raw ? normalizeSchemes(JSON.parse(raw)) : []
-    } catch {
-      return []
-    }
-  },
-  async save(list: ImportScheme[]): Promise<void> {
-    await storageAdapter.set(SCHEMES_KEY, JSON.stringify(list))
-  },
-}
+/** 导入映射方案存取（坏 JSON → 空表容错；R4 抽 optionsPlatforms 可脱离组件单测） */
+const schemesApi = createOptionsSchemesApi()
 
 const loadError = ref('')
 /** plan16 T13 迁移提示：本次挂载/解锁迁移了 N 个旧云目标时显示（幂等重跑=0 不再提示） */
@@ -94,7 +74,7 @@ onMounted(async () => {
     // 旧数据迁移（plan16 T13）：initStore 已含会话 DEK 自动恢复，解锁态在此直接跑（幂等）
     await runLegacyMigrations()
     // 自动云同步（页面存活期，勘误 §4.1）：读偏好填充缓存后启动调度器；initStore 失败（页面不可用）则不启动
-    await refreshCloudAutoPrefs()
+    await autoPrefs.refresh()
     scheduler.start()
     // 跟随拉取调度（跨端同步 T2）：解锁边沿 + 3min 轮询，gate 内查锁定态
     followScheduler.start()
@@ -124,292 +104,24 @@ onUnmounted(() => {
   lockWatcher.stop()
 })
 
-/**
- * 30s 清剪贴板：统一走 background(alarms+offscreen) 承载（与 popup 一致，重复复制由同名 alarm 覆盖重置）；
- * Firefox 无 offscreen API 降级不调度
- */
-function scheduleClipboardClear(): void {
-  if (!settings.clipboardClearEnabled) return
-  if (!canOffscreen()) return
-  void ext!.runtime.sendMessage({ type: 'schedule-clipboard-clear', delayMs: CLIPBOARD_CLEAR_DELAY_MS }).catch(() => {})
-}
-
 async function copyToClipboard(code: string) {
   await navigator.clipboard.writeText(code)
-  scheduleClipboardClear()
+  scheduleClipboardClear(settings)
 }
 
-// ---------- 备份平台实现 ----------
-// 文件命名偏好存扩展页 localStorage（非同步内容）：keep=时间戳文件名下载；overwrite=固定名下载。
-// 【只读兼容化石】无设置入口（T9 后 BackupCard 已无模式切换，本地源归 desktop；扩展端全仓无写入方，
-// 仅老版本用户的 localStorage 残留值仍生效）；且残留值中仅 overwrite 影响下载名（keep 分支的 n
-// 在 createBackup 恒走时间戳名，实际不被消费），保留读取只为不丢 overwrite 兼容
-const BACKUP_MODE_KEY = 'backupMode'
-const BACKUP_KEEP_N_KEY = 'backupKeepN'
-const DEFAULT_KEEP_N = 3
+// ---------- 平台装配（R4 抽 optionsPlatforms；App.vue 留生命周期接线）----------
 
-function loadBackupMode(): Retention {
-  try {
-    if (localStorage.getItem(BACKUP_MODE_KEY) === 'overwrite') return { type: 'overwrite' }
-    const n = Number(localStorage.getItem(BACKUP_KEEP_N_KEY))
-    return { type: 'keep', n: Number.isInteger(n) && n >= 1 ? n : DEFAULT_KEEP_N }
-  } catch {
-    return { type: 'keep', n: DEFAULT_KEEP_N }
-  }
-}
+/** 安全平台：security/剪贴板/锁定策略由 ui host createSecurityOpsFromStore 绑 store 承载；
+ *  extension 差异=popup 关窗延迟 + lockOnRestart 不支持（见 optionsPlatforms 注释） */
+const securityPlatform = createOptionsSecurityPlatform(store)
+/** 浏览器同步平台（extension 独有：开关持久化 + sync:status 状态读取） */
+const syncPlatform = createOptionsSyncPlatform(store)
+/** 备份平台（extension 独有：Blob 下载 + 文件选择 + KDF 档位） */
+const backupPlatform = createOptionsBackupPlatform(store, tr)
+/** 自动云偏好通道（storage.local 异步 → 进程内缓存；cloudPlatform 与 scheduler 同源读） */
+const autoPrefs = createCloudAutoPrefsChannel(storageAdapter)
 
-const backupMode = ref<Retention>(loadBackupMode())
-
-function downloadEnvelope(envelope: BackupEnvelope, name: string): void {
-  const blob = new Blob([JSON.stringify(envelope, null, 2)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = name
-  a.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
-
-/**
- * 动态 input[type=file] 选择文件（accept 指定扩展名过滤）。
- * 取消：input cancel 事件（Chromium 113+）→ null；旧内核无 cancel 事件会永挂起 → 30s 超时 reject「文件选择超时」兜底
- * （选超时而非 window focus 监听：系统文件选择器的焦点恢复语义跨内核不一致，超时是无条件、最简可靠的兜底）。
- * input 挂到 body（部分内核 detached input 不触发文件框），结算后移除。
- */
-function pickFile(accept: string): Promise<File | null> {
-  return new Promise((resolve, reject) => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = accept
-    let settled = false
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const finish = (f: File | null) => {
-      if (settled) return
-      settled = true
-      if (timer) clearTimeout(timer)
-      input.remove()
-      resolve(f)
-    }
-    timer = setTimeout(() => {
-      if (settled) return
-      settled = true
-      input.remove()
-      reject(new Error('文件选择超时'))
-    }, 30_000)
-    input.onchange = () => finish(input.files?.[0] ?? null)
-    input.oncancel = () => finish(null)
-    document.body.appendChild(input)
-    input.click()
-  })
-}
-
-const pickBackupFile = (): Promise<File | null> => pickFile('.totpbackup')
-
-// R11/R16⑪：导入扩展名单一派生来源（此前两处内联 accept 字面量，同集合不同排序）。
-// 文本组+二进制组两段与 Rust 侧 apps/desktop/src-tauri/src/dialog_grants.rs 的
-// IMPORT_TEXT_EXTENSIONS/IMPORT_BINARY_EXTENSIONS 一一对应，由该文件测试模块的镜像断言
-// （include_str! 提取本文件同名常量）锁定集合一致，防三端漂移
-const IMPORT_TEXT_EXTENSIONS = ['.json', '.jsonl', '.wauth', '.xml', '.txt', '.aegis'] as const
-const IMPORT_BINARY_EXTENSIONS = ['.db', '.sqlitedb', '.sqlite', '.zip'] as const
-const IMPORT_ACCEPT = [...IMPORT_TEXT_EXTENSIONS, ...IMPORT_BINARY_EXTENSIONS].join(',')
-
-// 最后一次导入选择的 File（模块级缓存）：SQLite 字节入口复用，避免同一文件二次弹窗
-let lastImportFile: File | null = null
-
-/** 安全平台：security 闭包绑 store；剪贴板/弹窗延迟走 settings+commitSettings（extension 有 popup，提供 popupCloseDelayMs）；
- *  passkey(PRF)：WebAuthn 交互（创建/求值）经 ui prf.ts，绑定落盘走 store 的 prf 源 op。
- *  plan16 T11 审查四项：changePassphrase opts 透传（漏接=档位切换误触发全库轮换）、kdfProfile、
- *  passwordChangedAt、lockPrefs——.vue 无 typecheck 对 platform 成员的覆盖，漏接无编译信号，全量接线。 */
-const securityPlatform: SecurityPlatform = {
-  security: {
-    locked,
-    hasEncryption,
-    enableEncryption: (pw) => enableEncryption(pw),
-    disableEncryption: () => disableEncryption(),
-    changePassphrase: (pw, opts) => changePassphrase(pw, opts),
-    kdfProfile: computed(() => store.securitySettings.value?.profile ?? 'balanced'),
-    passwordChangedAt: computed(() => store.securitySettings.value?.passwordChangedAt ?? null),
-    passkey: {
-      sources: computed(() => prfSources.value.map((p) => ({ credentialId: p.credentialId }))),
-      prfSupported: () => prfSupported(),
-      async add() {
-        // 绑定盐：注册期 create 与权威 get 均以该盐求值，解锁期用同一盐复现（同认证器+同盐→同输出）
-        const salt = randomBytes(32)
-        const created = await createPrfCredential('TOTP 验证码工具', salt, {
-          excludeCredentialIds: prfSources.value.map((p) => p.credentialId),
-        })
-        if (!created) return false
-        await addPrfSourceOp(created.credentialId, created.prfOutput, salt)
-        return true
-      },
-      remove: (credentialId) => removePrfSourceOp(credentialId),
-    },
-  },
-  clipboardClearEnabled: computed(() => settings.clipboardClearEnabled),
-  async setClipboardClear(v) {
-    settings.clipboardClearEnabled = v
-    await commitSettings()
-  },
-  popupCloseDelayMs: computed(() => settings.popupCloseDelayMs),
-  async setPopupCloseDelay(ms) {
-    settings.popupCloseDelayMs = ms
-    await commitSettings()
-  },
-  // 锁定策略（plan16 T11）：三字段整体覆写进 settings 后持久化（core loadSettings 已归一化）。
-  // 审查 Minor：lockOnRestart 在 ext 无效果（DEK 存 ext.storage.session，浏览器退出必清，
-  // 两取值行为一致）——显式声明不支持，SecurityCard 隐藏「重启后保持锁定」控件防无效设置
-  lockPrefs: {
-    get: () => ({ lockOnRestart: settings.lockOnRestart, lockIdleMinutes: settings.lockIdleMinutes, lockOnSystemLock: settings.lockOnSystemLock }),
-    set: (p) => {
-      Object.assign(settings, p)
-      void commitSettings()
-    },
-    unsupported: ['lockOnRestart'],
-  },
-}
-
-/**
- * 浏览器同步平台：开关经 settings+commitSettings 持久化（写路径由 store 统一调度推送）；
- * 关闭时直写 local 区 sync:status='off'（engine 导出的 markSyncOff，免 background 往返）；
- * 状态读取直查 local 区 sync:status，形状不符/读取失败按无状态处理。
- */
-const syncPlatform: SyncPlatform = {
-  get syncEnabled() { return settings.syncEnabled },
-  // 明文同步警示：SyncCard 据此在「开关开启且未启用加密」时提示（hasEncryption 直接暴露 ComputedRef<boolean>）
-  hasEncryption,
-  async setSyncEnabled(v) {
-    settings.syncEnabled = v
-    await commitSettings()
-    if (!v) {
-      await markSyncOff().catch(() => {})
-      return
-    }
-    // 开启同步：主动调度一次拉取（开启开关只写 local settings，不触发 background 的 onChanged('sync')；
-    // 缺这次拉取，新设备开启后若不写盘将永不应用远端较新数据）。SW 未就绪/上下文失效时忽略。
-    try {
-      void ext!.runtime.sendMessage({ type: 'sync-pull' }).catch(() => {})
-    } catch { /* 扩展上下文失效（重载中）：忽略 */ }
-  },
-  async readStatus() {
-    try {
-      const raw = (await ext!.storage.local.get(SYNC_STATUS_KEY))[SYNC_STATUS_KEY]
-      if (typeof raw !== 'object' || raw === null) return null
-      const s = raw as { state?: unknown; at?: unknown }
-      return typeof s.state === 'string' && typeof s.at === 'number' ? { state: s.state, at: s.at } : null
-    } catch {
-      return null
-    }
-  },
-  canSync: !!ext?.storage.sync,
-}
-
-const backupPlatform: BackupPlatform = {
-  async createBackup(vaultJson, password) {
-    // plan16 T11.5：本地备份 envelope 按备份设置所选 KDF 档位生成（默认 balanced 兜底旧设置）
-    const envelope = await createBackupEnvelope(vaultJson, password, settings.backupKdfProfile)
-    const overwrite = backupMode.value.type === 'overwrite'
-    const name = overwrite ? OVERWRITE_NAME : backupFileName(new Date())
-    downloadEnvelope(envelope, name)
-    // T9 后 BackupCard 直接展示宿主摘要：返回记录时语言文案（含文件名，诚实反映导出结果；D2 i18n）
-    return overwrite
-      ? i18n.global.t('options.exportedOverwrite', { name })
-      : i18n.global.t('options.exported', { name })
-  },
-  async restoreFromPicker(password) {
-    const file = await pickBackupFile()
-    if (!file) return null
-    return { json: await openBackupEnvelope(JSON.parse(await file.text()), password) }
-  },
-  replaceAllOp: (v) => replaceAllOp(v),
-  // 导入：浏览器 input file 读取文本；无 DPAPI 能力，WinAuth DPAPI 条目由 core 逐条 failure「请用桌面版」
-  async readImportFile() {
-    const file = await pickFile(IMPORT_ACCEPT)
-    if (!file) return null
-    lastImportFile = file
-    return { text: await file.text(), name: file.name }
-  },
-  // SQLite 字节入口：文本管道会损坏二进制，复用最近一次选择的文件（File.arrayBuffer 原生读字节）；
-  // 无最近选择时补弹选择器
-  async readImportFileBytes() {
-    const file = lastImportFile ?? (await pickFile(IMPORT_ACCEPT))
-    if (!file) return null
-    lastImportFile = file
-    return { bytes: new Uint8Array(await file.arrayBuffer()), name: file.name }
-  },
-  // 备份加密强度档位（plan16 T11.5）：settings 持久化（跨端随设置同步；extension 无本地源，仅影响 envelope 生成）
-  backupKdfProfile: {
-    get: () => settings.backupKdfProfile,
-    set: (p) => {
-      settings.backupKdfProfile = p
-      void commitSettings()
-    },
-  },
-  // 文本导出（批① §2.3）：otpauth 文本/Aegis JSON 走 Blob 下载（downloadEnvelope 同款 a[download] 通道）；浏览器下载无「取消」回执，恒 true
-  async saveTextFile(name, content) {
-    const url = URL.createObjectURL(new Blob([content], { type: 'application/octet-stream' }))
-    const a = document.createElement('a')
-    a.href = url
-    a.download = name
-    a.click()
-    setTimeout(() => URL.revokeObjectURL(url), 10_000)
-    return true
-  },
-  // 图片导出（批① §2.5 多选二维码拼版 PNG）：dataUrl 解 base64 → Blob 走同一 a[download] 通道；无「取消」回执，恒 true
-  async saveImageFile(name, dataUrl) {
-    const bytes = base64ToBytes(dataUrl.slice(dataUrl.indexOf(',') + 1))
-    const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'image/png' }))
-    const a = document.createElement('a')
-    a.href = url
-    a.download = name
-    a.click()
-    setTimeout(() => URL.revokeObjectURL(url), 10_000)
-    return true
-  },
-}
-
-/**
- * 云同步平台实现（plan16 T13 源化口径）：源元数据明文存 backupSources 键（core loadSources/saveSources
- * 包装）；凭据是秘密存 DEK 保管区（store.saveSourceCredOp/removeSourceCredOp，解锁态限定，未解锁中文报错）；
- * rev 基线按源 id 存 cloudSyncState（core loadSyncState/saveSyncState）。旧 cloudCreds/cloudCred/cloudRevs/cloudRev
- * 四键由 migrateLegacySources 一次性迁移（见 runLegacyMigrations）。冲突副本入 conflictCopies 列表
- * （storage.local，导出仅 UI 显式触发）；采用云端数据经 replaceAllOp 整体替换。
- */
-
-// ---------- 自动云同步偏好（cloudAutoPrefs 键，storage.local 异步读写）----------
-const CLOUD_AUTO_PREFS_KEY = 'cloudAutoPrefs'
-const DEFAULT_CLOUD_AUTO_PREFS: CloudAutoPrefs = { onChange: false, onInterval: false, intervalMinutes: 60 }
-
-/** 归一化（与 desktop loadCloudPrefs 同口径）：缺失位 false；间隔非法/<15 回退 60（匹配调度器 30s tick 粒度） */
-function normalizeCloudAutoPrefs(parsed: unknown): CloudAutoPrefs {
-  const p = (parsed ?? {}) as Partial<CloudAutoPrefs>
-  const minutes = Number(p.intervalMinutes)
-  return {
-    onChange: p.onChange === true,
-    onInterval: p.onInterval === true,
-    intervalMinutes: Number.isInteger(minutes) && minutes >= 15 ? minutes : DEFAULT_CLOUD_AUTO_PREFS.intervalMinutes,
-  }
-}
-
-/** 偏好进程内缓存：storage.local 异步读进不了同步 get()/intervalMs 回调——挂载时读一次、
- *  set 时双写；页面打开期间他端/跨页对 storage 的直改需待下次挂载才可见（容忍滞后，已知边界） */
-let cloudAutoPrefs: CloudAutoPrefs = { ...DEFAULT_CLOUD_AUTO_PREFS }
-
-async function refreshCloudAutoPrefs(): Promise<void> {
-  try {
-    const raw = await storageAdapter.get(CLOUD_AUTO_PREFS_KEY)
-    if (raw) cloudAutoPrefs = normalizeCloudAutoPrefs(JSON.parse(raw))
-  } catch { /* 坏 JSON/读取失败保持缓存现值 */ }
-}
-
-async function persistCloudAutoPrefs(p: CloudAutoPrefs): Promise<void> {
-  cloudAutoPrefs = p // 先更缓存再异步落盘：guard/intervalMs 立即按新值生效
-  await storageAdapter.set(CLOUD_AUTO_PREFS_KEY, JSON.stringify(p))
-}
-
-/** 存活期自动云同步 runner（D6，ui 共享实现，与 desktop 同一编排；plan16 T13 源口径）。
- *  跨端同步 T2：装配代码抽至 cloudRunnerFactory（popup/options 共用），差异仅 i18n t 注入；
- *  loadSources 装配「启用云源 × 保管区凭据」对（无凭据的源跳过——锁定态 credsCache 为空自然全跳过）；
- *  GDrive 首推凭据回存由 CloudCard 手动通道持有 */
+/** 存活期自动云同步 runner（D6，host 共享编排；extension 差异注入见 cloudRunnerFactory） */
 const cloudSync = createExtensionCloudRunner({ store, t: tr })
 
 /** 云凭据失效标志（跨端同步 T4）：followScheduler 经 onAuthFailed 置位 → SyncCard 重授权警示；
@@ -418,16 +130,11 @@ const cloudAuthFailed = ref(false)
 
 /** 跟随拉取调度（跨端同步 T2）：解锁边沿 + 3min 轮询，经 syncScheduler gate（锁定态零网络）。
  *  与既有 cloudAutoPrefs 的 change/interval 通道相互独立（autoFollow 是跟随拉取的开关，勿混）；
- *  gate 每次触发现读 settings（响应式），开关关闭后即时静默。T9：跟随走 pull-only 只读形态
- *  run('pull')——syncWithCloudRev preview 判定，downloaded/merged 只采纳落盘不写云（零上传零副本），
- *  本地内容不变也能拉到云端更新。intervalMs 仅 start 读取一次，开关/间隔变更由下方 watch stop+start 重建 */
-const followScheduler = createSyncScheduler({
-  isUnlocked: () => !locked.value,
-  onUnlocked: (cb) => watch(locked, (v) => { if (!v) cb() }),
+ *  T9：跟随走 pull-only 只读形态 run('pull')——syncWithCloudRev preview 判定，downloaded/merged
+ *  只采纳落盘不写云（零上传零副本），本地内容不变也能拉到云端更新 */
+const followScheduler = createFollowScheduler(store, {
   runPull: () => cloudSync.run('pull'),
-  autoFollowEnabled: () => settings.syncPrefs.autoFollow !== false,
   intervalMs: () => (settings.syncPrefs.autoFollow ? 180_000 : null),
-  onError: (e) => console.warn('[syncFollow]', e),
   // T4：凭据失效（401/403）→ 停轮询 + SyncCard 重授权警示（恢复闭环：手动同步成功 onManualSynced → resume()）
   onAuthFailed: () => { cloudAuthFailed.value = true },
 })
@@ -445,10 +152,11 @@ watch(() => settings.syncPrefs.autoFollow, () => {
  *  guard 按 reason 双开关过滤；开关与间隔读进程内缓存（异步读进不了同步回调，滞后见上注释） */
 const scheduler = createAutoRunScheduler({
   debounceMs: 10_000,
-  intervalMs: () => (cloudAutoPrefs.onInterval ? cloudAutoPrefs.intervalMinutes * 60_000 : null),
+  intervalMs: () => (autoPrefs.get().onInterval ? autoPrefs.get().intervalMinutes * 60_000 : null),
   run: async (reason) => {
-    if (reason === 'change' && !cloudAutoPrefs.onChange) return
-    if (reason === 'interval' && !cloudAutoPrefs.onInterval) return
+    const p = autoPrefs.get()
+    if (reason === 'change' && !p.onChange) return
+    if (reason === 'interval' && !p.onInterval) return
     await cloudSync.run()
   },
 })
@@ -466,50 +174,19 @@ const lockWatcher = createIdleLockWatcher({
   onError: (e) => console.warn('[lockWatcher]', e),
 })
 
-const cloudPlatform: CloudPlatform = {
-  // ---- 源模型成员（plan16 T13）----
-  loadSources: () => loadSourcesImpl(storageAdapter),
-  saveSources: (list) => saveSourcesImpl(storageAdapter, list),
-  saveCred: (id, cred) => store.saveSourceCredOp(id, cred),
-  removeCred: (id) => store.removeSourceCredOp(id),
-  // getter 形态：CloudCard 渲染/回调按 id 动态读取（p.creds[id]），锁定清空/解锁装载/保存后即时可见
-  get creds() { return store.credsCache.value },
-  readVaultJson: () => JSON.stringify(store.vault),
-  async persistDownloaded(json) {
-    await replaceAllOp(JSON.parse(json) as Vault)
-  },
-  // 冲突副本入 storage.local 列表（spec §4，限 5 份滚动删）：不自动触发浏览器下载，
-  // 导出仅由 UI 显式调用 exportConflictCopy；sourceId 仅用于副本命名区分来源
-  saveConflictBackup: (bytes, sourceId) => addConflictCopy(storageAdapter, bytes, sourceId),
-  // T11 冲突区块：副本元数据列表 + 手动导出（唯一下载出口；desktop 无此二能力=不渲染副本区）
-  listConflictCopies: async () => (await listConflictCopies(storageAdapter)).map((c) => ({ name: c.name, at: c.at })),
-  exportConflictCopy: (name) => exportConflictCopy(storageAdapter, name),
-  // rev 基线（spec §1.2）+ DEK seal 静态保护：与 runner 通道共用同一 revSeal（共享 cloudSyncState
-  // 键——手动/自动两侧读写形态必须一致，缺 seal 侧会把密文当明文 bag 互踩并泄漏 baseSnapshot）
-  loadSourceState: (id) => loadSyncState(storageAdapter, id, revSeal(store)),
-  saveSourceState: (id, st) => saveSyncState(storageAdapter, id, st, revSeal(store)),
-  deviceId: () => loadDeviceId(storageAdapter),
-  kdfProfile: () => settings.backupKdfProfile,
-  autoPrefs: {
-    get: () => cloudAutoPrefs,
-    set: (p) => persistCloudAutoPrefs(p),
-  },
-  loadAutoStatus: async () => {
-    try {
-      // cloudAutoStatus 键原文 → 三态格式化纯函数（单测覆盖；审查 Minor-2 抽出）。
-      // D2 R1：标签/分隔符展示时取词（cloudAuto.status*），summary 原文为记录时翻译不回填
-      return formatAutoStatusText(await storageAdapter.get('cloudAutoStatus'), tr)
-    } catch {
-      return null
-    }
-  },
+/** 云同步平台（host 共享装配 + extension 差异；onManualSynced 闭包引用其后声明的
+ *  followScheduler/cloudAuthFailed——回调仅发生于挂载后异步时点，无 TDZ 问题） */
+const cloudPlatform = createOptionsCloudPlatform({
+  store,
+  t: tr,
+  autoPrefs,
   // 审查 I1 恢复闭环：CloudCard 手动同步全部目标成功后回调——复位云凭据失效警示并重启跟随轮询
   // （用户重新授权 + 手动同步成功即闭环，无需重开 options 页）。回调内同步调用，宿主自兜错
   onManualSynced: () => {
     followScheduler.resume()
     cloudAuthFailed.value = followScheduler.authFailed()
   },
-}
+})
 </script>
 
 <template>
