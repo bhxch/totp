@@ -2,12 +2,13 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { OtpListItem, createClipboardClearer, createIconStore, iconView, useOtpCodes, useTheme, type IconStore, type VueStore } from '@totp/ui'
+import { OtpListItem, createIconStore, iconView, useOtpCodes, useTheme, type IconStore, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createTauriFs } from './tauriFs'
 import { bootDesktopStore, useDesktopI18n } from './desktopShell'
 import { createCopyAutoHide } from './miniAutoHide'
 import { sortMiniEntries } from './miniSort'
+import { createDesktopCopy } from './desktopCopy'
 
 // store 浅包装（T14 审查根修，与 App.vue 同款）：深 ref 会对嵌套 ref/computed 成员自动解包，
 // 模板 `store.locked` 的布尔判断在深 ref 下靠「解包后恰为 boolean」侥幸正确，shallowRef 下
@@ -75,18 +76,16 @@ onScopeDispose(() => {
 const sorted = computed(() => (store.value ? sortMiniEntries(store.value.vault.entries) : []))
 const { codes } = useOtpCodes(sorted)
 
-/** 30s 清剪贴板：settings.clipboardClearEnabled 开启时复制后定时清空（重复复制重置计时；setup 作用域销毁自动 dispose；store 未就绪时读不到开关视为关闭）。
- *  F16：清除经 Rust clipboard_clear_if_staged 读回比对（仍为本应用复制内容才清空），dispose 欠清除补清、失败重试上报 */
-const clearer = createClipboardClearer(
-  () => store.value?.settings.clipboardClearEnabled === true,
-  () => invoke('clipboard_clear_if_staged').then(() => {}),
-)
+/** 复制编排统一走 createDesktopCopy（R13，与主窗同一事实源）：stage 成功武装 30s 清空、失败横幅
+ *  3s 自动复位（修复：mini 原横幅不复位，行为已与 desktopCopy 漂移，以 desktopCopy 为准） */
+const { copyFailed, copyToClipboard } = createDesktopCopy({
+  isEnabled: () => store.value?.settings.clipboardClearEnabled === true,
+  stage: (value) => invoke('stage_clipboard_write', { value }).then(() => {}),
+  clearIfStaged: () => invoke('clipboard_clear_if_staged').then(() => {}),
+})
 
 /** 复制后 500ms 自动隐藏控制器（审查 I-1 武装竞态守卫）：纯逻辑抽至 miniAutoHide.ts 便于单测覆盖取消时序 */
 const autoHide = createCopyAutoHide(500, () => { void getCurrentWindow().hide() })
-
-/** 复制失败提示（真机发现：剪贴板被第三方进程独占时 stage 命令拒绝，原实现静默无提示） */
-const copyFailed = ref(false)
 
 async function copy(entry: { uuid: string; type?: string; counter?: number }) {
   // I-1：copy 开始即快照揭示代次——若双击（递增代次）落在下方 await 期间，
@@ -94,23 +93,18 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
   const generation = autoHide.beginCopy()
   const code = codes.value.get(entry.uuid)?.code
   if (!code) return
-  // F16：复制经 Rust stage 命令登记暂存值（退出兜底比对的事实源）
-  try {
-    await invoke('stage_clipboard_write', { value: code })
-  } catch {
-    // 复制失败：提示并保持窗口可见（不武装自动隐藏）；码未复制成功，HOTP 不推进 counter
-    copyFailed.value = true
-    return
-  }
-  copyFailed.value = false
+  // onStaged 扩展点（mini 通道特定收尾，stage 成功才调用）：
   // C14：HOTP 复制的是旧 counter 的码（RFC 语义），复制完成后再递增；TOTP 不动 counter。
   // mini 锁定时模板不渲染条目（见 template v-if="store && locked" 分支），故此处 store 必已解锁；
   // updateEntryOp 在 locked 态会抛错，捕获避免在某些边界场景把窗口隐藏打断
-  if (entry.type === 'hotp') {
-    try { await store.value?.updateEntryOp(entry.uuid, { counter: (entry.counter ?? 0) + 1 }) } catch { /* mini 降级不打扰 */ }
-  }
-  clearer.notifyCopied()
-  autoHide.completeCopy(generation)
+  await copyToClipboard(code, {
+    onStaged: async () => {
+      if (entry.type === 'hotp') {
+        try { await store.value?.updateEntryOp(entry.uuid, { counter: (entry.counter ?? 0) + 1 }) } catch { /* mini 降级不打扰 */ }
+      }
+      autoHide.completeCopy(generation)
+    },
+  })
 }
 </script>
 
