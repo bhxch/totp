@@ -50,12 +50,9 @@ beforeEach(() => {
 
 async function mountApp() {
   const wrapper = mount(App, {
-    // McpConsentDialog 经 global.components 显式注册（测试编译下 App.vue 模板对该组件的
-    // setup 绑定解析不到，Vue 退化为原生元素；生产构建不受影响）
-    global: {
-      components: { McpConsentDialog },
-      stubs: { NavigationShell: NavStub, LockScreen: LockScreenStub },
-    },
+    // McpConsentDialog 不注册不桩：验证 App.vue 模板经 script setup 绑定真实解析组件
+    // （回归守护——若导入丢失，此处退化为未知元素，审批对话框联动用例即失败）
+    global: { stubs: { NavigationShell: NavStub, LockScreen: LockScreenStub } },
   })
   await flushPromises()
   return wrapper

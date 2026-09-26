@@ -8,6 +8,7 @@ import { createDesktopAutoChannels } from './autoBackup'
 import { createBackupPlatform, createImportSchemesApi } from './backupPlatform'
 import { createCloudPlatform, createDesktopCloudSync } from './cloudPlatforms'
 import { createDesktopCopy } from './desktopCopy'
+import McpConsentDialog from './McpConsentDialog.vue'
 import {
   createDesktopApprovalQueue, createDesktopMcpDeps, createDesktopShell, createDevtoolsPlatform, createLegacyMigrations,
   createMcpConsentFlow, createMcpPlatform, createReleasePlatform,
