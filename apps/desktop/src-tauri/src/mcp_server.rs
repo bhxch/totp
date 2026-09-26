@@ -118,8 +118,8 @@ pub fn save_mcp_config_inner(
         "mcp".into(),
         serde_json::to_value(cfg).map_err(|e| e.to_string())?,
     );
-    // 原子写（审查 I-5）：lib.rs 的 write_text_atomic 临时文件+rename 通道，崩溃中途不损坏 settings.json
-    crate::write_text_atomic(
+    // 原子写（审查 I-5）：settings_io.rs 的 write_text_atomic 临时文件+rename 通道，崩溃中途不损坏 settings.json
+    crate::settings_io::write_text_atomic(
         settings_file,
         &serde_json::to_string_pretty(&obj).map_err(|e| e.to_string())?,
     )
