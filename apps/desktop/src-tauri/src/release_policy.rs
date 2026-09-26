@@ -2,9 +2,10 @@
 //! 配置存 settings.json `releasePolicy` 键（Rust 轨，合并写保留外来键）；分钟数 0=禁用该档。
 //! 本模块为纯逻辑：配置解析/合并、状态机 advance；副作用（轮询线程/TrySuspend/destroy/重建）在 lib.rs 接线。
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ReleasePolicyConfig {
     /// 隐藏后多少分钟进入暂停档；0=禁用暂停档
     #[serde(default = "default_pause_minutes")]
@@ -41,15 +42,20 @@ impl Default for ReleasePolicyConfig {
     }
 }
 
-/// 从 settings.json 文本解析（缺键/类型不符逐字段回默认；整体非 JSON 回全默认）
+/// 从 settings.json 文本解析（缺键/类型不符逐字段回默认；整体非 JSON 回全默认）。
+/// 文本→分节外壳经 settings_io::read_section_text 单点（R9）；
+/// 「类型不符逐字段回默认」语义保留为唯一手写处（from_section）——serde 字段类型
+/// 不匹配是整体报错而非逐字段回退，派生无法等价替代（有意裁定，测试锁定）
 pub fn from_settings_text(text: &str) -> ReleasePolicyConfig {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
-        return ReleasePolicyConfig::default();
-    };
-    let Some(r) = v.get("releasePolicy") else {
-        return ReleasePolicyConfig::default();
-    };
+    from_section(crate::settings_io::read_section_text(text, "releasePolicy").as_ref())
+}
+
+/// 逐字段回默认核心（from_settings_text 的可测单元；红线：不得改 serde 整体解析）
+fn from_section(section: Option<&serde_json::Value>) -> ReleasePolicyConfig {
     let d = ReleasePolicyConfig::default();
+    let Some(r) = section else {
+        return d;
+    };
     ReleasePolicyConfig {
         pause_minutes: r
             .get("pauseMinutes")
@@ -70,27 +76,6 @@ pub fn from_settings_text(text: &str) -> ReleasePolicyConfig {
             .and_then(|x| x.as_bool())
             .unwrap_or(d.lock_on_destroy),
     }
-}
-
-/// 合并既有 settings.json 文本，只改 releasePolicy 键（根非对象时重建，与 devtools 合并同口径，不丢外来键）
-pub fn merge_into_settings_text(
-    existing: Option<&str>,
-    cfg: &ReleasePolicyConfig,
-) -> Result<String, String> {
-    let mut obj: serde_json::Map<String, serde_json::Value> = existing
-        .and_then(|t| serde_json::from_str::<serde_json::Value>(t).ok())
-        .and_then(|v| v.as_object().cloned())
-        .unwrap_or_default();
-    obj.insert(
-        "releasePolicy".into(),
-        serde_json::json!({
-            "pauseMinutes": cfg.pause_minutes,
-            "destroyMinutes": cfg.destroy_minutes,
-            "lockOnPause": cfg.lock_on_pause,
-            "lockOnDestroy": cfg.lock_on_destroy,
-        }),
-    );
-    serde_json::to_string_pretty(&serde_json::Value::Object(obj)).map_err(|e| e.to_string())
 }
 
 /// 状态机动作（接线层消费：Pause→TrySuspend；Destroy→锁库/暂存+destroy；None→无操作）
@@ -343,21 +328,17 @@ mod tests {
     }
 
     #[test]
-    fn settings_roundtrip_defaults_and_merge_preserves_foreign_keys() {
+    fn from_settings_text_defaults_on_missing_and_invalid_text() {
         assert_eq!(from_settings_text("{}"), ReleasePolicyConfig::default());
         assert_eq!(
             from_settings_text("not json"),
             ReleasePolicyConfig::default()
         );
-        let merged = merge_into_settings_text(
-            Some(r#"{"mcp":{"enabled":true},"devtools":{"enabled":false,"port":9222}}"#),
-            &cfg(1, 2),
-        )
-        .unwrap();
-        let v: serde_json::Value = serde_json::from_str(&merged).unwrap();
-        assert_eq!(v["mcp"]["enabled"], serde_json::json!(true));
-        assert_eq!(v["releasePolicy"]["pauseMinutes"], serde_json::json!(1));
-        assert_eq!(v["releasePolicy"]["destroyMinutes"], serde_json::json!(2));
+        // 根非对象取键 → None → 全默认（与 settings_io::read_section_text 回落口径一致）
+        assert_eq!(
+            from_settings_text(r#"["legacy"]"#),
+            ReleasePolicyConfig::default()
+        );
     }
 
     // 逐字段解析（盘点 B14）：完整对象逐字段生效；缺 releasePolicy 键回全默认；
@@ -392,20 +373,36 @@ mod tests {
         assert_eq!(c.lock_on_pause, d.lock_on_pause);
     }
 
-    // serde 直接反序列化通道的字段级 default 函数（#[serde(default = ...)] 引用；
-    // 读取主路径 from_settings_text 为手写解析不经此处，此通道供未来直用 serde 的调用方。
-    // 注意：本 struct 无 rename_all，serde 直反序列化的键为 snake_case（非 settings.json
-    // 的 camelCase——那是手写解析读取的键名）
+    // serde 直接反序列化通道的字段级 default 函数（#[serde(default = ...)] 引用）。
+    // R9 后本 struct 带 rename_all="camelCase"：serde 通道键名与 settings.json 的
+    // camelCase 对齐，直反序列化 releasePolicy 分节可得正确字段；读取主路径
+    // from_settings_text 仍为手写逐字段回退（红线，见上方 settings_parse_* 测试）
     #[test]
-    fn serde_deserialize_uses_field_defaults() {
+    fn serde_deserialize_uses_camel_case_keys_and_field_defaults() {
         let c: ReleasePolicyConfig = serde_json::from_str("{}").unwrap();
         assert_eq!(c, ReleasePolicyConfig::default());
         let c: ReleasePolicyConfig =
-            serde_json::from_str(r#"{"pause_minutes":7,"lock_on_pause":true}"#).unwrap();
+            serde_json::from_str(r#"{"pauseMinutes":7,"lockOnPause":true}"#).unwrap();
         assert_eq!(c.pause_minutes, 7);
         assert!(c.lock_on_pause);
         assert_eq!(c.destroy_minutes, 30);
         assert!(c.lock_on_destroy);
+    }
+
+    // 序列化输出 camelCase（R9：release_policy_get 直接序列化 struct、release_policy_set
+    // 经 write_section Serialize 写节，两者落盘/invoke 返回的键名由本测试锁定）
+    #[test]
+    fn serde_serialize_emits_camel_case_settings_keys() {
+        let v = serde_json::to_value(cfg(1, 2)).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "pauseMinutes": 1,
+                "destroyMinutes": 2,
+                "lockOnPause": false,
+                "lockOnDestroy": true,
+            })
+        );
     }
 
     // ---- tick 副作用计划四档联动（盘点 B15：接线层判定抽纯函数）----

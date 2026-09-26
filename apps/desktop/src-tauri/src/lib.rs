@@ -37,7 +37,7 @@ use session_vaults::{
 };
 use settings_io::{
     read_section_text, read_settings_text, read_shortcut_from_settings, settings_path,
-    write_section, write_text_atomic,
+    write_section,
 };
 
 // mini 最近一次因失焦而隐藏的时刻，用于缓解「托盘点击收起」与「失焦自动隐藏」的竞态
@@ -170,17 +170,15 @@ fn ensure_devtools_port_free(mcp: &mcp_server::McpConfig, port: u16) -> Result<(
 }
 
 /// 释放策略读/写（spec 批⑧ §7.5；settings.json `releasePolicy` 键，合并写保留外来键）。
+/// R9：struct 带 serde rename_all="camelCase"+Serialize——get 直接序列化 struct 返回，
+/// set 由 4 个 invoke 参数构造 struct 后经 write_section Serialize 写节（合并写/原子写
+/// 单点在 settings_io）；读取侧 from_settings_text 仍为手写逐字段回退（红线裁定）。
 /// 参数名 Rust 侧 snake_case + rename_all="camelCase"：前端 invoke 键仍为 pauseMinutes 等（与
 /// brief 契约一致），同时满足非 snake_case lint
 #[tauri::command(rename_all = "camelCase")]
 fn release_policy_get<R: Runtime>(app: AppHandle<R>) -> Result<serde_json::Value, String> {
     let cfg = release_policy::from_settings_text(&read_settings_text(&app));
-    Ok(serde_json::json!({
-        "pauseMinutes": cfg.pause_minutes,
-        "destroyMinutes": cfg.destroy_minutes,
-        "lockOnPause": cfg.lock_on_pause,
-        "lockOnDestroy": cfg.lock_on_destroy,
-    }))
+    serde_json::to_value(&cfg).map_err(|e| e.to_string())
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -191,21 +189,13 @@ fn release_policy_set<R: Runtime>(
     lock_on_pause: bool,
     lock_on_destroy: bool,
 ) -> Result<(), String> {
-    let path = settings_path(&app).ok_or("无法定位 settings.json".to_string())?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
     let cfg = release_policy::ReleasePolicyConfig {
         pause_minutes,
         destroy_minutes,
         lock_on_pause,
         lock_on_destroy,
     };
-    let text = release_policy::merge_into_settings_text(
-        std::fs::read_to_string(&path).ok().as_deref(),
-        &cfg,
-    )?;
-    write_text_atomic(&path, &text)
+    write_section(&app, "releasePolicy", &cfg)
 }
 
 fn toggle_mini(app: &AppHandle) {
