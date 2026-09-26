@@ -31,13 +31,22 @@ export function kekSourcesOf(s: SecuritySettings): KekSource[] {
   return [{ kind: 'password' }]
 }
 
+// R16⑧（两步走第一步）：为 withPrfSource 增加替换语义参数——replace=true 时先过滤同
+// kind+credentialId 的既有条目再追加（与 securityStore.addPrfSource 原 others 过滤对齐），
+// 同 credentialId 二次绑定不产生重复源；缺省保持纯追加（既有 ui 消费方语义不变）。
+// 统一后 securityStore.addPrfSource 委托本函数，kekSources 编辑不再两文件各持一份实现。
 export function withPrfSource(
   s: SecuritySettings,
   credentialId: string,
   salt: string,
   wrappedDekP: string,
+  opts: { replace?: boolean } = {},
 ): SecuritySettings {
-  return { ...s, kekSources: [...kekSourcesOf(s), { kind: 'prf', credentialId, salt, wrappedDekP }] }
+  const existing = kekSourcesOf(s)
+  const kept = opts.replace
+    ? existing.filter((src) => !(src.kind === 'prf' && src.credentialId === credentialId))
+    : existing
+  return { ...s, kekSources: [...kept, { kind: 'prf', credentialId, salt, wrappedDekP }] }
 }
 
 export function withDpapiSource(s: SecuritySettings, wrappedDekD: string): SecuritySettings {

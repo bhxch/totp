@@ -85,6 +85,30 @@ describe('withPrfSource / withDpapiSource 添加来源', () => {
   })
 })
 
+// R16⑧（两步走第一步）：kekSources 编辑收敛前，先在 multiKek 层统一 prf upsert 语义。
+// 红线（方案 §4）：withPrfSource 现为纯追加，未统一替换语义前不得让 addPrfSource 直接合并。
+describe('R16⑧：withPrfSource 替换语义参数（upsert）', () => {
+  it('同 credentialId 二次绑定（replace:true）不产生重复源：旧条目被替换，其余来源原样保留', () => {
+    const s1 = withPrfSource(bareSettings(), 'cred-1', 'c2FsdEE=', 'd3JhcEE=')
+    const s2 = withPrfSource(s1, 'cred-1', 'c2FsdEI=', 'd3JhcEI=', { replace: true })
+    const prf = s2.kekSources!.filter((x) => x.kind === 'prf')
+    expect(prf).toHaveLength(1)
+    expect(prf[0]).toEqual({ kind: 'prf', credentialId: 'cred-1', salt: 'c2FsdEI=', wrappedDekP: 'd3JhcEI=' })
+    expect(s2.kekSources!.filter((x) => x.kind !== 'prf')).toEqual([{ kind: 'password' }])
+  })
+  it('replace:true 仅过滤同 kind+credentialId：不同 credentialId 的 prf 与 dpapi 均保留', () => {
+    const s1 = withDpapiSource(withPrfSource(bareSettings(), 'cred-a', 'c2FsdEE=', 'd3JhcEE='), 'ZHBhcGk=')
+    const s2 = withPrfSource(s1, 'cred-b', 'c2FsdEI=', 'd3JhcEI=', { replace: true })
+    expect(s2.kekSources).toHaveLength(4) // password + cred-a + dpapi + cred-b
+    expect(s2.kekSources!.filter((x) => x.kind === 'prf')).toHaveLength(2)
+  })
+  it('缺省保持纯追加（既有 ui 消费方语义锁定）：同 credentialId 二次调用仍产生两份', () => {
+    const s1 = withPrfSource(bareSettings(), 'cred-1', 'c2FsdEE=', 'd3JhcEE=')
+    const s2 = withPrfSource(s1, 'cred-1', 'c2FsdEI=', 'd3JhcEI=')
+    expect(s2.kekSources!.filter((x) => x.kind === 'prf')).toHaveLength(2)
+  })
+})
+
 describe('removeKekSource 移除守护', () => {
   it('仅口令（缺省字段）移除 password → 抛「至少保留一种解锁方式」', () => {
     expect(() => removeKekSource(bareSettings(), 'password')).toThrow('至少保留一种解锁方式')

@@ -1,6 +1,6 @@
 import { aesGcmDecrypt, aesGcmEncrypt, base64ToBytes, bytesToBase64, deriveKek, randomBytes } from '../crypto/aesgcm'
 import { DEFAULT_KDF_PROFILE, isKdfProfile, KDF_DECRYPT_CLAMP, KDF_PROFILES, type KdfProfile } from '../crypto/kdfProfile'
-import { kekSourcesOf } from './multiKek'
+import { kekSourcesOf, withPrfSource } from './multiKek'
 
 export { DEFAULT_KDF_PROFILE, isKdfProfile, KDF_PROFILES } from '../crypto/kdfProfile'
 export type { KdfProfile } from '../crypto/kdfProfile'
@@ -266,7 +266,9 @@ function removeDuplicateKekSources(sources: ReturnType<typeof kekSourcesOf>): Re
 }
 
 /** 添加/替换 prf KEK 来源：KEK_prf = prfOutput 前 32B，wrappedDekP = base64(nonce(12B) ‖ AES-GCM(DEK))。
- *  同 credentialId 已存在时替换（先移除再添加），其余来源原样保留；salt 为 base64（解锁时 PRF eval 用） */
+ *  同 credentialId 已存在时替换（先移除再添加），其余来源原样保留；salt 为 base64（解锁时 PRF eval 用）。
+ *  R16⑧（两步走第二步）：kekSources 编辑收敛到 multiKek 单点——替换语义（先过滤同 kind+credentialId
+ *  再追加）由 withPrfSource({replace:true}) 提供，本函数不再自持 others 过滤，防两文件实现漂移 */
 export async function addPrfSource(
   settings: SecuritySettings,
   dek: Uint8Array,
@@ -282,9 +284,5 @@ export async function addPrfSource(
   const blob = new Uint8Array(12 + ct.length)
   blob.set(nonce, 0)
   blob.set(ct, 12)
-  const others = kekSourcesOf(settings).filter((src) => !(src.kind === 'prf' && src.credentialId === credentialId))
-  return {
-    ...settings,
-    kekSources: [...others, { kind: 'prf', credentialId, salt, wrappedDekP: bytesToBase64(blob) }],
-  }
+  return withPrfSource(settings, credentialId, salt, bytesToBase64(blob), { replace: true })
 }
