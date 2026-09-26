@@ -22,7 +22,7 @@ import { openSecretBag, sealSecretBag, SECRET_BAG_KEY } from '../src/backup/secr
 import { migrateLegacyCloudSources } from '../src/backup/legacyCloudMigrate'
 import {
   loadSourceRevs, loadSources,
-  SOURCE_REVS_KEY, SOURCES_KEY,
+  SOURCE_REVS_KEY, SOURCES_KEY, type BackupSource,
 } from '../src/backup/sources'
 import type { CloudCred } from '../src/cloud/backend'
 import type { StorageAdapter } from '../src/storage/adapter'
