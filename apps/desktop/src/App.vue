@@ -2,17 +2,17 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { backupFileName, base64ToBytes, bytesToBase64, createBackupEnvelope, loadDeviceId, loadSources, loadSyncState, normalizeSchemes, openBackupEnvelope, saveSources, saveSyncState, SCHEMES_KEY, sha256Hex, type BackupSource, type CloudCred, type ImportScheme, type KdfProfile, type Seal, type StorageAdapter, type Vault } from '@totp/core'
-import { createAppI18n, createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createVueStore, LockScreen, NavigationShell, requestMergeConfirm, setSyncProgress, useTheme, type BackupPlatform, type CloudPlatform, type DevtoolsConfigDto, type DevtoolsPlatform, type IconStore, type ImportSchemesApi, type LocalSourceView, type McpConfigWithStatusDto, type McpPlatform, type ReleasePolicyDto, type ReleasePlatform, type VueStore } from '@totp/ui'
+import { base64ToBytes, bytesToBase64, loadDeviceId, loadSources, loadSyncState, saveSyncState, sha256Hex, type BackupSource, type CloudCred, type KdfProfile, type Seal, type StorageAdapter, type Vault } from '@totp/core'
+import { createAppI18n, createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createVueStore, LockScreen, NavigationShell, requestMergeConfirm, setSyncProgress, useTheme, type CloudPlatform, type DevtoolsConfigDto, type DevtoolsPlatform, type IconStore, type McpConfigWithStatusDto, type McpPlatform, type ReleasePolicyDto, type ReleasePlatform, type VueStore } from '@totp/ui'
 import { computed, getCurrentInstance, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createDesktopAutoRunner } from './autoBackup'
+import { createBackupPlatform, createImportSchemesApi } from './backupPlatform'
 import {
   BACKUP_AUTO_STATUS_KEY, BACKUP_KEEP_N_KEY, BACKUP_MODE_KEY, CLOUD_AUTO_STATUS_KEY,
   legacyRetention, loadBackupPrefs, loadCloudPrefs, persistBackupPrefs, persistCloudPrefs,
   readAutoStatusText, readCloudContentHash, readLastBackupHash, recordAutoStatus, writeCloudContentHash, writeLastBackupHash,
 } from './desktopPrefs'
-import { createBackupToSources, listBackupsFromSources, pickBackupDirOs, pickBackupOpenOs, pickBackupSaveOs, readBackupByName, readBackupFileOs, saveConflictBackupToDir, saveCloudSourcesPreservingLocal, writeBackupFileOs, writeBytesFileOs, writeTextFileOs, type DialogFilterSpec, type PickedOsFile } from './backupService'
-import { decryptDpapiOs, pickImportFileOs, readImportFileBytesOs, readImportFileOs } from './importService'
+import { createBackupToSources, saveConflictBackupToDir, saveCloudSourcesPreservingLocal } from './backupService'
 import { createIdleLockExecutor } from './idleLock'
 import { BACKUP_DIR_KEY, migrateLegacyCloudSources, migrateLegacyLocalSource } from './legacyMigrate'
 import { createMcpApprovalQueue, isToolConfirmItem, type McpApprovalAction } from './mcpApprovalQueue'
@@ -63,45 +63,26 @@ function requireStore(): VueStore {
 }
 
 // ---------- 导入映射方案存取 ----------
-// adapter 在 onMounted 就绪后赋值；schemesApi 闭包实时读取（旧单页 仅在 store 就绪后渲染，不会读到 null）
+// adapter 在 onMounted 就绪后赋值；schemesApi/backupPlatform 工厂闭包实时读取（旧单页 仅在 store 就绪后渲染，不会读到 null）
 let fsAdapter: StorageAdapter | null = null
+const getAdapter = (): StorageAdapter | null => fsAdapter
+const getStore = (): VueStore | null => store.value
 
 function requireAdapter(): StorageAdapter {
   if (!fsAdapter) throw new Error('数据尚未就绪')
   return fsAdapter
 }
 
-/** 直读写 adapter 的 SCHEMES_KEY（本地 AppData JSON）；load 容错：坏 JSON → 空表 */
-const schemesApi: ImportSchemesApi = {
-  async load(): Promise<ImportScheme[]> {
-    if (!fsAdapter) return []
-    try {
-      const raw = await fsAdapter.get(SCHEMES_KEY)
-      return raw ? normalizeSchemes(JSON.parse(raw)) : []
-    } catch {
-      return []
-    }
-  },
-  async save(list: ImportScheme[]): Promise<void> {
-    if (!fsAdapter) throw new Error('数据尚未就绪')
-    await fsAdapter.set(SCHEMES_KEY, JSON.stringify(list))
-  },
-}
+// 导入映射方案存取（坏 JSON → 空表容错）与备份平台 18 成员抽至 backupPlatform.ts 工厂
+// （含 lastImportPick 成对缓存与对话框过滤器调用时取词）
+const schemesApi = createImportSchemesApi({ getAdapter })
 
-// ---------- 备份源存取（plan16 T14 源化）----------
-// 源元数据明文存 AppData backupSources 键（core loadSources/saveSources）；云源凭据存 DEK 保管区
-// （store.saveSourceCredOp/removeSourceCredOp），基线按源 id 存 sourceRevs。
+const backupPlatform = createBackupPlatform({ getStore, getAdapter, tr })
 
+// 以下三个共用小助手仍被云平台/自动通道装配消费（阶段 A 后续抽工厂后随之移出）
 /** 全部源列表（云源+本地源；各消费方按 kind 过滤） */
 function loadAllSources(): Promise<BackupSource[]> {
   return loadSources(requireAdapter())
-}
-
-/** core 本地源 → ui LocalSourceView（BackupCard 源列表区渲染/编辑用） */
-function toLocalViews(list: BackupSource[]): LocalSourceView[] {
-  return list
-    .filter((s) => s.kind === 'local')
-    .map(({ id, name, dir, retention, enabled }) => ({ id, name, dir: dir ?? null, retention, enabled }))
 }
 
 /** 备份加密强度档位（plan16 T11.5）：本地备份/云上传 envelope 按此档位生成；store 未就绪兜底 balanced */
@@ -109,132 +90,9 @@ function kdfProfileOf(): KdfProfile {
   return store.value?.settings.backupKdfProfile ?? 'balanced'
 }
 
-// ---------- 自动备份偏好（D2）----------
-// 本地偏好存桌面 localStorage（读写实现抽至 desktopPrefs.ts：BackupCard 经 platform 与
-// 自动备份 runner deps 共用同一对函数）；源与目录已源化（backupSources 键）
-
-// store 整体替换的唯一实现：backupPlatform.replaceAllOp / cloudPlatform.persistDownloaded / 云 runner persistAdopted 共用
+// store 整体替换的唯一实现：cloudPlatform.persistDownloaded / 云 runner persistAdopted 共用
 async function replaceAllOps(v: Vault): Promise<void> {
   await requireStore().replaceAllOp(v)
-}
-
-// 最后一次导入选择的 Rust 对话框结果（F4：path+token 成对缓存）：SQLite 字节入口复用，避免同一文件二次弹窗
-let lastImportPick: PickedOsFile | null = null
-
-/** envelope 文本 → 解密出明文 vault JSON（口令错误/文件损坏由 openBackupEnvelope 抛错，卡片统一展示） */
-async function openBackupText(text: string, password: string): Promise<string> {
-  return openBackupEnvelope(JSON.parse(text), password)
-}
-
-// 文件对话框过滤器名（D2 抽串）：i18n 随 store 就绪装入，而平台方法均在其后调用——改为工厂函数调用时取词
-const backupFileFilters = (): DialogFilterSpec[] => [{ name: tr('desktop.filterBackup'), extensions: ['totpbackup'] }]
-// 文本导出（批① §2.3）对话框过滤器：otpauth 文本落 .txt、Aegis 导出落 .json
-const textFileFilters = (): DialogFilterSpec[] => [{ name: tr('desktop.filterExport'), extensions: ['json', 'txt'] }]
-// 图片导出（批① §2.5 二维码拼版）对话框过滤器：拼版 PNG 落 .png
-const imageFileFilters = (): DialogFilterSpec[] => [{ name: tr('desktop.filterImage'), extensions: ['png'] }]
-// 与 Rust 端 read_import_file_os 扩展名白名单一致（.json/.wauth/.xml/.txt/.aegis）+ SQLite .db/.sqlitedb/.sqlite
-// （.db 经文本读取报 UTF-8 错时由 ImportCard 转字节入口复查，见 read_import_file_bytes_os）+ AP .zip（手动选择字节通道）
-const importFileFilters = (): DialogFilterSpec[] => [
-  { name: tr('desktop.filterImport'), extensions: ['json', 'wauth', 'txt', 'aegis', 'xml', 'db', 'sqlitedb', 'sqlite', 'zip'] },
-]
-
-/**
- * 备份平台实现（plan16 T9 源化形状）：createBackup=全部启用本地源按各自 retention 落盘并返回中文摘要；
- * 本地源经 listLocalSources/saveLocalSource/removeLocalSource 增删改（AppData backupSources 键）；
- * 备份/恢复按 (sourceId, name) 定位来源目录；旧 backupMode/getBackupDir/setBackupDir 随源模型删除
- * （retention 进每源，目录=每源 dir，迁移见 runLegacyMigrations）。
- */
-const backupPlatform: BackupPlatform = {
-  createBackup: async (vaultJson, password) => {
-    // 审查 I8：按结构化结果如实提示；仅全部启用源成功才记录 lastBackupHash——
-    // 部分失败推进基线会让自动通道按 unchanged 跳过后续重试（静默停摆），与自动通道同口径
-    const r = await createBackupToSources(await loadAllSources(), vaultJson, password, kdfProfileOf())
-    if (r.outcome === 'ok') {
-      try {
-        writeLastBackupHash(await sha256Hex(new TextEncoder().encode(vaultJson)))
-      } catch { /* hash 记录失败不影响备份本身 */ }
-    }
-    return r.summary
-  },
-  listLocalSources: async () => toLocalViews(await loadAllSources()),
-  async saveLocalSource(v) {
-    const adapter = requireAdapter()
-    const source: BackupSource = { ...v, kind: 'local', role: 'replica' }
-    const list = await loadSources(adapter)
-    const idx = list.findIndex((s) => s.id === v.id)
-    if (idx >= 0) list[idx] = source
-    else list.push(source)
-    await saveSources(adapter, list)
-  },
-  async removeLocalSource(id) {
-    const adapter = requireAdapter()
-    await saveSources(adapter, (await loadSources(adapter)).filter((s) => s.id !== id))
-  },
-  async exportToFile(vaultJson, password) {
-    // F4：save 对话框改由 Rust 打开并登记保存位置父目录（取消则直接 false），
-    // 再做 Argon2id 加密写文件，省一次白跑的 KDF（档位随备份设置）
-    const picked = await pickBackupSaveOs(backupFileName(new Date()), backupFileFilters())
-    if (!picked) return false
-    const envelope = await createBackupEnvelope(vaultJson, password, kdfProfileOf())
-    await writeBackupFileOs(picked, envelope)
-    return true
-  },
-  // 文本导出（批① §2.3）：save 对话框（Rust 登记授权）+ OS 白名单写；取消=不写盘返回 false
-  async saveTextFile(name, content) {
-    const picked = await pickBackupSaveOs(name, textFileFilters())
-    if (!picked) return false
-    await writeTextFileOs(picked, content)
-    return true
-  },
-  // 图片导出（批① §2.5 多选二维码拼版 PNG）：save 对话框（Rust 登记授权）+ OS 白名单字节写
-  // （dataUrl 解 base64 为原始字节，不经文本管道）；取消=不写盘返回 false
-  async saveImageFile(name, dataUrl) {
-    const picked = await pickBackupSaveOs(name, imageFileFilters())
-    if (!picked) return false
-    await writeBytesFileOs(picked, base64ToBytes(dataUrl.slice(dataUrl.indexOf(',') + 1)))
-    return true
-  },
-  async restoreFromPicker(password) {
-    // F4：open 对话框由 Rust 打开（path+dirToken 成对返回），遏制基准=后端登记父目录
-    const picked = await pickBackupOpenOs(backupFileFilters())
-    if (!picked) return null
-    return { json: await openBackupText(await readBackupFileOs(picked), password) }
-  },
-  listBackups: async () => listBackupsFromSources(await loadAllSources()),
-  async restoreByName(sourceId, name, password) {
-    return { json: await openBackupText(await readBackupByName(sourceId, name, await loadAllSources()), password) }
-  },
-  getAutoPrefs: () => loadBackupPrefs(),
-  setAutoPrefs: (p) => persistBackupPrefs(p),
-  getAutoStatus: async () => readAutoStatusText(BACKUP_AUTO_STATUS_KEY),
-  pickBackupDir: async () => {
-    // F4：目录选择经 Rust pick_dir_os（canonical 登记 + 跨会话持久化），前端仍只持久化 path
-    return pickBackupDirOs()
-  },
-  replaceAllOp: async (v) => replaceAllOps(v),
-  // 备份加密强度档位（plan16 T11.5）：settings 持久化（backupKdfProfile 字段 + commitSettings）
-  backupKdfProfile: {
-    get: () => kdfProfileOf(),
-    set: (p) => {
-      const s = requireStore()
-      s.settings.backupKdfProfile = p
-      void s.commitSettings()
-    },
-  },
-  async readImportFile() {
-    // F4：open 对话框由 Rust 打开（登记父目录返回 token），文本/字节入口共用同一登记结果
-    const picked = await pickImportFileOs(importFileFilters())
-    if (!picked) return null
-    lastImportPick = picked
-    return { text: await readImportFileOs(picked), name: picked.path.split(/[\\/]/).pop() ?? picked.path }
-  },
-  // SQLite 字节入口：复用最近一次选择的登记结果（避免二次弹窗）；无最近选择时补弹对话框
-  async readImportFileBytes() {
-    const picked = lastImportPick ?? (await pickImportFileOs(importFileFilters()))
-    if (!picked) return null
-    return { bytes: await readImportFileBytesOs(picked), name: picked.path.split(/[\\/]/).pop() ?? picked.path }
-  },
-  decryptDpapi: (b64) => decryptDpapiOs(b64),
 }
 
 /** 自动备份 runner（D2）：backup/cloud 双通道。deps 闭包实时读 store/platform/localStorage，
