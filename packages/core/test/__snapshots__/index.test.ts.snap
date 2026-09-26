@@ -2,6 +2,7 @@
 
 exports[`@totp/core 桶导出面（防漏导出/改名破坏消费方） > 导出键集合快照：新增导出或改名时快照 diff 显式暴露，需有意更新 1`] = `
 [
+  "BACKEND_LABEL",
   "BACKUP_EXT",
   "BACKUP_NAME_RE",
   "CORE_VERSION",

@@ -12,18 +12,12 @@
  */
 import type { CloudCred } from '../cloud/backend'
 import type { StorageAdapter } from '../storage/adapter'
-import { loadSources, saveSourceRev, saveSources, type BackupSource, type SourceKind } from './sources'
+import { BACKEND_LABEL, loadSources, saveSourceRev, saveSources, type BackupSource } from './sources'
 
 const CLOUD_CRED_KEY = 'cloudCred'
 const CLOUD_CREDS_KEY = 'cloudCreds'
 const CLOUD_REV_KEY = 'cloudRev'
 const CLOUD_REVS_KEY = 'cloudRevs'
-
-/** 旧目标 backend → 用户可见名（与 ui CloudCard BACKEND_LABEL 同表；ui 未导出，core 侧持一份，
- *  R14 收敛后删冗余） */
-const BACKEND_LABEL: Record<SourceKind, string> = {
-  webdav: 'WebDAV', s3: 'S3', gist: 'GitHub Gist', gdrive: 'Google Drive', onedrive: 'OneDrive', local: '本地目录',
-}
 
 /** 旧多目标条目（Task 8 形状）：cred + 启用态。仅迁移读取用 */
 interface LegacyTarget { cred: CloudCred; enabled: boolean }
