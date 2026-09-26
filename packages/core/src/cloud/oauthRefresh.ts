@@ -1,5 +1,5 @@
 import type { GDriveCred, OneDriveCred } from './backend'
-import { CloudHttpError } from './backend'
+import { CloudHttpError, cloudFetch } from './backend'
 import { sha256Hex } from './canonical'
 
 /**
@@ -36,6 +36,32 @@ const inflight = new Map<string, Promise<string>>()
 export function __resetOAuthCacheForTest(): void {
   sessionCache.clear()
   inflight.clear()
+}
+
+/**
+ * OAuth 自愈请求工厂（R15①）：gdrive/onedrive 逐字重复的 authFetch + 可变 Authorization 收敛单点。
+ * 凭据泛型 C 对齐 refreshAccessToken（GDriveCred | OneDriveCred），onCredChange 原样透传。
+ * 返回的 auth 是可变 Authorization 头对象：OAuth 模式（spec §5⑦）401 刷新后原地改写，后续请求
+ * （含同调用链重试）即取新 token；手工 token 模式该值恒为 cred.accessToken，行为不变。
+ * authFetch 语义：请求 401 且 cred.oauth 存在 → 刷新 access token（模块级会话缓存去重、并发单飞行）
+ * 后原请求重试一次。重试须重建 Authorization——调用方构造 init 时已把当时的 auth 展开/引用进
+ * headers，原地改写 auth 不会回填旧 init。刷新响应若含轮转 refresh_token 经 onCredChange 上抛
+ * （宿主回存 secretBag）。重试仍 401/403 交由调用方 ensureHttpOk 抛（凭据失效语义不变）；
+ * 无 oauth 时与 cloudFetch 直连完全一致（401 照原样返回给上层判定）。
+ */
+export function createAuthFetch<C extends GDriveCred | OneDriveCred>(
+  cred: C,
+  label: string,
+  opts?: { onCredChange?: (cred: C) => void },
+): { auth: { Authorization: string }; authFetch: (url: string, init?: RequestInit) => Promise<Response> } {
+  const auth = { Authorization: `Bearer ${cred.accessToken}` }
+  const authFetch = async (url: string, init?: RequestInit): Promise<Response> => {
+    const res = await cloudFetch(label, url, init)
+    if (res.status !== 401 || !cred.oauth) return res
+    auth.Authorization = `Bearer ${await refreshAccessToken(cred, { onCredChange: opts?.onCredChange })}`
+    return cloudFetch(label, url, { ...init, headers: { ...(init?.headers as Record<string, string>), Authorization: auth.Authorization } })
+  }
+  return { auth, authFetch }
 }
 
 function labelOf(backend: 'gdrive' | 'onedrive'): string {

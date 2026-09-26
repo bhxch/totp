@@ -1,7 +1,7 @@
 import type { CloudBackend, GDriveCred } from './backend'
-import { cloudFetch, ensureHttpOk } from './backend'
+import { ensureHttpOk } from './backend'
 import { BACKUP_NAME_RE } from '../backup/policy'
-import { refreshAccessToken } from './oauthRefresh'
+import { createAuthFetch } from './oauthRefresh'
 import { resolveObjectPath } from './targetPath'
 
 const LABEL = 'Google Drive'
@@ -19,21 +19,9 @@ export interface GDriveBackendOptions {
  * get/exists/delete：有 fileId 直接用（校验仍在），否则按 name 查询 files.list（trashed=false）。
  */
 export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions = {}): CloudBackend {
-  // OAuth 模式（spec §5⑦）：Authorization 可变——401 刷新后原地改写，后续请求（含同调用链重试）
-  // 即取新 token；手工 token 模式该值恒为 cred.accessToken，行为不变。
-  const auth = { Authorization: `Bearer ${cred.accessToken}` }
-
-  /** OAuth 自愈请求（spec §5⑦）：请求 401 且 cred.oauth 存在 → 刷新 access token（模块级会话缓存
-   *  去重、并发单飞行）后原请求重试一次。重试须重建 Authorization——调用方构造 init 时已把当时的
-   *  auth 展开/引用进 headers，原地改写 auth 不会回填旧 init。刷新响应若含轮转 refresh_token 经
-   *  opts.onCredChange 上抛（宿主回存 secretBag）。重试仍 401/403 交由调用方 ensureHttpOk 抛
-   *  （凭据失效语义不变）；无 oauth 时与 cloudFetch 直连完全一致（401 照原样返回给上层判定）。 */
-  const authFetch = async (url: string, init?: RequestInit): Promise<Response> => {
-    const res = await cloudFetch(LABEL, url, init)
-    if (res.status !== 401 || !cred.oauth) return res
-    auth.Authorization = `Bearer ${await refreshAccessToken(cred, { onCredChange: opts.onCredChange })}`
-    return cloudFetch(LABEL, url, { ...init, headers: { ...(init?.headers as Record<string, string>), Authorization: auth.Authorization } })
-  }
+  // OAuth 自愈请求（spec §5⑦，R15① 与 onedrive 收敛 createAuthFetch 单点）：auth 可变——401 刷新后
+  // 原地改写，后续请求即取新 token；手工 token 模式恒为 cred.accessToken。
+  const { auth, authFetch } = createAuthFetch(cred, LABEL, opts)
 
   let fileId = cred.fileId
   // objectPath 的 basename：delete 判定「目标与主对象同名」用（objectPath 实例生命周期内不变，算一次）
