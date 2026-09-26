@@ -2,9 +2,10 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { OtpListItem, createAppI18n, createClipboardClearer, createIconStore, createVueStore, iconView, useOtpCodes, useTheme, type IconStore, type VueStore } from '@totp/ui'
-import { computed, getCurrentInstance, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
+import { OtpListItem, createClipboardClearer, createIconStore, iconView, useOtpCodes, useTheme, type IconStore, type VueStore } from '@totp/ui'
+import { computed, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createTauriFs } from './tauriFs'
+import { bootDesktopStore, useDesktopI18n } from './desktopShell'
 import { createCopyAutoHide } from './miniAutoHide'
 import { sortMiniEntries } from './miniSort'
 
@@ -15,17 +16,10 @@ const store = shallowRef<VueStore | null>(null)
 /** 模板锁定态（mini 未就绪/未加密库显示条目，锁定显示不可用） */
 const locked = computed(() => store.value?.locked.value ?? false)
 const icons = ref<IconStore | null>(null)
-// D1 i18n 挂载（store 就绪后装入，见 load 内）：app 引用必须在 setup 同步段获取；
-// mini 的 store 在每次聚焦重载时重建（既有模式，useTheme 同样重新接线）——i18n 插件只能
-// 装入一次，首次就绪的 store 驱动 locale（仅首次生效，重载为 no-op）
-const appForI18n = getCurrentInstance()?.appContext.app
-let i18nInstalled = false
-// D2 抽串：mini 壳层 t() 走捕获的 i18n 实例（本组件 script setup 内 useI18n 注入不可用，沿 options 页口径）。
-// 模板仅在 store 就绪后渲染，而装入与 store 赋值同步——tr 兜底回原文 key 仅极端时序可见
-const i18nRef = shallowRef<ReturnType<typeof createAppI18n> | null>(null)
-function tr(key: string, params: Record<string, unknown> = {}): string {
-  return i18nRef.value ? i18nRef.value.global.t(key, params) : key
-}
+// i18n 胶水收敛至 desktopShell.useDesktopI18n（R13，与主窗同款实现）：app 引用在 setup 同步段
+// 捕获；mini 的 store 在每次聚焦重载时重建（既有模式，useTheme 同样重新接线）——i18n 插件只能
+// 装入一次，mountI18n 内部仅首次生效，重载为 no-op；tr 兜底回原文 key 仅极端时序可见
+const { tr, mountI18n } = useDesktopI18n()
 
 async function load() {
   try {
@@ -35,21 +29,14 @@ async function load() {
     // 按密文置 locked=true，而 mini 无解锁 UI 也拿不到主窗会话 DEK → 加密库在 mini 恒锁定（store.commit
     // 拒绝 locked 态写，spec 要求 mini 与 App 交互一致但读不到密文）。
     // onLocked：mini 的锁库路径（force-lock 联动）同样清 Rust DEK 暂存槽，保证「锁库后不再回注」语义闭环
-    const s = createVueStore(adapter, {
+    // （boot 序列收敛至 desktopShell.bootDesktopStore，R13）
+    const s = await bootDesktopStore(adapter, {
       windowId: 'mini',
       onLocked: () => { void invoke('clear_stashed_dek').catch(() => {}) },
     })
-    await s.initStore()
     store.value = s
     // D1 i18n 挂载：设置已从盘载入（含 locale）；仅首次生效，重载不再装入
-    if (!i18nInstalled) {
-      const i18nInst = createAppI18n(s)
-      if (appForI18n) {
-        appForI18n.use(i18nInst)
-        i18nInstalled = true
-      }
-      i18nRef.value = i18nInst
-    }
+    mountI18n(s)
     // 主题接线:initStore 成功后挂 useTheme(设置已加载为真实值;首帧属性由 html 内联脚本负责)
     useTheme(s)
     const iconStore = createIconStore(adapter)

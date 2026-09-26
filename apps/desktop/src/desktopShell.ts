@@ -8,7 +8,9 @@
  * - createDesktopShell：onMounted 初始化全编排（系统锁屏→空闲锁→失焦隐藏→store 创建→
  *   force-lock/stash-dek 监听→take_stashed_dek 回注→i18n→迁移→auto.start→主题→图标→
  *   loadError 兜底→MCP 装配）与卸载清理（dispose）。init/dispose 为普通方法（App.vue 薄壳
- *   onMounted/onScopeDispose 调用；测试可直接驱动验证启动序列/卸载清算）。
+ *   onMounted/onScopeDispose 调用；测试可直接驱动验证启动序列/卸载清算）；
+ * - useDesktopI18n / bootDesktopStore（R13 抽共享）：双窗口（主窗/mini）各自持有的 i18n 胶水
+ *   与 createVueStore+initStore boot 序列收敛于此，MiniApp.vue 直接消费。
  * 行为不变关键：注册顺序、事件名/参数形状、容错边界（force-lock/stash-dek .catch(() => null)、
  * MCP 三段独立 try/catch 降级）、时序（回注先于 store.value 赋值、迁移先于 auto.start）逐字保持。
  */
@@ -16,8 +18,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { base64ToBytes, bytesToBase64, type StorageAdapter } from '@totp/core'
-import { createIconStore, createVueStore, useTheme, type DevtoolsConfigDto, type DevtoolsPlatform, type IconStore, type McpConfigWithStatusDto, type McpPlatform, type ReleasePolicyDto, type ReleasePlatform, type VueStore } from '@totp/ui'
-import type { Ref, ShallowRef } from 'vue'
+import { createAppI18n, createIconStore, createVueStore, useTheme, type DevtoolsConfigDto, type DevtoolsPlatform, type IconStore, type McpConfigWithStatusDto, type McpPlatform, type ReleasePolicyDto, type ReleasePlatform, type VueStore } from '@totp/ui'
+import { getCurrentInstance, shallowRef, type Ref, type ShallowRef } from 'vue'
 import type { DesktopAutoRunner } from './autoBackup'
 import { createIdleLockExecutor } from './idleLock'
 import { BACKUP_DIR_KEY, migrateLegacyCloudSources, migrateLegacyLocalSource } from './legacyMigrate'
@@ -29,6 +31,48 @@ import { DisposableBag, requireAdapter, requireStore, safeListen, storeGuards } 
 
 /** MCP 首连审批队列类型（createMcpApprovalQueue 返回形状） */
 export type McpApprovalQueue = ReturnType<typeof createMcpApprovalQueue>
+
+// ---------- 双窗口共享 i18n 胶水与 store boot（R13 抽共享；原 App.vue/MiniApp.vue 各持一份）----------
+
+/** desktop i18n 胶水（D1 挂载/D2 取词的收敛实现）：app 引用必须在组件 setup 同步段获取
+ *  （onMounted await 之后 instance 上下文已失效），故 useDesktopI18n 须在 setup 同步段调用；
+ *  i18n 插件只能装入一次（store 重建/窗口重载时 mountI18n 重复调用为 no-op），仅首次就绪的
+ *  store 驱动 locale；未装入（初始化失败等）时 tr 兜底回原文 key */
+export interface DesktopI18n {
+  /** 壳层取词（script setup 内 useI18n 注入不可用，沿 options 页口径走捕获的 i18n 实例） */
+  tr(key: string, params?: Record<string, unknown>): string
+  /** store 就绪后装入 i18n（设置已从盘载入含 locale；仅首次生效） */
+  mountI18n(s: VueStore): void
+}
+
+export function useDesktopI18n(): DesktopI18n {
+  const app = getCurrentInstance()?.appContext.app
+  const i18nRef = shallowRef<ReturnType<typeof createAppI18n> | null>(null)
+  let installed = false
+  return {
+    tr: (key, params = {}) => (i18nRef.value ? i18nRef.value.global.t(key, params) : key),
+    mountI18n(s: VueStore): void {
+      if (installed) return
+      const inst = createAppI18n(s)
+      if (app) {
+        app.use(inst)
+        installed = true
+      }
+      i18nRef.value = inst
+    },
+  }
+}
+
+/** 双窗口 store boot 共享（spec §7 末尾：windowId 独立解锁——DEK/locked 按 windowId 索引）：
+ *  createVueStore + initStore 两步序列（原主窗 init 与 mini load 各持一份） */
+export async function bootDesktopStore(
+  adapter: StorageAdapter,
+  opts: { windowId: string; onCommitted?: () => void; onLocked?: () => void },
+): Promise<VueStore> {
+  const s = createVueStore(adapter, { windowId: opts.windowId, onCommitted: opts.onCommitted, onLocked: opts.onLocked })
+  await s.initStore()
+  return s
+}
 
 /** 首连审批队列创建（回执接 mcp_approval_response）：同 ident 10s 去重/FIFO/先弹队首再回执语义见 mcpApprovalQueue.ts */
 export function createDesktopApprovalQueue(): McpApprovalQueue {
@@ -251,12 +295,11 @@ export function createDesktopShell(deps: DesktopShellDeps): DesktopShellControll
       // spec §7 末尾：主窗口独立解锁——windowId='main' 与 mini 隔离 DEK；
       // onCommitted：任何经队列的写 op 成功后触发自动备份变更检测（锁定态由 runner 内 decideAutoRun 挡下）；
       // onLocked：手动/空闲/系统锁库走纯前端 lock()，经此同步清 Rust DEK 暂存槽（best-effort，失败不阻断锁定）
-      const s = createVueStore(adapter, {
+      const s = await bootDesktopStore(adapter, {
         windowId: 'main',
         onCommitted: () => deps.auto.notifyChanged(),
         onLocked: () => { void invoke('clear_stashed_dek').catch(() => {}) },
       })
-      await s.initStore()
       // 释放策略联动（spec 批⑧ §7.4-7.5，Task 14）：锁库事件 + 不锁库路径的 DEK 暂存回注。
       // 监听容错注册（safeListen：失败仅该联动降级，不放大为整屏 loadError）
       unlistens.track(await safeListen('force-lock', () => {
