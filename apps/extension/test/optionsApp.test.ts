@@ -159,7 +159,9 @@ import { markSyncOff } from '../src/syncEngine'
 const NavStub = {
   name: 'NavigationShellStub',
   props: ['store', 'platform', 'securityPlatform', 'syncPlatform', 'cloudPlatform', 'cloudAuthFailed', 'icons', 'schemesApi'],
-  template: '<div data-test="shell" />',
+  emits: ['copy'],
+  // copy 按钮触发宿主 copyToClipboard（独立函数不在 platform 上）
+  template: "<div data-test=\"shell\"><button data-test=\"shell-copy\" @click.stop=\"$emit('copy')\">c</button></div>",
 }
 /** LockScreen 桩：click 即 emit unlocked（解锁回调补跑迁移的触发通道） */
 const LockScreenStub = {
@@ -199,13 +201,22 @@ async function mountOptions(local: Record<string, string> = {}): Promise<VueWrap
   return wrapper
 }
 
-function shellOf(w: VueWrapper): { platform: unknown; syncPlatform: any; cloudPlatform: any; cloudAuthFailed: boolean } {
+function shellOf(w: VueWrapper): {
+  platform: unknown
+  securityPlatform: any
+  syncPlatform: any
+  cloudPlatform: any
+  schemesApi: unknown
+  cloudAuthFailed: boolean
+} {
   const stub = w.findComponent(NavStub)
   if (!stub.exists()) throw new Error('shellOf: NavStub not found; html=' + w.html().slice(0, 400))
   return {
     platform: stub.props('platform'),
+    securityPlatform: stub.props('securityPlatform'),
     syncPlatform: stub.props('syncPlatform'),
     cloudPlatform: stub.props('cloudPlatform'),
+    schemesApi: stub.props('schemesApi'),
     cloudAuthFailed: stub.props('cloudAuthFailed'),
   }
 }
@@ -504,5 +515,163 @@ describe('调度器装配（B4-24）', () => {
     await vi.advanceTimersByTimeAsync(15 * 60_000)
     // interval reason 过 guard（onInterval=true）→ cloudSync.run() 无 mode（推拉全量通道）
     expect(runMock.mock.calls.some((c) => c.length === 0)).toBe(true)
+  })
+})
+
+describe('securityPlatform / backupPlatform / schemesApi / 壳层复制（B4-20/22 装配接线）', () => {
+  /** URL.createObjectURL/revokeObjectURL jsdom 未实现——Blob 下载通道（downloadEnvelope/saveTextFile/saveImageFile）stub */
+  function stubBlobUrl(): void {
+    (URL as unknown as { createObjectURL: unknown }).createObjectURL = vi.fn(() => 'blob:mock');
+    (URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL = vi.fn()
+  }
+
+  afterEach(() => {
+    localStorage.removeItem('backupMode')
+    localStorage.removeItem('backupKeepN')
+  })
+
+  it('securityPlatform：kdfProfile/passwordChangedAt computed、lockPrefs 三字段读写与 unsupported、剪贴板/关窗延迟提交', async () => {
+    const w = await mountOptions()
+    const sec = shellOf(w).securityPlatform
+
+    // securitySettings null → profile 兜底 balanced / passwordChangedAt null
+    expect(sec.security.kdfProfile.value).toBe('balanced')
+    expect(sec.security.passwordChangedAt.value).toBeNull()
+    expect(sec.clipboardClearEnabled.value).toBe(false)
+    expect(sec.popupCloseDelayMs.value).toBe(3000)
+
+    expect(sec.lockPrefs.get()).toEqual({ lockOnRestart: true, lockIdleMinutes: 0, lockOnSystemLock: true })
+    expect(sec.lockPrefs.unsupported).toEqual(['lockOnRestart']) // ext 无效控件隐藏
+
+    await sec.lockPrefs.set({ lockIdleMinutes: 30 })
+    expect(settings.lockIdleMinutes).toBe(30)
+    await sec.setClipboardClear(true)
+    expect(settings.clipboardClearEnabled).toBe(true)
+    await sec.setPopupCloseDelay(5000)
+    expect(settings.popupCloseDelayMs).toBe(5000)
+    expect(commitSettings).toHaveBeenCalled()
+
+    // security 闭包绑定 store：改密透传（漏接=档位切换误触发全库轮换）
+    await sec.security.changePassphrase('new-pw', { rotateDek: true })
+    expect(store.changePassphrase).toHaveBeenCalledWith('new-pw', { rotateDek: true })
+  })
+
+  it('backupPlatform：createBackup 按时间戳命名出摘要；backupMode 化石 overwrite 恒定名', async () => {
+    stubBlobUrl()
+    const w = await mountOptions()
+    const platform = shellOf(w).platform as { createBackup(v: string, p: string): Promise<string> }
+
+    const summary = await platform.createBackup('{"entries":[],"tags":[]}', 'pw')
+    expect(summary).toContain('已导出备份文件')
+    expect(summary).toContain('.totpbackup')
+
+    // 【只读兼容化石】localStorage backupMode='overwrite' → 固定名 vault-backup.totpbackup
+    localStorage.setItem('backupMode', 'overwrite')
+    const w2 = await mountOptions()
+    const platform2 = shellOf(w2).platform as { createBackup(v: string, p: string): Promise<string> }
+    const summary2 = await platform2.createBackup('{"entries":[],"tags":[]}', 'pw')
+    expect(summary2).toContain('vault-backup.totpbackup')
+    expect(summary2).toContain('覆盖')
+  })
+
+  it('backupPlatform：kdfProfile 档位 get/set；saveTextFile/saveImageFile 走 Blob 下载恒 true', async () => {
+    stubBlobUrl()
+    const w = await mountOptions()
+    const platform = shellOf(w).platform as Record<string, any>
+
+    expect(platform.backupKdfProfile.get()).toBe('balanced')
+    await platform.backupKdfProfile.set('heavy')
+    expect(settings.backupKdfProfile).toBe('heavy')
+
+    await expect(platform.saveTextFile('codes.txt', 'otpauth://x')).resolves.toBe(true)
+    await expect(platform.saveImageFile('qr.png', 'data:image/png;base64,AAAA')).resolves.toBe(true)
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(2)
+  })
+
+  it('backupPlatform：文件选择取消（input cancel 事件）→ null；readImportFile 缓存 lastImportFile 供字节入口复用（F4）', async () => {
+    const w = await mountOptions()
+    const platform = shellOf(w).platform as Record<string, any>
+
+    // 恢复通道取消：pickFile 挂到 body 的 input 派发 cancel
+    const restoreP = (platform as { restoreFromPicker(p: string): Promise<unknown> }).restoreFromPicker('pw')
+    const restoreInput = document.body.querySelector('input[type="file"]') as HTMLInputElement
+    expect(restoreInput).toBeTruthy()
+    restoreInput.dispatchEvent(new Event('cancel'))
+    await expect(restoreP).resolves.toBeNull()
+
+    // 导入文本：change 事件 + files 注入 → {text,name}；字节入口复用缓存文件不二次弹窗
+    const textP = platform.readImportFile()
+    const importInput = Array.from(document.body.querySelectorAll('input[type="file"]')).at(-1) as HTMLInputElement
+    const bytes = new TextEncoder().encode('{"a":1}')
+    const stubFile = {
+      name: 'data.json',
+      text: async () => '{"a":1}',
+      arrayBuffer: async () => bytes.buffer,
+    }
+    Object.defineProperty(importInput, 'files', { value: [stubFile], configurable: true })
+    importInput.dispatchEvent(new Event('change'))
+    await expect(textP).resolves.toEqual({ text: '{"a":1}', name: 'data.json' })
+
+    const inputsBefore = document.body.querySelectorAll('input[type="file"]').length
+    await expect(platform.readImportFileBytes()).resolves.toEqual({
+      bytes: new Uint8Array(bytes.buffer),
+      name: 'data.json',
+    })
+    expect(document.body.querySelectorAll('input[type="file"]').length).toBe(inputsBefore) // 复用缓存未补弹
+  })
+
+  it('backupPlatform：restoreFromPicker 旧内核无 cancel 事件 → 30s 超时 reject「文件选择超时」', async () => {
+    const w = await mountOptions()
+    const platform = shellOf(w).platform as { restoreFromPicker(p: string): Promise<unknown> }
+    vi.useFakeTimers()
+    const pending = platform.restoreFromPicker('pw')
+    const assertion = expect(pending).rejects.toThrow('文件选择超时')
+    await vi.advanceTimersByTimeAsync(30_000)
+    await assertion
+  })
+
+  it('schemesApi：load 空表/坏 JSON 容错回 []、save 落 SCHEMES_KEY', async () => {
+    const w = await mountOptions()
+    const schemes = shellOf(w).schemesApi as { load(): Promise<unknown[]>; save(list: unknown[]): Promise<void> }
+
+    await expect(schemes.load()).resolves.toEqual([]) // 缺键 → 空表
+    await schemes.save([{ id: 's' }])
+    expect(storageAdapter.set).toHaveBeenCalledWith('importSchemes', JSON.stringify([{ id: 's' }]))
+
+    const w2 = await mountOptions({ importSchemes: '{bad json' })
+    const schemes2 = shellOf(w2).schemesApi as { load(): Promise<unknown[]> }
+    await expect(schemes2.load()).resolves.toEqual([]) // 坏 JSON → 空表
+  })
+
+  it('壳层复制 copyToClipboard：写剪贴板 + 三重门控齐备时发 schedule-clipboard-clear', async () => {
+    settings.clipboardClearEnabled = true
+    const w = await mountOptions()
+    shim.chrome.offscreen = {} // mountOptions 重装 shim，offscreen 注入须在其后
+    const sendSpy = vi.spyOn(shim.chrome.runtime as { sendMessage: (msg: unknown) => Promise<unknown> }, 'sendMessage')
+
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn(async () => {}) },
+      configurable: true,
+    })
+    await w.find('[data-test="shell-copy"]').trigger('click')
+    await flushPromises()
+
+    expect(sendSpy).toHaveBeenCalledWith({ type: 'schedule-clipboard-clear', delayMs: 30_000 })
+    settings.clipboardClearEnabled = false
+  })
+
+  it('cloudPlatform：saveConflictBackup/listConflictCopies 走 conflictCopies 列表、loadAutoStatus 三态格式化', async () => {
+    const w = await mountOptions({ cloudAutoStatus: JSON.stringify({ at: 1, ok: true, summary: '同步完成' }) })
+    const cloud = shellOf(w).cloudPlatform as Record<string, any>
+
+    // 副本入列表（storage.local conflictCopies 键，限 5 滚动删——本体 conflictCopies.test.ts 已测）
+    await cloud.saveConflictBackup(new Uint8Array([1]), 's1')
+    expect(storageAdapter.set).toHaveBeenCalledWith('conflictCopies', expect.stringContaining('s1'))
+    await expect(cloud.listConflictCopies()).resolves.toEqual([]) // get mock 返回 null → 空表
+
+    // loadAutoStatus：cloudAutoStatus 键原文 → 记录时三态格式化（ok=true 文案 + 摘要）
+    const text = (await cloud.loadAutoStatus()) as string
+    expect(text).toContain('同步完成')
+    expect(text).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/)
   })
 })
