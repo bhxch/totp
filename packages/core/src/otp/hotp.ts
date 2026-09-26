@@ -7,20 +7,28 @@ const WEB_CRYPTO_HASH: Record<HashAlgorithm, string> = {
   SHA512: 'SHA-512',
 }
 
-async function hmac(secret: Uint8Array, message: Uint8Array, algorithm: HashAlgorithm): Promise<Uint8Array> {
+// R16①：HMAC 原语单点导出（原 hotp 私有实现；steam.ts 的 SHA-1 特化与其等价，改导入复用）
+export async function hmac(secret: Uint8Array, message: Uint8Array, algorithm: HashAlgorithm): Promise<Uint8Array> {
   const key = await crypto.subtle.importKey('raw', secret as BufferSource, { name: 'HMAC', hash: WEB_CRYPTO_HASH[algorithm] }, false, ['sign'])
   const sig = await crypto.subtle.sign('HMAC', key, message as BufferSource)
   return new Uint8Array(sig)
 }
 
-function dynamicTruncate(mac: Uint8Array, digits: number): string {
+// R16①：RFC 4226 动态截断底层——以末字节低 4 位为偏移取 4 字节并清最高符号位，产出 u31
+// （0 ≤ n ≤ 2^31-1）。产出形态不在本层：hotp 转十进制串 padStart，steam 用字符表取模；
+// yandex 为 uint64/BigInt 形态本质不同，按方案 §6 裁定不归一。
+export function truncateU31(mac: Uint8Array): number {
   const offset = mac[mac.length - 1]! & 0x0f
-  const bin =
+  return (
     ((mac[offset]! & 0x7f) << 24) |
     (mac[offset + 1]! << 16) |
     (mac[offset + 2]! << 8) |
     mac[offset + 3]!
-  return String(bin).padStart(digits, '0').slice(-digits)
+  )
+}
+
+function dynamicTruncate(mac: Uint8Array, digits: number): string {
+  return String(truncateU31(mac)).padStart(digits, '0').slice(-digits)
 }
 
 export async function hotp(
