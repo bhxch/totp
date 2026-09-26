@@ -32,7 +32,7 @@ P0-P6 全部完成。各包最终实测与 gate 定值（gate = 实测 -0.5pp �
 - **§5 前端阈值**：未一步定到 95/85 目标值，按实测 -0.5pp 边际开闸（ui/extension/desktop 已高于
   分层目标，core 收敛 100/95 前以边际值守门）；CI 实装为 ci.yml `coverage-web`（ubuntu）+
   `coverage-rust`（windows-latest，cfg(windows) 代码需参与编译统计）两 job。
-- **§4 E2E 清单**：已逐条展开为可执行清单 `docs/review/2026-09-26-coverage-e2e-checklist.md`
+- **§4 E2E 清单**：已逐条展开为可执行清单 `docs/e2e/2026-09-26-coverage-e2e-checklist.md`
   （桌面 7 条 [可自动化] / 扩展 6 条 [手测]），真机执行待人工/后续会话执行并留档。
 
 ## 0. 背景与基线
