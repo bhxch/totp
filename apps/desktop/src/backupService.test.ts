@@ -307,22 +307,29 @@ describe('R10 守卫：os 授权目录/默认目录读写路径（双通道行�
     expect(invokeMock).not.toHaveBeenCalledWith('remove_backup_file', { name: 'notes.txt' })
   })
 
-  it('os 分支列表现状口径（R10 对齐前）：Rust 白名单（前缀+后缀，中段不限）放行的宽中段名原样透出，TS 侧不再过滤', async () => {
+  it('R10 口径对齐：os 分支与默认分支对同一文件集合产出相同可见集合（Rust 白名单放行的宽中段名两分支都不再列出）', async () => {
+    // 模拟 Rust list_backup_files_granted 输出（已升序）：vault-notes / conflict-Weird_Name
+    // 为「前缀+.totpbackup 后缀即放行」的宽口径名，READABLE_BACKUP_RE 拒绝；
+    // conflict-webdav-* 合法（多段 sourceId 小写字母数字）
+    const rustWhitelist = [
+      'vault-20260916-120000.totpbackup',
+      'vault-notes.totpbackup',
+      'conflict-Weird_Name.totpbackup',
+      'conflict-webdav-20260916-130000.totpbackup',
+    ]
     invokeMock.mockImplementation(async (cmd: string) => {
       if (cmd === 'dir_token_os') return 'tok'
-      if (cmd === 'list_backup_files_os') {
-        // 模拟 Rust list_backup_files_granted 输出（已升序）：vault-notes / conflict-Weird_Name
-        // 均为「前缀+.totpbackup 后缀即放行」的宽口径名，READABLE_BACKUP_RE 会拒绝
-        return ['vault-20260916-120000.totpbackup', 'vault-notes.totpbackup', 'conflict-Weird_Name.totpbackup']
-      }
+      if (cmd === 'list_backup_files_os') return [...rustWhitelist]
       return null
     })
-    const list = await listBackupsFromSources([{ ...sources[0]! }])
-    // 聚合列表倒序展示：vault-notes > vault-120000 > conflict-*（码点序）
-    expect(list.map((e) => e.name)).toEqual([
-      'vault-notes.totpbackup',
+    fsMocks.readDir.mockResolvedValue(rustWhitelist.map((name) => ({ name })))
+    const osList = await listBackupsFromSources([{ ...sources[0]! }])
+    const defaultList = await listBackupsFromSources([{ ...sources[1]! }])
+    // 对偶断言：两分支可见集合一致（聚合列表倒序展示）
+    expect(osList.map((e) => e.name)).toEqual(defaultList.map((e) => e.name))
+    expect(osList.map((e) => e.name)).toEqual([
       'vault-20260916-120000.totpbackup',
-      'conflict-Weird_Name.totpbackup',
+      'conflict-webdav-20260916-130000.totpbackup',
     ])
   })
 
