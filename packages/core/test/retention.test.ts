@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { enforceRemoteRetention } from '../src/backup/retention'
+import { enforceRemoteRetention } from '../src/cloud/retention'
 import { selectBackupsToKeep } from '../src/backup/policy'
 import { createWebdavBackend } from '../src/cloud/webdav'
 import { createS3Backend } from '../src/cloud/s3'

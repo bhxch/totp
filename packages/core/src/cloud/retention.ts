@@ -1,7 +1,9 @@
 /** 云源 keep-n 远端滚动删除（设计 §3）：名单口径与本地一致（BACKUP_NAME_RE、字典序=时间序、
- *  conflict/overwrite 名不参与），仅作用域换成远端 list/delete。删除逐个进行，单个失败不阻断（只计成功数）。 */
-import type { CloudBackend } from '../cloud/backend'
-import { selectBackupsToKeep } from './policy'
+ *  conflict/overwrite 名不参与），仅作用域换成远端 list/delete。删除逐个进行，单个失败不阻断（只计成功数）。
+ *  R15⑤：自 backup/ 迁入 cloud/——远端滚动删除只依赖 CloudBackend，留 backup/ 会形成
+ *  backup→cloud(backend) 与 cloud×5→backup(policy) 的目录级互依赖环。 */
+import type { CloudBackend } from './backend'
+import { selectBackupsToKeep } from '../backup/policy'
 
 /** 返回删除数；backend 不支持 listBackups 返回 -1 */
 export async function enforceRemoteRetention(backend: CloudBackend, keep: number): Promise<number> {
