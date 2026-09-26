@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import {
-  SQLITE_TABLE_PROBES, applyImportPlan, dedupeWithinFile, extractGenericRows, importAegisEncrypted,
-  importAegisPlaintext, importAndOtp, importAuthenticatorPlus, importAuthy, importBattleNet,
-  importBitwarden, importDuo, importFoxauth, importFreeOtp, importFreeOtpLegacy, importGeneric, importProton,
-  importStratum, importTotpAuthenticator, importTwoFas, importUriBatch, importWinauth, matchSchemes,
-  planImport, normalizeSchemes, removeScheme, sniffAegis, sniffFoxauthEncrypted, sniffFormat, upsertScheme,
+  IMPORT_REGISTRY, SQLITE_TABLE_PROBES, applyImportPlan, dedupeWithinFile, extractGenericRows,
+  importAegisEncrypted, importAuthenticatorPlus, importAuthy, importBattleNet, importDuo, importFoxauth,
+  importGeneric, importTotpAuthenticator, importWinauth, matchSchemes, needsPasswordFor, planImport,
+  normalizeSchemes, removeScheme, sniffFormat, upsertScheme,
   type ConflictPolicy, type ImportFormat, type ImportPlan, type ImportResult, type ImportScheme,
   type ImportStats, type ParsedEntry, type RowMapping, type SuspectChoice,
 } from '@totp/core'
@@ -413,18 +412,24 @@ async function parseAndConfirm(
   }
 }
 
-/** 直接解析族分派表：sniff/手动格式 → parser（async parser 交 parseAndConfirm await） */
+/** 注册表直解项：ImportFormat 格式的 parser 取 core 注册表 parse 槽（R5 派生，调用点 await 两态兼容） */
+function registryParse(f: ImportFormat): () => ImportResult | Promise<ImportResult> {
+  return () => IMPORT_REGISTRY[f].parse!(fileText.value)
+}
+
+/** 直接解析族分派表：键完整性由 DirectFormat 联合在编译期锁定；ImportFormat 项 parser 由
+ * core 注册表 parse 槽派生（R5），battleNet/duo 为非 sniff 手动文本格式本地登记 */
 const TEXT_PARSERS: Record<DirectFormat, () => ImportResult | Promise<ImportResult>> = {
-  uriBatch: () => importUriBatch(fileText.value),
-  twoFas: () => importTwoFas(fileText.value),
-  bitwarden: () => importBitwarden(fileText.value),
-  proton: () => importProton(fileText.value),
-  stratum: () => importStratum(fileText.value),
-  freeOtp: () => importFreeOtp(fileText.value),
-  freeOtpLegacy: () => importFreeOtpLegacy(fileText.value),
-  totpAuthenticator: () => importTotpAuthenticator(fileText.value),
-  andOtp: () => importAndOtp(fileText.value),
-  foxauth: () => importFoxauth(fileText.value),
+  uriBatch: registryParse('uriBatch'),
+  twoFas: registryParse('twoFas'),
+  bitwarden: registryParse('bitwarden'),
+  proton: registryParse('proton'),
+  stratum: registryParse('stratum'),
+  freeOtp: registryParse('freeOtp'),
+  freeOtpLegacy: registryParse('freeOtpLegacy'),
+  totpAuthenticator: registryParse('totpAuthenticator'),
+  andOtp: registryParse('andOtp'),
+  foxauth: registryParse('foxauth'),
   battleNet: () => importBattleNet(fileText.value),
   duo: () => importDuo(fileText.value),
 }
@@ -481,10 +486,10 @@ async function importFromSqlite(auto: boolean): Promise<boolean> {
 }
 
 /**
- * 第 2 步分派：generic→映射页；aegis 加密→口令页（明文直接解析）；winauth/authy→口令页；
- * totpAuthenticator 分享文件（非 '[' 开头的 Base64 密文）→口令页（明文数组走分派表直接解析）；
- * foxauth 加密（isEncrypted）→口令页（明文走分派表直接解析）；msAuth/sqlite→字节入口；
- * 其余按分派表直接解析；未识别→报错留 picked 页
+ * 第 2 步分派：generic→映射页；winauth/authy→口令页；aegis 加密→口令页（明文直接解析）；
+ * totpAuthenticator 分享文件（非 '[' 开头的 Base64 密文）/foxauth 加密（isEncrypted）→条件口令页
+ * （两态判定由 core 注册表 needsPassword 内容谓词统一派生，R5；明文走分派表直接解析）；
+ * msAuth/sqlite→字节入口；其余按分派表直接解析；未识别→报错留 picked 页
  */
 async function nextFromPicked(): Promise<void> {
   if (busy.value) return
@@ -505,14 +510,14 @@ async function nextFromPicked(): Promise<void> {
     return
   }
   if (f === 'aegis') {
-    // M11：使用 sniffAegis 暴露的 encrypted 标志（顶层 db 为密文 Base64 字符串 → 加密；明文 vault 同样带空 slots 的 header）
-    const aegis = sniffAegis(fileText.value)
-    if (aegis?.encrypted) {
+    // 两态判定由 core 注册表 needsPassword 内容谓词派生（R5；口径同 sniffAegis.encrypted：
+    // 顶层 db 为密文 Base64 字符串 → 加密；明文 vault 同样带空 slots 的 header）
+    if (needsPasswordFor(f, fileText.value)) {
       passwordHint.value = t('importCard.aegisPwHint')
       step.value = 'password'
       return
     }
-    await parseAndConfirm(() => importAegisPlaintext(fileText.value))
+    await parseAndConfirm(() => IMPORT_REGISTRY.aegis.parse!(fileText.value))
     return
   }
   if (f === 'winauth') {
@@ -534,17 +539,11 @@ async function nextFromPicked(): Promise<void> {
     await importFromSqlite(false)
     return
   }
-  // totpAuthenticator 条件口令页入口：外部分享文件为 Base64 密文（非明文数组）→ 口令页；
-  // 明文 '[' 开头保持下方分派表直接解析
-  if (f === 'totpAuthenticator' && !fileText.value.trim().startsWith('[')) {
-    passwordHint.value = t('importCard.totpAuthPwHint')
-    step.value = 'password'
-    return
-  }
-  // foxauth 条件口令页入口：加密备份（isEncrypted）→ 口令页（与 aegis 加密同款交互）；
-  // 明文保持下方分派表直接解析
-  if (f === 'foxauth' && sniffFoxauthEncrypted(fileText.value)) {
-    passwordHint.value = t('importCard.foxauthPwHint')
+  // 条件口令页入口（两态格式，判定均由 core 注册表 needsPassword 内容谓词派生，R5）：
+  // totpAuthenticator 外部分享为 Base64 密文（非 '[' 明文数组）→ 口令页；foxauth 加密备份
+  // （isEncrypted）→ 口令页（与 aegis 加密同款交互）；两态明文保持下方分派表直接解析
+  if ((f === 'totpAuthenticator' || f === 'foxauth') && needsPasswordFor(f, fileText.value)) {
+    passwordHint.value = f === 'totpAuthenticator' ? t('importCard.totpAuthPwHint') : t('importCard.foxauthPwHint')
     step.value = 'password'
     return
   }
