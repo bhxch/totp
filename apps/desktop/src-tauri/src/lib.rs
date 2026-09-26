@@ -2255,7 +2255,8 @@ mod tests {
     // ---- devtools 环境注入（盘点 B30：apply_devtools_env 静默边界与「未设才注入」）----
 
     /// 搭建带（或无）settings.json 的假 APPDATA 根（按用例名隔离，cargo test 并行安全），
-    /// 返回其路径
+    /// 返回其路径。仅 Windows 用例消费（Linux 下 cfg 掉防 dead_code）
+    #[cfg(windows)]
     fn devtools_appdata(case: &str, settings_json: Option<&str>) -> std::path::PathBuf {
         let root = std::env::temp_dir().join(format!("totp_devtools_env_{case}"));
         let dir = root.join("com.totp.desktop");
@@ -2269,6 +2270,7 @@ mod tests {
         root
     }
 
+    #[cfg(windows)]
     fn devtools_conf() -> serde_json::Value {
         serde_json::json!({ "identifier": "com.totp.desktop" })
     }
