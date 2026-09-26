@@ -13,6 +13,7 @@ import {
   conflictBackupFileName, loadSources, saveSources,
   type BackupSource, type StorageAdapter,
 } from '@totp/core'
+import { formatAutoStatusText as formatAutoStatusTextShared } from '@totp/ui'
 
 const CLOUD_CRED_KEY = 'cloudCred'
 const CLOUD_CREDS_KEY = 'cloudCreds'
@@ -71,24 +72,18 @@ export function conflictBackupName(backendKey: string | undefined, now: Date): s
   return backendKey ? `conflict-${backendKey}-${base.slice('conflict-'.length)}` : base
 }
 
-/** 自动状态 JSON → 卡片展示文本（design §4.1）：「YYYY-MM-DD HH:mm 成功/失败/跳过：summary」；
- *  缺字段/坏 JSON/空值 → null（卡片显示「暂无」）。ok=null 渲染「跳过」（写侧 summary 仅存原因，
- *  前缀由本函数拼装）；旧 JSON 的 ok 恒为 true/false，照常渲染成功/失败。
- *  与 desktop autoBackup.formatAutoStatusText 同款语义：options App.vue loadAutoStatus 委托本实现，
- *  抽出供三态单测（审查 Minor-2，放 cloudCredStore 因同属 cloud 存储域纯逻辑可测模块）。
- *  入参含 storageAdapter.get 返回的 null（键不存在）：!raw 已统一兜住 null/undefined/空串。
- *  D2 R1 key 化：三态标签与冒号分隔符走 cloudAuto.statusOk/statusFailed/statusSkipped/statusSep，
- *  展示时取词（本函数仅渲染 cloudAutoStatus 落盘内容；summary 原文为记录时翻译，不回填旧记录） */
+/** 自动状态 JSON → 卡片展示文本（design §4.1）：委托 ui formatAutoStatusText 单点（R14，
+ *  原「与 desktop 同款语义、两份逐字实现」合一），extension 注入 i18n 三态标签与分隔符
+ *  （D2 R1 key 化：cloudAuto.statusOk/statusFailed/statusSkipped/statusSep，展示时取词——
+ *  本函数仅渲染 cloudAutoStatus 落盘内容；summary 原文为记录时翻译，不回填旧记录）。
+ *  options App.vue loadAutoStatus 委托本实现；抽出供三态单测（审查 Minor-2，
+ *  放 cloudCredStore 因同属 cloud 存储域纯逻辑可测模块）。
+ *  入参含 storageAdapter.get 返回的 null（键不存在）：单点 !raw 统一兜住 null/undefined/空串。 */
 export function formatAutoStatusText(raw: string | null | undefined, t: TranslateFn): string | null {
-  if (!raw) return null
-  try {
-    const s = JSON.parse(raw) as { at?: unknown; ok?: unknown; summary?: unknown }
-    if (typeof s.at !== 'number' || typeof s.summary !== 'string' || s.summary === '') return null
-    const d = new Date(s.at)
-    const p = (n: number) => String(n).padStart(2, '0')
-    const label = s.ok === null ? t('cloudAuto.statusSkipped') : s.ok === true ? t('cloudAuto.statusOk') : t('cloudAuto.statusFailed')
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} ${label}${t('cloudAuto.statusSep')}${s.summary}`
-  } catch {
-    return null
-  }
+  return formatAutoStatusTextShared(raw, {
+    ok: t('cloudAuto.statusOk'),
+    failed: t('cloudAuto.statusFailed'),
+    skipped: t('cloudAuto.statusSkipped'),
+    sep: t('cloudAuto.statusSep'),
+  })
 }

@@ -62,3 +62,5 @@ export type { DpapiUnlockOps, LockPrefs, PasskeyUnlockOps, SecurityOps, Security
 export type { SyncPlatform, SyncStatus } from './components/syncPlatform'
 // R14 跨端共享纯函数单点（normalizeAutoPrefs/formatAutoStatusText）：宿主偏好/状态实现委托入口
 export { MIN_AUTO_INTERVAL_MINUTES, normalizeAutoPrefs } from './components/backupPlatform'
+export type { AutoStatusLabels } from './components/backupPlatform'
+export { formatAutoStatusText } from './components/backupPlatform'

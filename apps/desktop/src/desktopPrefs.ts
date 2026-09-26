@@ -12,7 +12,11 @@
  * 本地偏好存桌面 localStorage；键常量集中于此防宿主各处漂移。
  */
 import type { Retention } from '@totp/core'
-import { normalizeAutoPrefs, type BackupAutoPrefs, type CloudAutoPrefs } from '@totp/ui'
+import {
+  formatAutoStatusText as formatAutoStatusTextShared,
+  normalizeAutoPrefs,
+  type AutoStatusLabels, type BackupAutoPrefs, type CloudAutoPrefs,
+} from '@totp/ui'
 
 // ---------- 通道自动偏好（D2/Task 11，R13 参数化收敛）----------
 /** 通道自动偏好统一形态（偏好类型合一）：ui BackupAutoPrefs/CloudAutoPrefs 同构三字段，
@@ -125,22 +129,13 @@ export function recordAutoStatus(key: AutoStatusKey, ok: boolean | null, summary
   } catch { /* 状态记录失败不影响主流程 */ }
 }
 
-/** 状态 JSON → 卡片展示文本（design §4.1）：「YYYY-MM-DD HH:mm 成功/失败/跳过：summary」；
- *  缺字段/坏 JSON/null → null（卡片显示「暂无」）。ok=null 渲染「跳过」（写侧 summary 仅存原因，
- *  前缀由本函数拼装）；旧 JSON 的 ok 恒为 true/false，照常渲染成功/失败。
+/** 状态 JSON → 卡片展示文本（design §4.1）：委托 ui formatAutoStatusText 单点（R14，原两份
+ *  逐字实现合一），desktop 注入固定中文三态标签（桌面端无 i18n，与历史落盘展示一致）。
  *  纯函数导出：autoBackup.ts 以 re-export 兼容既有导入面，供三态单测（审查 Minor-2） */
+const DESKTOP_AUTO_STATUS_LABELS: AutoStatusLabels = { ok: '成功', failed: '失败', skipped: '跳过', sep: '：' }
+
 export function formatAutoStatusText(raw: string | null): string | null {
-  if (!raw) return null
-  try {
-    const s = JSON.parse(raw) as { at?: unknown; ok?: unknown; summary?: unknown }
-    if (typeof s.at !== 'number' || typeof s.summary !== 'string' || s.summary === '') return null
-    const d = new Date(s.at)
-    const p = (n: number) => String(n).padStart(2, '0')
-    const label = s.ok === null ? '跳过' : s.ok === true ? '成功' : '失败'
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} ${label}：${s.summary}`
-  } catch {
-    return null
-  }
+  return formatAutoStatusTextShared(raw, DESKTOP_AUTO_STATUS_LABELS)
 }
 
 /** 状态 JSON → 卡片展示文本：读 backupAutoStatus/cloudAutoStatus 键后委托 formatAutoStatusText

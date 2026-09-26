@@ -99,3 +99,30 @@ export function normalizeAutoPrefs<P extends BackupAutoPrefs>(x: unknown, fallba
     intervalMinutes: Number.isInteger(minutes) && minutes >= MIN_AUTO_INTERVAL_MINUTES ? minutes : fallback.intervalMinutes,
   }
 }
+
+/** 自动状态三态标签（调用方注入，R14：desktop 固定中文 / extension 经 i18n 取词）。 */
+export interface AutoStatusLabels {
+  ok: string
+  failed: string
+  skipped: string
+  /** 标签与 summary 间分隔符（extension i18n 注入 cloudAuto.statusSep，desktop 固定全角冒号） */
+  sep: string
+}
+
+/** 自动状态 JSON → 卡片展示文本（design §4.1，R14 单点：desktop desktopPrefs 与 extension
+ *  cloudCredStore 两份逐字实现合一）：「YYYY-MM-DD HH:mm {标签}{sep}{summary}」。
+ *  at 非数字/summary 缺失或空串/坏 JSON/空值 → null（卡片显示「暂无」）。ok=null 渲染 skipped
+ *  标签（写侧 summary 仅存原因，前缀由本函数拼装）；旧 JSON 的 ok 恒为 true/false，照常渲染。 */
+export function formatAutoStatusText(raw: string | null | undefined, labels: AutoStatusLabels): string | null {
+  if (!raw) return null
+  try {
+    const s = JSON.parse(raw) as { at?: unknown; ok?: unknown; summary?: unknown }
+    if (typeof s.at !== 'number' || typeof s.summary !== 'string' || s.summary === '') return null
+    const d = new Date(s.at)
+    const p = (n: number) => String(n).padStart(2, '0')
+    const label = s.ok === null ? labels.skipped : s.ok === true ? labels.ok : labels.failed
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} ${label}${labels.sep}${s.summary}`
+  } catch {
+    return null
+  }
+}
