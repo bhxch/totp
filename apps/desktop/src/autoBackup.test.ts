@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises } from '@vue/test-utils'
 import { createDesktopAutoRunner, createDesktopAutoChannels, formatAutoStatusText, type AutoBackupDeps } from './autoBackup'
 
 // recordAutoStatus 包装为可断言 spy（显式调用记录断言，取代 localStorage 轮询——消除 coverage
@@ -398,13 +397,14 @@ describe('createDesktopAutoRunner（cloud 通道）', () => {
 // 断言全部落在注入 mock 的显式调用记录上（recordAutoStatus/createBackupToSources/doCloudSync/基线写），
 // 不轮询 localStorage——残留写入与本轮判定之间无时序耦合（规格审查 Important 项）
 describe('createDesktopAutoChannels（store/adapter/prefs/状态键接线）', () => {
-  /** 有界小步推进（1s×≤15）：跨过 10s 防抖边界即触发，不依赖单次大步推进的精确边界命中；
-   *  每步 flushPromises 排干异步链——断言只看显式调用记录（规格审查 Important 项的确定性修法） */
-  async function advanceUntil(spy: { mock: { calls: unknown[] } }, times = 1): Promise<void> {
-    for (let i = 0; i < 20 && spy.mock.calls.length < times; i++) {
-      await vi.advanceTimersByTimeAsync(1000)
-      await flushPromises()
-    }
+  /** 确定性收敛等待：advanceTimersByTimeAsync(10_000) 精确跨过 10s 防抖窗口触发调度，
+   *  再用 vi.waitFor 等真实异步链收敛后断言。runBackup 链上的 crypto.subtle.digest 走 libuv
+   *  线程池、真实耗时不定，旧 advanceUntil 的固定 20 步（≈10ms）轮询在 CI 负载下会在链收敛前
+   *  提前放弃（run 36224456089 实证 0 调用）；waitFor 用安全真实 timer 轮询且每步推进 fake
+   *  时钟（vitest 内建集成），断言即等待条件，无「轮询窗口过后才发生」的悬崖 */
+  async function fireDebounceAndWait(assertion: () => void): Promise<void> {
+    await vi.advanceTimersByTimeAsync(10_000)
+    await vi.waitFor(assertion)
   }
 
   beforeEach(() => {
@@ -429,7 +429,7 @@ describe('createDesktopAutoChannels（store/adapter/prefs/状态键接线）', (
       doCloudSync: vi.fn(async () => {}),
     })
     runner.notifyChanged()
-    await advanceUntil(createBackupToSourcesMock)
+    await fireDebounceAndWait(() => expect(createBackupToSourcesMock).toHaveBeenCalled())
     expect(createBackupToSourcesMock).toHaveBeenCalledOnce()
     const [sources, vaultJson, secret, profile] = createBackupToSourcesMock.mock.calls[0] as unknown as [unknown[], string, string, string]
     expect(sources).toEqual([]) // adapter 无源
@@ -454,7 +454,7 @@ describe('createDesktopAutoChannels（store/adapter/prefs/状态键接线）', (
       doCloudSync,
     })
     runner.notifyChanged()
-    await advanceUntil(doCloudSync)
+    await fireDebounceAndWait(() => expect(doCloudSync).toHaveBeenCalled())
     expect(doCloudSync).toHaveBeenCalledOnce()
     // 排干并发备份通道的续延（双通道同刻触发）：不把本用例的 ok 状态写入泄漏进后续用例的 spy
     await vi.waitFor(() => expect(recordAutoStatusMock).toHaveBeenCalledWith('backupAutoStatus', true, '已备份到 1 个目录（家里）'))
@@ -469,9 +469,9 @@ describe('createDesktopAutoChannels（store/adapter/prefs/状态键接线）', (
       doCloudSync: vi.fn(async () => {}),
     })
     runner.notifyChanged()
-    await advanceUntil(recordAutoStatusMock)
+    // 等待即断言载荷（批 4：跳过态可观测）：skip 记录在真实 digest 收敛后落地，waitFor 直接锚定
+    await fireDebounceAndWait(() => expect(recordAutoStatusMock).toHaveBeenCalledWith('backupAutoStatus', null, '库已锁定'))
     expect(createBackupToSourcesMock).not.toHaveBeenCalled()
-    expect(recordAutoStatusMock).toHaveBeenCalledWith('backupAutoStatus', null, '库已锁定') // 批 4：跳过态可观测
     runner.stop()
   })
 })
