@@ -513,21 +513,74 @@ pub struct TotpMcp {
 }
 
 /// 恒定身份串：clientInfo.name 优先，回落 UA，再回落 <unknown>（fail-closed）。
-/// 门控匹配（wildcard/exact）与 once/deny 记账全部作用在此串上
+/// 门控匹配（wildcard/exact）与 once/deny 记账全部作用在此串上。
+/// 回落判定抽 identity_fallback（Peer 无公共构造器，RequestContext 不可直接构造）
 fn identity_of(context: &RequestContext<RoleServer>) -> String {
-    if let Some(ci) = context.client_info() {
-        return ci.name;
+    let client_name = context.client_info().map(|ci| ci.name);
+    let user_agent = context
+        .extensions
+        .get::<http::request::Parts>()
+        .and_then(|parts| parts.headers.get(http::header::USER_AGENT))
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    identity_fallback(client_name, user_agent)
+}
+
+/// identity_of 的三级回落判定（可测核心）：clientInfo.name 优先 → UA → "<unknown>"
+fn identity_fallback(client_name: Option<String>, user_agent: Option<String>) -> String {
+    if let Some(name) = client_name {
+        return name;
     }
-    if let Some(parts) = context.extensions.get::<http::request::Parts>() {
-        if let Some(ua) = parts
-            .headers
-            .get(http::header::USER_AGENT)
-            .and_then(|v| v.to_str().ok())
-        {
-            return ua.to_string();
-        }
+    if let Some(ua) = user_agent {
+        return ua;
     }
     "<unknown>".into()
+}
+
+/// gated_call 决策链产出（判定与副作用分离：emit 审批/工具确认/桥接由
+/// TotpMcp::gated_call 薄壳执行，本枚举只决定「做什么」）
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GateOutcome {
+    /// 门控通过：needs_confirm=true 时须先过工具级逐次确认（action 工具 + 非 token 档）
+    Proceed { needs_confirm: bool },
+    /// 直接拒绝（文案已定：mcp disabled / unknown tool / tool disabled / deny 冷却中）
+    Rejected(String),
+    /// 弹客户端审批（emit `mcp://approval` 后本次调用回 pending 文案）
+    EmitApproval { ident: String },
+}
+
+/// gated_call 的决策链（纯函数；配置每请求重读由调用方完成后传入）：
+/// !enabled → exposure_check → decide_gate → once 批准放行 / deny 冷却拒绝 / 首次弹审批；
+/// action 工具叠加 confirm 判定（token 档免，Allow 与 once 放行路径一致叠加）
+pub fn decide_gate_outcome(
+    cfg: &McpConfig,
+    sessions: &GateSessions,
+    ident: &str,
+    tool: &str,
+) -> GateOutcome {
+    if !cfg.enabled {
+        return GateOutcome::Rejected("mcp disabled".into());
+    }
+    // 暴露面门控（spec §6.2）：不在 exposedTools 的工具直接拒绝；同一每请求重读通道，
+    // 设置页勾选改动即时生效
+    if let Err(e) = exposure_check(cfg, tool) {
+        return GateOutcome::Rejected(e.into());
+    }
+    let kind = tool_kind(tool).expect("exposure_check guarantees known tool");
+    let needs_confirm = action_confirm_required(kind, cfg.mode);
+    // NeedsApproval 分支序：once 批准期内放行 → deny 冷却期拒绝 → 首次弹审批事件
+    match decide_gate(cfg, Some(ident)) {
+        GateDecision::Allow => GateOutcome::Proceed { needs_confirm },
+        GateDecision::NeedsApproval if sessions.once_valid(ident) => {
+            GateOutcome::Proceed { needs_confirm }
+        }
+        GateDecision::NeedsApproval if sessions.denied_recently(ident) => GateOutcome::Rejected(
+            "approval denied; try again in about a minute to trigger a new approval dialog".into(),
+        ),
+        GateDecision::NeedsApproval => GateOutcome::EmitApproval {
+            ident: ident.to_string(),
+        },
+    }
 }
 
 impl TotpMcp {
@@ -545,35 +598,20 @@ impl TotpMcp {
         }
     }
 
-    /// 门控 + 事件桥转发（两个工具共用）：
-    /// 配置每请求重读 → decide_gate → once/denied 分支 → 审批事件或 bridge_call
+    /// 门控 + 事件桥转发（两个工具共用薄壳）：
+    /// 配置每请求重读 → decide_gate_outcome 决策 → 按产出执行 emit 审批/工具确认/bridge_call。
+    /// 决策链全分支见 decide_gate_outcome（纯函数单测覆盖），此处只保留副作用
     async fn gated_call(
         &self,
         context: &RequestContext<RoleServer>,
         tool: &str,
         args: serde_json::Value,
     ) -> Result<serde_json::Value, McpError> {
-        // 配置每请求重读：覆盖 enabled/档位/白名单，设置页改动即时生效；
-        // token/端口变更经 restart_if_needed 重启生效（bearer 快照与端口绑定在 serve_forever 启动时定型，6c 落地）
         let cfg = load_mcp_config_inner(&self.cfg_file);
-        if !cfg.enabled {
-            return Err(McpError::invalid_params("mcp disabled", None));
-        }
-        // 暴露面门控（spec §6.2）：不在 exposedTools 的工具直接拒绝；
-        // 同一每请求重读通道，设置页勾选改动即时生效
-        exposure_check(&cfg, tool).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
         let ident = identity_of(context);
-        match decide_gate(&cfg, Some(&ident)) {
-            GateDecision::Allow => {}
-            // NeedsApproval 分支序：once 批准期内放行 → deny 冷却期拒绝 → 首次弹审批事件
-            GateDecision::NeedsApproval if self.sessions.once_valid(&ident) => {}
-            GateDecision::NeedsApproval if self.sessions.denied_recently(&ident) => {
-                return Err(McpError::invalid_params(
-                    "approval denied; try again in about a minute to trigger a new approval dialog",
-                    None,
-                ));
-            }
-            GateDecision::NeedsApproval => {
+        match decide_gate_outcome(&cfg, &self.sessions, &ident, tool) {
+            GateOutcome::Rejected(msg) => Err(McpError::invalid_params(msg, None)),
+            GateOutcome::EmitApproval { ident } => {
                 use tauri::Emitter;
                 self.app
                     .emit_to(
@@ -585,31 +623,32 @@ impl TotpMcp {
                         McpError::invalid_params(format!("approval dialog unavailable: {e}"), None)
                     })?;
                 // fail-closed：本次调用不执行，等用户批准后客户端重试
-                return Err(McpError::invalid_params(
+                Err(McpError::invalid_params(
                     "approval pending: the user must approve this client in the TOTP app",
                     None,
-                ));
+                ))
             }
-        }
-        // action 工具逐次确认（spec §6.2）：客户端级审批（decide_gate/once-TTL）通过后
-        // 再叠加工具级确认——token 档免（持有 token 即主人），其余档每次都问；
-        // deny/超时/通道失败 fail-closed。read 工具零变化（向后兼容）
-        let kind = tool_kind(tool).expect("exposure_check guarantees known tool");
-        if action_confirm_required(kind, cfg.mode) {
-            match tool_confirm(&self.app, &self.bridge, &ident, tool).await {
-                Ok(true) => {}
-                Ok(false) => {
-                    return Err(McpError::invalid_params(
-                        "tool call denied by user in the TOTP app",
-                        None,
-                    ));
+            GateOutcome::Proceed { needs_confirm } => {
+                // action 工具逐次确认（spec §6.2）：客户端级审批（decide_gate/once-TTL）
+                // 通过后再叠加工具级确认——token 档免（持有 token 即主人），其余档每次都问；
+                // deny/超时/通道失败 fail-closed。read 工具零变化（向后兼容）
+                if needs_confirm {
+                    match tool_confirm(&self.app, &self.bridge, &ident, tool).await {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            return Err(McpError::invalid_params(
+                                "tool call denied by user in the TOTP app",
+                                None,
+                            ));
+                        }
+                        Err(e) => return Err(McpError::invalid_params(e, None)),
+                    }
                 }
-                Err(e) => return Err(McpError::invalid_params(e, None)),
+                bridge_call(&self.app, &self.bridge, "main", tool, args)
+                    .await
+                    .map_err(|e| McpError::invalid_params(e, None))
             }
         }
-        bridge_call(&self.app, &self.bridge, "main", tool, args)
-            .await
-            .map_err(|e| McpError::invalid_params(e, None))
     }
 }
 
@@ -1737,6 +1776,113 @@ mod tests {
             decide_gate(&base(AlwaysAsk, &[]), Some("claude")),
             GateDecision::NeedsApproval
         ));
+    }
+
+    // ==== gated_call 决策链全分支（盘点 B40；emit/桥接副作用留薄壳，决策纯函数直测）====
+
+    /// 白名单命中 wildcard 配置（read 两工具默认暴露；exposed 另加 trigger_sync 供 action 用例）
+    fn outcome_cfg(mode: GateMode, exposed_action: bool) -> McpConfig {
+        let mut cfg = McpConfig {
+            enabled: true,
+            mode,
+            whitelist: vec!["Claude*".into()],
+            ..McpConfig::default()
+        };
+        if exposed_action {
+            cfg.exposed_tools.push("trigger_sync".into());
+        }
+        cfg
+    }
+
+    #[test]
+    fn decide_gate_outcome_covers_all_branches() {
+        let sessions = GateSessions::default();
+        // !enabled：最优先拒绝（设置页关闭即断，无论工具/身份）
+        assert_eq!(
+            decide_gate_outcome(&McpConfig::default(), &sessions, "claude", "get_code"),
+            GateOutcome::Rejected("mcp disabled".into())
+        );
+        let cfg = outcome_cfg(GateMode::Wildcard, true);
+        // 未知工具（不在注册表）
+        assert_eq!(
+            decide_gate_outcome(&cfg, &sessions, "claude", "nope"),
+            GateOutcome::Rejected("unknown tool".into())
+        );
+        // 工具未暴露（默认关闭的 action 触发器）
+        let read_only_cfg = outcome_cfg(GateMode::Wildcard, false);
+        assert_eq!(
+            decide_gate_outcome(&read_only_cfg, &sessions, "claude", "trigger_sync"),
+            GateOutcome::Rejected("tool disabled: not in exposed tools".into())
+        );
+        // token 档恒放行且 action 免确认（持有 token 即主人）
+        assert_eq!(
+            decide_gate_outcome(
+                &outcome_cfg(GateMode::Token, true),
+                &sessions,
+                "anyone",
+                "trigger_sync"
+            ),
+            GateOutcome::Proceed {
+                needs_confirm: false
+            }
+        );
+        // wildcard 命中 + read：放行不加确认
+        assert_eq!(
+            decide_gate_outcome(&cfg, &sessions, "claude-desktop", "get_code"),
+            GateOutcome::Proceed {
+                needs_confirm: false
+            }
+        );
+        // wildcard 命中 + action：放行但须逐次确认（非 token 档叠加 confirm）
+        assert_eq!(
+            decide_gate_outcome(&cfg, &sessions, "claude-desktop", "trigger_sync"),
+            GateOutcome::Proceed {
+                needs_confirm: true
+            }
+        );
+        // once 批准期内放行（AlwaysAsk 恒 NeedsApproval，once 记账放行；action 仍须确认）
+        let always = outcome_cfg(GateMode::AlwaysAsk, true);
+        sessions.grant_once("cursor".into());
+        assert_eq!(
+            decide_gate_outcome(&always, &sessions, "cursor", "trigger_sync"),
+            GateOutcome::Proceed {
+                needs_confirm: true
+            }
+        );
+        // deny 冷却期：拒绝并提示稍后再试（冷却不跨 ident）
+        sessions.mark_denied("denied-client");
+        assert_eq!(
+            decide_gate_outcome(&always, &sessions, "denied-client", "get_code"),
+            GateOutcome::Rejected(
+                "approval denied; try again in about a minute to trigger a new approval dialog"
+                    .into()
+            )
+        );
+        // 首次 NeedsApproval：弹审批（ident 原样带出供 emit 载荷）
+        assert_eq!(
+            decide_gate_outcome(&always, &sessions, "fresh-client", "get_code"),
+            GateOutcome::EmitApproval {
+                ident: "fresh-client".into()
+            }
+        );
+    }
+
+    // ==== identity_of 三级回落（盘点 B43；Peer 无公共构造器，抽参量版直测）====
+
+    #[test]
+    fn identity_fallback_three_tiers() {
+        // 一级：clientInfo.name 在场即用（即使 UA 也在场）
+        assert_eq!(
+            identity_fallback(Some("claude-desktop".into()), Some("UA/1.0".into())),
+            "claude-desktop"
+        );
+        // 二级：clientInfo 缺失回落 UA
+        assert_eq!(
+            identity_fallback(None, Some("ZCode CLI/2.1".into())),
+            "ZCode CLI/2.1"
+        );
+        // 三级：全缺回落 <unknown>（fail-closed，门控匹配/记账作用其上）
+        assert_eq!(identity_fallback(None, None), "<unknown>");
     }
 
     #[test]
