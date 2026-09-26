@@ -169,39 +169,43 @@ SW 休眠（chrome://serviceworker-internals 手动 Stop 或等空闲）→ 唤�
 
 ---
 
-## 4. 执行记录（新记录追加在表首）
+## 4. 执行记录索引
 
-| 日期 | 范围 | 结果 | 详情 |
+**归档规则**：每次执行的详细记录（逐项方法/结果、当日发现与处置）写入
+`docs/e2e/YYYY-MM-DD-<主题>.md`（按日期归档），并在下表登记一行索引。
+截图与原始日志放 `.temp/` 或 `E:\tmp\cc\`，不入库。
+
+| 日期 | 范围 | 结果 | 记录文件 |
 |---|---|---|---|
-| 2026-09-26 | D1–D7、B22/B23 复验 | **桌面 6/7 自动化通过**（D1/D2/D4/D5/D6/D7 ✅，D3 登记人工）；E1–E6 保持手测；发现 B22/B23 并当日修复，复验通过 | 详见 §3 各用例与 §5；原始证据 `E:\tmp\cc\totp-e2e\`（不入库） |
-| 2026-09-23~24 | batch⑧ 八项改进 | 8/8 有结论，3 个真缺陷当批修复（见 §5）；Firefox idle README 勘误 | 归档：`docs/review/2026-09-23-batch8-real-machine-test.md` |
+| 2026-09-26 | D1–D7、E1–E6、B22/B23 复验（覆盖率批次） | 桌面 6/7 自动化通过（D3 登记人工）；E1–E6 保持手测；发现 B22/B23 当日修复并复验 | `docs/e2e/2026-09-26-coverage-e2e-checklist.md` |
+| 2026-09-23~24 | batch⑧ 八项改进（8/8 有结论，3 缺陷当批修复；Firefox idle README 勘误） | 通过 | `docs/review/2026-09-23-batch8-real-machine-test.md`（归档先例，早于 `docs/e2e/` 归档规则） |
 
 ---
 
-## 5. 缺陷与处置登记（E2E 发现的缺陷；未修复项须同步登记 backlog）
+## 5. 缺陷与处置登记索引
 
-| 日期 | 缺陷 | 处置 |
-|---|---|---|
-| 2026-09-26 | B22 双实例启动 panic（全局快捷键冲突 exit 101） | **已修复+复验**：tauri-plugin-single-instance（90d9ab2）；第二实例 exit 0、主窗聚焦 |
-| 2026-09-26 | B23 MCP 工具确认连续请求异常（10s 去重窗把不同 oneshot id 误当重试：自动拒绝/点击不生效） | **已修复+真机复验**：工具确认独立入队、去重仅保留首连审批（91abb0c/763184d）；复验 callA=denied by user、callB 等待后 triggered:true |
-| 2026-09-24 | 壳层锁高引发 document 级隐性滚动（sr-only 包含块逃逸） | 已修复：MdSwitch/MdCheckbox 根 position:relative |
-| 2026-09-24 | 桌面剪贴板导入无响应（WebView2 CLIPBOARD 权限永久挂起） | 已修复：ensure_window 加 enable_clipboard_access |
-| 2026-09-24 | 释放策略销毁档导致进程整体退出 | 已修复：RunEvent::ExitRequested code=None → prevent_exit |
-| 2026-09-23 | README「Firefox 空闲锁定不可用」表述过时 | 已勘误（idle API 已支持，min_version 140） |
+各批次发现的缺陷与处置**明细在对应日期的记录文件内**（见 §4 记录文件列）；
+**未修复项必须同步登记 `docs/plans/2026-09-22-review-backlog.md`（活文档）**。已修复缺陷速查：
 
-未修复的发现须同步登记 `docs/plans/2026-09-22-review-backlog.md`（活文档），并在此表注明 backlog 编号。
+| 日期 | 缺陷 | 处置 | 明细 |
+|---|---|---|---|
+| 2026-09-26 | B22 双实例启动 panic（全局快捷键冲突 exit 101） | 已修复+复验：tauri-plugin-single-instance（90d9ab2） | `docs/e2e/2026-09-26-coverage-e2e-checklist.md` §四 |
+| 2026-09-26 | B23 MCP 工具确认连续请求异常（10s 去重窗误合并不同 oneshot id） | 已修复+真机复验：工具确认独立入队、去重仅保留首连审批（91abb0c/763184d） | 同上 |
+| 2026-09-24 | 壳层锁高隐性滚动 / 桌面剪贴板权限挂起 / 销毁档进程退出 | 已修复（三项） | `docs/review/2026-09-23-batch8-real-machine-test.md` §四 |
+| 2026-09-23 | README「Firefox 空闲锁定不可用」表述过时 | 已勘误（idle API 已支持，min_version 140） | 同上 |
 
 ---
 
 ## 6. 扩充指南
 
 1. **新增用例**：编号续接（D8+ / E7+），按 §3 格式补全「自动化标注/前置/步骤/预期/源码」五要素，并在 §7 变更记录追加一行。范围判定参照 §1：只有依赖真实环境、单测不可达的行为才进 E2E。
-2. **执行**：跑完在 §4 表首追加记录行（日期/范围/结果/详情指针）；截图与原始日志放 `.temp/` 或 `E:\tmp\cc\`，不入库。
-3. **发现缺陷**：当批修复则在 §5 登记「已修复」；不能当批修复的，登记 backlog 并在 §5 注明编号。
+2. **执行与记录**：每次执行新建 `docs/e2e/YYYY-MM-DD-<主题>.md`（逐项方法/结果 + 当日发现与处置），并在 §4 索引表登记一行。
+3. **发现缺陷**：当批修复则在当日记录文件登记「已修复」；不能当批修复的，登记 `docs/plans/2026-09-22-review-backlog.md` 并在记录文件注明编号。
 4. **口径变更**（豁免增减、分层调整）：本文档 §1 修改即可生效，无需新开日期文档；若与已归档的覆盖率方案冲突，以本文档为准并在变更记录注明。
 
 ## 7. 变更记录
 
 | 日期 | 变更 | 备注 |
 |---|---|---|
-| 2026-09-26 | v1.0 整合成文 | 吸收 `docs/plans/2026-09-25-coverage-design.md` §1.2/§1.3/§4/§7 口径、`docs/review/2026-09-26-coverage-e2e-checklist.md` 全部用例与执行记录、`docs/review/2026-09-23-batch8-real-machine-test.md` 缺陷登记；并含 B22/B23 修复后真机复验结果（90d9ab2/91abb0c/763184d） |
+| 2026-09-26 | v1.1 执行记录与缺陷登记改为 `docs/e2e/` 按日期归档，§4/§5 改为索引制 | 09-26 批次记录移至 `docs/e2e/2026-09-26-coverage-e2e-checklist.md`（git mv 保留历史） |
+| 2026-09-26 | v1.0 整合成文 | 吸收 `docs/plans/2026-09-25-coverage-design.md` §1.2/§1.3/§4/§7 口径、`docs/e2e/2026-09-26-coverage-e2e-checklist.md`（原 docs/review/ 下）全部用例与执行记录、`docs/review/2026-09-23-batch8-real-machine-test.md` 缺陷登记；并含 B22/B23 修复后真机复验结果（90d9ab2/91abb0c/763184d） |
