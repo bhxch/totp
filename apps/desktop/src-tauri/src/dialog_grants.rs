@@ -797,6 +797,93 @@ mod tests {
         std::fs::remove_dir_all(std::env::temp_dir().join("totp_read_text_test")).ok();
     }
 
+    // ---- R11 守卫（先于收敛锁定现状）：5 个文件命令 × 扩展名 允许/拒绝矩阵 ----
+    // 各命令白名单互不互通（写 text/bytes、读备份/导入文本/导入字节），矩阵以字面量
+    // 锁定成员与大小写语义（读备份大小写敏感、导出/导入组大小写不敏感），收敛
+    // ensure_extension 时矩阵必须保持不变（除显式记录的白名单成员变更）。
+    #[test]
+    fn file_command_extension_allow_deny_matrix_locks_current_contract() {
+        // 矩阵覆盖三类成员：导入组现有成员、白名单外交互样本、他命令专属成员
+        const EXTS: [&str; 13] = [
+            ".json", ".jsonl", ".wauth", ".xml", ".txt", ".aegis", ".db", ".sqlitedb", ".sqlite",
+            ".zip", ".totpbackup", ".png", ".exe",
+        ];
+        // 现状允许集合（字面量快照）
+        const READ_TEXT_OK: [&str; 1] = [".totpbackup"];
+        const READ_IMPORT_TEXT_OK: [&str; 5] = [".json", ".wauth", ".xml", ".txt", ".aegis"];
+        const READ_IMPORT_BYTES_OK: [&str; 9] = [
+            ".json", ".wauth", ".xml", ".txt", ".aegis", ".db", ".sqlitedb", ".sqlite", ".zip",
+        ];
+        const WRITE_TEXT_OK: [&str; 3] = [".totpbackup", ".json", ".txt"];
+        const WRITE_BYTES_OK: [&str; 1] = [".png"];
+        for e in EXTS {
+            // 读命令：对每个扩展名建真实文件（is_file 前置），逐命令断言允许/拒绝
+            let (g, p, t) =
+                granted_dir_with_file("totp_matrix_read_text", &format!("f{e}"), b"x");
+            assert_eq!(
+                read_text_file_granted(&g, &p, &t).is_ok(),
+                READ_TEXT_OK.contains(&e),
+                "read_text_file 对 {e} 的允许/拒绝与矩阵不符"
+            );
+            let (g, p, t) =
+                granted_dir_with_file("totp_matrix_read_import", &format!("f{e}"), b"x");
+            assert_eq!(
+                read_import_file_granted(&g, &p, &t).is_ok(),
+                READ_IMPORT_TEXT_OK.contains(&e),
+                "read_import_file 对 {e} 的允许/拒绝与矩阵不符"
+            );
+            let (g, p, t) =
+                granted_dir_with_file("totp_matrix_read_import_bytes", &format!("f{e}"), b"x");
+            assert_eq!(
+                read_import_file_bytes_granted(&g, &p, &t).is_ok(),
+                READ_IMPORT_BYTES_OK.contains(&e),
+                "read_import_file_bytes 对 {e} 的允许/拒绝与矩阵不符"
+            );
+        }
+        // 写命令：两通道各自守护（写盘通道有意不同：text=原子写、bytes=直写，此处只锁白名单）
+        let base = std::env::temp_dir().join("totp_matrix_write");
+        let allowed = base.join("allowed");
+        std::fs::create_dir_all(&allowed).unwrap();
+        let grants = DialogGrants::default();
+        let token = grants.register(std::fs::canonicalize(&allowed).unwrap());
+        for e in EXTS {
+            let text_path = allowed.join(format!("text-f{e}"));
+            assert_eq!(
+                write_text_file_granted(&grants, text_path.to_str().unwrap().into(), "{}".into(), &token)
+                    .is_ok(),
+                WRITE_TEXT_OK.contains(&e),
+                "write_text_file 对 {e} 的允许/拒绝与矩阵不符"
+            );
+            let bytes_path = allowed.join(format!("bytes-f{e}"));
+            assert_eq!(
+                write_bytes_file_granted(
+                    &grants,
+                    bytes_path.to_str().unwrap().into(),
+                    vec![1, 2],
+                    &token
+                )
+                .is_ok(),
+                WRITE_BYTES_OK.contains(&e),
+                "write_bytes_file 对 {e} 的允许/拒绝与矩阵不符"
+            );
+        }
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    // 大小写语义锁定（read_granted_file_core 注释「read_text 大小写敏感、import 组大小写
+    // 不敏感，语义各自保留」）：大写形态的备份名在读备份命令被拒，大写导入扩展名在导入命令放行
+    #[test]
+    fn file_command_case_sensitivity_semantics_locked() {
+        let (g, p, t) =
+            granted_dir_with_file("totp_matrix_case_text", "f.TOTPBACKUP", b"x");
+        assert!(read_text_file_granted(&g, &p, &t).is_err(), "读备份白名单必须保持大小写敏感");
+        let (g2, p2, t2) = granted_dir_with_file("totp_matrix_case_import", "f.AEGIS", b"x");
+        assert!(
+            read_import_file_granted(&g2, &p2, &t2).is_ok(),
+            "导入组白名单必须保持大小写不敏感"
+        );
+    }
+
     #[test]
     fn read_import_file_granted_whitelist_and_bytes_superset() {
         // 文本导入组白名单（大小写不敏感）
