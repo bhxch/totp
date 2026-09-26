@@ -101,6 +101,45 @@ pub enum ReleaseAction {
     Destroy,
 }
 
+/// 释放 tick 副作用计划（判定与 OS 副作用分离：接线层按计划执行 emit/TrySuspend/destroy）。
+/// Pause 档联动 lock_on_pause 决定是否同时锁库；Destroy 档由接线层处理锁库/暂存与回滚记账
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReleasePlan {
+    /// 无动作
+    Idle,
+    /// 仅挂起两窗（暂停档且不锁库）
+    Suspend,
+    /// 锁库（emit force-lock + 清 DEK 暂存槽）+ 挂起两窗
+    LockAndSuspend,
+    /// 销毁两窗（失败回滚 destroyed 下一 tick 重试，见 apply_destroy_with_rollback）
+    Destroy,
+}
+
+/// tick 副作用计划判定（纯函数）：Pause 联动 lock_on_pause，Destroy/None 直映射。
+/// 四档联动（盘点 B15）：lock_on_pause×Pause/无锁 Pause/Destroy/None
+pub fn plan_for(action: ReleaseAction, cfg: &ReleasePolicyConfig) -> ReleasePlan {
+    match action {
+        ReleaseAction::Pause if cfg.lock_on_pause => ReleasePlan::LockAndSuspend,
+        ReleaseAction::Pause => ReleasePlan::Suspend,
+        ReleaseAction::Destroy => ReleasePlan::Destroy,
+        ReleaseAction::None => ReleasePlan::Idle,
+    }
+}
+
+/// Destroy 档记账（销毁动作注入闭包）：返回是否全部销毁成功；任一失败回滚 destroyed
+/// 标记，下一 tick 重试（接线层在锁外执行真实销毁、锁内记账——advance 单步注释所述
+/// 持锁跨 is_visible/destroy 副作用会形成「tick 等主线程、主线程等 tick」的循环等待）
+pub fn apply_destroy_with_rollback(
+    track: &mut ReleaseTrack,
+    destroy_windows: impl FnOnce() -> bool,
+) -> bool {
+    let ok = destroy_windows();
+    if !ok {
+        track.destroyed = false;
+    }
+    ok
+}
+
 /// 释放状态轨迹（接线层持有；任一窗口可见或窗口重建时调用 reset）
 #[derive(Debug, Default)]
 pub struct ReleaseTrack {
@@ -319,5 +358,42 @@ mod tests {
         assert_eq!(v["mcp"]["enabled"], serde_json::json!(true));
         assert_eq!(v["releasePolicy"]["pauseMinutes"], serde_json::json!(1));
         assert_eq!(v["releasePolicy"]["destroyMinutes"], serde_json::json!(2));
+    }
+
+    // ---- tick 副作用计划四档联动（盘点 B15：接线层判定抽纯函数）----
+
+    #[test]
+    fn plan_for_maps_four_combinations() {
+        // Pause + lock_on_pause：锁库+挂起
+        let mut c = cfg(5, 30);
+        c.lock_on_pause = true;
+        assert_eq!(
+            plan_for(ReleaseAction::Pause, &c),
+            ReleasePlan::LockAndSuspend
+        );
+        // Pause 不锁库：仅挂起（默认 lock_on_pause=false）
+        assert_eq!(
+            plan_for(ReleaseAction::Pause, &cfg(5, 30)),
+            ReleasePlan::Suspend
+        );
+        // Destroy：销毁（锁库/暂存由接线层按 lock_on_destroy 处理，计划层不折叠）
+        c.lock_on_pause = false;
+        c.lock_on_destroy = false;
+        assert_eq!(plan_for(ReleaseAction::Destroy, &c), ReleasePlan::Destroy);
+        assert_eq!(plan_for(ReleaseAction::None, &c), ReleasePlan::Idle);
+    }
+
+    #[test]
+    fn destroy_rollback_resets_track_on_partial_failure() {
+        let mut t = ReleaseTrack {
+            destroyed: true,
+            ..ReleaseTrack::default()
+        };
+        // 全部销毁成功：记账保持 destroyed（窗口将消失，等重建路径 reset）
+        assert!(apply_destroy_with_rollback(&mut t, || true));
+        assert!(t.destroyed);
+        // 任一 destroy 失败：回滚 destroyed，下一 tick 重试（防轨迹与事实脱节）
+        assert!(!apply_destroy_with_rollback(&mut t, || false));
+        assert!(!t.destroyed);
     }
 }

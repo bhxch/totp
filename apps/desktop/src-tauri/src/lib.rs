@@ -201,6 +201,25 @@ fn attach_parent_console() {
 #[allow(dead_code)]
 fn attach_parent_console() {}
 
+/// devtools 环境注入判定（apply_devtools_env 的可测核心，env 读写留薄壳）：给定 APPDATA 根、
+/// tauri.conf 解析值与外部预设态，返回应注入的 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS 值。
+/// identifier 缺失/settings.json 读不到/未启用/外部已预设 → None（静默不动，不挤外部参数）
+#[cfg(windows)]
+fn apply_devtools_env_inner(
+    appdata: &std::path::Path,
+    conf: &serde_json::Value,
+    external_preset: bool,
+) -> Option<String> {
+    let id = conf.get("identifier")?.as_str()?;
+    let text = std::fs::read_to_string(appdata.join(id).join("settings.json")).ok()?;
+    let (enabled, port) = read_devtools_from_settings_text(&text);
+    if enabled && !external_preset {
+        Some(format!("--remote-debugging-port={port}"))
+    } else {
+        None
+    }
+}
+
 /// 须在任何 WebView 创建前调用（run() 最早期）；settings.json 路径按
 /// Windows app_data_dir 规则 %APPDATA%/{identifier} 解析（mac/linux 无 CDP 端口通道，恒 no-op）
 fn apply_devtools_env() {
@@ -212,24 +231,13 @@ fn apply_devtools_env() {
         let Ok(conf) = include_str!("../tauri.conf.json").parse::<serde_json::Value>() else {
             return;
         };
-        let Some(id) = conf["identifier"].as_str() else {
-            return;
-        };
-        let Ok(text) = std::fs::read_to_string(
-            std::path::Path::new(&appdata)
-                .join(id)
-                .join("settings.json"),
-        ) else {
-            return;
-        };
-        let (enabled, port) = read_devtools_from_settings_text(&text);
-        // 终审修复：仅在环境变量未设置时写入——外部（调试器/CI/用户 shell）预设的
+        // 终审修复：仅在环境变量未设置时注入——外部（调试器/CI/用户 shell）预设的
         // WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS 可能携带其他浏览器参数，无条件覆写会挤掉它们
-        if enabled && std::env::var_os("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").is_none() {
-            std::env::set_var(
-                "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-                format!("--remote-debugging-port={port}"),
-            );
+        let external_preset = std::env::var_os("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").is_some();
+        if let Some(value) =
+            apply_devtools_env_inner(std::path::Path::new(&appdata), &conf, external_preset)
+        {
+            std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", value);
         }
     }
 }
@@ -399,27 +407,30 @@ fn release_tick(app: &AppHandle) {
         let mut track = RELEASE_TRACK.lock().expect("release track poisoned");
         release_policy::advance(&mut track, &cfg, main_visible, mini_visible, Instant::now())
     };
-    match action {
-        release_policy::ReleaseAction::Pause => {
-            if cfg.lock_on_pause {
-                let _ = app.emit("force-lock", ());
-                // 锁库即清 DEK 暂存槽（Task 14）：锁库路径绝不留跨重建的免解锁通道
-                dek_slot_clear(&STASHED_DEK);
-            }
+    match release_policy::plan_for(action, &cfg) {
+        release_policy::ReleasePlan::LockAndSuspend => {
+            let _ = app.emit("force-lock", ());
+            // 锁库即清 DEK 暂存槽（Task 14）：锁库路径绝不留跨重建的免解锁通道
+            dek_slot_clear(&STASHED_DEK);
             for label in ["main", "mini"] {
                 try_suspend_window(app, label);
             }
         }
-        release_policy::ReleaseAction::Destroy => {
-            if !destroy_releasable_windows(app, &cfg) {
-                // 任一 destroy 失败：回滚销毁标记（advance 内已提前置位），下一 tick 重试，
-                // 防止「轨迹已销毁而窗口仍在」的状态与事实脱节（审查 Task 12 交接项）
-                if let Ok(mut track) = RELEASE_TRACK.lock() {
-                    track.destroyed = false;
-                }
+        release_policy::ReleasePlan::Suspend => {
+            for label in ["main", "mini"] {
+                try_suspend_window(app, label);
             }
         }
-        release_policy::ReleaseAction::None => {}
+        release_policy::ReleasePlan::Destroy => {
+            // 销毁在锁外执行（emit/sleep/destroy 副作用不得持锁，见上方 advance 注释）；
+            // 任一 destroy 失败由 apply_destroy_with_rollback 回滚销毁标记（advance 内已
+            // 提前置位），下一 tick 重试，防止「轨迹已销毁而窗口仍在」的状态与事实脱节
+            //（审查 Task 12 交接项）
+            let all_destroyed = destroy_releasable_windows(app, &cfg);
+            let mut track = RELEASE_TRACK.lock().expect("release track poisoned");
+            release_policy::apply_destroy_with_rollback(&mut track, || all_destroyed);
+        }
+        release_policy::ReleasePlan::Idle => {}
     }
 }
 
@@ -2239,5 +2250,97 @@ mod tests {
         std::fs::write(&outside_file, "x").unwrap();
         assert!(read_import_file_granted(&grants, outside_file.to_str().unwrap(), &token).is_err());
         std::fs::remove_dir_all(&base).ok();
+    }
+
+    // ---- devtools 环境注入（盘点 B30：apply_devtools_env 静默边界与「未设才注入」）----
+
+    /// 搭建带（或无）settings.json 的假 APPDATA 根（按用例名隔离，cargo test 并行安全），
+    /// 返回其路径
+    fn devtools_appdata(case: &str, settings_json: Option<&str>) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("totp_devtools_env_{case}"));
+        let dir = root.join("com.totp.desktop");
+        std::fs::create_dir_all(&dir).unwrap();
+        match settings_json {
+            Some(text) => std::fs::write(dir.join("settings.json"), text).unwrap(),
+            None => {
+                std::fs::remove_file(dir.join("settings.json")).ok();
+            }
+        }
+        root
+    }
+
+    fn devtools_conf() -> serde_json::Value {
+        serde_json::json!({ "identifier": "com.totp.desktop" })
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn devtools_env_inner_silent_boundaries_and_injection() {
+        let conf = devtools_conf();
+        // settings.json 读不到（APPDATA 下无此文件）：静默
+        let root = devtools_appdata("missing", None);
+        assert_eq!(apply_devtools_env_inner(&root, &conf, false), None);
+        // conf 缺 identifier：静默
+        let root = devtools_appdata(
+            "no-ident",
+            Some(r#"{"devtools":{"enabled":true,"port":9333}}"#),
+        );
+        assert_eq!(
+            apply_devtools_env_inner(&root, &serde_json::json!({}), false),
+            None
+        );
+        // 未启用（默认关）：静默
+        let root = devtools_appdata("disabled", Some("{}"));
+        assert_eq!(apply_devtools_env_inner(&root, &conf, false), None);
+        // 启用且外部未预设：注入 CDP 端口参数
+        let root = devtools_appdata(
+            "inject",
+            Some(r#"{"devtools":{"enabled":true,"port":9333}}"#),
+        );
+        assert_eq!(
+            apply_devtools_env_inner(&root, &conf, false),
+            Some("--remote-debugging-port=9333".into())
+        );
+        // 启用但外部已预设：不挤掉外部参数（终审修复语义）
+        assert_eq!(apply_devtools_env_inner(&root, &conf, true), None);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // 端到端接线（薄壳 env 读写）：单一用例内完成 env 改写/断言/恢复，进程内其他测试
+    // 不触碰 APPDATA 与 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS，无并行竞态
+    #[cfg(windows)]
+    #[test]
+    fn apply_devtools_env_end_to_end_injects_and_preserves_external_preset() {
+        let saved_appdata = std::env::var("APPDATA").ok();
+        let saved_arg = std::env::var_os("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS");
+        let root = devtools_appdata("e2e", Some(r#"{"devtools":{"enabled":true,"port":9333}}"#));
+        std::env::set_var("APPDATA", &root);
+        std::env::remove_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS");
+        // 未设：注入
+        apply_devtools_env();
+        assert_eq!(
+            std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap(),
+            "--remote-debugging-port=9333"
+        );
+        // 已设（外部哨兵）：不被挤掉
+        std::env::set_var(
+            "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+            "--external-sentinel",
+        );
+        apply_devtools_env();
+        assert_eq!(
+            std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap(),
+            "--external-sentinel"
+        );
+        // 恢复现场
+        match saved_appdata {
+            Some(v) => std::env::set_var("APPDATA", v),
+            None => std::env::remove_var("APPDATA"),
+        }
+        match saved_arg {
+            Some(v) => std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", v),
+            None => std::env::remove_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"),
+        }
+        std::fs::remove_dir_all(&root).ok();
     }
 }
