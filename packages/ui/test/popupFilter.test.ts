@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { addTag, createVault, addEntry } from '@totp/core'
-import { resolvePopupVisible, HINT_SITE_TAGGED, HINT_TAG_RELAXED, HINT_SITE_PLAIN, HINT_SITE_ALL } from '../src/popupFilter'
+import { resolvePopupVisible, searchEntries, HINT_SITE_TAGGED, HINT_TAG_RELAXED, HINT_SITE_PLAIN, HINT_SITE_ALL } from '../src/popupFilter'
 import zhMessages from '../src/i18n/locales/zh/common.json'
 import enMessages from '../src/i18n/locales/en/common.json'
 import type { OtpEntry } from '@totp/core'
@@ -107,5 +107,27 @@ describe('F13：popup 混合规则求值（同步/旧 vault 通道的引擎边�
     expect(r.visible.map((x) => x.uuid)).toEqual(['r'])
     expect(r.hint).toBe(HINT_SITE_PLAIN)
     expect(r.urlMatchCount).toBe(0)
+  })
+})
+
+describe('searchEntries 搜索谓词单一来源（R16④ 两份谓词合一）', () => {
+  const note = { ...e('n', []), note: 'Work account' }
+  const entries = [note]
+  it('issuer/label/note 拼串大小写不敏感包含；空 q 原样返回', () => {
+    expect(searchEntries(entries, '')).toBe(entries)
+    expect(searchEntries([note], 'work acc').map((x) => x.uuid)).toEqual(['n'])
+    expect(searchEntries([note], 'WORK ACCOUNT').map((x) => x.uuid)).toEqual(['n'])
+    expect(searchEntries([note], 'nomatch')).toEqual([])
+  })
+  it('includeSecret=false（缺省）不匹配 secret（popup 既有口径）', () => {
+    expect(searchEntries([note], 'jbswy3dpehpk3pxp')).toEqual([])
+  })
+  it('includeSecret=true：secret 命中（I49）；secret 与输入串都去空白后比较', () => {
+    expect(searchEntries([note], 'jbswy3dpehpk3pxp', { includeSecret: true }).map((x) => x.uuid)).toEqual(['n'])
+    expect(searchEntries([note], 'jb sw y3', { includeSecret: true }).map((x) => x.uuid)).toEqual(['n'])
+    expect(searchEntries([{ ...note, secret: 'AB CD' }], 'abcd', { includeSecret: true }).map((x) => x.uuid)).toEqual(['n'])
+  })
+  it('includeSecret=true 时基础字段匹配不受影响（分支不互斥）', () => {
+    expect(searchEntries([note], 'work', { includeSecret: true }).map((x) => x.uuid)).toEqual(['n'])
   })
 })

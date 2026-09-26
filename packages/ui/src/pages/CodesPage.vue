@@ -4,6 +4,7 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useOtpCodes } from '../composables/useOtpCodes'
 import { iconView, type IconStore } from '../iconStore'
+import { searchEntries } from '../popupFilter'
 import type { VueStore } from '../store'
 import EntryFormDialog from '../components/EntryFormDialog.vue'
 import TagFilterRow from '../components/TagFilterRow.vue'
@@ -103,20 +104,11 @@ const sorted = computed(() =>
 const { codes } = useOtpCodes(sorted)
 /** EntryForm 图标数据源：builtin 全集 + store 内 stored/url dataUrl 映射 */
 const entryIcons = computed(() => ({ builtin: getBuiltinIcons(), stored: props.icons?.icons ?? {} }))
-/** 可见列表：搜索过滤（issuer/label/note，I49 可选 secret）→ 标签筛选（filterByTags，any/all 模式） */
+/** 可见列表：搜索过滤（issuer/label/note，I49 可选 secret；谓词走 popupFilter.searchEntries 单一来源）
+ *  → 标签筛选（filterByTags，any/all 模式） */
 const visible = computed(() => {
-  const q = query.value.trim().toLowerCase()
-  let list = sorted.value
-  if (q) {
-    // I49：仅在用户主动开启时纳入 secret 匹配；secret 已规范为大写无空白，对输入串做同样归一化
-    const qNorm = q.replace(/\s+/g, '')
-    list = list.filter((e) => {
-      const base = `${e.issuer} ${e.label} ${e.note ?? ''}`.toLowerCase().includes(q)
-      if (base) return true
-      if (searchSecret.value) return e.secret.replace(/\s+/g, '').toLowerCase().includes(qNorm)
-      return false
-    })
-  }
+  const q = query.value.trim()
+  const list = q ? searchEntries(sorted.value, q, { includeSecret: searchSecret.value }) : sorted.value
   return filterByTags(list, new Set(selectedTagIds.value), props.store.settings.tagFilterMode)
 })
 /** 兜底：tag 被删除（管理弹层/远端同步）后从选中集合剔除；immediate 覆盖 setup 时 tags 已装载的首轮

@@ -27,14 +27,26 @@ export interface PopupFilterResult {
   urlMatchCount: number
 }
 
-function searchMatch(entries: OtpEntry[], q: string): OtpEntry[] {
+export interface SearchEntriesOptions {
+  /** 追加 secret 串匹配（I49：用户主动开启；secret 与待搜串都去空白后比较，大小写不敏感） */
+  includeSecret?: boolean
+}
+
+/** 搜索谓词单一来源（R16④：popup 与 CodesPage 两份谓词合一）。issuer/label/note 拼串
+ *  大小写不敏感包含；q 为空原样返回。includeSecret 时再对 secret 匹配（两者都去空白：
+ *  secret 已规范为大写无空白，输入串做同样归一化） */
+export function searchEntries(entries: OtpEntry[], q: string, opts: SearchEntriesOptions = {}): OtpEntry[] {
   if (!q) return entries
   const needle = q.toLowerCase()
-  return entries.filter((e) => `${e.issuer} ${e.label} ${e.note ?? ''}`.toLowerCase().includes(needle))
+  const secretNeedle = opts.includeSecret ? needle.replace(/\s+/g, '') : ''
+  return entries.filter((e) => {
+    if (`${e.issuer} ${e.label} ${e.note ?? ''}`.toLowerCase().includes(needle)) return true
+    return opts.includeSecret === true && e.secret.replace(/\s+/g, '').toLowerCase().includes(secretNeedle)
+  })
 }
 
 export function resolvePopupVisible(input: PopupFilterInput): PopupFilterResult {
-  const base = searchMatch(input.entries, input.query.trim())
+  const base = searchEntries(input.entries, input.query.trim())
   const tagged = filterByTags(base, input.selectedTagIds, input.tagMode)
   if (!input.urlFilterActive) {
     if (tagged.length === 0 && input.query.trim() !== '' && input.selectedTagIds.size > 0) {
