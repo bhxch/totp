@@ -2,14 +2,16 @@
  * plan16 迁移端到端（Task 16）：仅用 core 纯函数模拟完整宿主迁移序列（不依赖 ui/宿主实现）。
  * 旧态：v1 加密 vault 密文内含遗留 backupSecret 字段 + 旧云多目标键四件套
  * （cloudCreds 多源 / cloudCred 单对象回退 / cloudRevs / cloudRev）。
- * 迁移序列（与 ui store.migrateLegacySecrets + desktop/extension migrateLegacyCloudSources 同构）：
+ * 迁移序列（与 ui store.migrateLegacySecrets 同构；云迁移段 R2 起直调 core 单点实现
+ * backup/legacyCloudMigrate.migrateLegacyCloudSources——两端宿主委托的正是同一实现）：
  *   解锁得 DEK → openSecretBag 空袋 → vault 内 backupSecret 写入保管区并密封（先写新）
  *   → 剥除字段重加密落盘（后删旧）→ cloudCreds 解析（缺失回退 cloudCred 单对象）
  *   → saveSources（id=旧 backend 键）→ 逐源凭据入保管区 → saveSourceRev 基线平移 → 删四旧键。
  * 断言：盘上 vault 密文解出无 backupSecret；保管区密文可解口令+两凭据；backupSources 形状正确；
  * sourceRevs 平移；四个旧键全删；迁移完成态二次运行整段序列零写盘（counting adapter）；
  * 第 2 个凭据 saveCred 抛错中断 → 旧键原样保留 → 重跑收敛（先写新后删旧）；
- * 审查 M5 补两个中断点：①保管区已写但 vault 未剥除 ②基线已平移但旧键未删——均断言重跑收敛。
+ * 审查 M5 补两个中断点：①保管区已写但 vault 未剥除 ②基线已平移但旧键未删——均断言重跑收敛；
+ * R2 补三项两端差异守卫用例（双缺失清 revs 孤儿 / 合法空配置删孤儿 / backend 去重）。
  */
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -17,9 +19,10 @@ import {
   setupVaultEncryption, unlockVaultEncryption,
 } from '../src/security/securityStore'
 import { openSecretBag, sealSecretBag, SECRET_BAG_KEY } from '../src/backup/secretBag'
+import { migrateLegacyCloudSources } from '../src/backup/legacyCloudMigrate'
 import {
-  loadSourceRevs, loadSources, saveSourceRev, saveSources,
-  SOURCE_REVS_KEY, SOURCES_KEY, type BackupSource,
+  loadSourceRevs, loadSources,
+  SOURCE_REVS_KEY, SOURCES_KEY,
 } from '../src/backup/sources'
 import type { CloudCred } from '../src/cloud/backend'
 import type { StorageAdapter } from '../src/storage/adapter'
@@ -44,11 +47,6 @@ const OLD_VAULT_OBJ = {
   groups: [] as unknown[],
   updatedAt: 12345,
   backupSecret: LEGACY_SECRET,
-}
-
-/** 旧目标 backend → 用户可见名（与宿主 BACKEND_LABEL 同表） */
-const BACKEND_LABEL: Record<string, string> = {
-  webdav: 'WebDAV', s3: 'S3', gist: 'GitHub Gist', gdrive: 'Google Drive', onedrive: 'OneDrive', local: '本地目录',
 }
 
 /** 计数 StorageAdapter：记录 set/delete 次数（二次运行零写盘断言用），data 供键存在性断言 */
@@ -132,74 +130,8 @@ function makeSaveCred(adapter: Adapter, dek: Uint8Array): (id: string, cred: Clo
   }
 }
 
-/** 宿主 migrateLegacyCloudSources 同构（desktop legacyMigrate.ts / extension cloudCredStore.ts 纯 core 版）：
- *  旧云键 → 源模型（id=旧 backend 键）+ 凭据入保管区 + sourceRevs 平移 + 四旧键删除（先写新后删旧）。
- *  返回本次迁移的源数（无旧键返回 0，不动任何键）。
- *  failBeforeCleanup：中断注入（审查 M5）——基线已平移、四旧键未删时抛错，模拟删旧键前中断。 */
-async function migrateLegacyCloudSources(
-  adapter: Adapter,
-  dek: Uint8Array,
-  deps: { saveCred(id: string, cred: CloudCred): Promise<void> },
-  failBeforeCleanup?: Error,
-): Promise<number> {
-  // 读旧凭据：cloudCreds（数组）缺失回退 cloudCred（单对象 → enabled:true）
-  let targets: { cred: CloudCred; enabled: boolean }[]
-  const credsRaw = await adapter.get(CLOUD_CREDS_KEY)
-  if (credsRaw !== null) {
-    const parsed: unknown = JSON.parse(credsRaw)
-    if (!Array.isArray(parsed)) return 0
-    targets = parsed
-      .filter((t): t is { cred: { backend: string }; enabled: boolean } => {
-        const o = t as { cred?: { backend?: unknown }; enabled?: unknown }
-        return typeof o?.cred?.backend === 'string' && typeof o.enabled === 'boolean'
-      })
-      .map((t) => ({ cred: t.cred as CloudCred, enabled: t.enabled }))
-  } else {
-    const singleRaw = await adapter.get(CLOUD_CRED_KEY)
-    if (singleRaw === null) return 0
-    const single = JSON.parse(singleRaw) as CloudCred
-    if (typeof single?.backend !== 'string') return 0
-    targets = [{ cred: single, enabled: true }]
-  }
-  if (targets.length === 0) return 0
-
-  const existing = await loadSources(adapter)
-  const migrated: BackupSource[] = targets.map((t) => ({
-    id: t.cred.backend,
-    kind: t.cred.backend,
-    name: BACKEND_LABEL[t.cred.backend] ?? t.cred.backend,
-    retention: { type: 'overwrite' },
-    enabled: t.enabled,
-    role: 'replica',
-  }))
-  const merged = [...existing, ...migrated.filter((m) => !existing.some((e) => e.id === m.id))]
-
-  // 先写新：源列表 → 逐源凭据入保管区 → 基线平移；任一步抛错旧键保留（异常上抛）
-  await saveSources(adapter, merged)
-  for (const t of targets) await deps.saveCred(t.cred.backend, t.cred)
-
-  const revsRaw = await adapter.get(CLOUD_REVS_KEY)
-  const ids = new Set(migrated.map((m) => m.id))
-  if (revsRaw !== null) {
-    const revs = JSON.parse(revsRaw) as Record<string, unknown>
-    for (const [id, hash] of Object.entries(revs)) {
-      if (typeof hash === 'string' && ids.has(id)) await saveSourceRev(adapter, id, hash)
-    }
-  } else {
-    const legacyRev = await adapter.get(CLOUD_REV_KEY)
-    const first = migrated[0]
-    if (legacyRev !== null && first) await saveSourceRev(adapter, first.id, legacyRev)
-  }
-
-  if (failBeforeCleanup) throw failBeforeCleanup
-  await adapter.delete(CLOUD_CREDS_KEY)
-  await adapter.delete(CLOUD_CRED_KEY)
-  await adapter.delete(CLOUD_REVS_KEY)
-  await adapter.delete(CLOUD_REV_KEY)
-  return migrated.length
-}
-
-/** 宿主完整迁移序列：解锁 → migrateLegacySecrets → migrateLegacyCloudSources（App.vue 双汇合点同序）。
+/** 宿主完整迁移序列：解锁 → migrateLegacySecrets → core migrateLegacyCloudSources（R2 起宿主即直调
+ *  core 单点实现，App.vue 双汇合点同序）。
  *  fail 透传两个中断点（保管区已写未剥除 / 基线已平移未删旧键），生产同构调用不传。 */
 async function runHostMigration(
   adapter: Adapter,
@@ -208,7 +140,22 @@ async function runHostMigration(
 ): Promise<{ dek: Uint8Array; migrated: number }> {
   const dek = await unlockFromDisk(adapter)
   await migrateLegacySecrets(adapter, dek, fail?.afterBagWrite)
-  const migrated = await migrateLegacyCloudSources(adapter, dek, deps, fail?.beforeDeleteOldKeys)
+  // beforeDeleteOldKeys 中断注入（审查 M5）：core 实现无测试钩子，改为包装 adapter 令首次 delete 抛错——
+  // 实现删旧键序列的第一个 delete 即 cloudCreds，抛错时四旧键全未删，与「基线已平移、旧键未删」中断态一致
+  let target: StorageAdapter = adapter
+  if (fail?.beforeDeleteOldKeys) {
+    const boom = fail.beforeDeleteOldKeys
+    let deletes = 0
+    target = {
+      get: (key) => adapter.get(key),
+      set: (key, value) => adapter.set(key, value),
+      delete: async (key) => {
+        if (++deletes === 1) throw boom
+        await adapter.delete(key)
+      },
+    }
+  }
+  const migrated = await migrateLegacyCloudSources(target, deps)
   return { dek, migrated }
 }
 
@@ -388,16 +335,15 @@ describe('plan16 迁移端到端（纯 core 模拟宿主序列）', () => {
   })
 
   // ---------- R2 差异守卫（§5.1 先补失败用例再迁移）：同一旧盘数据在两端必须收敛到同一结果。
-  //  历史上 desktop 版缺三项审查修复（见 apps/desktop/src/legacyMigrate.ts 旧实现），
-  //  三项各一用例，断言 extension 版修复语义——实施下沉 core 前对本文件旧同构（desktop 语义）应失败，
-  //  下沉后锚定 core 实现应全绿。 ----------
+  //  历史上 desktop 版缺三项审查修复，三项各一用例断言 extension 版修复语义——
+  //  下沉前对本文件旧同构（desktop 语义）跑出失败，现锚定 core 单点实现，两端委托后必然收敛。 ----------
 
   it('R2 差异①：cloudCreds/cloudCred 双缺失但 revs 孤儿键残留 → 出口清孤儿键（中断形态收敛）', async () => {
     const adapter = makeAdapter({
       [CLOUD_REVS_KEY]: JSON.stringify({ webdav: 'hash-w' }),
       [CLOUD_REV_KEY]: 'orphan-hash',
     })
-    await expect(migrateLegacyCloudSources(adapter, new Uint8Array(0), { saveCred: vi.fn() })).resolves.toBe(0)
+    await expect(migrateLegacyCloudSources(adapter, { saveCred: vi.fn() })).resolves.toBe(0)
     // 纯 hash 基线在新模型无凭据可迁即无消费方：不清则重跑永不收敛、宿主「待迁移」提示永驻
     expect(adapter.data[CLOUD_REVS_KEY]).toBeUndefined()
     expect(adapter.data[CLOUD_REV_KEY]).toBeUndefined()
@@ -409,7 +355,7 @@ describe('plan16 迁移端到端（纯 core 模拟宿主序列）', () => {
       [CLOUD_REVS_KEY]: JSON.stringify({ webdav: 'hash-w' }),
       [CLOUD_REV_KEY]: 'orphan-hash',
     })
-    await expect(migrateLegacyCloudSources(adapter, new Uint8Array(0), { saveCred: vi.fn() })).resolves.toBe(0)
+    await expect(migrateLegacyCloudSources(adapter, { saveCred: vi.fn() })).resolves.toBe(0)
     // 无任何凭据内容删除零风险：不清则幂等早退不收敛
     expect(adapter.data[CLOUD_CREDS_KEY]).toBeUndefined()
     expect(adapter.data[CLOUD_REVS_KEY]).toBeUndefined()
@@ -424,7 +370,7 @@ describe('plan16 迁移端到端（纯 core 模拟宿主序列）', () => {
       ]),
     })
     const saveCred = vi.fn().mockResolvedValue(undefined)
-    await expect(migrateLegacyCloudSources(adapter, new Uint8Array(0), { saveCred })).resolves.toBe(1)
+    await expect(migrateLegacyCloudSources(adapter, { saveCred })).resolves.toBe(1)
     expect((await loadSources(adapter)).map((s) => s.id)).toEqual(['webdav'])
     expect(saveCred).toHaveBeenCalledTimes(1)
     expect(saveCred).toHaveBeenCalledWith('webdav', WEBDAV)
