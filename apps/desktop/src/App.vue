@@ -2,8 +2,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { backupFileName, base64ToBytes, bytesToBase64, createBackupEnvelope, loadDeviceId, loadSources, loadSyncState, normalizeSchemes, openBackupEnvelope, randomBytes, saveSources, saveSyncState, SCHEMES_KEY, sha256Hex, type BackupSource, type CloudCred, type ImportScheme, type KdfProfile, type Seal, type StorageAdapter, type Vault } from '@totp/core'
-import { createAppI18n, createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, requestMergeConfirm, setSyncProgress, useTheme, type BackupPlatform, type CloudPlatform, type DevtoolsConfigDto, type DevtoolsPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type LocalSourceView, type McpConfigWithStatusDto, type McpPlatform, type ReleasePolicyDto, type ReleasePlatform, type SecurityPlatform, type VueStore } from '@totp/ui'
+import { backupFileName, base64ToBytes, bytesToBase64, createBackupEnvelope, loadDeviceId, loadSources, loadSyncState, normalizeSchemes, openBackupEnvelope, saveSources, saveSyncState, SCHEMES_KEY, sha256Hex, type BackupSource, type CloudCred, type ImportScheme, type KdfProfile, type Seal, type StorageAdapter, type Vault } from '@totp/core'
+import { createAppI18n, createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createVueStore, LockScreen, NavigationShell, requestMergeConfirm, setSyncProgress, useTheme, type BackupPlatform, type CloudPlatform, type DevtoolsConfigDto, type DevtoolsPlatform, type IconStore, type ImportSchemesApi, type LocalSourceView, type McpConfigWithStatusDto, type McpPlatform, type ReleasePolicyDto, type ReleasePlatform, type VueStore } from '@totp/ui'
 import { computed, getCurrentInstance, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createDesktopAutoRunner } from './autoBackup'
 import {
@@ -14,13 +14,13 @@ import {
 import { createBackupToSources, listBackupsFromSources, pickBackupDirOs, pickBackupOpenOs, pickBackupSaveOs, readBackupByName, readBackupFileOs, saveConflictBackupToDir, saveCloudSourcesPreservingLocal, writeBackupFileOs, writeBytesFileOs, writeTextFileOs, type DialogFilterSpec, type PickedOsFile } from './backupService'
 import { decryptDpapiOs, pickImportFileOs, readImportFileBytesOs, readImportFileOs } from './importService'
 import { createIdleLockExecutor } from './idleLock'
-import { lockPrefsUnsupportedKeys } from './lockPrefs'
 import { BACKUP_DIR_KEY, migrateLegacyCloudSources, migrateLegacyLocalSource } from './legacyMigrate'
 import { createMcpApprovalQueue, isToolConfirmItem, type McpApprovalAction } from './mcpApprovalQueue'
 import { createMcpTriggers, startMcpBridge, type McpBridgeDeps } from './mcpBridge'
 import McpConsentDialog from './McpConsentDialog.vue'
+import { createSecurityPlatform } from './securityPlatform'
 import { createTauriFs } from './tauriFs'
-import { isEntropyBoundDekWrap, osAutoForgetOs, osAutoProtectOs, osAutoUnprotectOs } from './tauriSecurity'
+import { desktopUaFlags, unlockNamingFor } from './unlockNaming'
 
 // store 必须浅包装（T14 审查根修）：深 ref 会对值做 reactive 深代理，代理 get 对嵌套
 // ref/computed 成员自动解包——闭包 `store.value.locked.value` / 组件 prop `props.store.X.value`
@@ -388,124 +388,17 @@ const cloudSync = createCloudSyncRunner({
   onError: (err) => console.warn('[cloudAutoSync]', err),
 })
 
-/** 解锁方式按端命名：UA 平台标识判定宿主端。
- *  依据（自审声明）：desktop 桌面壳 UA 形态——Windows WebView2 恒含 "Windows NT"；
- *  macOS WKWebView/Safari 恒含 "Mac OS X"（"Macintosh" 平台段）；Linux 桌面浏览器 UA
- *  恒含 "X11; Linux"。桌面端不存在 iPhone/iPad 形态，排除规则仅作防御（防 UA 伪造/异常）。 */
+/** F3 迁移、dpapi 通道与安全平台装配抽至 securityPlatform.ts（createSecurityPlatform 工厂）；
+ *  UA 判定抽至 unlockNaming.ts。naming 保持「调用时求值」：computed 求值与 label getter 读取
+ *  均在 i18n 装入后，经 tr 内部 locale ref 建立响应依赖（locale 切换联动） */
 const ua = navigator.userAgent
-const isMac = /Mac/i.test(ua) && !/iPhone|iPad/i.test(ua)
-const isWin = /Windows/i.test(ua)
-/** 解锁方式显示名（D2 抽串）：改工厂调用时取词——securityPlatform computed 求值与 dpapiOps.label
- *  getter 读取均发生在 i18n 装入后，且经 locale ref 建立响应依赖（locale 切换联动） */
-const unlockNaming = (): { prfLabel: string; osAutoLabel: string | null } =>
-  isMac
-    ? { prfLabel: 'Touch ID (Passkey)', osAutoLabel: tr('desktop.unlockKeychain') }
-    : isWin
-      ? { prfLabel: 'Windows Hello (Passkey)', osAutoLabel: tr('desktop.unlockWindows') }
-      : { prfLabel: 'Passkey', osAutoLabel: tr('desktop.unlockKeyring') }
+const uaFlags = desktopUaFlags(ua)
+const unlockNaming = () => unlockNamingFor(uaFlags, tr)
+const securityFactory = createSecurityPlatform({ getStore: () => store.value, tr, naming: unlockNaming, flags: uaFlags, ua })
+const dpapiOps = securityFactory.dpapi
+const securityPlatform = securityFactory.platform
+const migrateDekWrapToEntropyBound = securityFactory.migrateDekWrapToEntropyBound
 
-/** OS 自动解锁通道（三平台统一，见 lib.rs os_auto_protect/unprotect）：Windows 下委托同一
- *  DEK 通道（运行时行为与旧 dpapi_* 命令等价），macOS/Linux 经 keyring。Rust os_auto_* 与
- *  dpapi_* 命令并存，dpapi_* 保留供语义兼容（kekSources kind 仍 'dpapi'）。
- *  F3：Windows 侧 v2 格式 = TOTPDEK1 前缀 + DPAPI(DEK, 应用附加熵)，仅主窗口可调用，
- *  旧格式（无熵）由 Rust 32B 兜底解出并在解锁后迁移（migrateDekWrapToEntropyBound）。
- *  SecurityCard（启用/移除）与 LockScreen（挂载静默解锁）共用同一对象；label 注入按端显示名
- *  （?? 回退防未来分支 osAutoLabel 变 null 时静默 undefined），techSuffix 为已绑定行技术标注 */
-const dpapiOps: DpapiUnlockOps = {
-  // getter：读取时取词（SecurityCard/LockScreen 渲染期读取，晚于 i18n 装入；?? 回退防未来分支为 null）
-  get label() { return unlockNaming().osAutoLabel ?? tr('desktop.unlockWindows') },
-  techSuffix: isWin ? '（DPAPI）' : isMac ? '（Keychain）' : '（Secret Service）',
-  source: computed(() => store.value?.dpapiSource.value ?? null),
-  getCurrentDek: () => store.value?.getCurrentDek() ?? null,
-  protect: (dek) => osAutoProtectOs(dek),
-  unprotect: (wrapped) => osAutoUnprotectOs(wrapped),
-  async add(wrappedDekD) {
-    const s = store.value
-    if (!s) throw new Error('数据尚未就绪')
-    await s.addDpapiSourceOp(wrappedDekD)
-  },
-  async remove() {
-    const s = store.value
-    if (!s) throw new Error('数据尚未就绪')
-    await s.removeDpapiSourceOp()
-    // 审查 M1（C1 遗留）：移除成功后 best-effort 清 keyring DEK 条目（mac/Linux；Windows 为
-    // 报错桩，静默忽略）。失败不影响移除主流程——security JSON 已更新，残留条目仅是 OS 凭据
-    // 库卫生问题。mac/Linux keyring 分支未真机验证挂账不变（见 tauriSecurity.ts 头注释）。
-    // 失败不吞进黑洞：warn 留痕（排查残留条目时需要失败原因），不弹 UI
-    void osAutoForgetOs().catch((e: unknown) => { console.warn('[desktop] keyring 条目清理失败', e) })
-  },
-}
-
-/** F3 迁移：历史 wrappedDekD（无应用附加熵的旧格式）在下一次成功解锁后重包为 v2 应用熵绑定
- *  格式（TOTPDEK1 前缀 + DPAPI(DEK, 熵)，见 tauriSecurity 与 lib.rs dek 通道）。幂等（已是 v2 跳过）；
- *  best-effort：失败仅告警——Rust 端旧格式 32B 兜底仍可解锁，下次成功解锁重试 */
-async function migrateDekWrapToEntropyBound(): Promise<void> {
-  const s = store.value
-  const src = dpapiOps.source.value
-  const dek = s?.getCurrentDek()
-  if (!s || s.locked.value || !src || !dek) return
-  if (isEntropyBoundDekWrap(src.wrappedDekD)) return
-  try {
-    await dpapiOps.add(await dpapiOps.protect(dek))
-  } catch (e) {
-    console.warn('[migrate] DEK 包裹升级为应用熵绑定格式失败（旧格式仍可解锁，下次重试）', e)
-  }
-}
-
-/** 安全平台：security 闭包绑 store；剪贴板开关走 settings+commitSettings；desktop 无 popup，不提供 popupCloseDelayMs；
- *  passkey(PRF)：WebAuthn 交互（创建/求值）经 ui prf.ts，绑定落盘走 store 的 prf 源 op。
- *  plan16 T11 审查四项：changePassphrase opts 透传（漏接=档位切换误触发全库轮换）、kdfProfile、
- *  passwordChangedAt、lockPrefs——.vue 无 typecheck 对 platform 成员的覆盖，漏接无编译信号，全量接线。 */
-const securityPlatform = computed<SecurityPlatform | null>(() => {
-  const s = store.value
-  if (!s) return null
-  return {
-    security: {
-      locked: s.locked,
-      hasEncryption: s.hasEncryption,
-      enableEncryption: (pw) => s.enableEncryption(pw),
-      disableEncryption: () => s.disableEncryption(),
-      // opts 透传：档位切换走 { rotateDek: false, profile }（重 wrap 立即生效，不误触发全库轮换）
-      changePassphrase: (pw, opts) => s.changePassphrase(pw, opts),
-      kdfProfile: computed(() => s.securitySettings.value?.profile ?? 'balanced'),
-      passwordChangedAt: computed(() => s.securitySettings.value?.passwordChangedAt ?? null),
-      passkey: {
-        sources: computed(() => s.prfSources.value.map((p) => ({ credentialId: p.credentialId }))),
-        prfSupported: () => prfSupported(),
-        async add() {
-          // 绑定盐：注册期 create 与权威 get 均以该盐求值，解锁期用同一盐复现（同认证器+同盐→同输出）
-          const salt = randomBytes(32)
-          const created = await createPrfCredential('TOTP 验证码工具', salt, {
-            excludeCredentialIds: s.prfSources.value.map((p) => p.credentialId),
-          })
-          if (!created) return false
-          await s.addPrfSourceOp(created.credentialId, created.prfOutput, salt)
-          return true
-        },
-        remove: (credentialId) => s.removePrfSourceOp(credentialId),
-      },
-    },
-    dpapi: dpapiOps,
-    unlockNaming: unlockNaming(),
-    clipboardClearEnabled: computed(() => s.settings.clipboardClearEnabled),
-    async setClipboardClear(v) {
-      s.settings.clipboardClearEnabled = v
-      await s.commitSettings()
-    },
-    // 锁定策略（plan16 T11）：三字段整体覆写进 settings 后持久化（core loadSettings 已归一化）。
-    // 审查 I10：desktop 无会话级 DEK 存储 → lockOnRestart 全平台无实现支撑（重启必锁）；
-    // 系统锁屏事件源仅 Windows（lock_events WTS），非 Windows 追加声明 lockOnSystemLock——
-    // SecurityCard 按 unsupported 隐藏对应开关防无效设置
-    lockPrefs: {
-      get: () => ({ lockOnRestart: s.settings.lockOnRestart, lockIdleMinutes: s.settings.lockIdleMinutes, lockOnSystemLock: s.settings.lockOnSystemLock }),
-      set: (p) => {
-        Object.assign(s.settings, p)
-        void s.commitSettings()
-      },
-      unsupported: lockPrefsUnsupportedKeys(ua),
-    },
-  }
-})
 
 /**
  * 旧数据迁移编排（plan16 T14，幂等可重复跑）：历史 wrappedDekD → v2 应用熵绑定重包（F3，
