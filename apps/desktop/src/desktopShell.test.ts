@@ -11,7 +11,11 @@ import { flushPromises } from '@vue/test-utils'
 import { ref, shallowRef } from 'vue'
 import { base64ToBytes, bytesToBase64 } from '@totp/core'
 import { tauriMock } from '../test/mocks/tauri'
-import { createDesktopApprovalQueue, createDesktopMcpDeps, createDesktopShell, createMcpConsentFlow, type DesktopShellDeps } from '../src/desktopShell'
+import { fakeStore, memoryAdapter } from '../test/helpers/fakes'
+import {
+  createDesktopApprovalQueue, createDesktopMcpDeps, createDesktopShell, createDevtoolsPlatform, createLegacyMigrations,
+  createMcpConsentFlow, createReleasePlatform, type DesktopShellDeps,
+} from '../src/desktopShell'
 
 vi.mock('@tauri-apps/api/core', async () => (await import('../test/mocks/tauri')).invokeModule())
 vi.mock('@tauri-apps/api/event', async () => (await import('../test/mocks/tauri')).eventModule())
@@ -216,6 +220,20 @@ describe('MCP 桥与审批事件接线（B8）', () => {
     await vi.waitFor(() => expect(tauriMock.calls('mcp_respond')).toHaveLength(1))
     expect(tauriMock.calls('mcp_respond')[0]!.args).toEqual({ id: 7, ok: true, result: true, error: null })
   })
+
+  it('onConsentClose：按队首通道分流 deny（首连回执 deny；空队列安全 no-op）', async () => {
+    const { deps } = await initShell()
+    const flow = createMcpConsentFlow(deps.approvalQueue)
+    flow.onConsentClose() // 空队列 no-op
+    expect(tauriMock.calls('mcp_approval_response')).toHaveLength(0)
+    tauriMock.emit('mcp://approval', { ident: 'conn-9', tool: 't' })
+    await flushPromises()
+    flow.onConsentClose()
+    await flushPromises()
+    expect(tauriMock.calls('mcp_approval_response')).toHaveLength(1)
+    expect(tauriMock.calls('mcp_approval_response')[0]!.args).toEqual({ ident: 'conn-9', action: 'deny' })
+    expect(deps.approvalQueue.current.value).toBeNull()
+  })
 })
 
 describe('dispose：卸载清算', () => {
@@ -238,5 +256,128 @@ describe('dispose：卸载清算', () => {
     const { shell } = await initShell()
     shell.dispose()
     expect(() => shell.dispose()).not.toThrow()
+  })
+})
+
+describe('配置平台适配器（B12 释放策略/devtools）', () => {
+  it('devtools get/set → invoke devtools_get_config/devtools_set_config', async () => {
+    const p = createDevtoolsPlatform()
+    tauriMock.onReturn('devtools_get_config', { enabled: true, port: 9222 })
+    expect(await p.getConfig()).toEqual({ enabled: true, port: 9222 })
+    await p.setConfig(false, 9223)
+    expect(tauriMock.calls('devtools_set_config')[0]?.args).toEqual({ enabled: false, port: 9223 })
+  })
+
+  it('release get/set → invoke release_policy_get/set（snake_case 四键，rename camelCase 对齐）', async () => {
+    const p = createReleasePlatform()
+    tauriMock.onReturn('release_policy_get', { pauseMinutes: 10, destroyMinutes: 30, lockOnPause: true, lockOnDestroy: false })
+    expect(await p.getConfig()).toMatchObject({ pauseMinutes: 10 })
+    await p.setConfig({ pauseMinutes: 5, destroyMinutes: 15, lockOnPause: false, lockOnDestroy: true })
+    expect(tauriMock.calls('release_policy_set')[0]?.args).toEqual({
+      pauseMinutes: 5, destroyMinutes: 15, lockOnPause: false, lockOnDestroy: true,
+    })
+  })
+})
+
+describe('MCP 触发器前置判定接线（B8.28，受理即返回）', () => {
+  it('锁定 → guard 结构化拒绝 trigger_sync（不触发通道）', async () => {
+    const { store, auto } = await initShell()
+    store.value!.lock()
+    tauriMock.emit('mcp://req', { id: 3, tool: 'trigger_sync', args: {} })
+    await vi.waitFor(() => expect(tauriMock.calls('mcp_respond')).toHaveLength(1))
+    expect(tauriMock.calls('mcp_respond')[0]!.args).toMatchObject({ id: 3, ok: true, result: { triggered: false, reason: 'vault locked' } })
+    expect(auto.runBackupNow).not.toHaveBeenCalled()
+  })
+
+  it('解锁有口令 → 受理即返回 triggered:true（不 await 业务结果，绝不返回 vault 数据）', async () => {
+    const { store, auto } = await initShell()
+    await store.value!.setBackupSecret('pw', false) // 会话备份口令（守护需要非 null）
+    tauriMock.emit('mcp://req', { id: 4, tool: 'trigger_backup', args: {} })
+    await vi.waitFor(() => expect(tauriMock.calls('mcp_respond')).toHaveLength(1))
+    expect(tauriMock.calls('mcp_respond')[0]!.args).toMatchObject({ id: 4, ok: true, result: { triggered: true } })
+    await vi.waitFor(() => expect(auto.runBackupNow).toHaveBeenCalled()) // fire-and-forget 通道已启动
+    const respond = tauriMock.calls('mcp_respond')[0]!.args as { result: Record<string, unknown> }
+    expect(Object.keys(respond.result)).toEqual(['triggered']) // 绝不携带 vault 数据
+  })
+})
+
+describe('createLegacyMigrations 成功路径（云旧键迁移提示）', () => {
+  it('unlock 态 + 云旧键 → 迁移 N 个并 console.info；saveCred 走 store 保管区 op', async () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const store = fakeStore()
+    store.saveSourceCredOp.mockResolvedValue(undefined)
+    const adapter = memoryAdapter()
+    await adapter.set('cloudCreds', JSON.stringify([
+      { cred: { backend: 'webdav', serverUrl: 'https://dav', username: 'u', password: 'p' }, enabled: true },
+    ]))
+    const run = createLegacyMigrations({
+      getStore: () => store,
+      getAdapter: () => adapter,
+      migrateDekWrapToEntropyBound: async () => {},
+    })
+    await run()
+    expect(store.saveSourceCredOp).toHaveBeenCalled()
+    await vi.waitFor(() => expect(infoSpy).toHaveBeenCalledWith('[migrate] 已迁移 1 个云目标到新模型'))
+    infoSpy.mockRestore()
+  })
+})
+
+describe('createLegacyMigrations 容错', () => {
+  it('迁移失败（adapter 未就绪）→ warn 旧键保留不抛（解锁后重试）', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const run = createLegacyMigrations({
+      getStore: () => ({ locked: { value: false } } as never),
+      getAdapter: () => null,
+      migrateDekWrapToEntropyBound: async () => {},
+    })
+    await expect(run()).resolves.toBeUndefined()
+    await vi.waitFor(() => expect(warnSpy).toHaveBeenCalledWith('[migrate] 旧数据迁移失败（旧键保留，解锁后重试）', expect.any(Error)))
+    warnSpy.mockRestore()
+  })
+})
+
+describe('init 内三段独立容错（降级不放大）', () => {
+  it('MCP 桥装配失败（mcp://req 注册拒绝）→ 仅 warn，审批监听照常注册', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const unlisten = async (): Promise<() => void> => () => {}
+    tauriMock.listen.mockImplementationOnce(unlisten).mockImplementationOnce(unlisten).mockImplementationOnce(unlisten)
+    tauriMock.listen.mockImplementationOnce(async (): Promise<() => void> => { throw new Error('bus down') }) // 第 4 次=mcp://req
+    const ctx = makeDeps()
+    const shell = createDesktopShell(ctx.deps)
+    await shell.init()
+    await flushPromises()
+    await vi.waitFor(() => expect(warnSpy).toHaveBeenCalledWith('[mcp] MCP 桥装配失败，已降级跳过（不影响应用主流程）', expect.any(Error)))
+    expect(tauriMock.listenerCount('mcp://approval')).toBe(1) // 后续容错段不受影响
+    warnSpy.mockRestore()
+  })
+
+  it('审批/工具确认监听注册失败 → 各自 warn 降级', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const unlisten = async (): Promise<() => void> => () => {}
+    // 第 1-4 次默认成功（system-lock/force-lock/stash/mcp://req），第 5 次=审批，第 6 次=工具确认
+    for (let i = 0; i < 4; i++) tauriMock.listen.mockImplementationOnce(unlisten)
+    tauriMock.listen.mockImplementationOnce(async (): Promise<() => void> => { throw new Error('approval bus down') })
+    tauriMock.listen.mockImplementationOnce(async (): Promise<() => void> => { throw new Error('tool bus down') })
+    const ctx = makeDeps()
+    const shell = createDesktopShell(ctx.deps)
+    await shell.init()
+    await flushPromises()
+    await vi.waitFor(() => expect(warnSpy).toHaveBeenCalledWith('[mcp] MCP 审批监听注册失败，已降级跳过（不影响应用主流程）', expect.any(Error)))
+    expect(warnSpy).toHaveBeenCalledWith('[mcp] MCP 工具确认监听注册失败，已降级跳过（不影响应用主流程）', expect.any(Error))
+    warnSpy.mockRestore()
+  })
+
+  it('工具确认回执失败 → onDecide invoke 拒绝仅告警', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const ctx = await (async () => makeDeps())()
+    const shell = createDesktopShell(ctx.deps)
+    await shell.init()
+    await flushPromises()
+    tauriMock.on('mcp_respond', () => { throw new Error('respond rejected') })
+    tauriMock.emit('mcp://tool-approval', { id: 11, ident: 'c11', tool: 't' })
+    const flow = createMcpConsentFlow(ctx.deps.approvalQueue)
+    flow.onToolAllow()
+    await vi.waitFor(() => expect(warnSpy).toHaveBeenCalledWith('[mcp] mcp_respond(tool confirm) failed', expect.any(Error)))
+    warnSpy.mockRestore()
   })
 })

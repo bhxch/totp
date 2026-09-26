@@ -169,6 +169,26 @@ describe('复制编排（B10.36）', () => {
   })
 })
 
+describe('聚焦重载与卸载（B10.34）', () => {
+  it('聚焦重载失败（fs 异常）→ 保留旧数据（只读窗口无写盘风险）', async () => {
+    await seedVault([TOTP])
+    const wrapper = await mountMini()
+    expect(wrapper.find('[data-test="item"]').exists()).toBe(true)
+    tauriMock.fs.mkdir.mockRejectedValue(new Error('fs gone'))
+    tauriMock.emitFocusChanged(true) // mini 显示即聚焦 → 整链重建 store
+    await flushPromises()
+    expect(wrapper.find('[data-test="item"]').exists()).toBe(true) // 重载失败保留旧数据
+  })
+
+  it('卸载清理：force-lock 监听随组件作用域移除', async () => {
+    await seedVault([])
+    const wrapper = await mountMini()
+    expect(tauriMock.listenerCount('force-lock')).toBe(1)
+    wrapper.unmount()
+    expect(tauriMock.listenerCount('force-lock')).toBe(0)
+  })
+})
+
 describe('force-lock 联动（释放策略暂停/销毁）', () => {
   it('force-lock → 锁定提示；锁库路径 onLocked → 清 Rust DEK 暂存槽（与主窗同口径）', async () => {
     await seedVault([TOTP])

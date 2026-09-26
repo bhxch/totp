@@ -4,13 +4,12 @@
  * 自动状态三态写入与卡片文本格式化往返、基线键读写删。jsdom 提供 localStorage。
  */
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   BACKUP_AUTO_STATUS_KEY, BACKUP_KEEP_N_KEY, BACKUP_MODE_KEY, CLOUD_AUTO_STATUS_KEY, CLOUD_CONTENT_HASH_KEY,
-  LAST_BACKUP_HASH_KEY, legacyRetention, loadBackupPrefs, loadCloudPrefs, readAutoStatusText, readCloudContentHash,
-  readLastBackupHash, recordAutoStatus, writeCloudContentHash, writeLastBackupHash,
+  LAST_BACKUP_HASH_KEY, legacyRetention, loadBackupPrefs, loadCloudPrefs, persistBackupPrefs, readAutoStatusText,
+  readCloudContentHash, readLastBackupHash, recordAutoStatus, writeCloudContentHash, writeLastBackupHash,
 } from '../src/desktopPrefs'
-import { persistBackupPrefs } from '../src/desktopPrefs'
 
 beforeEach(() => {
   localStorage.clear()
@@ -133,5 +132,23 @@ describe('自动通道基线键', () => {
     writeCloudContentHash(null)
     expect(localStorage.getItem(CLOUD_CONTENT_HASH_KEY)).toBeNull()
     expect(readCloudContentHash()).toBeNull()
+  })
+})
+
+describe('localStorage 不可用兜底（宿主读抛错路径）', () => {
+  it('getItem 抛 → legacyRetention/readAutoStatusText 兜底默认值不抛', () => {
+    const spy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked') })
+    expect(legacyRetention()).toEqual({ type: 'keep', n: 3 })
+    expect(readAutoStatusText(BACKUP_AUTO_STATUS_KEY)).toBeNull()
+    spy.mockRestore()
+  })
+
+  it('setItem 抛 → 各 persist/record 写路径静默不影响主流程', () => {
+    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota') })
+    expect(() => persistBackupPrefs({ onChange: true, onInterval: false, intervalMinutes: 30 })).not.toThrow()
+    expect(() => recordAutoStatus(BACKUP_AUTO_STATUS_KEY, true, 'x')).not.toThrow()
+    expect(() => writeLastBackupHash('h')).not.toThrow()
+    expect(() => writeCloudContentHash('h')).not.toThrow()
+    spy.mockRestore()
   })
 })

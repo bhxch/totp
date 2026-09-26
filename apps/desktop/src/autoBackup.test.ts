@@ -1,5 +1,13 @@
+// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createDesktopAutoRunner, formatAutoStatusText, type AutoBackupDeps } from './autoBackup'
+import { flushPromises } from '@vue/test-utils'
+import { createDesktopAutoRunner, createDesktopAutoChannels, formatAutoStatusText, type AutoBackupDeps } from './autoBackup'
+
+const { createBackupToSourcesMock } = vi.hoisted(() => ({ createBackupToSourcesMock: vi.fn() }))
+vi.mock('./backupService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./backupService')>()
+  return { ...actual, createBackupToSources: createBackupToSourcesMock }
+})
 
 const JSON1 = '{"vault":1}'
 const HASH1 = `hash(${JSON1})`
@@ -368,5 +376,89 @@ describe('createDesktopAutoRunner（cloud 通道）', () => {
     await vi.advanceTimersByTimeAsync(15 * 60_000 + 30_000)
     expect(onError).toHaveBeenCalledTimes(1)
     expect(onError).toHaveBeenCalledWith(boom, 'cloud')
+  })
+})
+
+// ---------- createDesktopAutoChannels（desktop 装配，P4 抽出）：deps 闭包接线直测 ----------
+describe('createDesktopAutoChannels（store/adapter/prefs/状态键接线）', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    createBackupToSourcesMock.mockReset().mockResolvedValue({ outcome: 'ok', okCount: 1, failed: [], vaultJson: JSON1, summary: '已备份到 1 个目录（家里）' })
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('变更触发：backupPrefs 现读 backupAutoPrefs；doBackup 单次快照+档位；基线写 lastBackupHash；状态记成功', async () => {
+    vi.useFakeTimers()
+    localStorage.setItem('backupAutoPrefs', JSON.stringify({ onChange: true, onInterval: false, intervalMinutes: 60 }))
+    const vault = { version: 2, entries: [], tags: [], updatedAt: 5 }
+    const store = {
+      locked: { value: false },
+      backupSecret: { value: 'pw' },
+      vault,
+      settings: { backupKdfProfile: 'fast' },
+    }
+    const runner = createDesktopAutoChannels({
+      getStore: () => store as never,
+      getAdapter: () => ({ get: async () => null, set: async () => {}, delete: async () => {} }),
+      doCloudSync: vi.fn(async () => {}),
+    })
+    runner.notifyChanged()
+    await vi.advanceTimersByTimeAsync(10_000) // 防抖窗口
+    await flushPromises()
+    expect(createBackupToSourcesMock).toHaveBeenCalledOnce()
+    const [sources, vaultJson, secret, profile] = createBackupToSourcesMock.mock.calls[0] as unknown as [unknown[], string, string, string]
+    expect(sources).toEqual([]) // adapter 无源
+    expect(vaultJson).toBe(JSON.stringify(vault)) // M3：单次快照
+    expect(secret).toBe('pw')
+    expect(profile).toBe('fast') // 档位取 settings
+    // I8/M3：全部成功 → 基线=sha256(落盘 vaultJson)，状态记成功
+    expect(localStorage.getItem('lastBackupHash')).toBeTypeOf('string')
+    const status = JSON.parse(localStorage.getItem('backupAutoStatus')!) as { ok: boolean; summary: string }
+    expect(status.ok).toBe(true)
+    expect(status.summary).toBe('已备份到 1 个目录（家里）')
+    runner.stop() // 防泄漏：不影响后续用例
+  })
+
+  it('云通道：cloudPrefs 开启 onChange → notifyChanged 触发 doCloudSync', async () => {
+    vi.useFakeTimers()
+    localStorage.setItem('backupAutoPrefs', JSON.stringify({ onChange: true }))
+    localStorage.setItem('cloudAutoPrefs', JSON.stringify({ onChange: true }))
+    const doCloudSync = vi.fn(async () => {})
+    const store = { locked: { value: false }, backupSecret: { value: 'pw' }, vault: { version: 2, entries: [], tags: [], updatedAt: 0 }, settings: {} }
+    const runner = createDesktopAutoChannels({
+      getStore: () => store as never,
+      getAdapter: () => ({ get: async () => null, set: async () => {}, delete: async () => {} }),
+      doCloudSync,
+    })
+    runner.notifyChanged()
+    await vi.advanceTimersByTimeAsync(10_000)
+    await flushPromises()
+    expect(doCloudSync).toHaveBeenCalledOnce()
+    runner.stop() // 防泄漏：不影响后续用例
+  })
+
+  it('store 未就绪 → isLocked 兜底 true：守护 skip，恒不动作', async () => {
+    vi.useFakeTimers()
+    localStorage.setItem('backupAutoPrefs', JSON.stringify({ onChange: true }))
+    const runner = createDesktopAutoChannels({
+      getStore: () => null,
+      getAdapter: () => null,
+      doCloudSync: vi.fn(async () => {}),
+    })
+    runner.notifyChanged()
+    // 防抖触发 → decideAutoRun locked skip → 跳过态可观测（批 4）：ok=null + 原因入库，不写基线。
+    // 轮询逐次过滤旧写入（前序用例的异步落盘不串扰本轮判定）
+    let status: { ok: boolean | null; summary: string } | null = null
+    for (let i = 0; i < 15; i++) {
+      await vi.advanceTimersByTimeAsync(1000)
+      await flushPromises()
+      const raw = localStorage.getItem('backupAutoStatus')
+      if (raw && JSON.parse(raw).summary === '库已锁定') { status = JSON.parse(raw); break }
+      localStorage.removeItem('backupAutoStatus')
+    }
+    expect(createBackupToSourcesMock).not.toHaveBeenCalled()
+    expect(status).toMatchObject({ ok: null, summary: '库已锁定' })
   })
 })
