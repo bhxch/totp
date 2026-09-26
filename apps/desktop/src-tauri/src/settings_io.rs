@@ -1,9 +1,11 @@
 //! 桌面应用 settings.json 读写基础件（R9 单点化）：路径解析、分节读（读失败/缺键回 None）、
 //! 分节合并写。settings.json 为 Rust 四组配置（shortcutToggleMini/devtools/releasePolicy/mcp）
 //! + 前端 AppSettings 共写文件，两条不变式收口在本模块：
-//! ①「合并写不丢外来键，根非对象回落空对象重建」（审查 I-5/M3，写侧必经 merge_section_text/
-//!    write_section，禁止整文件覆盖）；
-//! ②「读失败回默认」（读侧经 read_section/read_section_at/read_section_text 取 None 后回落）；
+//!
+//! 1. 「合并写不丢外来键，根非对象回落空对象重建」（审查 I-5/M3，写侧必经
+//!    merge_section_text/write_section，禁止整文件覆盖）；
+//! 2. 「读失败回默认」（读侧经 read_section/read_section_at/read_section_text 取 None 后回落）；
+//!
 //! write_text_atomic 为全部写侧共用的原子落盘通道。
 
 use serde::Serialize;
@@ -163,8 +165,8 @@ mod tests {
 
     #[test]
     fn read_section_text_returns_section_value_verbatim() {
-        let v = read_section_text(r#"{"devtools":{"enabled":true,"port":9333}}"#, "devtools")
-            .unwrap();
+        let v =
+            read_section_text(r#"{"devtools":{"enabled":true,"port":9333}}"#, "devtools").unwrap();
         assert_eq!(v["enabled"], serde_json::json!(true));
         assert_eq!(v["port"], serde_json::json!(9333));
         // 分节类型不符（字符串）原样返回 Some——类型回默认是调用方职责，读取层不越权裁定
@@ -181,18 +183,22 @@ mod tests {
     #[test]
     fn merge_section_text_non_object_root_rebuilds_without_panic() {
         for root in [r#"["legacy"]"#, r#""x""#, "42", "true", "null"] {
-            let text = merge_section_text(Some(root), "devtools", &serde_json::json!({
-                "enabled": true,
-                "port": 9333u16,
-            }))
+            let text = merge_section_text(
+                Some(root),
+                "devtools",
+                &serde_json::json!({
+                    "enabled": true,
+                    "port": 9333u16,
+                }),
+            )
             .unwrap_or_else(|e| panic!("根 {root} 合并不应失败: {e}"));
             let v: serde_json::Value = serde_json::from_str(&text).unwrap();
             assert_eq!(v["devtools"]["enabled"], serde_json::json!(true));
             assert_eq!(v["devtools"]["port"], serde_json::json!(9333));
         }
         // 无既有文件（None）：同口径落到新对象
-        let text = merge_section_text(None, "devtools", &serde_json::json!({ "port": 9222u16 }))
-            .unwrap();
+        let text =
+            merge_section_text(None, "devtools", &serde_json::json!({ "port": 9222u16 })).unwrap();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["devtools"]["port"], serde_json::json!(9222));
     }
@@ -211,7 +217,10 @@ mod tests {
         assert_eq!(v["shortcutToggleMini"], "alt+shift+t");
         assert_eq!(v["mcp"]["enabled"], serde_json::json!(true));
         // 仅目标键被替换（含子键整节覆写，不残留旧子键）
-        assert_eq!(v["devtools"], serde_json::json!({ "enabled": true, "port": 9333 }));
+        assert_eq!(
+            v["devtools"],
+            serde_json::json!({ "enabled": true, "port": 9333 })
+        );
     }
 
     // 端到端（路径级）：建目录 + 合并写 + 原子落盘 + 二次写不丢首轮键

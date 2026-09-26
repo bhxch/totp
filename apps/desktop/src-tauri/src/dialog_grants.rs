@@ -834,24 +834,41 @@ mod tests {
     fn file_command_extension_allow_deny_matrix_locks_current_contract() {
         // 矩阵覆盖三类成员：导入组现有成员、白名单外交互样本、他命令专属成员
         const EXTS: [&str; 13] = [
-            ".json", ".jsonl", ".wauth", ".xml", ".txt", ".aegis", ".db", ".sqlitedb", ".sqlite",
-            ".zip", ".totpbackup", ".png", ".exe",
+            ".json",
+            ".jsonl",
+            ".wauth",
+            ".xml",
+            ".txt",
+            ".aegis",
+            ".db",
+            ".sqlitedb",
+            ".sqlite",
+            ".zip",
+            ".totpbackup",
+            ".png",
+            ".exe",
         ];
         // 允许集合（字面量快照）
         const READ_TEXT_OK: [&str; 1] = [".totpbackup"];
-        const READ_IMPORT_TEXT_OK: [&str; 6] = [
-            ".json", ".jsonl", ".wauth", ".xml", ".txt", ".aegis",
-        ];
+        const READ_IMPORT_TEXT_OK: [&str; 6] =
+            [".json", ".jsonl", ".wauth", ".xml", ".txt", ".aegis"];
         const READ_IMPORT_BYTES_OK: [&str; 10] = [
-            ".json", ".jsonl", ".wauth", ".xml", ".txt", ".aegis", ".db", ".sqlitedb", ".sqlite",
+            ".json",
+            ".jsonl",
+            ".wauth",
+            ".xml",
+            ".txt",
+            ".aegis",
+            ".db",
+            ".sqlitedb",
+            ".sqlite",
             ".zip",
         ];
         const WRITE_TEXT_OK: [&str; 3] = [".totpbackup", ".json", ".txt"];
         const WRITE_BYTES_OK: [&str; 1] = [".png"];
         for e in EXTS {
             // 读命令：对每个扩展名建真实文件（is_file 前置），逐命令断言允许/拒绝
-            let (g, p, t) =
-                granted_dir_with_file("totp_matrix_read_text", &format!("f{e}"), b"x");
+            let (g, p, t) = granted_dir_with_file("totp_matrix_read_text", &format!("f{e}"), b"x");
             assert_eq!(
                 read_text_file_granted(&g, &p, &t).is_ok(),
                 READ_TEXT_OK.contains(&e),
@@ -881,8 +898,13 @@ mod tests {
         for e in EXTS {
             let text_path = allowed.join(format!("text-f{e}"));
             assert_eq!(
-                write_text_file_granted(&grants, text_path.to_str().unwrap().into(), "{}".into(), &token)
-                    .is_ok(),
+                write_text_file_granted(
+                    &grants,
+                    text_path.to_str().unwrap().into(),
+                    "{}".into(),
+                    &token
+                )
+                .is_ok(),
                 WRITE_TEXT_OK.contains(&e),
                 "write_text_file 对 {e} 的允许/拒绝与矩阵不符"
             );
@@ -906,9 +928,11 @@ mod tests {
     // 不敏感，语义各自保留」）：大写形态的备份名在读备份命令被拒，大写导入扩展名在导入命令放行
     #[test]
     fn file_command_case_sensitivity_semantics_locked() {
-        let (g, p, t) =
-            granted_dir_with_file("totp_matrix_case_text", "f.TOTPBACKUP", b"x");
-        assert!(read_text_file_granted(&g, &p, &t).is_err(), "读备份白名单必须保持大小写敏感");
+        let (g, p, t) = granted_dir_with_file("totp_matrix_case_text", "f.TOTPBACKUP", b"x");
+        assert!(
+            read_text_file_granted(&g, &p, &t).is_err(),
+            "读备份白名单必须保持大小写敏感"
+        );
         let (g2, p2, t2) = granted_dir_with_file("totp_matrix_case_import", "f.AEGIS", b"x");
         assert!(
             read_import_file_granted(&g2, &p2, &t2).is_ok(),
@@ -922,8 +946,16 @@ mod tests {
         assert_eq!(
             import_byte_extensions(),
             vec![
-                ".json", ".jsonl", ".wauth", ".xml", ".txt", ".aegis", ".db", ".sqlitedb",
-                ".sqlite", ".zip",
+                ".json",
+                ".jsonl",
+                ".wauth",
+                ".xml",
+                ".txt",
+                ".aegis",
+                ".db",
+                ".sqlitedb",
+                ".sqlite",
+                ".zip",
             ]
         );
     }
@@ -947,12 +979,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("{name} 定义缺数组闭括号"));
         source[open + 1..close]
             .split(',')
-            .map(|s| {
-                s.trim()
-                    .trim_matches('\'')
-                    .trim_matches('"')
-                    .to_string()
-            })
+            .map(|s| s.trim().trim_matches('\'').trim_matches('"').to_string())
             .filter(|s| !s.is_empty())
             .collect()
     }
@@ -965,8 +992,10 @@ mod tests {
         let mut ts: Vec<String> = ts_const_string_array(APP_VUE, "IMPORT_TEXT_EXTENSIONS");
         ts.extend(ts_const_string_array(APP_VUE, "IMPORT_BINARY_EXTENSIONS"));
         ts.sort();
-        let mut rs: Vec<String> =
-            import_byte_extensions().into_iter().map(String::from).collect();
+        let mut rs: Vec<String> = import_byte_extensions()
+            .into_iter()
+            .map(String::from)
+            .collect();
         rs.sort();
         assert_eq!(
             ts, rs,
