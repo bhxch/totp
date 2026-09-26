@@ -360,6 +360,52 @@ mod tests {
         assert_eq!(v["releasePolicy"]["destroyMinutes"], serde_json::json!(2));
     }
 
+    // 逐字段解析（盘点 B14）：完整对象逐字段生效；缺 releasePolicy 键回全默认；
+    // 字段类型错误（字符串进 u32 档、数字进 bool 档）逐字段回默认；部分缺失只回缺失字段
+    #[test]
+    fn settings_parse_per_field_type_errors_fall_back() {
+        let c = from_settings_text(
+            r#"{"releasePolicy":{"pauseMinutes":1,"destroyMinutes":2,"lockOnPause":true,"lockOnDestroy":false}}"#,
+        );
+        assert_eq!(c.pause_minutes, 1);
+        assert_eq!(c.destroy_minutes, 2);
+        assert!(c.lock_on_pause);
+        assert!(!c.lock_on_destroy);
+        // 缺 releasePolicy 键 → 全默认
+        assert_eq!(
+            from_settings_text(r#"{"mcp":{"enabled":true}}"#),
+            ReleasePolicyConfig::default()
+        );
+        // 字段类型错误逐字段回默认（不整体丢弃、不 panic）
+        let d = ReleasePolicyConfig::default();
+        let c = from_settings_text(
+            r#"{"releasePolicy":{"pauseMinutes":"5","destroyMinutes":true,"lockOnPause":"yes","lockOnDestroy":7}}"#,
+        );
+        assert_eq!(c.pause_minutes, d.pause_minutes);
+        assert_eq!(c.destroy_minutes, d.destroy_minutes);
+        assert_eq!(c.lock_on_pause, d.lock_on_pause);
+        assert_eq!(c.lock_on_destroy, d.lock_on_destroy);
+        // 部分字段缺失：只回缺失字段，已给字段生效
+        let c = from_settings_text(r#"{"releasePolicy":{"pauseMinutes":9}}"#);
+        assert_eq!(c.pause_minutes, 9);
+        assert_eq!(c.destroy_minutes, d.destroy_minutes);
+        assert_eq!(c.lock_on_pause, d.lock_on_pause);
+    }
+
+    // serde 直接反序列化通道的字段级 default 函数（#[serde(default = ...)] 引用；
+    // 读取主路径 from_settings_text 为手写解析不经此处，此通道供未来直用 serde 的调用方）
+    #[test]
+    fn serde_deserialize_uses_field_defaults() {
+        let c: ReleasePolicyConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(c, ReleasePolicyConfig::default());
+        let c: ReleasePolicyConfig =
+            serde_json::from_str(r#"{"pauseMinutes":7,"lockOnPause":true}"#).unwrap();
+        assert_eq!(c.pause_minutes, 7);
+        assert!(c.lock_on_pause);
+        assert_eq!(c.destroy_minutes, 30);
+        assert!(c.lock_on_destroy);
+    }
+
     // ---- tick 副作用计划四档联动（盘点 B15：接线层判定抽纯函数）----
 
     #[test]
