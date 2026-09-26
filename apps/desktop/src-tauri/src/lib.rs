@@ -35,7 +35,10 @@ use session_vaults::{
     clear_clipboard_if_staged, clear_stashed_dek, clipboard_clear_if_staged, dek_slot_clear,
     stage_clipboard_write, stash_dek, take_stashed_dek, CLIPBOARD_STAGE, STASHED_DEK,
 };
-use settings_io::{read_shortcut_from_settings, settings_path, write_text_atomic};
+use settings_io::{
+    read_section_text, read_settings_text, read_shortcut_from_settings, settings_path,
+    write_section, write_text_atomic,
+};
 
 // mini 最近一次因失焦而隐藏的时刻，用于缓解「托盘点击收起」与「失焦自动隐藏」的竞态
 static LAST_FOCUS_HIDE: Mutex<Option<Instant>> = Mutex::new(None);
@@ -46,12 +49,15 @@ static RELEASE_TRACK: Mutex<release_policy::ReleaseTrack> =
     Mutex::new(release_policy::ReleaseTrack::new());
 
 /// 验收条目4：WebView 远程调试配置（settings.json `devtools` 键；明文区——须在无解锁态可读）。
-/// 返回 (enabled, port)；缺省 (false, 9222)，enabled=true 而 port<1024 时端口回落 9222
+/// 返回 (enabled, port)；缺省 (false, 9222)，enabled=true 而 port<1024 时端口回落 9222。
+/// 文本→分节外壳经 settings_io::read_section_text 单点（R9），字段级回默认为本命令手写语义
 fn read_devtools_from_settings_text(text: &str) -> (bool, u16) {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
-        return (false, 9222);
-    };
-    let Some(d) = v.get("devtools") else {
+    devtools_from_section(read_section_text(text, "devtools").as_ref())
+}
+
+/// devtools 分节字段提取（read_devtools_from_settings_text 的可测核心；None=缺键/解析失败回默认）
+fn devtools_from_section(section: Option<&serde_json::Value>) -> (bool, u16) {
+    let Some(d) = section else {
         return (false, 9222);
     };
     let enabled = d.get("enabled").and_then(|x| x.as_bool()).unwrap_or(false);
@@ -120,15 +126,12 @@ fn apply_devtools_env() {
     }
 }
 
-/// devtools 设置读/写（明文 settings.json；读经 settings_path + 文本解析，写走
-/// read-modify-write 合并既有键——settings.json 为 Rust 四组配置 + 前端 AppSettings 共写文件，
+/// devtools 设置读/写（明文 settings.json；读外壳经 read_settings_text 单点，写经
+/// write_section 单点合并既有键——settings.json 为 Rust 四组配置 + 前端 AppSettings 共写文件，
 /// 任何写侧均不得整文件覆盖丢外来键；落盘复用 write_text_atomic（审查 I-5 原子写））
 #[tauri::command]
 fn devtools_get_config<R: Runtime>(app: AppHandle<R>) -> Result<serde_json::Value, String> {
-    let text = settings_path(&app)
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .unwrap_or_else(|| "{}".into());
-    let (enabled, port) = read_devtools_from_settings_text(&text);
+    let (enabled, port) = read_devtools_from_settings_text(&read_settings_text(&app));
     Ok(serde_json::json!({ "enabled": enabled, "port": port }))
 }
 
@@ -146,16 +149,12 @@ fn devtools_set_config<R: Runtime>(
     // 保存时前置拒绝（Err 经 invoke 回传设置页展示）；MCP 未启用不拦截
     let mcp = mcp_server::load_mcp_config_inner(&path);
     ensure_devtools_port_free(&mcp, port)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    // 合并既有键：读全文解析后只改 devtools 键，不丢外来键（shortcutToggleMini/mcp 等）
-    let text = merge_devtools_config_text(
-        std::fs::read_to_string(&path).ok().as_deref(),
-        enabled,
-        port,
-    )?;
-    write_text_atomic(&path, &text)
+    // 合并既有键：只改 devtools 键，不丢外来键（shortcutToggleMini/mcp 等；R9 收口 settings_io）
+    write_section(
+        &app,
+        "devtools",
+        &serde_json::json!({ "enabled": enabled, "port": port }),
+    )
 }
 
 /// 审查 M6：devtools 端口与 MCP 端口冲突判定（纯函数便于单测）。两者同绑 127.0.0.1，
@@ -170,34 +169,12 @@ fn ensure_devtools_port_free(mcp: &mcp_server::McpConfig, port: u16) -> Result<(
     Ok(())
 }
 
-/// 审查 M3：读取既有 settings.json 文本合并 devtools 键，返回落盘文本。根为合法 JSON 但
-/// 非对象（[] / "x" 等）时不得走 serde_json IndexMut（root["devtools"]=… 对非对象根 panic），
-/// 统一口径 as_object().cloned() 回落空对象重建，不丢外来键
-fn merge_devtools_config_text(
-    existing: Option<&str>,
-    enabled: bool,
-    port: u16,
-) -> Result<String, String> {
-    let mut obj: serde_json::Map<String, serde_json::Value> = existing
-        .and_then(|t| serde_json::from_str::<serde_json::Value>(t).ok())
-        .and_then(|v| v.as_object().cloned())
-        .unwrap_or_default();
-    obj.insert(
-        "devtools".into(),
-        serde_json::json!({ "enabled": enabled, "port": port }),
-    );
-    serde_json::to_string_pretty(&serde_json::Value::Object(obj)).map_err(|e| e.to_string())
-}
-
 /// 释放策略读/写（spec 批⑧ §7.5；settings.json `releasePolicy` 键，合并写保留外来键）。
 /// 参数名 Rust 侧 snake_case + rename_all="camelCase"：前端 invoke 键仍为 pauseMinutes 等（与
 /// brief 契约一致），同时满足非 snake_case lint
 #[tauri::command(rename_all = "camelCase")]
 fn release_policy_get<R: Runtime>(app: AppHandle<R>) -> Result<serde_json::Value, String> {
-    let text = settings_path(&app)
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .unwrap_or_else(|| "{}".into());
-    let cfg = release_policy::from_settings_text(&text);
+    let cfg = release_policy::from_settings_text(&read_settings_text(&app));
     Ok(serde_json::json!({
         "pauseMinutes": cfg.pause_minutes,
         "destroyMinutes": cfg.destroy_minutes,
@@ -266,11 +243,7 @@ fn show_main(app: &AppHandle) {
 
 /// 释放 tick 单步：读配置→窗口可见性→advance→执行副作用。30s 轮询由 setup 启动的线程驱动
 fn release_tick(app: &AppHandle) {
-    let cfg = release_policy::from_settings_text(
-        &settings_path(app)
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .unwrap_or_else(|| "{}".into()),
-    );
+    let cfg = release_policy::from_settings_text(&read_settings_text(app));
     let visible = |label: &str| {
         app.get_webview_window(label)
             .map(|w| w.is_visible().unwrap_or(false))
@@ -737,34 +710,6 @@ mod tests {
             read_devtools_from_settings_text(r#"{"devtools":"on"}"#),
             (false, 9222)
         );
-    }
-
-    // 审查 M3：settings.json 根为合法 JSON 但非对象（[] / "x" / 标量）时 set 不得 panic，
-    // devtools 键落到新对象（as_object 回落重建口径；旧实现 IndexMut 直写非对象根会 panic）
-    #[test]
-    fn devtools_merge_non_object_root_does_not_panic() {
-        for root in [r#"["legacy"]"#, r#""x""#, "42", "true", "null"] {
-            let text = merge_devtools_config_text(Some(root), true, 9333)
-                .unwrap_or_else(|e| panic!("根 {root} 合并不应失败: {e}"));
-            let v: serde_json::Value = serde_json::from_str(&text).unwrap();
-            assert_eq!(v["devtools"]["enabled"], serde_json::json!(true));
-            assert_eq!(v["devtools"]["port"], serde_json::json!(9333));
-        }
-        // 无既有文件（None）：同口径落到新对象
-        let text = merge_devtools_config_text(None, false, 9222).unwrap();
-        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(v["devtools"]["port"], serde_json::json!(9222));
-    }
-
-    // 合并不丢外来键（settings.json 各写侧共同承诺）：shortcutToggleMini / mcp 原样保留
-    #[test]
-    fn devtools_merge_preserves_foreign_keys() {
-        let existing = r#"{"shortcutToggleMini":"alt+shift+t","mcp":{"enabled":true}}"#;
-        let text = merge_devtools_config_text(Some(existing), true, 9333).unwrap();
-        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(v["shortcutToggleMini"], "alt+shift+t");
-        assert_eq!(v["mcp"]["enabled"], serde_json::json!(true));
-        assert_eq!(v["devtools"]["port"], serde_json::json!(9333));
     }
 
     // 审查 M6：devtools 端口与已启用 MCP 端口相同被拒（同绑 127.0.0.1 后启动者静默失败）；

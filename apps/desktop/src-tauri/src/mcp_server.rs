@@ -84,19 +84,15 @@ impl Default for McpConfig {
 }
 
 pub fn load_mcp_config_inner(settings_file: &std::path::Path) -> McpConfig {
-    // 与 read_shortcut_from_settings 同口径：读不到/解析失败一律默认（默认=关闭，安全侧）
-    let Ok(text) = std::fs::read_to_string(settings_file) else {
-        return McpConfig::default();
-    };
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return McpConfig::default();
-    };
-    v.get("mcp")
-        .map(|m| serde_json::from_value::<McpConfig>(m.clone()).unwrap_or_default())
+    // 与 read_shortcut_from_settings 同口径（R9 收口 read_section_at）：读不到/解析失败/
+    // 缺 mcp 键/字段不符一律默认（默认=关闭，安全侧）
+    crate::settings_io::read_section_at(settings_file, "mcp")
+        .and_then(|m| serde_json::from_value::<McpConfig>(m).ok())
         .unwrap_or_default()
 }
 
-/// 合并写：只动 `mcp` 键，外来键（shortcutToggleMini 等）原样保留。
+/// 合并写：只动 `mcp` 键，外来键（shortcutToggleMini 等）原样保留（R9 收口 write_section_at：
+/// 根非对象回落空对象 + 原子写均由 settings_io 单点）。
 /// 参数为 settings.json 文件路径本身（测试注入临时文件即可全链路验证）
 pub fn save_mcp_config_inner(
     settings_file: &std::path::Path,
@@ -105,24 +101,7 @@ pub fn save_mcp_config_inner(
     // 保存侧校验：滤除暴露面里的未知名（防手改 settings.json/前端注入未定义工具名）
     let mut cfg = cfg.clone();
     cfg.exposed_tools.retain(|t| tool_kind(t).is_some());
-    if let Some(parent) = settings_file.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let mut obj: serde_json::Map<String, serde_json::Value> =
-        std::fs::read_to_string(settings_file)
-            .ok()
-            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-            .and_then(|v| v.as_object().cloned())
-            .unwrap_or_default();
-    obj.insert(
-        "mcp".into(),
-        serde_json::to_value(cfg).map_err(|e| e.to_string())?,
-    );
-    // 原子写（审查 I-5）：settings_io.rs 的 write_text_atomic 临时文件+rename 通道，崩溃中途不损坏 settings.json
-    crate::settings_io::write_text_atomic(
-        settings_file,
-        &serde_json::to_string_pretty(&obj).map_err(|e| e.to_string())?,
-    )
+    crate::settings_io::write_section_at(settings_file, "mcp", &cfg)
 }
 
 pub fn add_whitelist_inner(
