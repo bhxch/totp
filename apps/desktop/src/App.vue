@@ -2,10 +2,15 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { backupFileName, base64ToBytes, bytesToBase64, createBackupEnvelope, loadDeviceId, loadSources, loadSyncState, normalizeSchemes, openBackupEnvelope, randomBytes, saveSources, saveSyncState, SCHEMES_KEY, sha256Hex, type BackupSource, type CloudCred, type ImportScheme, type KdfProfile, type Retention, type Seal, type StorageAdapter, type Vault } from '@totp/core'
-import { createAppI18n, createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, requestMergeConfirm, setSyncProgress, useTheme, type BackupAutoPrefs, type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type DevtoolsConfigDto, type DevtoolsPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type LocalSourceView, type McpConfigWithStatusDto, type McpPlatform, type ReleasePolicyDto, type ReleasePlatform, type SecurityPlatform, type VueStore } from '@totp/ui'
+import { backupFileName, base64ToBytes, bytesToBase64, createBackupEnvelope, loadDeviceId, loadSources, loadSyncState, normalizeSchemes, openBackupEnvelope, randomBytes, saveSources, saveSyncState, SCHEMES_KEY, sha256Hex, type BackupSource, type CloudCred, type ImportScheme, type KdfProfile, type Seal, type StorageAdapter, type Vault } from '@totp/core'
+import { createAppI18n, createClipboardClearer, createCloudBackend, createCloudSyncRunner, createIconStore, createPrfCredential, createVueStore, LockScreen, NavigationShell, prfSupported, requestMergeConfirm, setSyncProgress, useTheme, type BackupPlatform, type CloudPlatform, type DevtoolsConfigDto, type DevtoolsPlatform, type DpapiUnlockOps, type IconStore, type ImportSchemesApi, type LocalSourceView, type McpConfigWithStatusDto, type McpPlatform, type ReleasePolicyDto, type ReleasePlatform, type SecurityPlatform, type VueStore } from '@totp/ui'
 import { computed, getCurrentInstance, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
-import { createDesktopAutoRunner, formatAutoStatusText } from './autoBackup'
+import { createDesktopAutoRunner } from './autoBackup'
+import {
+  BACKUP_AUTO_STATUS_KEY, BACKUP_KEEP_N_KEY, BACKUP_MODE_KEY, CLOUD_AUTO_STATUS_KEY,
+  legacyRetention, loadBackupPrefs, loadCloudPrefs, persistBackupPrefs, persistCloudPrefs,
+  readAutoStatusText, readCloudContentHash, readLastBackupHash, recordAutoStatus, writeCloudContentHash, writeLastBackupHash,
+} from './desktopPrefs'
 import { createBackupToSources, listBackupsFromSources, pickBackupDirOs, pickBackupOpenOs, pickBackupSaveOs, readBackupByName, readBackupFileOs, saveConflictBackupToDir, saveCloudSourcesPreservingLocal, writeBackupFileOs, writeBytesFileOs, writeTextFileOs, type DialogFilterSpec, type PickedOsFile } from './backupService'
 import { decryptDpapiOs, pickImportFileOs, readImportFileBytesOs, readImportFileOs } from './importService'
 import { createIdleLockExecutor } from './idleLock'
@@ -105,53 +110,10 @@ function kdfProfileOf(): KdfProfile {
 }
 
 // ---------- 自动备份偏好（D2）----------
-// 本地偏好存桌面 localStorage（ui BackupCard 读写经 platform 同一对函数）；源与目录已源化（backupSources 键）
-const BACKUP_AUTO_PREFS_KEY = 'backupAutoPrefs'
-const LAST_BACKUP_HASH_KEY = 'lastBackupHash'
-const DEFAULT_AUTO_PREFS: BackupAutoPrefs = { onChange: false, onInterval: false, intervalMinutes: 60 }
+// 本地偏好存桌面 localStorage（读写实现抽至 desktopPrefs.ts：BackupCard 经 platform 与
+// 自动备份 runner deps 共用同一对函数）；源与目录已源化（backupSources 键）
 
-/** Task 7（BackupCard）与 Task 10（自动备份 runner deps）共用的唯一读写实现，避免两处漂移 */
-function loadBackupPrefs(): BackupAutoPrefs {
-  try {
-    const raw = localStorage.getItem(BACKUP_AUTO_PREFS_KEY)
-    if (!raw) return { ...DEFAULT_AUTO_PREFS }
-    const p = JSON.parse(raw) as Partial<BackupAutoPrefs>
-    const minutes = Number(p.intervalMinutes)
-    return {
-      onChange: p.onChange === true,
-      onInterval: p.onInterval === true,
-      // 兜底最小 15 分钟：与 core 调度器 30s tick 粒度匹配，防误配置出低于 tick 语义的间隔
-      intervalMinutes: Number.isInteger(minutes) && minutes >= 15 ? minutes : DEFAULT_AUTO_PREFS.intervalMinutes,
-    }
-  } catch {
-    return { ...DEFAULT_AUTO_PREFS }
-  }
-}
-
-function persistBackupPrefs(p: BackupAutoPrefs): void {
-  try {
-    localStorage.setItem(BACKUP_AUTO_PREFS_KEY, JSON.stringify(p))
-  } catch { /* 偏好持久化失败不影响功能 */ }
-}
-
-// ---------- 旧备份偏好迁移读取（plan16 T14）----------
-// 旧「备份模式」localStorage 键仅作迁移读取（→ 默认本地源 retention），迁移成功后由宿主删除
-const BACKUP_MODE_KEY = 'backupMode'
-const BACKUP_KEEP_N_KEY = 'backupKeepN'
-const DEFAULT_KEEP_N = 3
-
-/** 旧 backupMode/backupKeepN → retention（与旧 loadBackupMode 同口径：overwrite 或 keep，n 非法回退 3） */
-function legacyRetention(): Retention {
-  try {
-    if (localStorage.getItem(BACKUP_MODE_KEY) === 'overwrite') return { type: 'overwrite' }
-    const n = Number(localStorage.getItem(BACKUP_KEEP_N_KEY))
-    return { type: 'keep', n: Number.isInteger(n) && n >= 1 ? n : DEFAULT_KEEP_N }
-  } catch {
-    return { type: 'keep', n: DEFAULT_KEEP_N }
-  }
-}
-
-/** store 整体替换的唯一实现：backupPlatform.replaceAllOp / cloudPlatform.persistDownloaded / 云 runner persistAdopted 共用 */
+// store 整体替换的唯一实现：backupPlatform.replaceAllOp / cloudPlatform.persistDownloaded / 云 runner persistAdopted 共用
 async function replaceAllOps(v: Vault): Promise<void> {
   await requireStore().replaceAllOp(v)
 }
@@ -189,7 +151,7 @@ const backupPlatform: BackupPlatform = {
     const r = await createBackupToSources(await loadAllSources(), vaultJson, password, kdfProfileOf())
     if (r.outcome === 'ok') {
       try {
-        localStorage.setItem(LAST_BACKUP_HASH_KEY, await sha256Hex(new TextEncoder().encode(vaultJson)))
+        writeLastBackupHash(await sha256Hex(new TextEncoder().encode(vaultJson)))
       } catch { /* hash 记录失败不影响备份本身 */ }
     }
     return r.summary
@@ -284,12 +246,8 @@ const auto = createDesktopAutoRunner({
   backupPrefs: () => loadBackupPrefs(),
   // 云通道偏好（Task 11 接入）：与 CloudCard autoPrefs 同一读写实现（cloudAutoPrefs 键）
   cloudPrefs: () => loadCloudPrefs(),
-  getLastBackupHash: () => localStorage.getItem(LAST_BACKUP_HASH_KEY),
-  setLastBackupHash: (h) => {
-    try {
-      localStorage.setItem(LAST_BACKUP_HASH_KEY, h)
-    } catch { /* hash 持久化失败仅影响去重，不阻塞 */ }
-  },
+  getLastBackupHash: () => readLastBackupHash(),
+  setLastBackupHash: (h) => writeLastBackupHash(h),
   doBackup: async (secret) => {
     // plan16 T14：全部启用本地源各按 retention 落盘；审查 I8：返回结构化成败结果（部分失败
     // 不推进基线）；审查 M3：vault 快照在此单次取得并随结果返回，runner 以落盘内容计基线 hash
@@ -315,56 +273,7 @@ const auto = createDesktopAutoRunner({
  *   （backupSources/sourceRevs 均为整键覆写）；runner busy 只防自动与自动重叠，与手动同步的并发
  *   为已知边界，不引入跨实例锁。
  */
-
-/** 云同步自动触发偏好：localStorage 键 cloudAutoPrefs，与 loadBackupPrefs 同风格、独立实现（键不同） */
-const CLOUD_AUTO_PREFS_KEY = 'cloudAutoPrefs'
-/** 云同步 auto 内容门持久基线（spec §1.3）：localStorage 键 cloudContentHash（runner loadContentHash/saveContentHash 消费） */
-const CLOUD_CONTENT_HASH_KEY = 'cloudContentHash'
-const DEFAULT_CLOUD_AUTO_PREFS: CloudAutoPrefs = { onChange: false, onInterval: false, intervalMinutes: 60 }
-
-function loadCloudPrefs(): CloudAutoPrefs {
-  try {
-    const raw = localStorage.getItem(CLOUD_AUTO_PREFS_KEY)
-    if (!raw) return { ...DEFAULT_CLOUD_AUTO_PREFS }
-    const p = JSON.parse(raw) as Partial<CloudAutoPrefs>
-    const minutes = Number(p.intervalMinutes)
-    return {
-      onChange: p.onChange === true,
-      onInterval: p.onInterval === true,
-      // 与 backup 偏好同口径兜底最小 15 分钟：匹配 core 调度器 30s tick 粒度
-      intervalMinutes: Number.isInteger(minutes) && minutes >= 15 ? minutes : DEFAULT_CLOUD_AUTO_PREFS.intervalMinutes,
-    }
-  } catch {
-    return { ...DEFAULT_CLOUD_AUTO_PREFS }
-  }
-}
-
-function persistCloudPrefs(p: CloudAutoPrefs): void {
-  try {
-    localStorage.setItem(CLOUD_AUTO_PREFS_KEY, JSON.stringify(p))
-  } catch { /* 偏好持久化失败不影响功能 */ }
-}
-
-/** 「上次自动备份/同步」状态记录（design §4.1：{at, ok, summary}；Task 13 卡片渲染消费）。
- *  ok 三态（批 4）：true=成功 / false=失败 / null=跳过 */
-const BACKUP_AUTO_STATUS_KEY = 'backupAutoStatus'
-const CLOUD_AUTO_STATUS_KEY = 'cloudAutoStatus'
-
-function recordAutoStatus(key: 'backupAutoStatus' | 'cloudAutoStatus', ok: boolean | null, summary: string): void {
-  try {
-    localStorage.setItem(key, JSON.stringify({ at: Date.now(), ok, summary }))
-  } catch { /* 状态记录失败不影响主流程 */ }
-}
-
-/** 状态 JSON → 卡片展示文本：读 backupAutoStatus/cloudAutoStatus 键后委托 autoBackup.formatAutoStatusText
- *  （三态格式化纯函数，单测覆盖；审查 Minor-2 抽出） */
-function readAutoStatusText(key: 'backupAutoStatus' | 'cloudAutoStatus'): string | null {
-  try {
-    return formatAutoStatusText(localStorage.getItem(key))
-  } catch {
-    return null
-  }
-}
+// 云同步自动触发偏好（cloudAutoPrefs 键）与内容门基线（cloudContentHash 键）读写抽至 desktopPrefs.ts
 
 const cloudPlatform: CloudPlatform = {
   // ---- 源模型成员（plan16 T14；本卡仅消费云源，local 项归 BackupCard）----
@@ -439,13 +348,8 @@ const cloudSync = createCloudSyncRunner({
   loadSyncState: (id) => loadSyncState(requireAdapter(), id, revSeal(requireStore())),
   saveSyncState: (id, st) => saveSyncState(requireAdapter(), id, st, revSeal(requireStore())),
   // 内容门持久基线（spec §1.3）：localStorage 键 cloudContentHash（跨会话/页面重开生效）
-  loadContentHash: async () => localStorage.getItem(CLOUD_CONTENT_HASH_KEY),
-  saveContentHash: async (h) => {
-    try {
-      if (h === null) localStorage.removeItem(CLOUD_CONTENT_HASH_KEY)
-      else localStorage.setItem(CLOUD_CONTENT_HASH_KEY, h)
-    } catch { /* 基线落盘失败仅影响去重，不阻塞 */ }
-  },
+  loadContentHash: async () => readCloudContentHash(),
+  saveContentHash: async (h) => writeCloudContentHash(h),
   deviceId: () => loadDeviceId(requireAdapter()),
   makeBackend: (cred) => createCloudBackend(cred),
   persistAdopted: (json) => replaceAllOps(JSON.parse(json) as Vault),
