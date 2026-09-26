@@ -1202,7 +1202,7 @@ fn start_server_with(
     if cfg.token.is_empty() {
         return Err("token 为空，拒绝启动（请先在设置页生成/重置 token）".into());
     }
-    let cfg = cfg.clone();
+    // cfg 借用直用：本函数仅读 cfg.port/token，无需克隆持有（原冗余 clone 删除）
     let (tx, rx) = tokio::sync::watch::channel(false);
     // 应用侧持有 rmcp 取消令牌：stop_server cancel 它以终止 SSE 长连接（审查 I-3）
     let cancellation_token = tokio_util::sync::CancellationToken::new();
@@ -1236,10 +1236,11 @@ fn start_server_inner(
     let bridge = state.bridge.clone();
     let sessions = state.sessions.clone();
     let settings_file = state.settings_file.clone();
-    let cfg = cfg.clone();
+    // 同步启动侧直用入参引用 cfg（原首份克隆冗余）；闭包按值持有 serve_forever 所需的
+    // cfg_for_spawn（任务存活期超过本函数，须 owned）——两克隆收敛为一
     let cfg_for_spawn = cfg.clone();
     start_server_with(
-        &cfg,
+        cfg,
         &state.shutdown,
         Box::new(move |listener, rx, cancellation_token| {
             let on_err_app = app.clone();
@@ -1632,13 +1633,18 @@ mod tests {
                 .await
             })
         };
-        // 等待 emit 发生（pending 表出现 id），再取走发送端弃掉 → 模拟前端 drop 请求
-        let id = loop {
-            if let Some(id) = *pending_id.lock().unwrap() {
-                break id;
+        // 等待 emit 发生（pending 表出现 id），再取走发送端弃掉 → 模拟前端 drop 请求。
+        // 2s 上界：emit 桩未被调用（pending 登记回归）时测试失败而非无限挂起
+        let id = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Some(id) = *pending_id.lock().unwrap() {
+                    break id;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
             }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        };
+        })
+        .await
+        .expect("emit 桩 2s 内必须被调用（超时即 pending 登记回归）");
         drop(bridge.take(id).expect("请求须仍登记在 pending 表"));
         assert_eq!(
             tokio::time::timeout(Duration::from_secs(1), task)

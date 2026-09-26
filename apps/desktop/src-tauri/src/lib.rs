@@ -2322,12 +2322,43 @@ mod tests {
     }
 
     // 端到端接线（薄壳 env 读写）：单一用例内完成 env 改写/断言/恢复，进程内其他测试
-    // 不触碰 APPDATA 与 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS，无并行竞态
+    // 不触碰 APPDATA 与 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS，无并行竞态。
+    // EnvGuard（Drop 恢复现场）：断言失败 panic 时改写的 env 也随栈展开还原，
+    // 不向同进程其他测试泄漏 APPDATA 重定向与外部哨兵值
+    #[cfg(windows)]
+    struct EnvGuard {
+        saved_appdata: Option<String>,
+        saved_arg: Option<std::ffi::OsString>,
+    }
+
+    #[cfg(windows)]
+    impl EnvGuard {
+        fn save() -> Self {
+            Self {
+                saved_appdata: std::env::var("APPDATA").ok(),
+                saved_arg: std::env::var_os("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"),
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.saved_appdata.take() {
+                Some(v) => std::env::set_var("APPDATA", v),
+                None => std::env::remove_var("APPDATA"),
+            }
+            match self.saved_arg.take() {
+                Some(v) => std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", v),
+                None => std::env::remove_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"),
+            }
+        }
+    }
+
     #[cfg(windows)]
     #[test]
     fn apply_devtools_env_end_to_end_injects_and_preserves_external_preset() {
-        let saved_appdata = std::env::var("APPDATA").ok();
-        let saved_arg = std::env::var_os("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS");
+        let _guard = EnvGuard::save();
         let root = devtools_appdata("e2e", Some(r#"{"devtools":{"enabled":true,"port":9333}}"#));
         std::env::set_var("APPDATA", &root);
         std::env::remove_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS");
@@ -2347,15 +2378,6 @@ mod tests {
             std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap(),
             "--external-sentinel"
         );
-        // 恢复现场
-        match saved_appdata {
-            Some(v) => std::env::set_var("APPDATA", v),
-            None => std::env::remove_var("APPDATA"),
-        }
-        match saved_arg {
-            Some(v) => std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", v),
-            None => std::env::remove_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"),
-        }
         std::fs::remove_dir_all(&root).ok();
     }
 }
