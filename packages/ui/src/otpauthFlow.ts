@@ -1,4 +1,4 @@
-import { normalizeExtOtpauth, parseOtpUri, type OtpEntry } from '@totp/core'
+import { normalizeExtOtpauth, parseOtpUri, toOtpDigits, type OtpEntry } from '@totp/core'
 
 export { normalizeExtOtpauth }
 
@@ -20,8 +20,10 @@ export function parseUriToEntryData(uri: string): ParseUriResult {
         label: p.label,
         secret: p.secret,
         algorithm: p.algorithm,
-        // R3：parseOtpUri 已按 typeProfile 收口并校验（OtpUriParams.digits 类型即 OtpDigits），无需前置收口
-        digits: p.digits,
+        // R3 评审修复：此处保留 toOtpDigits——parseOtpUri 的 ALLOWED_DIGITS 含 5（steam URI 语义），
+        // totp/hotp URI digits=5 能过解析但 toOtpDigits(5, totp/hotp)=6 非恒等，不是幂等收口；
+        // 不收口则预填 digits=5 被共享 EntryForm 的 [6,7,8] 提交校验拒绝（原行为静默修正为 6）
+        digits: toOtpDigits(p.digits, p.type),
         period: p.period,
         ...(p.counter !== undefined ? { counter: p.counter } : {}),
         ...(p.pin !== undefined ? { pin: p.pin } : {}),

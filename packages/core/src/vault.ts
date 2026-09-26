@@ -79,8 +79,10 @@ export function newEntryFromUri(uri: string, nowMs: number = Date.now()): OtpEnt
     label: p.label,
     secret: p.secret,
     algorithm: p.algorithm,
-    // R3：parseOtpUri 已按 typeProfile 收口并校验（OtpUriParams.digits 类型即 OtpDigits），无需再收口
-    digits: p.digits,
+    // R3 评审修复：parseOtpUri 的 ALLOWED_DIGITS 含 5（steam URI 语义），totp/hotp URI digits=5
+    // 能过解析但 toOtpDigits(5, totp/hotp)=6 非恒等——此处不是幂等收口，必须保留（否则落库 5，
+    // UI 预填直提被共享 EntryForm 的 [6,7,8] 校验拒绝；原行为静默修正为 6）
+    digits: toOtpDigits(p.digits, p.type),
     period: p.period,
     ...(p.counter !== undefined ? { counter: p.counter } : {}),
     ...(p.pin !== undefined ? { pin: p.pin } : {}),

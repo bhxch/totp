@@ -4,6 +4,7 @@ import {
 } from '../src/otp/typeProfiles'
 import { normalizeType } from '../src/import/normalize'
 import { parseOtpUri, buildOtpUri } from '../src/otp/uri'
+import { addEntry, createVault, newEntryFromUri } from '../src/vault'
 import type { EntryType, OtpDigits } from '../src/model'
 
 // R3 守卫测试:OTP 类型注册表（typeProfiles）是 uri/entryCode/normalize 的单一事实源。
@@ -141,5 +142,25 @@ describe('parseOtpUri/buildOtpUri 查表行为不变(uri.test.ts 全量锚点之
     expect(yandex).toContain('algorithm=SHA512')
     expect(yandex).not.toContain('digits=')
     expect(yandex.startsWith('otpauth://yaotp/')).toBe(true)
+  })
+})
+
+// R3 评审修复守卫：parseOtpUri 的 ALLOWED_DIGITS 含 5（steam URI 语义），故 totp/hotp URI 写
+// digits=5 能通过解析，但 toOtpDigits(5, totp/hotp)=6 非恒等——newEntryFromUri/UI 预填（parseUriToEntryData
+// 同口径）必须保留 toOtpDigits 收口，否则预填 digits=5 会被共享 EntryForm 的 [6,7,8] 提交校验拒绝
+// （原行为静默修正为 6 导入成功）。锁定全链收口语义，防止再被当「幂等收口」移除。
+describe('R3 评审修复:totp/hotp URI digits=5 全链收口为 6(非幂等点保留 toOtpDigits)', () => {
+  const URI5 = (type: 'totp' | 'hotp') =>
+    `otpauth://${type}/A:b?secret=JBSWY3DPEHPK3PXP&digits=5${type === 'hotp' ? '&counter=0' : ''}`
+
+  it.each(['totp', 'hotp'] as const)('%s:parseOtpUri 放行 5,经 toOtpDigits 收口落 6', (type) => {
+    expect(parseOtpUri(URI5(type)).digits).toBe(5) // 解析层白名单本就放行（与重构前一致）
+    expect(newEntryFromUri(URI5(type)).digits).toBe(6) // 入库边界收口（原 toOtpDigits 前置语义）
+  })
+
+  it('addEntry 对异常 digits=5 的 totp 条目同样收口为 6（入库边界兜底）', () => {
+    const entry = newEntryFromUri(URI5('totp'))
+    const v = addEntry(createVault(), { ...entry, digits: 5 })
+    expect(v.entries[0]!.digits).toBe(6)
   })
 })
