@@ -64,3 +64,5 @@ export type { SyncPlatform, SyncStatus } from './components/syncPlatform'
 export { MIN_AUTO_INTERVAL_MINUTES, normalizeAutoPrefs } from './components/backupPlatform'
 export type { AutoStatusLabels } from './components/backupPlatform'
 export { formatAutoStatusText } from './components/backupPlatform'
+// R14 条目展示排序单点：ui CodesPage 与 desktop MiniApp（经 miniSort 转出口）共用
+export { sortEntries } from './entriesSort'

@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useOtpCodes } from '../composables/useOtpCodes'
 import { iconView, type IconStore } from '../iconStore'
 import { searchEntries } from '../popupFilter'
+import { sortEntries } from '../entriesSort'
 import type { VueStore } from '../store'
 import EntryFormDialog from '../components/EntryFormDialog.vue'
 import TagFilterRow from '../components/TagFilterRow.vue'
@@ -93,14 +94,8 @@ function onBatchAdded(count: number) {
 }
 onUnmounted(() => { if (batchToastTimer) clearTimeout(batchToastTimer) })
 
-/** 排序：pinned 优先，然后按 order。
- *  pinned 用 truthy 检查（缺省 false），向后兼容无 pinned 字段的旧 vault */
-const sorted = computed(() =>
-  [...props.store.vault.entries].sort((a, b) => {
-    if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1
-    return a.order - b.order
-  }),
-)
+/** 展示排序走 entriesSort 单点（R14，与 desktop MiniApp 共用；pinned 优先 → order 升序） */
+const sorted = computed(() => sortEntries(props.store.vault.entries))
 const { codes } = useOtpCodes(sorted)
 /** EntryForm 图标数据源：builtin 全集 + store 内 stored/url dataUrl 映射 */
 const entryIcons = computed(() => ({ builtin: getBuiltinIcons(), stored: props.icons?.icons ?? {} }))
