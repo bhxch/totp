@@ -377,6 +377,135 @@ fn ensure_window(app: &AppHandle, label: &str) -> bool {
     }
 }
 
+/// run() 装配段提函数（R16⑨）：无头模式连接信息 stdout 输出（验收条目13）。行为契约：
+/// 连接信息仅在服务真实监听成功时输出（终审修复：不再与启动结果脱钩——此前 autostart
+/// 失败仍打印成功样连接行，裸 --headless-mcp 且设置关闭时打印空 token 行）。headless
+/// 无人值守，失败 stderr 明示 + exit(2) 让脚本消费方可感知。gate 用 serde 线格式
+/// （token/wildcard/exact/alwaysAsk，serde camelCase）而非 {:?} 调试形式（Wildcard）：
+/// 脚本消费方按线格式解析；手写 match 不带通配分支，GateMode 新增变体时编译期强制
+/// 同步本映射，不会漂移
+fn print_headless_connection(cfg: &mcp_server::McpConfig, start: &Result<(), String>) {
+    match start {
+        Ok(()) => {
+            let gate = match cfg.mode {
+                mcp_server::GateMode::Token => "token",
+                mcp_server::GateMode::Wildcard => "wildcard",
+                mcp_server::GateMode::Exact => "exact",
+                mcp_server::GateMode::AlwaysAsk => "alwaysAsk",
+            };
+            println!(
+                "MCP: http://127.0.0.1:{}  token: {}  gate: {}",
+                cfg.port, cfg.token, gate
+            );
+        }
+        Err(e) => {
+            eprintln!("[mcp] headless 启动失败: {e}");
+            std::process::exit(2);
+        }
+    }
+}
+
+/// run() 装配段提函数（R16⑨）：C7 按 settings 覆写默认快捷键——unregister_all +
+/// on_shortcut 重新注册一次。Builder.with_shortcuts 在 setup 之前执行已注册默认
+/// alt+shift+t，故仅在配置差异时重注册
+fn apply_shortcut_override(app: &AppHandle) {
+    let configured = read_shortcut_from_settings(app);
+    if configured != "alt+shift+t" {
+        let gs = app.global_shortcut();
+        if gs.unregister_all().is_ok() {
+            let _ = gs.on_shortcut(configured.as_str(), |a, _s, e| {
+                if e.state == ShortcutState::Pressed {
+                    toggle_mini(a);
+                }
+            });
+        }
+    }
+}
+
+/// run() 装配段提函数（R16⑨）：托盘菜单 + 托盘图标 + 菜单事件接线（装配段属拆分豁免
+/// 清单，仅提函数不挪文件）。mcp_info 仅托盘作用域消费：验收条目13 无头模式无窗口可看，
+/// 托盘补「复制 MCP 连接信息」兜底（文本含 token，写入登记 F16 暂存——托盘退出兜底清除）
+fn setup_tray(
+    app: &tauri::App,
+    headless: bool,
+    mcp_cfg: &mcp_server::McpConfig,
+) -> tauri::Result<()> {
+    let show_main_item = MenuItem::with_id(app, "show-main", "显示主窗口", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let mcp_info = if headless {
+        Some(format!(
+            "MCP: http://127.0.0.1:{}  token: {}",
+            mcp_cfg.port, mcp_cfg.token
+        ))
+    } else {
+        None
+    };
+    let mcp_info_item = match &mcp_info {
+        Some(_) => Some(MenuItem::with_id(
+            app,
+            "copy-mcp-info",
+            "复制 MCP 连接信息",
+            true,
+            None::<&str>,
+        )?),
+        None => None,
+    };
+    let mut items: Vec<&dyn tauri::menu::IsMenuItem<_>> = vec![&show_main_item];
+    if let Some(item) = &mcp_info_item {
+        items.push(item);
+    }
+    items.push(&quit_item);
+    let menu = Menu::with_items(app, &items)?;
+
+    let _tray = TrayIconBuilder::new()
+        .icon(app.default_window_icon().unwrap().clone())
+        .tooltip("TOTP 验证码工具")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_tray_icon_event(|_tray, event| {
+            if let TrayIconEvent::Click {
+                button,
+                button_state: tauri::tray::MouseButtonState::Up,
+                ..
+            } = event
+            {
+                match button {
+                    tauri::tray::MouseButton::Left => toggle_mini(_tray.app_handle()),
+                    // 中键直达主窗口，省去右键菜单一步（等价「显示主窗口」）
+                    tauri::tray::MouseButton::Middle => show_main(_tray.app_handle()),
+                    _ => {}
+                }
+            }
+        })
+        .build(app)?;
+
+    app.on_menu_event(move |app, event| {
+        match event.id().as_ref() {
+            "show-main" => show_main(app),
+            // 验收条目13：无头连接信息兜底复制（登记 F16 暂存，托盘退出兜底清除 token）
+            "copy-mcp-info" => {
+                if let Some(text) = &mcp_info {
+                    if app.clipboard().write_text(text.clone()).is_ok() {
+                        if let Ok(mut s) = CLIPBOARD_STAGE.lock() {
+                            *s = Some(text.clone());
+                        }
+                    }
+                }
+            }
+            "quit" => {
+                // F16：托盘退出兜底——剪贴板仍持有本应用复制内容时清空（读回比对在 Rust 侧，
+                // 不会误清用户后续复制的外部内容；无暂存/内容已换则不动）
+                clear_clipboard_if_staged(app);
+                // 退出清 DEK 暂存槽（Task 14）：进程内存槽随退出失效，显式清空防语义歧义
+                dek_slot_clear(&STASHED_DEK);
+                app.exit(0)
+            }
+            _ => {}
+        }
+    });
+    Ok(())
+}
+
 pub fn run() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     // 审查 I-1：接管父控制台必须先于 parse_args——否则参数错误的 eprintln 写在未连接的
@@ -458,33 +587,10 @@ pub fn run() {
             // plan17：MCP 服务器装配（manage McpState）+ 按配置自动拉起；返回含 CLI 覆盖的
             // 生效 cfg 与真实启动结果，供无头连接信息输出（stdout/托盘复制与实际监听同源）
             let (mcp_cfg, mcp_start) = mcp_server::init_state_and_autostart(app, &mcp_override)?;
-            // 验收条目13：无头模式不显示任何窗口。连接信息仅在服务真实监听成功时输出
-            // （终审修复：不再与启动结果脱钩——此前 autostart 失败仍打印成功样连接行，
-            // 裸 --headless-mcp 且设置关闭时打印空 token 行）。headless 无人值守，失败
-            // stderr 明示 + exit(2) 让脚本消费方可感知；非 headless 失败已在装配层
-            // eprintln+运行态记录，不拦启动
+            // 验收条目13：无头模式不显示任何窗口，连接信息输出/失败 exit(2) 见
+            // print_headless_connection（R16⑨ 提函数，行为契约随函数注释）
             if headless {
-                match mcp_start {
-                    Ok(()) => {
-                        // gate 用 serde 线格式（token/wildcard/exact/alwaysAsk，serde camelCase）
-                        // 而非 {:?} 调试形式（Wildcard）：脚本消费方按线格式解析；手写 match
-                        // 不带通配分支，GateMode 新增变体时编译期强制同步本映射，不会漂移
-                        let gate = match mcp_cfg.mode {
-                            mcp_server::GateMode::Token => "token",
-                            mcp_server::GateMode::Wildcard => "wildcard",
-                            mcp_server::GateMode::Exact => "exact",
-                            mcp_server::GateMode::AlwaysAsk => "alwaysAsk",
-                        };
-                        println!(
-                            "MCP: http://127.0.0.1:{}  token: {}  gate: {}",
-                            mcp_cfg.port, mcp_cfg.token, gate
-                        );
-                    }
-                    Err(e) => {
-                        eprintln!("[mcp] headless 启动失败: {e}");
-                        std::process::exit(2);
-                    }
-                }
+                print_headless_connection(&mcp_cfg, &mcp_start);
             } else {
                 let _ = mcp_start;
                 // 窗口 visible:false 起步（防启动闪现），非 headless 在首帧前同步显示
@@ -497,95 +603,10 @@ pub fn run() {
             // 系统锁屏事件监听（plan16 T15）：Windows 下订阅 WTS_SESSION_LOCK → 前端广播
             // system-lock；非 Windows no-op（mac/Linux 挂账）。前端 App.vue 按设置执行锁定
             lock_events::start(app.handle().clone());
-            // C7：按 settings 覆写默认快捷键——unregister_all + on_shortcut 重新注册一次。
-            // Builder.with_shortcuts 在 setup 之前执行已注册默认 alt+shift+t，故仅在配置差异时重注册
-            let configured = read_shortcut_from_settings(app.handle());
-            if configured != "alt+shift+t" {
-                let gs = app.global_shortcut();
-                if gs.unregister_all().is_ok() {
-                    let _ = gs.on_shortcut(configured.as_str(), |a, _s, e| {
-                        if e.state == ShortcutState::Pressed {
-                            toggle_mini(a);
-                        }
-                    });
-                }
-            }
-            let show_main_item =
-                MenuItem::with_id(app, "show-main", "显示主窗口", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            // 验收条目13：无头模式无窗口可看，托盘补「复制 MCP 连接信息」兜底
-            // （文本含 token，写入登记 F16 暂存——托盘退出兜底清除）
-            let mcp_info = if headless {
-                Some(format!(
-                    "MCP: http://127.0.0.1:{}  token: {}",
-                    mcp_cfg.port, mcp_cfg.token
-                ))
-            } else {
-                None
-            };
-            let mcp_info_item = match &mcp_info {
-                Some(_) => Some(MenuItem::with_id(
-                    app,
-                    "copy-mcp-info",
-                    "复制 MCP 连接信息",
-                    true,
-                    None::<&str>,
-                )?),
-                None => None,
-            };
-            let mut items: Vec<&dyn tauri::menu::IsMenuItem<_>> = vec![&show_main_item];
-            if let Some(item) = &mcp_info_item {
-                items.push(item);
-            }
-            items.push(&quit_item);
-            let menu = Menu::with_items(app, &items)?;
-
-            let _tray = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("TOTP 验证码工具")
-                .menu(&menu)
-                .show_menu_on_left_click(false)
-                .on_tray_icon_event(|_tray, event| {
-                    if let TrayIconEvent::Click {
-                        button,
-                        button_state: tauri::tray::MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        match button {
-                            tauri::tray::MouseButton::Left => toggle_mini(_tray.app_handle()),
-                            // 中键直达主窗口，省去右键菜单一步（等价「显示主窗口」）
-                            tauri::tray::MouseButton::Middle => show_main(_tray.app_handle()),
-                            _ => {}
-                        }
-                    }
-                })
-                .build(app)?;
-
-            app.on_menu_event(move |app, event| {
-                match event.id().as_ref() {
-                    "show-main" => show_main(app),
-                    // 验收条目13：无头连接信息兜底复制（登记 F16 暂存，托盘退出兜底清除 token）
-                    "copy-mcp-info" => {
-                        if let Some(text) = &mcp_info {
-                            if app.clipboard().write_text(text.clone()).is_ok() {
-                                if let Ok(mut s) = CLIPBOARD_STAGE.lock() {
-                                    *s = Some(text.clone());
-                                }
-                            }
-                        }
-                    }
-                    "quit" => {
-                        // F16：托盘退出兜底——剪贴板仍持有本应用复制内容时清空（读回比对在 Rust 侧，
-                        // 不会误清用户后续复制的外部内容；无暂存/内容已换则不动）
-                        clear_clipboard_if_staged(app);
-                        // 退出清 DEK 暂存槽（Task 14）：进程内存槽随退出失效，显式清空防语义歧义
-                        dek_slot_clear(&STASHED_DEK);
-                        app.exit(0)
-                    }
-                    _ => {}
-                }
-            });
+            // C7：按 settings 覆写默认快捷键（R16⑨ 提函数）
+            apply_shortcut_override(app.handle());
+            // 托盘菜单 + 图标 + 菜单事件接线（R16⑨ 提函数；mcp_info 仅托盘作用域消费）
+            setup_tray(app, headless, &mcp_cfg)?;
             // 释放策略 tick：30s 轮询窗口可见性驱动三段释放（spec 批⑧ §7.3——轮询覆盖所有隐藏路径：
             // 关窗拦截/mini 失焦/前端「隐藏到托盘」，无事件盲区；配置每 tick 现读，改设置即时生效）
             let release_handle = app.handle().clone();
