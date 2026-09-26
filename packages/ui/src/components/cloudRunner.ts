@@ -1,8 +1,9 @@
 /**
  * 云同步 runner（宿主侧编排，desktop/extension 双端共享）：把启用的源+凭据对组装为 core
  * syncMultipleTargets 输入并执行（rev 逻辑时钟编排，T9 全量改造）。守护与裁定：
- * - single-flight（spec §5 ④）：实例闭包 chain promise 链串行化 run()——手动到来时自动在跑则排队
- *   合并执行，不丢弃不并发；跨宿主（desktop 与 extension 同时写云）不额外加锁，由 rev 模型天然裁决；
+ * - single-flight（spec §5 ④）：cloudSyncShared 模块级共享链串行化 run()（R1：CloudCard 手动直调
+ *   同走此链）——手动到来时自动在跑则排队合并执行，不丢弃不并发；跨宿主（desktop 与 extension
+ *   同时写云）不额外加锁，由 rev 模型天然裁决；
  * - 仅解锁会话内执行（锁定/无 secret 记 null 跳过态直接 return），跳过态可观测裁定不变；
  * - auto 内容门（spec §1.3 内容门持久化）：持久化「解密后 vault JSON 规范化 contentHashVault」基线
  *   （loadContentHash/saveContentHash，跨会话/页面重开生效，取代旧实例内存 sha256 字节门）；
@@ -30,11 +31,14 @@
  * - 单目标失败由 core 编排隔离（outcome=null + error），仅全程意外抛错才走 onError。
  */
 import {
-  BACKUP_NAME_RE, contentHashVault, enforceRemoteRetention, isAuthError, isAuthErrorCode,
-  resolveObjectPath, resolveTimestampPath, syncMultipleTargets, syncWithCloudRev,
+  contentHashVault, isAuthError, isAuthErrorCode, resolveObjectPath, syncMultipleTargets, syncWithCloudRev,
   type BackupSource, type CloudBackend, type CloudCred, type ConflictBackupResult, type EntryConflict,
-  type KdfProfile, type RevSyncAction, type RevSyncOutcome, type SourceSyncState, type TargetResult,
+  type KdfProfile, type RevSyncOutcome, type SourceSyncState, type TargetResult,
 } from '@totp/core'
+import {
+  CLOUD_ACTION_STATUS_KEYS, actionStatusLabelKey, allTargetsSettled, buildSyncTargets, latestKeepPath,
+  runExclusive, runKeepRetention,
+} from './cloudSyncShared'
 
 /** 手动合并预览摘要（onManualConfirm 入参）：T11 差异预览对话框消费 */
 export interface ManualMergePreview {
@@ -111,21 +115,6 @@ export interface CloudRunnerDeps {
   onAuthFailure?(err: string, status?: number): void
 }
 
-/** 同步动作 → 状态文案 key（D2：原 CLOUD_ACTION_LABEL zh 常量上移至 common.json cloudRunner.action.*）。
- *  键 = rev 编排四出口（RevSyncAction）；merged 且降级（祖先校验失败走两方合并）时换专用文案 */
-const ACTION_LABEL_KEY: Record<RevSyncAction, string> = {
-  uploaded: 'cloudRunner.action.uploaded',
-  downloaded: 'cloudRunner.action.downloaded',
-  merged: 'cloudRunner.action.merged',
-  'in-sync': 'cloudRunner.action.inSync',
-}
-const MERGED_DEGRADED_KEY = 'cloudRunner.action.mergedDegraded'
-
-/** 动作文案 key（含降级分支）：merged 且 mergeDegraded → mergedDegraded 专用文案 */
-function actionLabel(o: RevSyncOutcome): string {
-  return o.action === 'merged' && o.mergeDegraded === true ? MERGED_DEGRADED_KEY : ACTION_LABEL_KEY[o.action]
-}
-
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
@@ -176,21 +165,6 @@ function instrumentBackend(b: CloudBackend, onFirst: () => void): CloudBackend {
   return backend
 }
 
-/** keep 源远端最新份路径：listBackups 名单内时间戳备份的最新份（字典序=时间序，与滚动删除同口径）；
- *  后端不支持列名单/名单为空/listBackups 抛错 → null。抛错同按 null 走（该源按云端无对象首推，
- *  收敛归后续轮；本地/远端内容零丢失）——读侧名单失败不得炸整轮 Promise.all（逐源隔离，同 ⑮ 裁定） */
-async function latestKeepPath(backend: CloudBackend): Promise<string | null> {
-  if (!backend.listBackups) return null
-  const basename = (p: string): string => p.split('/').filter((s) => s !== '').pop() ?? p
-  let names: string[]
-  try {
-    names = (await backend.listBackups()).filter((p) => BACKUP_NAME_RE.test(basename(p))).sort()
-  } catch {
-    return null
-  }
-  return names[names.length - 1] ?? null
-}
-
 type MultiTargetRun = Awaited<ReturnType<typeof syncMultipleTargets>>
 
 export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto' | 'manual' | 'pull'): Promise<void> } {
@@ -225,7 +199,7 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
         const backend = deps.makeBackend(cred)
         const path = source.retention.type === 'keep' ? await latestKeepPath(backend) : resolveObjectPath(cred)
         if (path === null) {
-          labels.push(`${displayName(source.id)}: ${deps.t(ACTION_LABEL_KEY['in-sync'])}`)
+          labels.push(`${displayName(source.id)}: ${deps.t(CLOUD_ACTION_STATUS_KEYS['in-sync'])}`)
           continue
         }
         const state = await deps.loadSyncState(source.id)
@@ -240,7 +214,7 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
           mode: 'preview', // 只读形态：永不写云端、永不存副本（pull-only 的存在意义）
         })
         if (o.action === 'in-sync' || o.action === 'uploaded') {
-          labels.push(`${displayName(source.id)}: ${deps.t(ACTION_LABEL_KEY['in-sync'])}`)
+          labels.push(`${displayName(source.id)}: ${deps.t(CLOUD_ACTION_STATUS_KEYS['in-sync'])}`)
           continue
         }
         const applied = o.appliedVaultJson
@@ -260,7 +234,7 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
           baseSnapshot: o.action === 'downloaded' ? applied : null,
         })
         if (o.action === 'merged' && o.conflicts?.length) deps.onMergeConflicts?.(o.conflicts)
-        labels.push(`${displayName(source.id)}: ${deps.t(actionLabel(o))}`)
+        labels.push(`${displayName(source.id)}: ${deps.t(actionStatusLabelKey(o))}`)
       } catch (err) {
         if (authErr === null && isAuthError(err)) {
           const status = (err as { status?: unknown }).status
@@ -289,25 +263,13 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
       return null
     }
     const total = pairs.length
-    const inputs = await Promise.all(
-      pairs.map(async ({ source, cred }) => {
-        const backend = deps.makeBackend(cred)
-        // keep 源「读最新份、写新时间戳份」分离（readPath）：读侧参与 rev 判定/下载/合并（审查
-        // Important-2——不分离则读恒落空、合并不可达，双设备并发编辑退化为 last-writer-wins 且
-        // 败者内容被滚动删除清除）；写侧每次新时间戳文件。overwrite 源固定路径读写同一对象。
-        // keep 读侧名单空/后端不支持列名单 → 无 readPath，按云端无对象首推，收敛归后续轮
-        const keep = source.retention.type === 'keep'
-        const readPath = keep ? ((await latestKeepPath(backend)) ?? undefined) : undefined
-        return {
-          key: source.id,
-          backend,
-          path: keep ? resolveTimestampPath(cred, new Date()) : resolveObjectPath(cred),
-          readPath,
-          source,
-          state: await deps.loadSyncState(source.id),
-        }
-      }),
-    )
+    // targets 组装收敛至 cloudSyncShared（R1）：keep 源 readPath 读/写分离、path 解析、基线装载
+    // 与 CloudCard 手动直调通道共用同一实现（手动通道由此补上 readPath，消除行为分叉）
+    const inputs = await buildSyncTargets({
+      pairs,
+      makeBackend: (cred) => deps.makeBackend(cred),
+      loadState: (id) => deps.loadSyncState(id),
+    })
     // 逐源进度挂点（spec §6 ⑥）：首目标开始不发 0（无信息量），i≥1 的首个后端调用到来发 (i,total)
     const wrapped = inputs.map((input, i) =>
       i === 0 ? input : { ...input, backend: instrumentBackend(input.backend, () => deps.onProgress?.(i, total)) },
@@ -354,27 +316,15 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
         stateWriteFailed = true
       }
     }
-    // keep 源滚动删除（基线回写后执行；复用原 backend 实例）：仅对 outcome=uploaded（上传/收敛
-    // 回推成功）的源执行——in-sync 无新文件，失败源无可清理依据。per-source try/catch 隔离：
-    // listBackups 网络抛错或宿主回调抛错只损失本轮清理（下轮重试），不改写该源 uploaded 结果、
-    // 不中断其余源清理与最终 summary（上传成功的既成事实不因清理失败回滚）
-    for (const { source } of pairs) {
-      if (source.retention.type !== 'keep') continue
-      const res = r.results.find((x) => x.key === source.id)
-      if (!res?.outcome || res.outcome.action !== 'uploaded') continue
-      const backend = inputs.find((x) => x.key === source.id)!.backend
-      try {
-        const deleted = await enforceRemoteRetention(backend, source.retention.n)
-        deps.onRetentionDeleted?.(displayName(source.id), deleted)
-      } catch {
-        // 不进 onError（区别于编排层意外）：清理失败下轮同步自动重试
-      }
-    }
+    // keep 源滚动删除（基线回写后执行；复用原 backend 实例）：逐源隔离与 uploaded 过滤收敛至
+    // cloudSyncShared.runKeepRetention（R1，与手动卡同构共享）；清理抛错仅损失本轮（下轮重试），
+    // 不改写该源 uploaded 结果、不中断其余源清理与最终 summary
+    await runKeepRetention(inputs, r.results, (id, deleted) => deps.onRetentionDeleted?.(displayName(id), deleted))
     // 内容门基线刷新（spec §1.3）：仅当全部目标拿到确定结果（outcome 非 null 且无 convergeError）
     // 且基线回写无失败 才以 finalVaultJson 刷新；否则置 null——下轮不被门短路，失败目标按全量重比
     // 自愈重试，防部分失败/在途锁定被门吸收成静默僵死。落盘失败不毁本轮结果（基线残留最多让下轮
     // 多做一次同步）
-    const allSettled = r.results.every((x) => x.outcome !== null && !x.convergeError) && !stateWriteFailed
+    const allSettled = allTargetsSettled(r.results) && !stateWriteFailed
     try {
       await deps.saveContentHash(allSettled ? await contentHashVault(r.finalVaultJson) : null)
     } catch { /* 基线落盘失败：保留下轮重试 */ }
@@ -386,9 +336,9 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
       if (authTarget.errorStatus !== undefined) deps.onAuthFailure?.(authTarget.error, authTarget.errorStatus)
       else deps.onAuthFailure?.(authTarget.error)
     }
-    // summary 动作文案（D2 i18n；merged 降级换专用文案）：单目标失败（outcome=null）记「失败」；
-    // 源显示名（审查 I4）。整体 ok=true 为既有部分失败 summary 语义（全部目标 settle 与否看基线门）
-    deps.recordStatus?.(true, r.results.map((x) => `${displayName(x.key)}: ${x.outcome ? deps.t(actionLabel(x.outcome)) : deps.t('cloudRunner.failed')}`).join('; '))
+    // summary 动作文案（D2 i18n；merged 降级换专用文案——R1 文案表收敛 cloudSyncShared）：单目标
+    // 失败（outcome=null）记「失败」；源显示名（审查 I4）。整体 ok=true 为既有部分失败 summary 语义
+    deps.recordStatus?.(true, r.results.map((x) => `${displayName(x.key)}: ${x.outcome ? deps.t(actionStatusLabelKey(x.outcome)) : deps.t('cloudRunner.failed')}`).join('; '))
     return r
   }
 
@@ -450,19 +400,16 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
     }
   }
 
-  // single-flight（spec §5 ④）：实例闭包 chain 链串行化——手动到来时自动在跑则排队合并执行，
-  // 不丢弃不并发（取代旧 busy 直接 return）。各轮返回 promise 独立 settle：前轮意外失败不传染
+  // single-flight（spec §5 ④）：runExclusive 共享链串行化（R1 收敛至 cloudSyncShared 模块级单链）——
+  // 手动到来时自动在跑则排队合并执行，不丢弃不并发（取代旧实例闭包 chain；CloudCard 手动直调
+  // 同走此链，与 auto/manual/pull 各轮互斥）。各轮返回 promise 独立 settle：前轮意外失败不传染
   // 排队轮（链上吞错仅用于衔接，单轮错误已在 runOnce 内转 onError/recordStatus）。
   // 每轮结束（无论成败）对账冲突强提示：badge/横幅随宿主实时未裁决数亮/清（spec §4）
-  let chain: Promise<void> = Promise.resolve()
-  const run = (mode: 'auto' | 'manual' | 'pull' = 'auto'): Promise<void> => {
-    const exec = (): Promise<void> =>
-      runOnce(mode).finally(() => {
+  const run = (mode: 'auto' | 'manual' | 'pull' = 'auto'): Promise<void> =>
+    runExclusive(async () => {
+      await runOnce(mode).finally(() => {
         deps.onConflicts?.(deps.conflictCount?.() ?? 0)
       })
-    const p = chain.then(exec, exec)
-    chain = p.then(() => {}, () => {})
-    return p
-  }
+    })
   return { run }
 }
