@@ -11,7 +11,7 @@
  * 第 2 个凭据 saveCred 抛错中断 → 旧键原样保留 → 重跑收敛（先写新后删旧）；
  * 审查 M5 补两个中断点：①保管区已写但 vault 未剥除 ②基线已平移但旧键未删——均断言重跑收敛。
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   decryptVaultWithDek, encryptVaultWithDek, isEncryptedVault, SECURITY_KEY,
   setupVaultEncryption, unlockVaultEncryption,
@@ -385,5 +385,48 @@ describe('plan16 迁移端到端（纯 core 模拟宿主序列）', () => {
     const sources = await loadSources(adapter)
     expect(sources.map((s) => s.id)).toEqual(['webdav', 'gist'])
     expect(await loadSourceRevs(adapter)).toEqual({ webdav: 'hash-w', gist: 'hash-g' })
+  })
+
+  // ---------- R2 差异守卫（§5.1 先补失败用例再迁移）：同一旧盘数据在两端必须收敛到同一结果。
+  //  历史上 desktop 版缺三项审查修复（见 apps/desktop/src/legacyMigrate.ts 旧实现），
+  //  三项各一用例，断言 extension 版修复语义——实施下沉 core 前对本文件旧同构（desktop 语义）应失败，
+  //  下沉后锚定 core 实现应全绿。 ----------
+
+  it('R2 差异①：cloudCreds/cloudCred 双缺失但 revs 孤儿键残留 → 出口清孤儿键（中断形态收敛）', async () => {
+    const adapter = makeAdapter({
+      [CLOUD_REVS_KEY]: JSON.stringify({ webdav: 'hash-w' }),
+      [CLOUD_REV_KEY]: 'orphan-hash',
+    })
+    await expect(migrateLegacyCloudSources(adapter, new Uint8Array(0), { saveCred: vi.fn() })).resolves.toBe(0)
+    // 纯 hash 基线在新模型无凭据可迁即无消费方：不清则重跑永不收敛、宿主「待迁移」提示永驻
+    expect(adapter.data[CLOUD_REVS_KEY]).toBeUndefined()
+    expect(adapter.data[CLOUD_REV_KEY]).toBeUndefined()
+  })
+
+  it("R2 差异②：cloudCreds='[]' 合法空配置 → 删自身与 revs 孤儿键（幂等早退收敛）", async () => {
+    const adapter = makeAdapter({
+      [CLOUD_CREDS_KEY]: '[]',
+      [CLOUD_REVS_KEY]: JSON.stringify({ webdav: 'hash-w' }),
+      [CLOUD_REV_KEY]: 'orphan-hash',
+    })
+    await expect(migrateLegacyCloudSources(adapter, new Uint8Array(0), { saveCred: vi.fn() })).resolves.toBe(0)
+    // 无任何凭据内容删除零风险：不清则幂等早退不收敛
+    expect(adapter.data[CLOUD_CREDS_KEY]).toBeUndefined()
+    expect(adapter.data[CLOUD_REVS_KEY]).toBeUndefined()
+    expect(adapter.data[CLOUD_REV_KEY]).toBeUndefined()
+  })
+
+  it('R2 差异③：cloudCreds 内同 backend 重复项 → 按 backend 去重（首现胜），不产生重复 id 源', async () => {
+    const adapter = makeAdapter({
+      [CLOUD_CREDS_KEY]: JSON.stringify([
+        { cred: WEBDAV, enabled: true },
+        { cred: { ...WEBDAV, password: 'p2' }, enabled: false }, // 同 backend 重复项
+      ]),
+    })
+    const saveCred = vi.fn().mockResolvedValue(undefined)
+    await expect(migrateLegacyCloudSources(adapter, new Uint8Array(0), { saveCred })).resolves.toBe(1)
+    expect((await loadSources(adapter)).map((s) => s.id)).toEqual(['webdav'])
+    expect(saveCred).toHaveBeenCalledTimes(1)
+    expect(saveCred).toHaveBeenCalledWith('webdav', WEBDAV)
   })
 })
