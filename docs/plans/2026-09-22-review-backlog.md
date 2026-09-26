@@ -120,8 +120,8 @@ B18/B19 为测试基建与稳健性。
 
 | # | 项 | 说明 | 建议 | 出处 |
 |---|---|---|---|---|
-| B10 | 远端 sync:settings 坏 JSON 原样写入本端 | mergeRemoteSettingsKeepingLocalSyncEnabled 的 catch 把解析失败的 remoteRaw 原串返回,上游整体采用写盘——本端 settings 被坏串替换。正确语义应放弃 merge、保留本端。现状已被测试按现状锚定(syncEngine.test.ts:542,断言 :555) | 修 catch 分支返回本端原串(读失败时才退化采用远端),改锚定断言;行为变更属用户可感知,建议下批优先 | apps/extension/src/syncEngine.ts:94-106 |
-| B11 | popup onSave type 变更路径表单 period 被静默重置 | `period: carried?.period ?? 30` 在 carried 失效(type 变更)时恒落 30,覆盖表单提交值(编辑同路径同样受害);digits 已改用 `?? toOtpDigits(...)` 收口,period 漏改 | 一行修复 `?? data.period ?? 30` + 同步改两处锚定断言(popupApp.test.ts:835 同 type 恒 30 处、:856 type 变更现状锚定处) | apps/extension/entrypoints/popup/App.vue:298 |
+| B10 | 远端 sync:settings 坏 JSON 原样写入本端 | mergeRemoteSettingsKeepingLocalSyncEnabled 的 catch 把解析失败的 remoteRaw 原串返回,上游整体采用写盘——本端 settings 被坏串替换。正确语义应放弃 merge、保留本端。现状已被测试按现状锚定(syncEngine.test.ts:542,断言 :556) | 修 catch 分支返回本端原串(读失败时才退化采用远端),改锚定断言;行为变更属用户可感知,建议下批优先 | apps/extension/src/syncEngine.ts:94-106 |
+| B11 | popup onSave type 变更路径表单 period 被静默重置 | `period: carried?.period ?? 30` 在 carried 失效(type 变更)时恒落 30,覆盖表单提交值(编辑同路径同样受害);digits 已改用 `?? toOtpDigits(...)` 收口,period 漏改 | 一行修复 `?? data.period ?? 30` + 同步改两处锚定断言(popupApp.test.ts:837 同 type 恒 30 处、:856 type 变更现状锚定处) | apps/extension/entrypoints/popup/App.vue:298 |
 
 ## 一致性/卫生类
 

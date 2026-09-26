@@ -6,7 +6,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     coverage: {
-      // 覆盖率 gate（coverage-design §5，P6 开闸）：当前实测 96.12% lines / 90.02% branches
+      // 覆盖率 gate（coverage-design §5，P6 开闸）：当前实测 96.12% lines / 90.01% branches
       // 减 0.5pp 安全边际，随改进逐步收紧（95/85 分层目标已达成，余量随改进回收）。
       thresholds: { lines: 95.6, branches: 89.5 },
       // 纯类型/构建脚本文件显式排除（P2b 覆盖率方案 §1.3 豁免清单，同 core 先例）：
