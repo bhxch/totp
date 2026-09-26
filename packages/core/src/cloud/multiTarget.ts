@@ -117,21 +117,27 @@ export async function syncMultipleTargets(opts: {
   const conflicts: EntryConflict[] = []
   let final = vaultJson
 
+  // R15⑥：三处 syncWithCloudRev 调用的 9 字段 opts 有 7 字段恒同（password/profile/deviceId/mode/
+  // onConflictBackup + backend/path/readPath 均随 target）——提局部 runSync 收敛，自由度仅剩
+  // 目标(t)、本地内容(vault)与所用 state 三者
+  const runSync = (t: MultiTargetInput, vault: string, state: SourceSyncState) =>
+    syncWithCloudRev({
+      backend: t.backend,
+      path: t.path,
+      readPath: t.readPath,
+      vaultJson: vault,
+      password,
+      profile,
+      state,
+      deviceId,
+      mode,
+      onConflictBackup: (bytes) => onConflictBackup?.(t.key, bytes),
+    })
+
   // ---- primary 裁决：四出口推拉，产出 final ----
   let primaryOutcome: RevSyncOutcome | null = null
   try {
-    primaryOutcome = await syncWithCloudRev({
-      backend: primary.backend,
-      path: primary.path,
-      readPath: primary.readPath,
-      vaultJson,
-      password,
-      profile,
-      state: primary.state,
-      deviceId,
-      mode,
-      onConflictBackup: (bytes) => onConflictBackup?.(primary.key, bytes),
-    })
+    primaryOutcome = await runSync(primary, vaultJson, primary.state)
     if (primaryOutcome.conflicts) conflicts.push(...primaryOutcome.conflicts)
   } catch (err) {
     // primary 失败=本轮终止该源：final 保持本地入参，replica 仍按本地内容推平
@@ -167,18 +173,7 @@ export async function syncMultipleTargets(opts: {
   for (const t of replicas) {
     const result: TargetResult = { key: t.key, outcome: null }
     try {
-      let r = await syncWithCloudRev({
-        backend: t.backend,
-        path: t.path,
-        readPath: t.readPath,
-        vaultJson: final,
-        password,
-        profile,
-        state: t.state,
-        deviceId,
-        mode,
-        onConflictBackup: (bytes) => onConflictBackup?.(t.key, bytes),
-      })
+      let r = await runSync(t, final, t.state)
       if (r.action === 'downloaded' && r.appliedVaultJson !== undefined) {
         // 误配置保护（裁定 4）：replica 云端较新且 final 未动 → 远端内容先两方并入 final
         //（base 未知，mergeVaults(null, ours=final, theirs=replica) 防丢），再以远端现值刷新
@@ -186,17 +181,9 @@ export async function syncMultipleTargets(opts: {
         result.outcome = r
         const mergedJson = JSON.stringify(mergeVaults(null, JSON.parse(final), JSON.parse(r.appliedVaultJson)).vault)
         final = mergedJson // 先并入 final（数据不丢），再推平——推平失败不回滚并入（随 finalVaultJson 交宿主）
-        r = await syncWithCloudRev({
-          backend: t.backend,
-          path: t.path,
-          readPath: t.readPath,
-          vaultJson: mergedJson,
-          password,
-          profile,
-          state: { lastKnownRemoteRev: r.remoteRev ?? t.state.lastKnownRemoteRev, baseSnapshot: r.appliedVaultJson },
-          deviceId,
-          mode,
-          onConflictBackup: (bytes) => onConflictBackup?.(t.key, bytes),
+        r = await runSync(t, mergedJson, {
+          lastKnownRemoteRev: r.remoteRev ?? t.state.lastKnownRemoteRev,
+          baseSnapshot: r.appliedVaultJson,
         })
       } else if (r.action === 'merged' && r.appliedVaultJson !== undefined) {
         // 双方都动：syncWithCloudRev 已合并并上传（rev 单调、base 校验失败自动降级两方），
