@@ -30,7 +30,7 @@ import { formatAutoStatusText, saveSourcesImpl, type TranslateFn } from './cloud
 import { addConflictCopy, exportConflictCopy, listConflictCopies } from './conflictCopies'
 import { canOffscreen, ext } from './extApi'
 import { createSyncScheduler, type SyncScheduler } from './syncScheduler'
-import { markSyncOff, SYNC_STATUS_KEY } from './syncEngine'
+import { markSyncOff, readSyncStatus } from './syncEngine'
 import { storageAdapter } from './store'
 
 /** 宿主取词(与 runner deps.t 同签名) */
@@ -196,14 +196,8 @@ export function createOptionsSyncPlatform(store: VueStore): SyncPlatform {
       } catch { /* 扩展上下文失效(重载中):忽略 */ }
     },
     async readStatus() {
-      try {
-        const raw = (await ext!.storage.local.get(SYNC_STATUS_KEY))[SYNC_STATUS_KEY]
-        if (typeof raw !== 'object' || raw === null) return null
-        const s = raw as { state?: unknown; at?: unknown }
-        return typeof s.state === 'string' && typeof s.at === 'number' ? { state: s.state, at: s.at } : null
-      } catch {
-        return null
-      }
+      // R16⑪ 收敛:读+校验单点在 syncEngine.readSyncStatus(engine 是唯一写入方,外来值按损坏拒)
+      return readSyncStatus()
     },
     canSync: !!ext?.storage.sync,
   }

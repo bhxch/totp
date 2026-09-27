@@ -131,7 +131,8 @@ vi.mock('../src/store', async () => {
 })
 
 vi.mock('../src/extApi', async () => (await import('./helpers/extApiMock')).extApiMock())
-vi.mock('../src/syncEngine', () => ({
+vi.mock('../src/syncEngine', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/syncEngine')>()), // 展开先例同 cloudRunnerFactory;R16⑪ readSyncStatus 导出复用后出口扩展免疫
   // 形状完整（popup/options 宿主 + background 共用模块面）
   pullSyncIfNewer: vi.fn(async () => {}),
   pushSync: vi.fn(async () => {}),
