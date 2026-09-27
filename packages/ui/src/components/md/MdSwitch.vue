@@ -1,17 +1,16 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
 const props = withDefaults(defineProps<{ modelValue: boolean; disabled?: boolean; ariaLabel?: string }>(), { modelValue: false, disabled: false })
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
-const checked = ref(props.modelValue)
-watch(() => props.modelValue, v => { checked.value = v })
+// C2 受控化:删除内部 checked ref 与 watch 双真值源——视觉纯由 modelValue 派生,
+// change 只 emit;父层拒绝/回滚(modelValue 未变)时开关视觉与真实状态一致。
+// 已核实消费方无「乐观改视觉」依赖(McpServerCard 回滚走 cfg DTO 赋值,受控化后更正确)
 function onChange(e: Event) {
-  checked.value = (e.target as HTMLInputElement).checked
-  emit('update:modelValue', checked.value)
+  emit('update:modelValue', (e.target as HTMLInputElement).checked)
 }
 </script>
 <template>
-  <label class="md-switch" :class="{ 'md-switch--checked': checked, 'md-switch--disabled': disabled }">
-    <input type="checkbox" class="md-switch__input" role="switch" :aria-label="ariaLabel" :checked="checked" :disabled="disabled" @change="onChange" />
+  <label class="md-switch" :class="{ 'md-switch--checked': props.modelValue, 'md-switch--disabled': disabled }">
+    <input type="checkbox" class="md-switch__input" role="switch" :aria-label="ariaLabel" :checked="props.modelValue" :disabled="disabled" @change="onChange" />
     <span class="md-switch__track"><span class="md-switch__thumb" /></span>
   </label>
 </template>

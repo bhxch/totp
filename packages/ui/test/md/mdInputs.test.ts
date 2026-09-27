@@ -105,11 +105,26 @@ describe('MdTextField', () => {
   })
 })
 describe('MdSwitch', () => {
-  it('点击翻转并发 update', async () => {
+  it('点击只 emit update,不自行改视觉(受控)', async () => {
     const w = mount(MdSwitch, { props: { modelValue: false } })
     await w.find('input[type=checkbox]').setValue(true)
     expect(w.emitted('update:modelValue')![0]).toEqual([true])
+    // 受控:父层未更新 modelValue 前,视觉保持未选中(C2 回滚语义)
+    expect(w.classes()).not.toContain('md-switch--checked')
+  })
+  it('视觉纯由 modelValue 派生:props 变化驱动类切换', async () => {
+    const w = mount(MdSwitch, { props: { modelValue: false } })
+    expect(w.classes()).not.toContain('md-switch--checked')
+    await w.setProps({ modelValue: true })
     expect(w.classes()).toContain('md-switch--checked')
+  })
+  it('父层回滚 modelValue → 视觉回退(B13 脱钩修复锁定)', async () => {
+    const w = mount(MdSwitch, { props: { modelValue: true } })
+    await w.find('input[type=checkbox]').setValue(false)
+    expect(w.emitted('update:modelValue')![0]).toEqual([false])
+    expect(w.classes()).toContain('md-switch--checked') // 父层拒绝时视觉不前进
+    await w.setProps({ modelValue: false })
+    expect(w.classes()).not.toContain('md-switch--checked')
   })
   it('disabled 时不触发 update', async () => {
     const w = mount(MdSwitch, { props: { modelValue: false, disabled: true } })
@@ -125,14 +140,12 @@ describe('MdSwitch', () => {
     const withoutLabel = mount(MdSwitch, { props: { modelValue: false } })
     expect(withoutLabel.find('input').attributes('aria-label')).toBeUndefined()
   })
-  it('未选中拇指 16dp/选中 24dp（M3 拇指随状态缩放）：thumb 样式钩子存在且随 checked 切换类', async () => {
+  it('未选中拇指 16dp/选中 24dp(M3 拇指随状态缩放):thumb 样式钩子存在且随 checked 切换类', async () => {
     const w = mount(MdSwitch, { props: { modelValue: false } })
-    // 未选中：thumb 节点存在、容器无 checked 类（拇指缩放样式挂载点）
     expect(w.find('.md-switch__thumb').exists()).toBe(true)
     expect(w.classes()).not.toContain('md-switch--checked')
-    await w.find('input[type=checkbox]').setValue(true)
+    await w.setProps({ modelValue: true })
     expect(w.classes()).toContain('md-switch--checked')
-    // jsdom 不应用 SFC 样式，16dp/24dp 档位以源码断言（同 themeTypescale 读 tokens.css 模式）
     const src = readFileSync(join(__dirname, '../../src/components/md/MdSwitch.vue'), 'utf8')
     expect(src).toMatch(/\.md-switch__thumb\s*\{[^}]*width:\s*16px/)
     expect(src).toMatch(/\.md-switch--checked \.md-switch__thumb\s*\{[^}]*width:\s*24px/)
