@@ -41,34 +41,43 @@ describe('importFoxauth 明文', () => {
     await expect(importFoxauth(JSON.stringify({ accountInfos: [], isEncrypted: false }))).rejects.toThrow(/无条目/)
   })
 
-  it('accountInfos 既非数组也非串：明文分支与加密分支（已给口令）均结构级报错', async () => {
+  it('accountInfos 既非数组也非串：明文分支与加密分支均结构级报错', async () => {
     await expect(importFoxauth(JSON.stringify({ accountInfos: 42, isEncrypted: false })))
       .rejects.toThrow('FoxAuth 文件结构非法：缺少 accountInfos 数组')
+    // 加密分支：passwordInfo/encryptPassword/IV 均合法 → 免口令直达 decryptFoxauth 的形态兜底检查（D1 删显式前置检查）
     await expect(importFoxauth(
       JSON.stringify({ accountInfos: { a: 1 }, isEncrypted: true, passwordInfo: { encryptPassword: btoa('pw'), encryptIV: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] } }),
-      'pw',
-    )).rejects.toThrow('FoxAuth 文件结构非法：缺少 accountInfos')
+    )).rejects.toThrow('FoxAuth 文件结构非法：accountInfos 不是条目数组')
   })
 
-  it('加密备份未给口令：明确报错（需要口令）', async () => {
-    await expect(importFoxauth(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: {} })))
-      .rejects.toThrow(/需要口令/)
-    await expect(importFoxauth(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: {} }), ''))
-      .rejects.toThrow(/需要口令/)
+  it('加密备份免口令直接解密导入（D1：解密口令取自文件内 encryptPassword）', async () => {
+    const accountInfosJson = JSON.stringify([
+      { localIssuer: 'GitHub', localAccountName: 'a@b.c', localSecretToken: 'JBSWY3DPEHPK3PXP', localOTPType: 'Time based', localOTPDigits: '6', localOTPPeriod: '30' },
+    ])
+    const key = await foxauthTestKey('test-password')
+    const fixture = JSON.stringify({
+      accountInfos: await foxauthTestEncrypt(key, FOXAUTH_IV, accountInfosJson),
+      isEncrypted: true,
+      passwordInfo: { encryptPassword: btoa('test-password'), encryptIV: Array.from(FOXAUTH_IV) },
+    })
+    const r = await importFoxauth(fixture)
+    expect(r.entries).toHaveLength(1)
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries[0]).toMatchObject({ type: 'totp', issuer: 'GitHub', label: 'a@b.c', algorithm: 'SHA1', digits: 6, period: 30 })
   })
 
   it('加密备份缺 encryptPassword：提示备份不含口令（官方支持口令存 sessionStorage）', async () => {
-    await expect(importFoxauth(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: {} }), 'any-password'))
+    await expect(importFoxauth(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: {} })))
       .rejects.toThrow(/不包含口令/)
     // encryptPassword 为空串同口径（typeof 通过、空值拒绝）
-    await expect(importFoxauth(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: { encryptPassword: '', encryptIV: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] } }), 'any-password'))
+    await expect(importFoxauth(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: { encryptPassword: '', encryptIV: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] } })))
       .rejects.toThrow(/不包含口令/)
   })
 
   it('加密备份缺 passwordInfo / passwordInfo 非对象 → 结构级报错', async () => {
-    await expect(importFoxauth(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true }), 'pw'))
+    await expect(importFoxauth(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true })))
       .rejects.toThrow('FoxAuth 文件结构非法：加密备份缺少 passwordInfo')
-    await expect(importFoxauth(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: 'nope' }), 'pw'))
+    await expect(importFoxauth(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: 'nope' })))
       .rejects.toThrow('FoxAuth 文件结构非法：加密备份缺少 passwordInfo')
   })
 
@@ -79,7 +88,7 @@ describe('importFoxauth 明文', () => {
       isEncrypted: true,
       passwordInfo: { encryptPassword: btoa('pw'), encryptIV: Array.from(FOXAUTH_IV) },
     })
-    await expect(importFoxauth(fixture, 'pw')).rejects.toThrow('FoxAuth 文件结构非法：accountInfos 不是条目数组')
+    await expect(importFoxauth(fixture)).rejects.toThrow('FoxAuth 文件结构非法：accountInfos 不是条目数组')
   })
 })
 
@@ -142,36 +151,32 @@ describe('importFoxauth 加密备份（整串密文形态）', () => {
     })
   })
 
-  it('正确口令解密导入：与明文同结果', async () => {
-    const r = await importFoxauth(encryptedFixture, 'test-password')
+  it('免口令解密导入（D1）：解密口令取自文件内 encryptPassword，与明文同结果', async () => {
+    const r = await importFoxauth(encryptedFixture)
     expect(r.entries).toHaveLength(1)
     expect(r.failures).toHaveLength(0)
     expect(r.entries[0]).toMatchObject({ type: 'totp', issuer: 'GitHub', label: 'a@b.c', algorithm: 'SHA1', digits: 6, period: 30 })
   })
 
-  it('错误口令：结构级报错（口令错误或文件已损坏）', async () => {
-    await expect(importFoxauth(encryptedFixture, 'wrong-password')).rejects.toThrow('FoxAuth 备份解密失败：口令错误或文件已损坏')
-  })
-
-  it('正确口令但密文被篡改：GCM tag 校验失败结构级报错（触达解密 catch）', async () => {
-    // 错误口令用例被解密前的口令比对拦截；本例口令正确、仅篡改密文中位字符，
+  it('密文被篡改：GCM tag 校验失败结构级报错（触达解密 catch）', async () => {
+    // D1 后无用户口令比对路径；仅篡改密文中位字符，
     // 必然进入 decryptFoxauth 的 GCM decrypt → OperationError → catch
     const parsed = JSON.parse(encryptedFixture) as { accountInfos: string }
     const cipher = parsed.accountInfos
     const mid = Math.floor(cipher.length / 2)
     const replacement = cipher.charAt(mid) === 'A' ? 'B' : 'A'
     const fixture = JSON.stringify({ ...parsed, accountInfos: cipher.slice(0, mid) + replacement + cipher.slice(mid + 1) })
-    await expect(importFoxauth(fixture, 'test-password')).rejects.toThrow('FoxAuth 备份解密失败：口令错误或文件已损坏')
+    await expect(importFoxauth(fixture)).rejects.toThrow('FoxAuth 备份解密失败：口令错误或文件已损坏')
   })
 
   it('encryptIV 缺失：结构级报错（不进入解密）', async () => {
     const fixture = JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: { encryptPassword: btoa('test-password') } })
-    await expect(importFoxauth(fixture, 'test-password')).rejects.toThrow(/encryptIV/)
+    await expect(importFoxauth(fixture)).rejects.toThrow(/encryptIV/)
   })
 
   it('encryptPassword 非法 Base64：中文结构级报错', async () => {
     const fixture = JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: { encryptPassword: '!!not-b64!!', encryptIV: Array.from(FOXAUTH_IV) } })
-    await expect(importFoxauth(fixture, 'test-password')).rejects.toThrow(/不是合法 Base64/)
+    await expect(importFoxauth(fixture)).rejects.toThrow(/不是合法 Base64/)
   })
 })
 
@@ -200,8 +205,8 @@ describe('importFoxauth 加密备份（真实导出形态：数组 + 逐字段�
     })
   })
 
-  it('正确口令解密导入：与明文同结果（坏 secret 进 failures）', async () => {
-    const r = await importFoxauth(encryptedFixture, 'test-password')
+  it('免口令解密导入（D1）：与明文同结果（坏 secret 进 failures）', async () => {
+    const r = await importFoxauth(encryptedFixture)
     expect(r.entries).toHaveLength(2)
     expect(r.failures).toHaveLength(1)
     expect(r.entries[0]).toMatchObject({ type: 'totp', issuer: 'GitHub', label: 'a@b.c', algorithm: 'SHA1', digits: 6, period: 30 })
@@ -217,7 +222,7 @@ describe('importFoxauth 加密备份（真实导出形态：数组 + 逐字段�
       localSecretToken: await foxauthTestEncrypt(key, FOXAUTH_IV, 'JBSWY3DPEHPK3PXP'),
       localOTPType: 'Time based', localOTPDigits: '6', localOTPPeriod: '30',
     })
-    const r = await importFoxauth(JSON.stringify(parsed), 'test-password')
+    const r = await importFoxauth(JSON.stringify(parsed))
     expect(r.failures).toHaveLength(1) // 原「坏条目」仍失败
     const empty = r.entries.find((e) => e.issuer === 'EmptyName')
     expect(empty).toMatchObject({ label: '', secret: 'JBSWY3DPEHPK3PXP' })
@@ -233,31 +238,27 @@ describe('importFoxauth 加密备份（真实导出形态：数组 + 逐字段�
       isEncrypted: true,
       passwordInfo: { encryptPassword: btoa('test-password'), encryptIV: Array.from(FOXAUTH_IV) },
     })
-    const r = await importFoxauth(fixture, 'test-password')
+    const r = await importFoxauth(fixture)
     expect(r.entries).toHaveLength(1)
     expect(r.failures).toEqual([{ index: 0, message: '条目 0 非对象' }])
   })
 
-  it('错误口令：结构级报错（口令错误或文件已损坏）', async () => {
-    await expect(importFoxauth(encryptedFixture, 'wrong-password')).rejects.toThrow('FoxAuth 备份解密失败：口令错误或文件已损坏')
-  })
-
-  it('正确口令但字段密文被篡改：GCM tag 校验失败结构级报错（触达解密 catch）', async () => {
+  it('字段密文被篡改：GCM tag 校验失败结构级报错（触达解密 catch）', async () => {
     const parsed = JSON.parse(encryptedFixture) as { accountInfos: Array<Record<string, unknown>> }
     const entry = parsed.accountInfos[0]!
     const cipher = entry.localSecretToken as string
     const mid = Math.floor(cipher.length / 2)
     const replacement = cipher.charAt(mid) === 'A' ? 'B' : 'A'
     entry.localSecretToken = cipher.slice(0, mid) + replacement + cipher.slice(mid + 1)
-    await expect(importFoxauth(JSON.stringify(parsed), 'test-password')).rejects.toThrow('FoxAuth 备份解密失败：口令错误或文件已损坏')
+    await expect(importFoxauth(JSON.stringify(parsed))).rejects.toThrow('FoxAuth 备份解密失败：口令错误或文件已损坏')
   })
 })
 
 // ---------- 非 ASCII 口令（回归：encryptPassword 的 Base64 是 UTF-8 语义，KDF 输入是 latin1 字节） ----------
 // FoxAuth 官方：encryptPassword = Base64(UTF-8(口令))（base64Decode = new TextDecoder().decode），
 // KDF（HKDF）输入 = 口令 latin1 字节（加密侧 btoa = 逐字符 charCodeAt & 0xff，口令限 U+0000–U+00FF）。
-// 回归点：atob 解码结果必须先经 UTF-8 TextDecoder 还原明文再与用户输入比对（否则含
-// U+0080–U+00FF 的正确口令被误报「口令错误」）；rawSecret 用该明文的 latin1 重编码。
+// 回归点（D1 免输入）：atob 解码结果必须先经 UTF-8 TextDecoder 还原明文再作解密密钥（否则含
+// U+0080–U+00FF 的 latin1 视图直接进 KDF，与官方加密侧口径不一致，解密必败）；rawSecret 用该明文的 latin1 重编码。
 function b64Utf8(s: string): string {
   return btoa(String.fromCharCode(...new TextEncoder().encode(s)))
 }
@@ -278,14 +279,10 @@ describe('importFoxauth 加密备份（非 ASCII 口令）', () => {
     })
   })
 
-  it('正确口令解密导入：与明文同结果', async () => {
-    const r = await importFoxauth(encryptedFixture, NON_ASCII_PASSWORD)
+  it('免输入直接解密导入：encryptPassword 的 U+0080–U+00FF latin1 视图经 UTF-8 TextDecoder 还原正确', async () => {
+    const r = await importFoxauth(encryptedFixture)
     expect(r.entries).toHaveLength(1)
     expect(r.failures).toHaveLength(0)
-    expect(r.entries[0]).toMatchObject({ type: 'totp', issuer: 'GitHub', label: 'ä@b.c', algorithm: 'SHA1', digits: 6, period: 30 })
-  })
-
-  it('错误口令：结构级报错（口令错误或文件已损坏）', async () => {
-    await expect(importFoxauth(encryptedFixture, 'wrong-password')).rejects.toThrow('FoxAuth 备份解密失败：口令错误或文件已损坏')
+    expect(r.entries[0]).toMatchObject({ type: 'totp', issuer: 'GitHub', label: 'ä@b.c', algorithm: 'SHA1', digits: 6, period: 30, secret: 'JBSWY3DPEHPK3PXP' })
   })
 })

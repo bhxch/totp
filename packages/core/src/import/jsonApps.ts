@@ -300,24 +300,13 @@ export function importStratum(text: string): ImportResult {
 // localOTPType 'Counter based'→hotp（counter 恒 0：FoxAuth 无 counter 字段），否则 totp；
 // 算法固定 SHA1（无字段）；digits/period 字符串数字，缺省 6/30。
 // 加密备份（isEncrypted:true）：encryptPassword = Base64(UTF-8(口令))（官方 base64Decode 为 UTF-8 语义），
-// 比对/解密口令即其解码明文；解密见 decryptFoxauth（参数依据 spec 加密参数附录）。
+// 解密口令即其解码明文；解密见 decryptFoxauth（参数依据 spec 加密参数附录）。
 // 官方另支持口令仅存 sessionStorage（文件无 encryptPassword，结构合法）→ 此时提示无法解密。
-export async function importFoxauth(text: string, password?: string): Promise<ImportResult> {
+export async function importFoxauth(text: string): Promise<ImportResult> {
   const obj = parseJsonObject(text, 'FoxAuth')
-  // 加密判定先于 accountInfos 形态检查：未给口令时应报「需要口令」而非「缺少 accountInfos」
+  // 加密判定先于 accountInfos 形态检查:加密但缺口令数据时应报「备份不含口令」而非「缺少 accountInfos」
   const encrypted = obj.isEncrypted === true
   if (encrypted) {
-    if (password === undefined || password === '') {
-      throw new Error('FoxAuth 加密备份需要口令：请输入导出时设置的密码')
-    }
-    // accountInfos 两种密文形态（附录 + FoxAuth 源码 accountInfo.js __encryptAndDecrypt）：
-    // - 真实导出（sync.js exportBtn = storage.local 全量 dump）：数组，各条目仅
-    //   localAccountName/localSecretToken/localRecovery 三字段为密文二进制串，其余明文
-    // - 整串密文（spec 附录 Task 4 口径）：非空密文二进制字符串，解密后为条目数组 JSON
-    const isBlob = typeof obj.accountInfos === 'string' && obj.accountInfos !== ''
-    if (!Array.isArray(obj.accountInfos) && !isBlob) {
-      throw new Error('FoxAuth 文件结构非法：缺少 accountInfos')
-    }
     const pwdInfo = asObject(obj.passwordInfo)
     if (!pwdInfo) throw new Error('FoxAuth 文件结构非法：加密备份缺少 passwordInfo')
     const b64pwd = pwdInfo.encryptPassword
@@ -329,18 +318,14 @@ export async function importFoxauth(text: string, password?: string): Promise<Im
     try {
       // encryptPassword = Base64(UTF-8(口令))（FoxAuth import.js base64Decode = new TextDecoder().decode，
       // UTF-8 语义）。atob 直接得到的字符串是 UTF-8 字节的 latin1 视图，含 U+0080–U+00FF 的口令
-      // （如 é/ü）必须先经 UTF-8 TextDecoder 还原明文，否则与用户输入比对必失败。
+      // （如 é/ü）必须先经 UTF-8 TextDecoder 还原明文再作解密密钥。
       pwd = new TextDecoder().decode(Uint8Array.from(atob(b64pwd), (c) => c.charCodeAt(0)))
     } catch {
       throw new Error('FoxAuth 文件结构非法：passwordInfo.encryptPassword 不是合法 Base64')
     }
-    // FoxAuth 导出时把口令 Base64 同存于 encryptPassword（savePasswordInfo），解密口令即该值；
-    // 用户输入口令与其比对：合法导出中两者一致，不一致即口令错误——解密前确定性报错
-    // （FoxAuth 自身导入亦从文件还原口令，不向用户询问）
-    if (pwd !== password) {
-      throw new Error('FoxAuth 备份解密失败：口令错误或文件已损坏')
-    }
-    // IV 不在密文内，由 encryptIV（12 字节数字数组，FoxAuth accountInfo.js Array.from(iv)）携带；缺失结构级报错
+    // D1 裁定（2026-09-27）：取消用户口令比对——官方导出口令 Base64 同存于 encryptPassword，
+    // 本就是解密口令（FoxAuth 自身导入亦从文件还原口令，不向用户询问）；比对属伪安全（口令可还原）。
+    // 解密失败（密文篡改/损坏）由 GCM 层报错，见下方 decryptFoxauth。
     const iv = pwdInfo.encryptIV
     if (!Array.isArray(iv) || iv.length !== 12 || iv.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
       throw new Error('FoxAuth 文件结构非法：加密备份缺少合法的 passwordInfo.encryptIV（12 字节数组）')
@@ -358,8 +343,8 @@ function parseFoxauthPlaintextObject(obj: Record<string, unknown>): ImportResult
 
 /**
  * FoxAuth 明文备份同步导入。独立导出供粘贴分发（import/paste.ts 的同步契约）使用，先例
- * importTotpAuthenticatorPlaintext；加密备份由 paste 通道以 sniffFoxauthEncrypted 拦截引导至
- * 导入页口令通道，不经此处。
+ * importTotpAuthenticatorPlaintext；加密备份解密为异步链路（importFoxauth），不经本同步入口
+ * ——D1 后粘贴通道对加密备份不再拦截引导口令通道，整串密文形态进本入口给出结构级报错。
  */
 export function importFoxauthPlaintext(text: string): ImportResult {
   return parseFoxauthPlaintextObject(parseJsonObject(text, 'FoxAuth'))

@@ -17,8 +17,8 @@ import type { ImportResult } from './types'
 // - parse：统一解析入口（导入页直接解析族派生源），签名统一为「可 await」，同步实现与加密
 //   感知异步实现（totpAuthenticator/foxauth）均可登记；调用点 await 两态兼容；
 // - needsPassword：内容谓词 (text) => boolean。「是否走口令页」是文本内容函数而非格式静态
-//   属性——加密 aegis（db 为密文串）、foxauth 加密态（isEncrypted）、密文 totpAuthenticator
-//   （非 '[' 开头的 Base64 分享）三种既有两态行为，静态布尔无法派生两态路由，禁用（方案 §6）。
+//   属性——加密 aegis（db 为密文串）、密文 totpAuthenticator（非 '[' 开头的 Base64 分享）
+//   两种既有两态行为（foxauth 加密态经 D1 免口令，不设谓词），静态布尔无法派生两态路由，禁用（方案 §6）。
 //   仅两态格式登记；恒进口令页的格式（winauth/authy/authenticatorPlus）由导入页显式分支表达
 //   （口令页交互分支差异真实存在，不做表格化），不经此谓词。
 
@@ -124,9 +124,9 @@ function sniffFreeOtp(obj: Record<string, unknown>): boolean {
 
 // FoxAuth 备份（FoxAuth/FoxAuth src/scripts/import.js overwriteKeys 白名单）：
 // 顶层 isEncrypted 布尔 + accountInfos：明文为数组，加密备份为密文二进制字符串。
-// 密文形态一并判 foxauth（对齐 aegis 明文/加密同判口径），未给口令时由 importFoxauth
-// 给出「需要口令」明确报错引导；两键组合为 FoxAuth overwriteKeys 特有，其余格式判定键
-// 均不同名（aegis db/header、bitwarden encrypted 键等），foxauth 判定先于 generic 兜底，无误伤。
+// 密文形态一并判 foxauth（对齐 aegis 明文/加密同判口径），D1 后明文/加密均免口令直接解析；
+// 两键组合为 FoxAuth overwriteKeys 特有，其余格式判定键均不同名（aegis db/header、bitwarden
+// encrypted 键等），foxauth 判定先于 generic 兜底，无误伤。
 function sniffFoxauth(obj: Record<string, unknown>): boolean {
   if (typeof obj.isEncrypted !== 'boolean') return false
   return Array.isArray(obj.accountInfos) || typeof obj.accountInfos === 'string'
@@ -171,8 +171,9 @@ function parseJsonObjectText(text: string): Record<string, unknown> | null {
 }
 
 /**
- * FoxAuth 加密判定（顶层 isEncrypted 布尔）：供粘贴通道与导入页拦截加密备份、引导至口令
- * 通道，口径同 sniffAegis 的 encrypted 标志；同时是注册表 foxauth 条目的 needsPassword 谓词。
+ * FoxAuth 加密判定（顶层 isEncrypted 布尔）：口径同 sniffAegis 的 encrypted 标志。
+ * D1 后注册表 foxauth 条目不再设 needsPassword 谓词（明文/加密均免口令直接解析），
+ * 本函数保留出包导出（sniff.ts 单点 re-export）与加密判定语义。
  * 非对象 JSON / 解析失败一律 false（交由后续格式判定）。
  */
 export function sniffFoxauthEncrypted(text: string): boolean {
@@ -242,8 +243,7 @@ export const IMPORT_REGISTRY: Record<ImportFormat, ImportFormatDescriptor> = {
     sniffObject: sniffFoxauth,
     paste: importFoxauthPlaintext,
     parse: importFoxauth,
-    // 两态：顶层 isEncrypted === true → 加密（口令页）；明文走同步明文变体直解
-    needsPassword: sniffFoxauthEncrypted,
+    // 明文/加密均免口令直接解析(D1):解密口令取自文件内 encryptPassword，口令页不再拦截
   },
   andOtp: { sniffArray: sniffAndOtp, paste: importAndOtp, parse: importAndOtp },
   totpAuthenticator: {

@@ -27,9 +27,9 @@ describe('parsePastedText', () => {
       expect(r.entries[0]).toMatchObject({ type: 'totp', issuer: 'GitHub', label: 'a@b.c', secret: 'JBSWY3DPEHPK3PXP' })
     }
   })
-  it('FoxAuth 加密备份提示走导入页', () => {
-    const r = parsePastedText(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: {} }))
-    expect(r).toEqual({ unsupported: expect.stringContaining('导入页') })
+  it('FoxAuth 加密备份免口令直接解析（D1）：不再拦截引导口令通道，密文形态交由解析器报结构错误', () => {
+    expect(() => parsePastedText(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: {} })))
+      .toThrow('FoxAuth 文件结构非法：缺少 accountInfos 数组')
   })
   it('Aegis 加密 vault（db 为密文 Base64 串）拦截引导至导入页口令通道，不走明文解析', () => {
     // 结构对齐真实加密导出：header 带 slots/params、顶层 db 为 Base64 密文字符串（sniffAegis.encrypted=true）

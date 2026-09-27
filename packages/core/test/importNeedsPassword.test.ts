@@ -3,8 +3,9 @@ import { IMPORT_FORMATS, needsPasswordFor } from '../src/import/sniff'
 
 /**
  * needsPasswordFor 内容谓词两态守卫（R5，方案 §5.2 行为契约项）：
- * 「哪些输入走口令页」是文本内容函数而非格式静态属性——加密 aegis、foxauth 加密态、
- * 密文 totpAuthenticator 三种既有两态行为；静态布尔禁用（方案 §6）。
+ * 「哪些输入走口令页」是文本内容函数而非格式静态属性——加密 aegis、密文 totpAuthenticator
+ * 两种既有两态行为（foxauth 加密态经 D1 免口令：谓词已从注册表移除，明文/加密均直解）；
+ * 静态布尔禁用（方案 §6）。
  * 本文件锁定谓词的文本两态路由；经 sniff 单点导入同时验证注册表 re-export 出包链。
  */
 
@@ -23,8 +24,8 @@ describe('needsPasswordFor 内容谓词（两端口令判定派生源，R5）', 
     expect(needsPasswordFor('aegis', '{"foo":1}')).toBe(false)
     expect(needsPasswordFor('aegis', 'not json')).toBe(false)
   })
-  it('foxauth 两态：isEncrypted:true → true；明文 → false', () => {
-    expect(needsPasswordFor('foxauth', JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: {} }))).toBe(true)
+  it('foxauth 明文/加密均 false（D1：免口令直接解析，不再进口令页）', () => {
+    expect(needsPasswordFor('foxauth', JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: {} }))).toBe(false)
     expect(needsPasswordFor('foxauth', JSON.stringify({ accountInfos: [], isEncrypted: false }))).toBe(false)
     expect(needsPasswordFor('foxauth', 'not json')).toBe(false)
   })
