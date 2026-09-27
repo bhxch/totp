@@ -627,7 +627,9 @@ const hasDuplicateNames = computed(() => {
       <template v-if="expanded === i">
         <div class="fields">
           <MdTextField v-model="s.name" :label="t('cloudCard.nameLabel')" :placeholder="t('cloudCard.namePlaceholder')" :aria-label="t('cloudCard.sourceNameAria')" autocomplete="off" />
-          <div class="retention-row">
+          <!-- F3/D4:gdrive 后端时间戳文件名不生效,keep 等价覆盖——隐藏保留策略配置消歧义
+               (README 已知限制②;多对象保留挂账) -->
+          <div v-if="s.kind !== 'gdrive'" class="retention-row">
             <MdSegmentedButton
               :options="RETENTION_OPTIONS" :model-value="s.retention.type" :aria-label="t('cloudCard.retentionAria')"
               @update:model-value="onRetentionType(s, $event)"

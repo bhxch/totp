@@ -191,6 +191,18 @@ describe('CloudCard（源列表 plan16 T8）', () => {
     expect(p.saveSources).toHaveBeenLastCalledWith([src({ id: 's1', retention: { type: 'keep', n: 3 } })])
   })
 
+  it('gdrive 源不渲染保留策略配置(D4:该后端 keep 等价覆盖,隐藏防误配)', async () => {
+    // 以 gdrive kind 装配一条启用源并展开配置（装配同 S3）
+    const p = makePlatform({
+      loadSources: vi.fn().mockResolvedValue([src({ id: 'g1', kind: 'gdrive', name: 'G-Drive' })]),
+      creds: { g1: { backend: 'gdrive', accessToken: 'tok' } },
+    })
+    const w = await mountCard(p)
+    await w.find('button.target-toggle').trigger('click')
+    expect(w.find('.retention-row').exists()).toBe(false)
+    // 非 gdrive 源不受影响(既有 S3 用例覆盖 webdav/s3 路径)
+  })
+
   it('S4 保存调用序列：saveSources 先于逐源 saveCred（禁用源凭据一并保存不静默丢失）；空白源计数提示', async () => {
     const S2_CRED: CloudCred = { backend: 'gist', token: 'tok2', gistId: 'gid2' }
     const p = makePlatform({

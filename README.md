@@ -357,7 +357,7 @@ pnpm typecheck     # 类型检查：core 为纯 tsc；ui/extension/desktop 为 v
 详见 [plan13-16 全量代码审查](docs/review/2026-09-18-plan13-16-full-code-review.md)与[批⑧六规格审查与验证](docs/review/2026-09-22-six-specs-review-and-verification.md)。
 
 - **手动云同步不设内容门**：manual 轮始终完整推拉（内容无变化也会重写云端）；自动轮经持久内容门降级 pull-only，内容无变化时零上传，两端均闲置不再互踢
-- **Google Drive 源的「保留最近 N 份」当前等价「覆盖」**（时间戳文件名对 gdrive 不生效，远端始终只有一份对象）
+- **Google Drive 源仅保留 1 份远端对象**（时间戳文件名对 gdrive 不生效，后端按名覆盖；keep 配置对该后端已隐藏）
 - **桌面「重启后保持锁定」开关当前无效果**（桌面无会话级 DEK 存储，重启后必为锁定态）；mac/Linux 的「系统锁屏时锁定」触发器不可用（挂账）
 - **Firefox（MV3）**：剪贴板自动清空不可用（无 offscreen API，清空降级为仅前台不调度）；空闲/锁屏自动锁定按 MDN 兼容性 idle API 已支持（含 `locked` 态，min_version 140），真机如有异常以运行时降级提示为准；Passkey（PRF）解锁支持有限，探测不支持时入口自动隐藏
 - **云端列表无分页**：单目录/前缀下对象数超过云接口单页上限时（如 S3 1000 条），滚动删除可能漏删最旧份
