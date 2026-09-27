@@ -295,7 +295,7 @@ async function onSave(data: EntryFormData) {
       // 此前 `steam ? 5 : 6` 把表单提交的 yandex digits=8 覆写为 6，addEntry 写路径不校验直接落盘，
       // 下次 loadVault 经 validateVaultObject 整记录拒绝（'vault corrupted'）致整个 vault 不可用
       digits: carried?.digits ?? toOtpDigits(data.digits ?? 6, data.type),
-      period: carried?.period ?? 30,
+      period: carried?.period ?? data.period ?? 30,
       ...(carried?.type === 'hotp' ? { counter: carried.counter ?? 0 } : {}),
       order: 0,
       createdAt: Date.now(),

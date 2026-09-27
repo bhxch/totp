@@ -852,8 +852,8 @@ describe('popup 编辑 digits 重算与 URI 导入 carried 透传（B3-16）', (
     expect(entry.type).toBe('totp')
     expect(entry.counter).toBeUndefined() // carried=null：hotp counter 不带
     expect(entry.digits).toBe(6)
-    // 现状锚定：carried=null 时 period 恒 30（`period: carried?.period ?? 30` 覆盖 ...data 的表单值）
-    expect(entry.period).toBe(30)
+    // B11 修复：carried=null 时 period 取表单提交值，不再被 30 覆盖
+    expect(entry.period).toBe(45)
   })
 })
 
