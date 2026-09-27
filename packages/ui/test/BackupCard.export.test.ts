@@ -82,7 +82,7 @@ describe('BackupCard 导出格式（spec §2.3）', () => {
     await vi.waitFor(() => expect(saveTextFile).toHaveBeenCalledOnce())
     expect(saveTextFile.mock.calls[0]![0]).toBe('aegis-export.json')
     expect(w.text()).toContain('已导出')
-    // 注：core exportAegisPlaintext 目前恒置 droppedTagCount=0，okWithDropped 的 >0 提示分支为防御保留
+    // 注：C1 后 AegisExportReport 无 droppedTagCount，导出反馈仅 成功/取消 两态
   })
 
   it('Aegis 明文：确认后用户取消（save=false）→ hint「已取消」', async () => {

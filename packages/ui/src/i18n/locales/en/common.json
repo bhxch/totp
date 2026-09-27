@@ -221,7 +221,6 @@
     "canceled": "Canceled",
     "exportedToFile": "Exported to file",
     "exported": "Exported",
-    "exportedWithDropped": "Exported ({count} extra tags not exported: Aegis entries support a single group only)",
     "localBackup": "Local backup",
     "localDir": "Local directory",
     "passphraseMismatch": "Passphrase does not match, please retry",

@@ -45,6 +45,5 @@ describe('exportAegisEncrypted', () => {
     v = addEntry(v, e2)
     const { report } = await exportAegisEncrypted(v, 'pw')
     expect(report.usedGroups).toEqual(['工作', '重要'])
-    expect(report.droppedTagCount).toBe(0)
   })
 })

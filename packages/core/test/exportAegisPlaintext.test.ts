@@ -29,7 +29,6 @@ describe('exportAegisPlaintext', () => {
     // 官方可读形态：groups 数组长度 = 标签数
     const obj = JSON.parse(json) as { db: { entries: Array<Record<string, unknown>> } }
     expect(obj.db.entries[0]!['groups']).toHaveLength(2)
-    expect(report.droppedTagCount).toBe(0) // groups 数组支持多标签后不再丢标签
     const r = importAegisPlaintext(json)
     expect(r.entries[0]!.tags).toEqual(['工作', '重要'])
   })
@@ -94,7 +93,6 @@ describe('exportAegisPlaintext 导出补全（盘点 B11 #42）', () => {
     expect(db.entries).toEqual([])
     expect(db.groups).toEqual([])
     expect(report.usedGroups).toEqual([])
-    expect(report.droppedTagCount).toBe(0)
   })
 
   it('tagId 悬空（tagNameOf null）过滤：不产出幽灵组，其余标签正常', () => {

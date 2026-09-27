@@ -15,8 +15,6 @@ const randomUUID = (): string => (typeof crypto !== 'undefined' && 'randomUUID' 
 export interface AegisExportReport {
   /** 实际写入的 group 名（去重，条目顺序） */
   usedGroups: string[]
-  /** 遗留字段：groups 数组支持多标签后不再丢标签，恒 0（保留以免破坏 BackupCard 消费方签名） */
-  droppedTagCount: number
 }
 
 export interface AegisExportResult {
@@ -72,7 +70,7 @@ function buildDb(v: Vault, report: AegisExportReport): Record<string, unknown> {
 }
 
 export function exportAegisPlaintext(v: Vault): AegisExportResult {
-  const report: AegisExportReport = { usedGroups: [], droppedTagCount: 0 }
+  const report: AegisExportReport = { usedGroups: [] }
   const json = JSON.stringify({ version: 1, header: { slots: [], params: {} }, db: buildDb(v, report) })
   return { json, report }
 }
@@ -97,7 +95,7 @@ async function gcmSplit(key: Uint8Array, plain: Uint8Array): Promise<{ ct: Uint8
 
 /** Aegis 加密 vault 导出：单个 PasswordSlot 包 32B 随机 master key，master key 解 db */
 export async function exportAegisEncrypted(v: Vault, password: string): Promise<AegisExportResult> {
-  const report: AegisExportReport = { usedGroups: [], droppedTagCount: 0 }
+  const report: AegisExportReport = { usedGroups: [] }
   const dbJson = JSON.stringify(buildDb(v, report))
 
   // ① 32B 随机 master key → 加密 db（密文 Base64 写顶层 db，nonce/tag 写 header.params）

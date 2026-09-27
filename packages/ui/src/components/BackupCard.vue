@@ -162,14 +162,14 @@ async function runExport(): Promise<void> {
       msg.value = saved ? t('backupCard.exported') : t('backupCard.canceled')
       msgKind.value = saved ? 'ok' : 'hint'
     } else if (fmt.value === 'aegis-plain') {
-      const { json, report } = exportAegisPlaintext(v)
-      okWithDropped(await save('aegis-export.json', json), report)
+      const { json } = exportAegisPlaintext(v)
+      onExported(await save('aegis-export.json', json))
     } else {
-      const { json, report } = await exportAegisEncrypted(v, encPw.value)
+      const { json } = await exportAegisEncrypted(v, encPw.value)
       const saved = await save('aegis-export.json', json)
       // 仅真落盘才记口令：取消/写失败时不把口令存入保管区（与导出事实一致）
       if (saved && remember.value) emit('remember-secret', encPw.value)
-      okWithDropped(saved, report)
+      onExported(saved)
     }
   } catch (e) {
     fail(e)
@@ -178,13 +178,10 @@ async function runExport(): Promise<void> {
   }
 }
 
-/** 文本导出反馈：取消=hint；成功时多余标签（Aegis 条目仅支持单分组，spec §2.2）随文案提示 */
-function okWithDropped(saved: boolean, report: { droppedTagCount: number }): void {
-  msg.value = !saved
-    ? t('backupCard.canceled')
-    : report.droppedTagCount > 0
-      ? t('backupCard.exportedWithDropped', { count: report.droppedTagCount })
-      : t('backupCard.exported')
+/** 文本导出反馈：取消=hint;Aegis 条目 groups 数组支持多标签后无标签丢弃(原 droppedTagCount
+ *  恒 0 死分支已随 C1 删除) */
+function onExported(saved: boolean): void {
+  msg.value = saved ? t('backupCard.exported') : t('backupCard.canceled')
   msgKind.value = saved ? 'ok' : 'hint'
 }
 
