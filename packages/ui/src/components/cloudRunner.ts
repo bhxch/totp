@@ -194,6 +194,9 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
     let current = vaultJson // 多源顺序处理：某源采纳后，其余源的「本地内容」以采纳后的最新值为准（同 core 收敛口径）
     const labels: string[] = []
     let authErr: { message: string; status?: number } | null = null
+    // F10(B9/S4)：ok 语义如实——本通道无 TargetResult 结构（syncWithCloudRev 单源形态），以逐源
+    // 失败标记聚合，与 apply 通道 allTargetsSettled 同构：任一源失败（异常/防御分支）记 false
+    let allSettled = true
     for (const { source, cred } of pairs) {
       try {
         const backend = deps.makeBackend(cred)
@@ -220,6 +223,7 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
         const applied = o.appliedVaultJson
         if (applied === undefined) {
           // 防御：downloaded/merged 预览必带采纳内容，缺省按本源失败（下轮重做）
+          allSettled = false
           labels.push(`${displayName(source.id)}: ${deps.t('cloudRunner.failed')}`)
           continue
         }
@@ -236,6 +240,7 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
         if (o.action === 'merged' && o.conflicts?.length) deps.onMergeConflicts?.(o.conflicts)
         labels.push(`${displayName(source.id)}: ${deps.t(actionStatusLabelKey(o))}`)
       } catch (err) {
+        allSettled = false
         if (authErr === null && isAuthError(err)) {
           const status = (err as { status?: unknown }).status
           authErr = { message: errMsg(err), status: typeof status === 'number' ? status : undefined }
@@ -248,7 +253,7 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
       if (authErr.status !== undefined) deps.onAuthFailure?.(authErr.message, authErr.status)
       else deps.onAuthFailure?.(authErr.message)
     }
-    deps.recordStatus?.(true, labels.join('; '))
+    deps.recordStatus?.(allSettled, labels.join('; '))
   }
 
   /**
@@ -337,8 +342,10 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
       else deps.onAuthFailure?.(authTarget.error)
     }
     // summary 动作文案（D2 i18n；merged 降级换专用文案——R1 文案表收敛 cloudSyncShared）：单目标
-    // 失败（outcome=null）记「失败」；源显示名（审查 I4）。整体 ok=true 为既有部分失败 summary 语义
-    deps.recordStatus?.(true, r.results.map((x) => `${displayName(x.key)}: ${x.outcome ? deps.t(actionStatusLabelKey(x.outcome)) : deps.t('cloudRunner.failed')}`).join('; '))
+    // 失败（outcome=null）记「失败」；源显示名（审查 I4）。
+    // F10(B9)：ok 语义如实——任一源失败（outcome=null）或收敛失败（convergeError）记 false；
+    // summary 逐源拼接（含失败源文案）不变。「部分失败仍 ok=true」为既有缺陷语义，随本修复废止
+    deps.recordStatus?.(allTargetsSettled(r.results), r.results.map((x) => `${displayName(x.key)}: ${x.outcome ? deps.t(actionStatusLabelKey(x.outcome)) : deps.t('cloudRunner.failed')}`).join('; '))
     return r
   }
 

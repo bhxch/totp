@@ -553,7 +553,7 @@ describe('createCloudSyncRunner', () => {
     expect(persistAdopted).not.toHaveBeenCalled() // 本地不被合并结果覆盖（无副本保护时同步失败）
     expect(saveSyncState).toHaveBeenCalledWith('s1', st) // 该目标失败 → state 原样，下轮重做
     expect(b.putCount).toBe(0) // 副本先行：不上传合并结果，云端旧版本原样保留
-    expect(recordStatus).toHaveBeenCalledWith(true, 's1: 失败') // 目标级失败标注（既有部分失败 summary 语义）
+    expect(recordStatus).toHaveBeenCalledWith(false, 's1: 失败') // F10:部分失败如实记 false
     expect(onError).not.toHaveBeenCalled() // 单目标失败由 core 编排隔离，不上溢
   })
 
@@ -595,7 +595,7 @@ describe('createCloudSyncRunner', () => {
     await createCloudSyncRunner(deps).run()
     expect(onAuthFailure).toHaveBeenCalledOnce()
     expect(onAuthFailure).toHaveBeenCalledWith('WebDAV 请求失败（HTTP 401）')
-    expect(recordStatus).toHaveBeenLastCalledWith(true, 's-bad: 失败; s-good: 已上传') // 既有 summary 语义不变
+    expect(recordStatus).toHaveBeenLastCalledWith(false, 's-bad: 失败; s-good: 已上传') // F10:部分失败如实记 false（summary 文案不变）
   })
 
   it('T4 非认证错误不触发 onAuthFailure；未提供 onAuthFailure 时 401 也静默（可选依赖）', async () => {
@@ -610,7 +610,7 @@ describe('createCloudSyncRunner', () => {
     })
     await createCloudSyncRunner(deps).run()
     expect(deps.onAuthFailure).not.toHaveBeenCalled()
-    expect(recordStatus).toHaveBeenLastCalledWith(true, 's-bad: 失败')
+    expect(recordStatus).toHaveBeenLastCalledWith(false, 's-bad: 失败') // F10:部分失败如实记 false
     // 未提供 onAuthFailure：401 不抛错，run 照常 resolve（desktop 宿主零影响）
     const bad401 = fakeBackend()
     bad401.get = async () => {
@@ -787,8 +787,8 @@ describe('auto 内容门持久化（spec §1.3；门命中=降级 pull-only 检�
     })
     const runner = createCloudSyncRunner(deps)
     await runner.run()
-    // core 编排不抛错：整体仍记成功 summary（失败源记「失败」），失败源基线原样不推进
-    expect(recordStatus).toHaveBeenLastCalledWith(true, 's-bad: 失败; s-good: 已上传')
+    // core 编排不抛错：summary 逐源拼接（失败源记「失败」），失败源基线原样不推进；F10:部分失败如实记 false
+    expect(recordStatus).toHaveBeenLastCalledWith(false, 's-bad: 失败; s-good: 已上传')
     expect(saveSyncState).toHaveBeenCalledWith('s-bad', { lastKnownRemoteRev: null, baseSnapshot: null })
     expect(deps.saveContentHash).toHaveBeenLastCalledWith(null) // 门基线置 null（部分失败）
     // → 下轮同内容不被门短路，重建 backend 全流程重试
@@ -796,8 +796,8 @@ describe('auto 内容门持久化（spec §1.3；门命中=降级 pull-only 检�
     expect(loadSources).toHaveBeenCalledTimes(2)
     expect(created).toHaveLength(4) // 每轮两源各建一个
     // 第二轮 good 源远端已有首轮信封，动作随远端形态可能变化（uploaded/downloaded 等），不精确断言；
-    // 只断言仍按编排结果记 ok=true 而非被门跳过（ok=null）
-    expect(vi.mocked(recordStatus).mock.calls.at(-1)![0]).toBe(true)
+    // 只断言按编排结果如实记 false（F10:s-bad 持续失败）而非被门跳过（ok=null）
+    expect(vi.mocked(recordStatus).mock.calls.at(-1)![0]).toBe(false)
   })
 })
 
@@ -959,7 +959,7 @@ describe('跟随拉取 pull-only 通道（syncWithCloudRev 只读形态）', () 
     await runner.run('pull')
     expect(saveSyncState).not.toHaveBeenCalled() // state 不动 → 下轮重试
     expect(persistAdopted).not.toHaveBeenCalled()
-    expect(recordStatus).toHaveBeenLastCalledWith(true, 's1: 失败')
+    expect(recordStatus).toHaveBeenLastCalledWith(false, 's1: 失败') // F10:pull 通道源失败如实记 false
     // 口令问题修复（云端换成正确口令信封，内容/时钟不变）
     b.store.set(PATH, await sealedRemote(3, B))
     await runner.run('pull')
@@ -981,7 +981,7 @@ describe('跟随拉取 pull-only 通道（syncWithCloudRev 只读形态）', () 
     await createCloudSyncRunner(deps).run('pull')
     expect(onAuthFailure).toHaveBeenCalledOnce()
     expect(onAuthFailure).toHaveBeenCalledWith('WebDAV 请求失败（HTTP 401）', 401)
-    expect(recordStatus).toHaveBeenLastCalledWith(true, 's1: 失败')
+    expect(recordStatus).toHaveBeenLastCalledWith(false, 's1: 失败') // F10:pull 通道源失败如实记 false
   })
 
   it('keep 源：listBackups 取时间戳最新份拉取；pull-only 零新增时间戳文件', async () => {
