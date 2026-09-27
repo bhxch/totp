@@ -47,12 +47,9 @@ async function ensureOffscreenDocument(): Promise<void> {
  */
 async function clearClipboardWithRetry(): Promise<void> {
   for (let i = 0; i < 3; i++) {
-    try {
-      await ensureOffscreenDocument()
-    } catch {
-      // createDocument 失败（无 offscreen 权限等）：放弃本次
-      return
-    }
+    // C4:ensureOffscreenDocument 内层已吞一切(createDocument 抛错即视为已存在),
+    // 此处 catch 不可达——删死防御;「无 offscreen 权限」场景由内层静默保留复用语义
+    await ensureOffscreenDocument()
     const ok = await new Promise<boolean>((resolve) => {
       let settled = false
       const finish = (v: boolean): void => {
