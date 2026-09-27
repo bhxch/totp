@@ -177,6 +177,7 @@ SW 休眠（chrome://serviceworker-internals 手动 Stop 或等空闲）→ 唤�
 
 | 日期 | 范围 | 结果 | 记录文件 |
 |---|---|---|---|
+| 2026-09-27 | D1–D7 重构后回归（基线 a385f1b→21fd241，R1–R16 十六项重构；重构后 debug 构建 + driver-session 9223） | 6/7 自动化通过；D2 受阻=宿主剪贴板被提权进程锁死（六项核查归因非重构引入，refactorCaused=false）；D3 沿用人工登记；未发现产品缺陷 | `docs/e2e/2026-09-26-refactor-e2e-record.md` |
 | 2026-09-26 | D1–D7、E1–E6、B22/B23 复验（覆盖率批次） | 桌面 6/7 自动化通过（D3 登记人工）；E1–E6 保持手测；发现 B22/B23 当日修复并复验 | `docs/e2e/2026-09-26-coverage-e2e-checklist.md` |
 | 2026-09-23~24 | batch⑧ 八项改进（8/8 有结论，3 缺陷当批修复；Firefox idle README 勘误） | 通过 | `docs/review/2026-09-23-batch8-real-machine-test.md`（归档先例，早于 `docs/e2e/` 归档规则） |
 
@@ -207,5 +208,6 @@ SW 休眠（chrome://serviceworker-internals 手动 Stop 或等空闲）→ 唤�
 
 | 日期 | 变更 | 备注 |
 |---|---|---|
+| 2026-09-27 | 登记重构后桌面 E2E 回归执行记录（§4 索引加行） | `docs/e2e/2026-09-26-refactor-e2e-record.md`：D1–D7（D3 除外）6/7 通过，D2 受阻归因宿主环境（剪贴板被提权进程独占，refactorCaused=false）；文件名沿用批次日期 2026-09-26，实际执行 2026-09-27 |
 | 2026-09-26 | v1.1 执行记录与缺陷登记改为 `docs/e2e/` 按日期归档，§4/§5 改为索引制 | 09-26 批次记录移至 `docs/e2e/2026-09-26-coverage-e2e-checklist.md`（git mv 保留历史） |
 | 2026-09-26 | v1.0 整合成文 | 吸收 `docs/plans/2026-09-25-coverage-design.md` §1.2/§1.3/§4/§7 口径、`docs/e2e/2026-09-26-coverage-e2e-checklist.md`（原 docs/review/ 下）全部用例与执行记录、`docs/review/2026-09-23-batch8-real-machine-test.md` 缺陷登记；并含 B22/B23 修复后真机复验结果（90d9ab2/91abb0c/763184d） |
