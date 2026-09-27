@@ -354,7 +354,8 @@ async function onDelayChange(value: string): Promise<void> {
         :label="t('securityCard.clipboardClear')" :aria-label="t('securityCard.clipboardClear')"
         @update:model-value="onClipboardChange"
       />
-      <span class="opt-hint">{{ t('securityCard.clipboardHint') }}</span>    </div>
+      <!-- F5:宿主注入 clipboardNote 哨兵('firefox'=无 offscreen,清空承诺不可用)时切换降级说明键 -->
+      <span class="opt-hint">{{ platform.clipboardNote === 'firefox' ? t('securityCard.clipboardHintFirefox') : t('securityCard.clipboardHint') }}</span>    </div>
     <div v-if="platform.popupCloseDelayMs && platform.setPopupCloseDelay" class="opt">
       <span>{{ t('securityCard.closeDelay') }}</span>
       <MdTextField

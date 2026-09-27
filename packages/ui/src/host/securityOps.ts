@@ -33,6 +33,9 @@ export interface SecurityOpsOverrides {
   }
   /** 该端不支持的锁定偏好键(SecurityCard 置灰禁用对应控件(lockOnRestart)或隐藏(lockOnSystemLock)防无效设置);缺省三控件全渲染 */
   lockPrefsUnsupported?: ReadonlyArray<keyof LockPrefs>
+  /** 剪贴板自动清空说明覆写哨兵(F5):'firefox'=Firefox 无 offscreen API,清空承诺不可用——
+   *  宿主探测后注入哨兵,SecurityCard 据此选降级说明键;缺省用 securityCard.clipboardHint 默认键 */
+  clipboardNote?: string
 }
 
 /**
@@ -83,6 +86,7 @@ export function createSecurityOpsFromStore(store: VueStore, overrides: SecurityO
           setPopupCloseDelay: o.popup.setCloseDelay,
         }
       : {}),
+    ...(o.clipboardNote ? { clipboardNote: o.clipboardNote } : {}),
     lockPrefs: {
       // 锁定策略(plan16 T11):三字段整体覆写进 settings 后持久化(core loadSettings 已归一化)
       get: () => ({ lockOnRestart: store.settings.lockOnRestart, lockIdleMinutes: store.settings.lockIdleMinutes, lockOnSystemLock: store.settings.lockOnSystemLock }),

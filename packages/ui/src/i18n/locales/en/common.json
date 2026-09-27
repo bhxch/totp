@@ -521,6 +521,7 @@
     "lockOnSystemLock": "Lock on system lock screen",
     "clipboardClear": "Auto-clear clipboard 30 seconds after copying",
     "clipboardHint": "(clipboard auto-clear currently works only in Chrome/Edge)",
+    "clipboardHintFirefox": "This browser (Firefox) has no offscreen capability; the clipboard will not be cleared automatically, please clean it up manually",
     "closeDelay": "Popup auto-close delay after copying (ms)",
     "delayLabel": "Delay (ms)",
     "lockedAdjustHint": "Unlock to adjust",

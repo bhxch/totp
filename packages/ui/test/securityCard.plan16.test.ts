@@ -265,3 +265,17 @@ describe('SecurityCard plan16：锁定策略偏好', () => {
     await vi.waitFor(() => expect(lp.api.set).toHaveBeenCalledWith({ lockOnRestart: true, lockIdleMinutes: 30, lockOnSystemLock: true }))
   })
 })
+
+describe('SecurityCard F5：剪贴板说明宿主注入', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('clipboardNote 注入哨兵时剪贴板说明切换为 Firefox 降级文案(F5:无 offscreen)', async () => {
+    const w = mount(SecurityCard, { global: { plugins: [createTestI18n()] },
+      props: { platform: makePlatform({ clipboardNote: 'firefox' }) } })
+    expect(w.text()).toContain('当前浏览器（Firefox）无 offscreen 能力')
+    expect(w.text()).not.toContain('剪贴板自动清空当前仅在 Chrome/Edge 生效')
+    // 未注入(desktop 不传)→ 走默认 hint 键
+    const d = mount(SecurityCard, { global: { plugins: [createTestI18n()] }, props: { platform: makePlatform() } })
+    expect(d.text()).toContain('剪贴板自动清空当前仅在 Chrome/Edge 生效')
+  })
+})

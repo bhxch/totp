@@ -164,8 +164,11 @@ export function createOptionsSecurityPlatform(store: VueStore): SecurityPlatform
       },
     },
     // 审查 Minor:lockOnRestart 在 ext 无效果(DEK 存 ext.storage.session,浏览器退出必清,
-    // 两取值行为一致)——显式声明不支持,SecurityCard 隐藏「重启后保持锁定」控件防无效设置
+    // 两取值行为一致)——显式声明不支持,SecurityCard 置灰「重启后保持锁定」控件防无效设置(D2)
     lockPrefsUnsupported: ['lockOnRestart'],
+    // F5:Firefox 无 offscreen API,30s 自动清空承诺不可用(E5 行为可预期)——注入降级说明哨兵,
+    // SecurityCard 按 'firefox' 选 securityCard.clipboardHintFirefox 降级键
+    ...(canOffscreen() ? {} : { clipboardNote: 'firefox' as const }),
   })
 }
 

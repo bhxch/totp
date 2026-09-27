@@ -78,6 +78,9 @@ export interface SecurityPlatform {
   clipboardClearEnabled: ComputedRef<boolean>
   /** 切换剪贴板清空开关（宿主写 settings + 持久化） */
   setClipboardClear(v: boolean): Promise<void>
+  /** [可选] 剪贴板自动清空说明覆写哨兵(F5):'firefox'=该端无 offscreen API,清空承诺不可用——
+   *  SecurityCard 据此切换为降级说明键(securityCard.clipboardHintFirefox);缺省走默认 hint 键 */
+  readonly clipboardNote?: string
   /** [可选] popup「已复制」后自动关闭延迟毫秒数（仅 extension 提供；desktop 无 popup 不渲染该输入） */
   popupCloseDelayMs?: ComputedRef<number>
   /** [可选] 修改弹窗关闭延迟（宿主写 settings + 持久化） */
