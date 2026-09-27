@@ -47,6 +47,18 @@ describe('OtpListItem 打码与复制', () => {
     expect(w.text()).not.toContain('123456')
   })
 
+  it('Shift+Enter 键盘揭示真实码，8 秒后自动打回（B3/F7）', async () => {
+    vi.useFakeTimers()
+    const w = mountItem()
+    await w.find('.otp-item').trigger('keydown', { key: 'Enter', shiftKey: true })
+    expect(w.text()).toContain('123 456')
+    expect(w.text()).not.toContain('••• •••')
+    vi.advanceTimersByTime(8000)
+    await vi.runOnlyPendingTimersAsync()
+    expect(w.text()).toContain('••• •••')
+    expect(w.text()).not.toContain('123456')
+  })
+
   it('不再提供 🔑 reveal 按钮与 reveal 事件', async () => {
     vi.useFakeTimers()
     const w = mountItem()

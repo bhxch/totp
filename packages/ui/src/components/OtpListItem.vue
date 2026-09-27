@@ -78,6 +78,8 @@ function onContextMenu(e: MouseEvent): void {
 </script>
 
 <template>
+  <!-- F7(B3)：键盘揭示与双击同链——根元素 Shift+Enter 复用 onDblclick 的揭示+8s 自动打回，
+       无障碍：AT/纯键盘用户此前只能复制不可见码；.prevent 阻止默认（如表单内换行） -->
   <div
     class="otp-item"
     role="button"
@@ -86,6 +88,7 @@ function onContextMenu(e: MouseEvent): void {
     @click="emit('copy')"
     @dblclick="onDblclick"
     @keydown.enter="emit('copy')"
+    @keydown.shift.enter.prevent="onDblclick"
     @contextmenu="onContextMenu"
   >
     <span class="avatar" :style="avatarStyle ?? undefined">
