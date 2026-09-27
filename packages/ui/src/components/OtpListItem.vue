@@ -104,9 +104,13 @@ function onContextMenu(e: MouseEvent): void {
       <div class="label">{{ entry.label }}</div>
     </div>
     <div class="right">
+      <!-- aria-live(F7 无障碍闭环):揭示/打回时 .code 文本动态变化且从不获得焦点,读屏用户
+           仅靠聚焦无法感知——polite 声明让揭示的真码与 8s 后的打回被自动播报;倒计时在
+           aria-hidden 的 SVG 内,不会造成播报噪音 -->
       <span
         :class="['code', { invalid: code === 'INVALID' }]"
         :title="code === 'INVALID' ? t('otpListItem.invalidTitle', { message: error ?? '' }) : undefined"
+        aria-live="polite"
       >{{ displayed }}</span>
       <!-- M-3：内嵌按钮只 stop click 不够——快速双击按钮的 dblclick 会冒泡到根元素触发揭示
            （QR 弹窗打开瞬间底层码明文），按钮层须一并 stop dblclick -->

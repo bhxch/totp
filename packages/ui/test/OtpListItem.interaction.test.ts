@@ -59,6 +59,11 @@ describe('OtpListItem 打码与复制', () => {
     expect(w.text()).not.toContain('123456')
   })
 
+  it('码文本声明 aria-live=polite（F7：揭示/打回对读屏可感知）', () => {
+    const w = mountItem()
+    expect(w.find('.code').attributes('aria-live')).toBe('polite')
+  })
+
   it('不再提供 🔑 reveal 按钮与 reveal 事件', async () => {
     vi.useFakeTimers()
     const w = mountItem()
