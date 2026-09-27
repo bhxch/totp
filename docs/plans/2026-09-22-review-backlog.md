@@ -42,10 +42,10 @@
 |---|---|---|---|
 | S1 | merged 轮零冲突副本契约 | 双设备真实并发窗口的 merged 轮即使零条目冲突也产「冲突副本」(T7 安全序契约:先存副本再覆盖);终审裁定维持(修 contentHashVault 后噪声已收敛);若产品期望零冲突不产副本需改 core syncOrchestrator 契约 | 终审+T13 |
 | S2 | 进度失败滞留 | runTargets 抛错(如 no primary target)跳过 onProgress(total,total),spinner 滞留至下一成功轮;try/finally 可修 | 终审 Minor |
-| S3 | CloudCard 缺 mergedDegraded 专用文案 | 降级合并时卡内显示「已合并」与 runner 摘要「降级合并」不一致;状态行 ACTION_LABEL_KEY 补分支即可 | 终审 Minor |
+| S3 | ~~CloudCard 缺 mergedDegraded 专用文案~~ | **已落地（2026-09-26 R1 文案表合并,复用 cloudRunner.action.mergedDegraded 同键,cloudSyncShared.ts:24;原记录 a106d39）** | 终审 Minor |
 | S4 | pullAll 全源失败仍 recordStatus(true) | 「部分失败=ok true」惯例边角,cosmetic | 终审 Minor |
-| S5 | 测试 fixture 旧口径 hash | cloudSync/multiTarget/twoDevice/cloudRunner 测试 fixture 仍用旧 contentHash 构造信封 baseContentHash(fixture vault 无 rev 故同值全绿);统一为 contentHashVault 防未来 fixture 引入 rev 静默失配 | 终审修复波复审 |
-| S6 | cloudRunner.noChange 死键 | auto 门命中改降级 pull 轮后「内容无变化」跳过态不再产生,zh/en 键无引用可删 | 终审修复波 |
+| S5 | ~~测试 fixture 旧口径 hash~~ | **已落地（2026-09-26 R15,core 侧 23 处测试 fixture 全量迁 contentHashVault——cloudSync/multiTarget/twoDevice/canonical;ui cloudRunner.test 无 contentHash 直引,复核无残留）** | 终审修复波复审 |
+| S6 | ~~cloudRunner.noChange 死键~~ | **已落地（zh/en 删除 a106d39;2026-09-27 复核 rg 无残留）** | 终审修复波 |
 | S7 | extension popup 冲突横幅 | spec §4 声明 popup/options 顶部横幅,options 已落地,popup 无冲突感知面 | T11 缺失项 |
 | S8 | desktop 托盘 tooltip 冲突计数 | spec §4 声明,应用内横幅已落地,托盘计数未做 | T11 裁定 backlog |
 | S9 | MS refresh_token 轮转撤销策略真机实测 | onedrive 轮转回存通道已实现(手动通道消费),MS /common 端点是否撤销旧 token 需真实租户实测;若撤销且自动通道未消费回存则 ≤1h 后凭据失效 | T12 |
@@ -99,6 +99,7 @@
 | S2 runTargets 抛错 spinner 滞留 | 轮末进度改 finally 发 | 4fc59c4 |
 | S3 CloudCard 缺 mergedDegraded 文案 | 复用 cloudRunner.action.mergedDegraded 同键 | a106d39 |
 | S6 cloudRunner.noChange 死键 | zh/en 删除 | a106d39 |
+| S5 测试 fixture 旧口径 hash | core 23 处迁 contentHashVault(随 R15) | (R15 批次) |
 
 ## 裁定/spec 回写(docs commit,本文档同批)
 
