@@ -317,14 +317,17 @@ async function onDelayChange(value: string): Promise<void> {
       <!-- 锁定策略区（plan16 设计 §1；仅已启用加密且宿主提供 lockPrefs 时渲染，锁定态也可改——settings 写入不依赖 DEK） -->
       <div v-if="hasEnc && platform.lockPrefs && lockPrefsState" class="lock-prefs">
         <h3>{{ t('securityCard.lockPrefsTitle') }}</h3>
-        <!-- 重启后保持锁定：仅对有会话保持能力的端有意义，宿主声明不支持（unsupported）时隐藏 -->
-        <div v-if="!unsupportedLockPrefs.has('lockOnRestart')" class="opt">
+        <!-- 重启后保持锁定:两端均无会话级凭据存储(桌面无会话 DEK;扩展 DEK 存 session 浏览器退出即清,
+             见 host/securityOps.ts 注释),D2 裁定置灰+角标说明保留入口,预示未来支持会话保持的端;
+             系统锁屏开关维持「平台不支持即隐藏」语义(v-if,真平台缺失) -->
+        <div class="opt" :class="{ 'opt--unsupported': unsupportedLockPrefs.has('lockOnRestart') }">
           <MdSwitch
-            class="lock-restart" :model-value="lockPrefsState.lockOnRestart" :aria-label="t('securityCard.lockOnRestart')"
+            class="lock-restart" :model-value="lockPrefsState.lockOnRestart"
+            :disabled="unsupportedLockPrefs.has('lockOnRestart')" :aria-label="t('securityCard.lockOnRestart')"
             @update:model-value="(v: boolean) => onLockPrefChange({ lockOnRestart: v })"
           />
           <span>{{ t('securityCard.lockOnRestart') }}</span>
-          <span class="opt-hint">{{ t('securityCard.lockOnRestartHint') }}</span>
+          <span class="opt-hint">{{ unsupportedLockPrefs.has('lockOnRestart') ? t('securityCard.lockOnRestartDisabledHint') : t('securityCard.lockOnRestartHint') }}</span>
         </div>
         <div class="opt">
           <span>{{ t('securityCard.lockIdle') }}</span>
@@ -401,4 +404,5 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .lock-prefs { display: flex; flex-direction: column; gap: 8px; }
 .lock-prefs h3 { font-size: var(--md-sys-typescale-body-medium); margin: 0; opacity: .8; }
 .idle-min { width: 150px; }
+.opt--unsupported { opacity: 0.55; }
 </style>

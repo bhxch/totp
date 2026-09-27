@@ -514,6 +514,7 @@
     "lockPrefsTitle": "锁定策略",
     "lockOnRestart": "重启后保持锁定",
     "lockOnRestartHint": "（关闭后浏览器会话内保持解锁，仅对支持会话保持的端有意义）",
+    "lockOnRestartDisabledHint": "当前版本重启后均会锁定：桌面端无会话级凭据存储；扩展端凭据仅存会话，浏览器退出即清",
     "lockIdle": "空闲 N 分钟后锁定（0=禁用）",
     "idleLabel": "空闲（分钟）",
     "idleAria": "空闲 N 分钟后锁定（0 为禁用）",

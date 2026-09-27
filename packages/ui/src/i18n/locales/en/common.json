@@ -514,6 +514,7 @@
     "lockPrefsTitle": "Lock policy",
     "lockOnRestart": "Stay locked after restart",
     "lockOnRestartHint": "(when off, the browser session stays unlocked; only meaningful on platforms supporting session persistence)",
+    "lockOnRestartDisabledHint": "Always locked after restart in this version: desktop has no session-level credential storage; extension keeps credentials in session only, cleared when the browser exits",
     "lockIdle": "Lock after N idle minutes (0 = disabled)",
     "idleLabel": "Idle (minutes)",
     "idleAria": "Lock after N idle minutes (0 disables)",

@@ -16,8 +16,8 @@ import { createPrfCredential, prfSupported } from '@totp/ui'
  * 注入差异(全部可选,4 键):
  * - dpapi / unlockNaming:desktop 独有(OS 自动解锁通道与按端命名);
  * - popup:extension 独有(popup「已复制」关窗延迟,desktop 无 popup 不渲染该输入);
- * - lockPrefsUnsupported:ext=['lockOnRestart'](DEK 存 session,浏览器退出必清,无实现支撑,
- *   显式声明不支持防无效设置)/ desktop=lockPrefsUnsupportedKeys(ua)(系统锁事件源仅 Windows)。
+ * - lockPrefsUnsupported:ext=['lockOnRestart'](D2 裁定置灰+角标,不再隐藏;
+ *   lockOnSystemLock 仍隐藏)/ desktop=lockPrefsUnsupportedKeys(ua)(系统锁事件源仅 Windows)。
  * overrides 键数 4 ≪ 同型成员 11 → 该工厂可抽。
  */
 
@@ -31,7 +31,7 @@ export interface SecurityOpsOverrides {
   popup?: {
     setCloseDelay(ms: number): Promise<void>
   }
-  /** 该端不支持的锁定偏好键(SecurityCard 隐藏对应控件防无效设置);缺省三控件全渲染 */
+  /** 该端不支持的锁定偏好键(SecurityCard 置灰禁用对应控件(lockOnRestart)或隐藏(lockOnSystemLock)防无效设置);缺省三控件全渲染 */
   lockPrefsUnsupported?: ReadonlyArray<keyof LockPrefs>
 }
 
