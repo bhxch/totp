@@ -19,7 +19,7 @@ import {
   type BackupEnvelope, type BackupSource, type ImportScheme, type Retention, type StorageAdapter,
 } from '@totp/core'
 import {
-  CLIPBOARD_CLEAR_DELAY_MS,
+  CLIPBOARD_CLEAR_DELAY_MS, normalizeAutoPrefs,
   type BackupPlatform, type CloudAutoPrefs, type CloudPlatform, type ImportSchemesApi, type SecurityPlatform,
   type SyncPlatform, type VueStore,
 } from '@totp/ui'
@@ -79,15 +79,10 @@ export function scheduleClipboardClear(settings: { clipboardClearEnabled: boolea
 const CLOUD_AUTO_PREFS_KEY = 'cloudAutoPrefs'
 const DEFAULT_CLOUD_AUTO_PREFS: CloudAutoPrefs = { onChange: false, onInterval: false, intervalMinutes: 60 }
 
-/** 归一化(与 desktop loadCloudPrefs 同口径):缺失位 false;间隔非法/<15 回退 60(匹配调度器 30s tick 粒度) */
+/** 归一化经 ui normalizeAutoPrefs 单点(batch A,与 desktop loadChannelPrefs 同源):
+ *  布尔严格 === true 判定;间隔非法/<15min 回落 fallback 间隔(60) */
 function normalizeCloudAutoPrefs(parsed: unknown): CloudAutoPrefs {
-  const p = (parsed ?? {}) as Partial<CloudAutoPrefs>
-  const minutes = Number(p.intervalMinutes)
-  return {
-    onChange: p.onChange === true,
-    onInterval: p.onInterval === true,
-    intervalMinutes: Number.isInteger(minutes) && minutes >= 15 ? minutes : DEFAULT_CLOUD_AUTO_PREFS.intervalMinutes,
-  }
+  return normalizeAutoPrefs(parsed, DEFAULT_CLOUD_AUTO_PREFS)
 }
 
 export interface CloudAutoPrefsChannel {
