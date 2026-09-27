@@ -27,13 +27,13 @@ const props = defineProps<{
   schemesApi?: ImportSchemesApi | null
 }>()
 
-// 流程状态机：idle → picked →（generic→mapping / aegis/foxauth 加密与 winauth/authy→password、totpAuthenticator 分享文件→password）→ confirm → report
+// 流程状态机：idle → picked →（generic→mapping / aegis 加密与 winauth/authy→password、totpAuthenticator 分享文件→password）→ confirm → report
 type Step = 'idle' | 'picked' | 'mapping' | 'password' | 'confirm' | 'report'
 
 // 可分派格式 = sniff 全集 + 非 sniff 判定的补充入口（authy/battleNet/duo 文本、authenticatorPlus zip 字节、msAuth/sqlite 字节）
 type ManualFormat = ImportFormat | 'authy' | 'battleNet' | 'duo' | 'authenticatorPlus' | 'msAuth' | 'sqlite'
-// 直接解析族（其余格式分别走：generic→映射页、aegis/winauth/authy→口令页、foxauth 加密与
-// totpAuthenticator 分享文件→条件口令页、authenticatorPlus→口令页+字节通道、msAuth/sqlite→字节入口）
+// 直接解析族（其余格式分别走：generic→映射页、aegis/winauth/authy→口令页、
+// totpAuthenticator 分享文件→条件口令页（foxauth D1 免口令直接解析）、authenticatorPlus→口令页+字节通道、msAuth/sqlite→字节入口）
 type DirectFormat = Exclude<ManualFormat, 'generic' | 'aegis' | 'winauth' | 'authy' | 'authenticatorPlus' | 'msAuth' | 'sqlite'>
 
 const step = ref<Step>('idle')
@@ -470,7 +470,7 @@ async function importFromSqlite(auto: boolean): Promise<boolean> {
 
 /**
  * 第 2 步分派：generic→映射页；winauth/authy→口令页；aegis 加密→口令页（明文直接解析）；
- * totpAuthenticator 分享文件（非 '[' 开头的 Base64 密文）/foxauth 加密（isEncrypted）→条件口令页
+ * totpAuthenticator 分享文件（非 '[' 开头的 Base64 密文）→条件口令页（foxauth D1 免口令不拦截）
  * （两态判定由 core 注册表 needsPassword 内容谓词统一派生，R5；明文走分派表直接解析）；
  * msAuth/sqlite→字节入口；其余按分派表直接解析；未识别→报错留 picked 页
  */
@@ -522,11 +522,11 @@ async function nextFromPicked(): Promise<void> {
     await importFromSqlite(false)
     return
   }
-  // 条件口令页入口（两态格式，判定均由 core 注册表 needsPassword 内容谓词派生，R5）：
-  // totpAuthenticator 外部分享为 Base64 密文（非 '[' 明文数组）→ 口令页；foxauth 加密备份
-  // （isEncrypted）→ 口令页（与 aegis 加密同款交互）；两态明文保持下方分派表直接解析
-  if ((f === 'totpAuthenticator' || f === 'foxauth') && needsPasswordFor(f, fileText.value)) {
-    passwordHint.value = f === 'totpAuthenticator' ? t('importCard.totpAuthPwHint') : t('importCard.foxauthPwHint')
+  // 条件口令页入口（两态格式，判定由 core 注册表 needsPassword 内容谓词派生，R5）：
+  // totpAuthenticator 外部分享为 Base64 密文（非 '[' 明文数组）→ 口令页；foxauth 已免口令
+  // （D1，解密口令取自文件），不再拦截；两态明文保持下方分派表直接解析
+  if (f === 'totpAuthenticator' && needsPasswordFor(f, fileText.value)) {
+    passwordHint.value = t('importCard.totpAuthPwHint')
     step.value = 'password'
     return
   }
