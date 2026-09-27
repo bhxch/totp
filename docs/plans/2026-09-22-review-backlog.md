@@ -69,8 +69,8 @@
 
 | # | 项 | 说明 | 来源 |
 |---|---|---|---|
-| M1 | needs_restart 显式断言 | 补「exposedTools 变更不触发重启」测试(实现上结构不可能触发,一行钉死不变量) | MCP 终审 |
-| M2 | DEFAULT_EXPOSED_TOOLS 类型卫生 | `string[]` → `readonly string[]`(消费方无突变行为,纯类型卫生) | MCP 终审 |
+| M1 | ~~needs_restart 显式断言~~ **已覆盖（mcp_server.rs:2315 用例 :2330 断言「档位/白名单变化→!needs_restart」;needs_restart 实现(:898-901)仅比较 enabled/port/token,结构上不读 exposed_tools——「exposedTools 变更不触发重启」不可能触发;2026-09-27 复核登记于 batch D plan Task 12）** | 补「exposedTools 变更不触发重启」测试(实现上结构不可能触发,一行钉死不变量) | MCP 终审 |
+| M2 | ~~DEFAULT_EXPOSED_TOOLS 类型卫生~~ **已实施（2026-09-27 复核:前端常量存在——mcpCard.ts DEFAULT_EXPOSED_TOOLS 改 as const(消费方仅 McpServerCard.vue 数组展开与测试 toEqual,零行为变化);Rust 侧 default_exposed_tools 本为函数形态(mcp_server.rs:53-56),无类型卫生问题;登记于 batch D plan Task 12）** | `string[]` → `readonly string[]`(消费方无突变行为,纯类型卫生) | MCP 终审 |
 | M3 | 两弹叠加 UX | once 批准的客户端在非 token 档调 action 工具连两弹(首连审批+工具确认)——终审裁定为既定行为(两独立维度,跳过任一削弱门控);真机验收时向用户演示确认 | MCP-B 审查 |
 
 ## 真机验证类(发布前)

@@ -46,8 +46,9 @@ export const MCP_TOOLS = [
   { name: 'trigger_sync', kind: 'action', key: 'mcpServer.toolTriggerSync' },
 ] as const
 
-/** 默认暴露面（与 Rust default_exposed_tools 对齐）：只读两工具，存量用户行为零变化 */
-export const DEFAULT_EXPOSED_TOOLS: string[] = ['list_accounts', 'get_code']
+/** 默认暴露面（与 Rust default_exposed_tools 对齐）：只读两工具，存量用户行为零变化。
+ * as const（M2 类型卫生）：消费方仅数组展开/值断言，无突变行为 */
+export const DEFAULT_EXPOSED_TOOLS = ['list_accounts', 'get_code'] as const
 
 /** 暴露面保存前净化：滤未知名 + 按 MCP_TOOLS 已知顺序去重（与 Rust save 侧 retain 同口径） */
 export function sanitizeExposedTools(list: string[]): string[] {
