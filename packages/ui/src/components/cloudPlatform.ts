@@ -2,6 +2,7 @@ import {
   createGDriveBackend, createGistBackend, createOneDriveBackend, createS3Backend, createWebdavBackend,
   type BackupSource, type CloudBackend, type CloudCred, type KdfProfile, type SourceSyncState,
 } from '@totp/core'
+import type { AutoPrefsShape } from './backupPlatform'
 
 /**
  * cred → backend 实例工厂（ui 侧 switch 五个 core create*Backend——core 无统一工厂，
@@ -51,8 +52,8 @@ export function isPlaintextHttpUrl(url: string): boolean {
  *   resolveTimestampPath(cred, now) 从 cred.objectPath 解析。
  */
 
-/** 云同步自动触发偏好（变更触发/间隔触发及间隔分钟数） */
-export interface CloudAutoPrefs { onChange: boolean; onInterval: boolean; intervalMinutes: number }
+/** 云同步自动触发偏好（变更触发/间隔触发及间隔分钟数；与 BackupAutoPrefs 共用 AutoPrefsShape） */
+export interface CloudAutoPrefs extends AutoPrefsShape {}
 
 /**
  * 云同步平台能力（宿主注入：desktop=Tauri fs；extension=chrome.storage.local+Blob 下载）。

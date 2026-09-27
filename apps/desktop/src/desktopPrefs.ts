@@ -15,18 +15,14 @@ import type { Retention } from '@totp/core'
 import {
   formatAutoStatusText as formatAutoStatusTextShared,
   normalizeAutoPrefs,
-  type AutoStatusLabels, type BackupAutoPrefs, type CloudAutoPrefs,
+  type AutoPrefsShape, type AutoStatusLabels, type BackupAutoPrefs, type CloudAutoPrefs,
 } from '@totp/ui'
 
 // ---------- 通道自动偏好（D2/Task 11，R13 参数化收敛）----------
 /** 通道自动偏好统一形态（偏好类型合一）：ui BackupAutoPrefs/CloudAutoPrefs 同构三字段，
  *  两键共用同一读写实现（loadChannelPrefs/persistChannelPrefs）；归一化（15min 钳制）经
  *  ui normalizeAutoPrefs 单点（R14），本模块只承担键绑定与存储兜底 */
-interface ChannelAutoPrefsShape {
-  onChange: boolean
-  onInterval: boolean
-  intervalMinutes: number
-}
+type ChannelAutoPrefsShape = AutoPrefsShape
 
 /** 参数化偏好读取：键缺失/坏 JSON → 全默认；布尔严格 === true 判定；间隔非法回落默认（60）
  *  （钳制下限 15min 与归一化规则走 ui normalizeAutoPrefs 单点，R14） */

@@ -1,11 +1,15 @@
 import type { KdfProfile, Retention, Vault } from '@totp/core'
 
-/** 自动备份偏好（D2）：onChange=变更后自动备份；onInterval=定时自动备份；intervalMinutes=定时间隔（分钟） */
-export interface BackupAutoPrefs {
+/** 自动偏好共用形状(batch A 类型合一):BackupAutoPrefs/CloudAutoPrefs 同构三字段,
+ *  归一化(normalizeAutoPrefs)/状态文本(formatAutoStatusText)经本形状约束 */
+export interface AutoPrefsShape {
   onChange: boolean
   onInterval: boolean
   intervalMinutes: number
 }
+
+/** 自动备份偏好（D2）：onChange=变更后自动备份；onInterval=定时自动备份；intervalMinutes=定时间隔（分钟） */
+export interface BackupAutoPrefs extends AutoPrefsShape {}
 
 /**
  * 本地源视图（plan16 §3「目录=源」：desktop 宿主实现；缺省=无本地源区，extension/popup 零影响）。
