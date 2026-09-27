@@ -7,6 +7,8 @@
  * 桩内 payload 携带 vaultJson、openBackupEnvelope 对称反解）。
  */
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createBackupEnvelope, loadSources, normalizeSchemes, openBackupEnvelope, saveSources, SCHEMES_KEY,
@@ -14,7 +16,9 @@ import {
 } from '@totp/core'
 import { tauriMock } from '../test/mocks/tauri'
 import { echoTr, fakeStore, memoryAdapter } from '../test/helpers/fakes'
-import { createBackupPlatform, createImportSchemesApi } from '../src/backupPlatform'
+import {
+  createBackupPlatform, createImportSchemesApi, IMPORT_BINARY_EXTS, IMPORT_TEXT_EXTS,
+} from '../src/backupPlatform'
 
 vi.mock('@tauri-apps/api/core', async () => (await import('../test/mocks/tauri')).invokeModule())
 vi.mock('@tauri-apps/plugin-fs', async () => (await import('../test/mocks/tauri')).fsModule())
@@ -320,5 +324,29 @@ describe('store/adapter 未就绪（「数据尚未就绪」契约 + schemesApi 
     expect(await schemesApi.load()).toEqual(normalizeSchemes([scheme]))
     await schemesApi.save([scheme] as never)
     expect(await adapter.get(SCHEMES_KEY)).toBe(JSON.stringify([scheme]))
+  })
+})
+
+/** A3 三端对齐:desktop 对话框过滤器与 Rust 导入白名单(dialog_grants.rs)集合互验。
+ *  Rust 常量带点('.json'),desktop 过滤器不带点('json'),比较时归一去点。 */
+describe('importFileFilters 与 Rust 导入白名单镜像(batch A)', () => {
+  it('文本组+二进制组与 Rust IMPORT_TEXT/BINARY_EXTENSIONS 集合一致(含 .jsonl)', () => {
+    const rustSrc = readFileSync(join(__dirname, '../src-tauri/src/dialog_grants.rs'), 'utf8')
+    const grab = (name: string): string[] => {
+      const start = rustSrc.indexOf(`const ${name}`)
+      expect(start).toBeGreaterThanOrEqual(0)
+      // 常量带类型标注 `: [&str; N]`（dialog_grants.rs:162），首个 '[' 是类型括号——先定位 '=' 再取值数组
+      const open = rustSrc.indexOf('[', rustSrc.indexOf('=', start))
+      const close = rustSrc.indexOf(']', open)
+      return rustSrc
+        .slice(open + 1, close)
+        .split(',')
+        .map((s) => s.trim().replaceAll('"', '').replaceAll("'", '').replace(/^\./, ''))
+        .filter((s) => s.length > 0)
+    }
+    const rustAll = [...grab('IMPORT_TEXT_EXTENSIONS'), ...grab('IMPORT_BINARY_EXTENSIONS')].sort()
+    const tsAll = [...IMPORT_TEXT_EXTS, ...IMPORT_BINARY_EXTS].sort()
+    expect(tsAll).toEqual(rustAll)
+    expect(tsAll).toContain('jsonl')
   })
 })

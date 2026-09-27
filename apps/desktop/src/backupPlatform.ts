@@ -27,6 +27,10 @@ import {
 } from './desktopPrefs'
 import { kdfProfileOf, requireAdapter, requireStore } from './storeAccess'
 
+/** A3 导入扩展名单点(与 src-tauri/src/dialog_grants.rs 白名单镜像互验;不带点形态供 DialogFilterSpec) */
+export const IMPORT_TEXT_EXTS = ['json', 'jsonl', 'wauth', 'xml', 'txt', 'aegis'] as const
+export const IMPORT_BINARY_EXTS = ['db', 'sqlitedb', 'sqlite', 'zip'] as const
+
 export interface BackupPlatformDeps {
   /** store 浅包装实时读取（未就绪 null → 平台方法「数据尚未就绪」中文报错） */
   getStore(): VueStore | null
@@ -87,10 +91,12 @@ export function createBackupPlatform(deps: BackupPlatformDeps): BackupPlatform {
   const textFileFilters = (): DialogFilterSpec[] => [{ name: tr('desktop.filterExport'), extensions: ['json', 'txt'] }]
   // 图片导出（批① §2.5 二维码拼版）对话框过滤器：拼版 PNG 落 .png
   const imageFileFilters = (): DialogFilterSpec[] => [{ name: tr('desktop.filterImage'), extensions: ['png'] }]
-  // 与 Rust 端 read_import_file_os 扩展名白名单一致（.json/.wauth/.xml/.txt/.aegis）+ SQLite .db/.sqlitedb/.sqlite
-  // （.db 经文本读取报 UTF-8 错时由 ImportCard 转字节入口复查，见 read_import_file_bytes_os）+ AP .zip（手动选择字节通道）
+  // 导入对话框过滤器:A3 单点化——文本组+二进制组与 Rust dialog_grants.rs 的
+  // IMPORT_TEXT_EXTENSIONS/IMPORT_BINARY_EXTENSIONS 集合互验(见 backupPlatform.test.ts 镜像用例),
+  // 防三端漂移(R11 历史漂移:Rust/extension 已含 .jsonl 而 desktop 过滤器缺)。
+  // .db 经文本读取报 UTF-8 错时由 ImportCard 转字节入口复查(见 read_import_file_bytes_os);AP .zip 走字节通道
   const importFileFilters = (): DialogFilterSpec[] => [
-    { name: tr('desktop.filterImport'), extensions: ['json', 'wauth', 'txt', 'aegis', 'xml', 'db', 'sqlitedb', 'sqlite', 'zip'] },
+    { name: tr('desktop.filterImport'), extensions: [...IMPORT_TEXT_EXTS, ...IMPORT_BINARY_EXTS] },
   ]
 
   // 最后一次导入选择的 Rust 对话框结果（F4：path+token 成对缓存）：SQLite 字节入口复用，避免同一文件二次弹窗
