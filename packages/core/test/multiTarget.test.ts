@@ -374,7 +374,10 @@ describe('syncMultipleTargets（primary 裁决 + replica 收敛复制）', () =>
     expect(r.conflicts[0]!.theirs!.label).toBe('remote')
   })
 
-  it('primary merged 后 state 记 newRev（非合并前 remoteRev）：下轮本地改动走纯上传，裁决不被降级合并回滚（T13 回归）', async () => {
+  it('primary merged 后 state 记 newRev（非合并前 remoteRev）：下轮本地改动走纯上传，裁决不被降级合并回滚（T13 回归）', { timeout: 30_000 }, async () => {
+    // C8/B21：双轮 syncMultipleTargets 全链 KDF（信封加解密+contentHash）墙钟随负载浮动，
+    // 默认 5s 在根 pnpm -r 四包并发下偶败（.temp/b21-repro.log round 3 实证 2 例之一，
+    // 文件耗时 35s→54.9s）——参照 twoDevice 30s 先例收口
     // base 校验通过的三方合并（updatedAt 新者 remote 胜出）→ state 必须记录合并结果落云的 newRev=6；
     // 若误记合并前 remoteRev=5，下轮本地改动（宿主裁决改回本地方）会被误判为双方都动，且 base 失配
     // 降级两方合并，把裁决结果回滚成合并默认主体
@@ -422,7 +425,8 @@ describe('syncMultipleTargets（primary 裁决 + replica 收敛复制）', () =>
     expect(r2.states['pri']).toEqual({ lastKnownRemoteRev: 5, baseSnapshot: A })
   })
 
-  it('多 replica：首个 replica 并入的内容随 final 推给后续 replica', async () => {
+  it('多 replica：首个 replica 并入的内容随 final 推给后续 replica', { timeout: 30_000 }, async () => {
+    // C8/B21：同上，.temp/b21-repro.log round 3 实证 2 例之二——负载下墙钟超默认 5s，30s 收口
     const ad = v([e('a'), e('d')])
     const pb = fakeBackend()
     const r1b = fakeBackend(await sealedRemote(5, ad))
