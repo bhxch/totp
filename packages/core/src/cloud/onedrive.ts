@@ -51,19 +51,20 @@ export function createOneDriveBackend(cred: OneDriveCred, opts: OneDriveBackendO
       ensureHttpOk(LABEL, res)
       return res.ok
     },
-    async listBackups() {
+    async listBackupsEx() {
       // keep-n（设计 §3）：按对象路径（含文件名）取 item 的 parentReference，再列同父 children 过滤备份名；
       // item 不存在（404）或父引用缺失 → 空数组（宁可不删不可误删）。
       // 返回与 put/get/delete 同域的完整路径（dir/name）——子目录 cred 下裸名会删错层。
       const dir = resolveDirPath(cred)
       const res = await authFetch(`${itemUrl(resolveObjectPath(cred))}?select=parentReference`, { method: 'GET', headers: auth })
-      if (res.status === 404) return []
+      if (res.status === 404) return { names: [], complete: true }
       ensureHttpOk(LABEL, res)
       const item = (await res.json()) as { parentReference?: { id?: string } }
       const parentId = item.parentReference?.id
-      if (!parentId) return []
+      if (!parentId) return { names: [], complete: true }
       // 分页续传（审查 M2）：Graph children 单页有限，响应含 @odata.nextLink 时按链接续拉聚合
       // （nextLink 为绝对 URL 原样透传）；上限 10 页防服务端异常失控。
+      // F6 截断感知：达 10 页上限且第 10 页仍有 @odata.nextLink（url 非 null）→ complete=false
       const out: string[] = []
       let url: string | null = `${GRAPH}/me/drive/items/${encodeURIComponent(parentId)}/children`
       for (let page = 0; url !== null && page < 10; page++) {
@@ -76,7 +77,11 @@ export function createOneDriveBackend(cred: OneDriveCred, opts: OneDriveBackendO
         }
         url = json['@odata.nextLink'] || null // 容忍缺失/空串 nextLink（空串续拉会打出无效请求）
       }
-      return out
+      return { names: out, complete: url === null }
+    },
+    async listBackups() {
+      // 既有消费方兼容薄包装（F6）：滚动删除/读侧名单复用 listBackupsEx 的截断感知聚合
+      return (await this.listBackupsEx!()).names
     },
   }
 }

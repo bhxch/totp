@@ -462,9 +462,11 @@ async function onSync(): Promise<void> {
       await runKeepRetention(
         inputs,
         r.results,
-        (id, deleted) => {
+        (id, deleted, truncated) => {
           if (deleted > 0) statusMap.value[id] += t('cloudCard.retentionCleaned', { count: deleted })
           else if (deleted < 0) statusMap.value[id] += t('cloudCard.retentionUnsupported')
+          // F6:名单来自截断分页(达单页上限仍有续页)——滚动删除可能不完整,状态行附加手动清理告警
+          if (truncated) statusMap.value[id] += t('cloudCard.retentionTruncated')
         },
         (id) => { statusMap.value[id] += t('cloudCard.retentionFailed') },
       )

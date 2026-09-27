@@ -326,6 +326,7 @@
     "retentionCleaned": "（滚动清理 {count} 份）",
     "retentionUnsupported": "（该后端不支持自动清理，历史备份会累积，可手动清理或改用覆盖模式）",
     "retentionFailed": "（滚动清理失败，下轮同步重试）",
+    "retentionTruncated": "（对象数超出分页上限，滚动删除可能不完整，请手动清理）",
     "authFailed": "云端凭据已失效，请重新授权",
     "conflictTitle": "同步冲突",
     "conflictBanner": "存在 {count} 条未裁决的条目冲突，同步继续，差异保留至裁决",

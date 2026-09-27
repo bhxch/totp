@@ -326,6 +326,7 @@
     "retentionCleaned": " ({count} old copies cleaned up)",
     "retentionUnsupported": " (this backend does not support automatic cleanup; history will accumulate — clean up manually or switch to overwrite mode)",
     "retentionFailed": " (automatic cleanup failed; will retry on next sync)",
+    "retentionTruncated": " (list truncated at the page limit; deletion may be incomplete — clean up manually)",
     "authFailed": "Cloud credentials are no longer valid — please re-authorize",
     "conflictTitle": "Sync conflicts",
     "conflictBanner": "{count} unresolved entry conflicts; sync continues and differences are kept until resolved",

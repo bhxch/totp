@@ -160,11 +160,11 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
     async exists(path) {
       return (await resolveId(path)) != null
     },
-    async listBackups() {
+    async listBackupsEx() {
       // keep-n（设计 §3）：cred.fileId 是文件非目录——先取其 parents，再列同父下 vault-*；
       // 无 fileId（首推未发生）按 Drive 根目录别名 'root' 列；目标文件已删（404）父目录未知，返回空（宁可不删不可误删）。
       const parent = await primaryParent()
-      if (parent === null) return []
+      if (parent === null) return { names: [], complete: true }
       // 单引号按 Drive 查询语法转义，防注入（与 queryIdByName 同款）
       const safe = parent.replace(/'/g, "\\'")
       const q = `'${safe}' in parents and name contains 'vault-' and trashed=false`
@@ -172,6 +172,7 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
       // nextPageToken（Drive 带 fields 时只返回所列字段）——它是 FileList 顶层字段，必须放括号外
       // 逗号分隔（files(name),nextPageToken）：括号内子选择器遇未知字段真实 API 返 400
       // Invalid field selection（质量审查勘误）。上限 10 页防服务端异常失控。
+      // F6 截断感知：达 10 页上限且第 10 页仍有 nextPageToken → complete=false（既有容错保留）
       const out: string[] = []
       let pageToken: string | undefined
       for (let page = 0; page < 10; page++) {
@@ -189,7 +190,11 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
         pageToken = json.nextPageToken
         if (!pageToken) break // 容忍缺失/空串 nextPageToken（空串续拉会打出无效请求）
       }
-      return out
+      return { names: out, complete: !pageToken }
+    },
+    async listBackups() {
+      // 既有消费方兼容薄包装（F6）：滚动删除/读侧名单复用 listBackupsEx 的截断感知聚合
+      return (await this.listBackupsEx!()).names
     },
   }
 }

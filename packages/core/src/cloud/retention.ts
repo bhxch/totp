@@ -5,14 +5,24 @@
 import type { CloudBackend } from './backend'
 import { selectBackupsToKeep } from '../backup/policy'
 
-/** 返回删除数；backend 不支持 listBackups 返回 -1 */
-export async function enforceRemoteRetention(backend: CloudBackend, keep: number): Promise<number> {
-  if (!backend.listBackups) return -1
-  if (!Number.isInteger(keep) || keep < 1) return 0
-  const listed = await backend.listBackups()
+/** enforceRemoteRetention 结果（F6 截断感知） */
+export interface RetentionOutcome {
+  /** 实际删除份数;-1=后端不支持 listBackups(既有语义) */
+  deleted: number
+  /** F6:名单来自截断分页,滚动删除可能不完整(UI 据此告警) */
+  truncated: boolean
+}
+
+/** 返回 {deleted, truncated}；backend 不支持 listBackups/listBackupsEx 返回 {deleted: -1, truncated: false} */
+export async function enforceRemoteRetention(backend: CloudBackend, keep: number): Promise<RetentionOutcome> {
+  if (!backend.listBackupsEx && !backend.listBackups) return { deleted: -1, truncated: false }
+  if (!Number.isInteger(keep) || keep < 1) return { deleted: 0, truncated: false }
+  const listed = backend.listBackupsEx
+    ? await backend.listBackupsEx()
+    : { names: await backend.listBackups!(), complete: true }
   // 名单口径与本地一致（BACKUP_NAME_RE、字典序=时间序、conflict/overwrite 名不参与）——按 basename 判定；
   // 删除用 list 原名：webdav/s3/onedrive 返回 dir/name 完整路径域，须与 put/get/delete 同域才能删中目标
-  const originalByBasename = new Map(listed.map((p) => [basenameOf(p), p]))
+  const originalByBasename = new Map(listed.names.map((p) => [basenameOf(p), p]))
   const stale = selectBackupsToKeep([...originalByBasename.keys()], keep)
   let deleted = 0
   for (const name of stale) {
@@ -23,7 +33,7 @@ export async function enforceRemoteRetention(backend: CloudBackend, keep: number
       // 单个删除失败不阻断：下轮同步会再次尝试
     }
   }
-  return deleted
+  return { deleted, truncated: !listed.complete }
 }
 
 function basenameOf(p: string): string {

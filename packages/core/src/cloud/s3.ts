@@ -176,13 +176,14 @@ export function createS3Backend(cred: S3Cred, opts: S3BackendOptions = {}): Clou
       ensureHttpOk(LABEL, res)
       return res.ok
     },
-    async listBackups() {
+    async listBackupsEx() {
       // keep-n（设计 §3）：ListObjectsV2 列对象父目录，服务端过滤前缀 = cred.prefix + 对象父目录（Key 物理域），
       // Key 末段过滤备份名后返回 dir/name——与 delete 的 keyOf 入参同域（prefix 由 keyOf 负责拼回，返回值含 prefix
       // 会双重前缀打在不存在的 key 上，幂等 204 虚报成功）；无 dir 时裸名。
       // delete 对已不存在的 key 返 204（S3 幂等语义）：目标若在列表后、删除前被并发清掉，会多计一次成功，属可接受偏差。
       // 分页续传（审查 M2）：单页最多 1000 键，响应含 NextContinuationToken 时带 continuation-token 续拉聚合；
       // token 为不透明值原样透传（canonical query 编码由 buildCanonicalQueryString 负责）；上限 10 页防服务端异常失控。
+      // F6 截断感知：达 10 页上限且第 10 页仍解析出 NextContinuationToken（token 非 null=仍有续页）→ complete=false
       const dir = resolveDirPath(cred)
       const scope = [prefix, dir].filter((s): s is string => !!s)
       const listPrefix = scope.length === 0 ? '' : `${scope.join('/')}/`
@@ -202,7 +203,11 @@ export function createS3Backend(cred: S3Cred, opts: S3BackendOptions = {}): Clou
         token = /<NextContinuationToken>([^<]+)<\/NextContinuationToken>/.exec(xml)?.[1] ?? null
         if (token === null) break
       }
-      return out
+      return { names: out, complete: token === null }
+    },
+    async listBackups() {
+      // 既有消费方兼容薄包装（F6）：滚动删除/读侧名单复用 listBackupsEx 的截断感知聚合
+      return (await this.listBackupsEx!()).names
     },
   }
 }

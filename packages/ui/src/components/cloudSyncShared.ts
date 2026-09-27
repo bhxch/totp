@@ -85,8 +85,9 @@ export function allTargetsSettled(results: TargetResult[]): boolean {
 export async function runKeepRetention(
   inputs: MultiTargetInput[],
   results: TargetResult[],
-  /** 成功回调：deleted=实际删除份数；-1=后端不支持（宿主降级提示） */
-  onDeleted: (id: string, deleted: number) => void,
+  /** 成功回调：deleted=实际删除份数（-1=后端不支持，宿主降级提示）；truncated=F6 名单来自截断
+   *  分页（滚动删除可能不完整）——手动卡据此附加「请手动清理」告警；runner 转发层只取前两位 */
+  onDeleted: (id: string, deleted: number, truncated: boolean) => void,
   /** [可选] 单源清理抛错回调（手动卡附「清理失败」提示；runner 静默，下轮重试） */
   onFailed?: (id: string) => void,
 ): Promise<void> {
@@ -95,7 +96,8 @@ export async function runKeepRetention(
     const input = inputs.find((x) => x.key === res.key)
     if (!input || input.source.retention.type !== 'keep') continue
     try {
-      onDeleted(res.key, await enforceRemoteRetention(input.backend, input.source.retention.n))
+      const r = await enforceRemoteRetention(input.backend, input.source.retention.n)
+      onDeleted(res.key, r.deleted, r.truncated)
     } catch {
       onFailed?.(res.key)
     }

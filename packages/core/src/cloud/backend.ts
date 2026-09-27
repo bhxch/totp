@@ -14,6 +14,9 @@ export interface CloudBackend {
   /** [可选] 列出该后端容器内可滚动的备份名（vault-{ts}.totpbackup）。keep-n 云源需要；
    *  缺省=该后端不支持（enforceRemoteRetention 返回 -1，UI 对 keep 选项降级提示）。 */
   listBackups?(): Promise<string[]>
+  /** [可选] listBackups 的截断感知版(F6):complete=false 表示分页达上限仍有更多对象,
+   *  滚动删除可能不完整——UI 据此提示手动清理。实现方:三聚合后端(s3/gdrive/onedrive) */
+  listBackupsEx?(): Promise<{ names: string[]; complete: boolean }>
 }
 
 export interface WebdavCred {

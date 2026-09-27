@@ -45,7 +45,8 @@ export interface CloudRunnerOverrides {
   /** 冲突副本落盘(key=源 id)。审查 I9:Promise 原样交回 core await——写盘拒绝 → 该目标同步失败 */
   saveConflictBackup(key: string, bytes: Uint8Array): Promise<string | null | void>
   /** keep 源远端滚动删除提示(deleted>0=清理 N 份 / 0=无信息量可不提示 / <0=后端不支持哨兵);
-   *  返回 null 不并入状态摘要 */
+   *  返回 null 不并入状态摘要。F6:runKeepRetention 的 onDeleted 已扩 truncated 位(名单来自
+   *  截断分页),runner 转发层只取前两位——截断告警由手动通道状态行呈现,本 overrides 形态不变 */
   retentionNote(name: string, deleted: number): string | null
   /** 「上次自动同步」状态记录(ok 三态:true/false/null=跳过;design §4.1 {at, ok, summary})。
    *  notes=本轮 retention 提示(工厂保证先逐源 onRetentionDeleted 后 recordStatus、消费即清空
@@ -112,6 +113,8 @@ export function createCloudSyncRunnerForStore(
     kdfProfile: () => storeOf()?.settings.backupKdfProfile ?? 'balanced',
     sourceName: (id) => cloudSourceNames.get(id) ?? id,
     t: o.t,
+    // F6:runKeepRetention 的 onDeleted 扩了 truncated 第三参,runner 转发层只透传 (name, deleted)
+    // 两位——截断告警由手动通道状态行呈现,notes 通道形态不变
     onRetentionDeleted: (name, deleted) => {
       const note = o.retentionNote(name, deleted)
       if (note) retentionNotes.push(note)
