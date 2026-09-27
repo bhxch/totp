@@ -17,7 +17,7 @@
 | B3 | 键盘揭示路径 | 验证码揭示(看码)仅鼠标双击可达,键盘/AT 用户可复制不可见;可给 OtpListItem 加 `Shift+Enter` 等键盘等价揭示 | UI 审查 M-2 |
 | B4 | devtools envPreset 提示 | 外部已设 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 时注入跳过,设置页仍显示已开启,用户无从得知为何 CDP 无响应;可给 `devtools_get_config` 附 envPreset 字段供 UI 提示 | 桌面审查 M4 |
 | B5 | HOTP 双击双 copy | 双击序列=两次 copy,HOTP counter 静默 +2(plan 已裁定接受双 copy);根治可对 300ms 内同 uuid 重复 copy 跳过 counter 递增(剪贴板写保留)。注意 B5 与 2026-09-22 复制失败修复叠加后:失败路径已不推进 counter | UI 审查 M-1 |
-| B6 | mini aria 死声明 | MiniApp 宿主未接 `@context` 却有 `aria-haspopup="menu"`(既有问题,非本轮引入) | UI 审查 M-4 |
+| B6 | ~~mini aria 死声明~~ **已失效（2026-09-27 复核:OtpListItem contextMenu prop 门控已落地,mini 传 false 不声明 aria-haspopup;登记于 batch D plan Task 10）** | MiniApp 宿主未接 `@context` 却有 `aria-haspopup="menu"`(既有问题,非本轮引入) | UI 审查 M-4 |
 | B7 | 冲突采纳 TOCTOU | runner 取快照→网络窗口→replaceAllOp 整体替换,窗口内本地写入既不在冲突副本也不在最终态(popup 刚开时点风险最高,desktop 同构);可 persistAdopted 前重读盘上 vault 做 diff 合并 | 同步审查 I3 |
 | B8 | 跨上下文互斥 | popup/options 同时开时跟随无跨上下文互斥(plan 已显式接受);与 B7 叠加时副本概率上升 | 同步审查 M1 |
 | B9 | cloudAutoStatus 语义 | 存在目标级失败(含 401)时 ok 仍记 true,「上次同步成功」与失败摘要并置,轻微误导 | 同步审查 M3 |
