@@ -2,22 +2,18 @@
 //! 配置存 settings.json `releasePolicy` 键（Rust 轨，合并写保留外来键）；分钟数 0=禁用该档。
 //! 本模块为纯逻辑：配置解析/合并、状态机 advance；副作用（轮询线程/TrySuspend/destroy/重建）在 lib.rs 接线。
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReleasePolicyConfig {
     /// 隐藏后多少分钟进入暂停档；0=禁用暂停档
-    #[serde(default = "default_pause_minutes")]
     pub pause_minutes: u32,
     /// 暂停后多少分钟销毁；0=禁用销毁档（暂停禁用时从隐藏起算）
-    #[serde(default = "default_destroy_minutes")]
     pub destroy_minutes: u32,
     /// 暂停档同时锁定 vault（默认关）
-    #[serde(default)]
     pub lock_on_pause: bool,
     /// 销毁档锁定 vault（默认开；关=DEK 暂存 Rust 内存、重建后回注）
-    #[serde(default = "default_true")]
     pub lock_on_destroy: bool,
 }
 
@@ -31,13 +27,14 @@ fn default_true() -> bool {
     true
 }
 
+/// C6:默认值单轨——impl Default 改调 default fns,5/30 不再两处手工维护
 impl Default for ReleasePolicyConfig {
     fn default() -> Self {
         Self {
-            pause_minutes: 5,
-            destroy_minutes: 30,
+            pause_minutes: default_pause_minutes(),
+            destroy_minutes: default_destroy_minutes(),
             lock_on_pause: false,
-            lock_on_destroy: true,
+            lock_on_destroy: default_true(),
         }
     }
 }
@@ -373,20 +370,21 @@ mod tests {
         assert_eq!(c.lock_on_pause, d.lock_on_pause);
     }
 
-    // serde 直接反序列化通道的字段级 default 函数（#[serde(default = ...)] 引用）。
-    // R9 后本 struct 带 rename_all="camelCase"：serde 通道键名与 settings.json 的
-    // camelCase 对齐，直反序列化 releasePolicy 分节可得正确字段；读取主路径
-    // from_settings_text 仍为手写逐字段回退（红线，见上方 settings_parse_* 测试）
+    // C5:Deserialize 通道删除后,解析唯一口径是 from_section 手写逐字段回退——
+    // 原「serde 通道 camelCase 键名 + 字段 default」断言改走 from_section,期望值不变
     #[test]
-    fn serde_deserialize_uses_camel_case_keys_and_field_defaults() {
-        let c: ReleasePolicyConfig = serde_json::from_str("{}").unwrap();
-        assert_eq!(c, ReleasePolicyConfig::default());
-        let c: ReleasePolicyConfig =
-            serde_json::from_str(r#"{"pauseMinutes":7,"lockOnPause":true}"#).unwrap();
-        assert_eq!(c.pause_minutes, 7);
-        assert!(c.lock_on_pause);
-        assert_eq!(c.destroy_minutes, 30);
-        assert!(c.lock_on_destroy);
+    fn from_section_uses_camel_case_keys_and_field_defaults() {
+        let text = r#"{"releasePolicy":{}}"#;
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+        let got = from_section(json.get("releasePolicy"));
+        assert_eq!(got, ReleasePolicyConfig::default());
+        let text = r#"{"releasePolicy":{"pauseMinutes":7,"lockOnPause":true}}"#;
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+        let got = from_section(json.get("releasePolicy"));
+        assert_eq!(got.pause_minutes, 7);
+        assert!(got.lock_on_pause);
+        assert_eq!(got.destroy_minutes, 30);
+        assert!(got.lock_on_destroy);
     }
 
     // 序列化输出 camelCase（R9：release_policy_get 直接序列化 struct、release_policy_set
