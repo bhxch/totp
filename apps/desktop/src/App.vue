@@ -2,8 +2,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { StorageAdapter } from '@totp/core'
-import { createAppI18n, LockScreen, NavigationShell, type IconStore, type VueStore } from '@totp/ui'
-import { computed, getCurrentInstance, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
+import { LockScreen, NavigationShell, type IconStore, type VueStore } from '@totp/ui'
+import { computed, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createDesktopAutoChannels } from './autoBackup'
 import { createBackupPlatform, createImportSchemesApi } from './backupPlatform'
 import { createCloudPlatform, createDesktopCloudSync } from './cloudPlatforms'
@@ -11,7 +11,7 @@ import { createDesktopCopy } from './desktopCopy'
 import McpConsentDialog from './McpConsentDialog.vue'
 import {
   createDesktopApprovalQueue, createDesktopMcpDeps, createDesktopShell, createDevtoolsPlatform, createLegacyMigrations,
-  createMcpConsentFlow, createMcpPlatform, createReleasePlatform,
+  createMcpConsentFlow, createMcpPlatform, createReleasePlatform, useDesktopI18n,
 } from './desktopShell'
 import { createSecurityPlatform } from './securityPlatform'
 import { desktopUaFlags, unlockNamingFor } from './unlockNaming'
@@ -27,24 +27,9 @@ const store = shallowRef<VueStore | null>(null)
 const locked = computed(() => store.value?.locked.value ?? false)
 const icons = ref<IconStore | null>(null)
 const loadError = ref('')
-// D1 i18n 挂载（store 就绪后装入，见 mountI18n）：app 引用必须在 setup 同步段获取
-// （onMounted await 之后 instance 上下文已失效）；本组件 store 仅在挂载时创建一次
-const appForI18n = getCurrentInstance()?.appContext.app
-let i18nInstalled = false
-// D2 抽串：壳层 t() 走捕获的 i18n 实例（本组件 script setup 内 useI18n 注入不可用，沿 options 页口径）。
-// 未装入（初始化失败等）时兜底回原文 key
-const i18nRef = shallowRef<ReturnType<typeof createAppI18n> | null>(null)
-function tr(key: string, params: Record<string, unknown> = {}): string {
-  return i18nRef.value ? i18nRef.value.global.t(key, params) : key
-}
-function mountI18n(s: VueStore): void {
-  if (appForI18n && !i18nInstalled) {
-    const i18nInst = createAppI18n(s)
-    appForI18n.use(i18nInst)
-    i18nRef.value = i18nInst
-    i18nInstalled = true
-  }
-}
+// i18n 胶水收敛至 desktopShell.useDesktopI18n(R13,与 MiniApp 同款实现):
+// app 引用在 setup 同步段捕获;插件只能装入一次,mountI18n 重复调用为 no-op
+const { tr, mountI18n } = useDesktopI18n()
 
 // ---------- 共享闭包（各平台工厂的单一事实源）----------
 // adapter 在壳层 init（createTauriFs）就绪后经 setAdapter 赋值；工厂闭包实时读取
