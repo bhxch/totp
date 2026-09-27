@@ -118,4 +118,30 @@ describe('offscreen clear-clipboard 处理（B2-9/10）', () => {
     await expect(pending).resolves.toEqual({ ok: true })
     expect(writeText).toHaveBeenCalledTimes(1)
   })
+
+  it('ack 的 sendMessage 返回 rejected promise：不产生 unhandled rejection，回执照发（C3）', async () => {
+    // 现状 sync try/catch 捕获不到 promise rejection → unhandled rejection。
+    // rejected promise 须经普通函数裸返：tinyspy 会给 mock 函数返回值挂 then 订阅（记录
+    // mock.resolves），经 vi.mock/spy 产生的 rejection 永远被消化、复现不了 unhandled。
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    await loadOffscreen()
+    const ackCalls: unknown[] = []
+    ;(shim.chrome.runtime as { sendMessage: unknown }).sendMessage = (msg: unknown) => {
+      ackCalls.push(msg)
+      return Promise.reject(new Error('SW closed'))
+    }
+    // 自监听归属：process 级 unhandledRejection 在测试运行期间同步入账，断言零残留
+    const rejections: unknown[] = []
+    const handler = (reason: unknown): void => { rejections.push(reason) }
+    process.on('unhandledRejection', handler)
+
+    await expect(shim.runtime.receive({ type: 'clear-clipboard' })).resolves.toEqual({ ok: true })
+    await flush() // 宏任务边界：让未订阅的 rejection 到达 processPromiseRejections 检查点
+    process.off('unhandledRejection', handler)
+
+    expect(writeText).toHaveBeenCalledWith('')
+    expect(ackCalls).toEqual([{ type: 'clear-clipboard-ack' }])
+    expect(rejections).toEqual([]) // 现状裸 promise 无订阅 → 此处红；.catch 吸收后 → 绿
+  })
 })

@@ -25,7 +25,9 @@ ext!.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     // sendResponse 回执——SW 端 ack 监听器据此判定成功
     try { sendResponse({ ok: true }) } catch { /* channel 已关：忽略 */ }
     // 同时发 fire-and-forget 消息，让 SW 在 sendResponse 不可用时也能感知
-    try { ext!.runtime.sendMessage({ type: 'clear-clipboard-ack' }) } catch { /* 忽略 */ }
+    // C3:sendMessage 返回 promise,sync try/catch 捕获不到 rejection(MV3 SW 未就绪时)——
+    // 显式 .catch 吸收,ack 是 fire-and-forget 兜底通道,失败可静默
+    void ext!.runtime.sendMessage({ type: 'clear-clipboard-ack' }).catch(() => {})
   })
   // 返回 true 保留 sendResponse 通道（异步回执用）
   return true
