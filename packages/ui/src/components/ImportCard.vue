@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   IMPORT_REGISTRY, SQLITE_TABLE_PROBES, applyImportPlan, dedupeWithinFile, extractGenericRows,
-  importAegisEncrypted, importAuthenticatorPlus, importAuthy, importBattleNet, importDuo, importFoxauth,
+  importAegisEncrypted, importAuthenticatorPlus, importAuthy, importBattleNet, importDuo,
   importGeneric, importTotpAuthenticator, importWinauth, matchSchemes, needsPasswordFor, planImport,
   normalizeSchemes, removeScheme, sniffFormat, upsertScheme,
   type ConflictPolicy, type ImportFormat, type ImportPlan, type ImportResult, type ImportScheme,
@@ -559,8 +559,9 @@ function nextFromMapping(): void {
 
 /**
  * 口令页下一步（按生效格式分派——手动指定覆盖嗅探，勿用 format.value）：
- * aegis/foxauth 加密必填口令；authy/winauth 口令可选（缺失且需要时结构级报错回到本页提示）；
+ * aegis 加密必填口令；authy/winauth 口令可选（缺失且需要时结构级报错回到本页提示）；
  * totpAuthenticator 口令可选（空口令走默认口令 TotpAuthenticator）；其余格式不经口令页，显式报错
+ * （foxauth 经 D1 裁定免口令：明文/加密均由 core 直接解析，不设 needsPassword 谓词，不经本页）
  */
 async function nextFromPassword(): Promise<void> {
   if (busy.value) return
@@ -568,11 +569,6 @@ async function nextFromPassword(): Promise<void> {
   if (f === 'aegis') {
     if (!password.value) return fail(new Error(t('importCard.passphraseRequired')))
     await parseAndConfirm(() => importAegisEncrypted(fileText.value, password.value))
-    return
-  }
-  if (f === 'foxauth') {
-    if (!password.value) return fail(new Error(t('importCard.passphraseRequired')))
-    await parseAndConfirm(() => importFoxauth(fileText.value, password.value))
     return
   }
   if (f === 'authy') {
