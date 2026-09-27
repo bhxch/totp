@@ -295,6 +295,7 @@
     "setPwFirst": "Set the backup passphrase first",
     "duplicateNamesHint": "Duplicate source names: use \"Name\" to distinguish them (multiple sources of the same type are allowed).",
     "autoHint": "Before running automatically, content is compared with the last run; unchanged content is not written.",
+    "syncNowHint": "Manual sync always pushes and pulls in full (the cloud is rewritten even when nothing changed); only automatic runs use the content gate",
     "autoOnChange": "Sync on change",
     "autoInterval": "Sync on a schedule",
     "intervalLabel": "Interval",

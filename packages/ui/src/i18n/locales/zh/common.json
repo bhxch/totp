@@ -295,6 +295,7 @@
     "setPwFirst": "请先设置备份口令",
     "duplicateNamesHint": "同名源请用「名称」区分（同类型可添加多份）。",
     "autoHint": "自动执行前会与上次内容比对，无变化则跳过写入。",
+    "syncNowHint": "手动同步始终完整推拉（即使内容无变化也会重写云端）；自动轮才有内容门",
     "autoOnChange": "变更后自动同步",
     "autoInterval": "定时自动同步",
     "intervalLabel": "间隔",

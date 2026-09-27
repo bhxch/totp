@@ -665,7 +665,7 @@ const hasDuplicateNames = computed(() => {
       />
       <MdButton class="creds-save" :disabled="busy" @click="onSaveCreds">{{ t('cloudCard.saveCreds') }}</MdButton>
       <!-- 挂起禁用收 confirmPattern.anyPending（R7）：adopt/reset/remove 任一确认行展开即禁用 -->
-      <MdButton class="cloud-sync" :disabled="busy || !sessionSecret || confirmPending" @click="onSync">{{ t('cloudCard.syncNow') }}</MdButton>
+      <MdButton class="cloud-sync" :disabled="busy || !sessionSecret || confirmPending" :title="t('cloudCard.syncNowHint')" @click="onSync">{{ t('cloudCard.syncNow') }}</MdButton>
     </div>
     <!-- 逐源进度（spec §5 ⑥，T11）：宿主 runner onProgress 经 cloudSyncBridge 驱动；
          done<total 才显示（轮末 (total,total) 自动隐藏），自动/跟随轮与手动预览轮同样可见 -->
