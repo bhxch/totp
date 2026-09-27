@@ -585,21 +585,77 @@ describe('pullSyncIfNewer（经 pullOnce）', () => {
     expect(local.data[SYNC_STATUS_KEY]).toMatchObject({ state: 'ok' })
   })
 
-  it('远端 settings 键为坏 JSON → merge 退化整体采用远端原串（catch 分支，实现行为锚定）', async () => {
+  it('远端 settings 键为坏 JSON → 放弃 merge 保留本端 settings,仅 vault 更新（B10）', async () => {
     const remotePayload = JSON.stringify({ version: 2, entries: [], tags: [], updatedAt: 2 })
     const { local } = installChrome(
       {
         [VAULT_KEY]: JSON.stringify({ entries: ['old'] }),
-        [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }),
+        [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true, theme: 'dark' }),
       },
       { ...remotePush(remotePayload, 2), 'sync:settings': '{broken-remote-settings' },
     )
 
     await pullSyncIfNewer()
 
-    // 注意：JSON.parse 失败点在 remoteRaw（坏串原样返回），本端 settings 被整体替换为坏串——
-    // 盘点「本端 settings 损坏退化整体采用」在现有 readSyncEnabled 前置门下不可达（本端损坏恒拉取短路），见汇报
-    expect(local.data[SETTINGS_KEY]).toBe('{broken-remote-settings')
+    // B10:坏串不得写盘——本端 settings 原样保留,syncEnabled 不被远端坏数据波及
+    expect(local.data[SETTINGS_KEY]).toBe(JSON.stringify({ syncEnabled: true, theme: 'dark' }))
+    expect(local.data[VAULT_KEY]).toBe(remotePayload)
+  })
+
+  it('远端 settings 坏 JSON 且本端无 settings 键 → 不写入 settings 键（B10）', async () => {
+    const remotePayload = JSON.stringify({ version: 2, entries: [], tags: [], updatedAt: 2 })
+    const { local } = installChrome(
+      {
+        [VAULT_KEY]: JSON.stringify({ entries: ['old'] }),
+        // readSyncEnabled 前置门要求本端 settings 在且开启,否则 pull 短路(缺该键则计划断言
+        // 「vault 更新」不可达);merge 读之前经下方注入删键,模拟「门读取后、merge 读取前」
+        // 本端 settings 被并发删除的竞态——这是 merge 返回 null(调用点跳过写 settings)唯一可达时序
+        [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true }),
+      },
+      { ...remotePush(remotePayload, 2), 'sync:settings': '{broken' },
+    )
+    const realGet = local.get.bind(local)
+    let settingsReads = 0
+    local.get = async (keys: string | string[] | null) => {
+      // 第 2 次本端 settings 读(merge 内)前删键 → merge 走「本端无 settings 键」分支返回 null
+      if (Array.isArray(keys) && keys.includes(SETTINGS_KEY) && ++settingsReads === 2) {
+        delete local.data[SETTINGS_KEY]
+      }
+      return realGet(keys)
+    }
+
+    await pullSyncIfNewer()
+
+    expect(local.data[SETTINGS_KEY]).toBeUndefined()
+    expect(local.data[VAULT_KEY]).toBe(remotePayload)
+  })
+
+  it('远端 settings 合法但本端 settings 读失败 → merge 仍产出,开关位按 false（原 catch 降级语义收窄后）', async () => {
+    const remotePayload = JSON.stringify({ version: 2, entries: [], tags: [], updatedAt: 2 })
+    const remoteSettings = JSON.stringify({ syncEnabled: true, theme: 'light' })
+    const { local } = installChrome(
+      {
+        [VAULT_KEY]: JSON.stringify({ entries: ['old'] }),
+        // 开关门需本端 settings 可读且开启(缺该键则 pull 短路,断言不可达)
+        [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true, theme: 'dark' }),
+      },
+      { ...remotePush(remotePayload, 2), 'sync:settings': remoteSettings },
+    )
+    // 本端 storage.local.get 注入失败仅命中 merge 内的本端 settings 读(第 2 次;readSyncEnabled
+    // 开关门的第 1 次读须放行,否则整个 pull 置 error):开关位保留语义等价 false(函数头注释
+    // 既有口径),其余字段整体采用远端
+    const realGet = local.get.bind(local)
+    let settingsReads = 0
+    local.get = async (keys: string | string[] | null) => {
+      if (Array.isArray(keys) && keys.includes(SETTINGS_KEY) && ++settingsReads === 2) {
+        throw new Error('quota')
+      }
+      return realGet(keys)
+    }
+
+    await pullSyncIfNewer()
+
+    expect(JSON.parse(local.data[SETTINGS_KEY] as string)).toEqual({ syncEnabled: false, theme: 'light' })
     expect(local.data[VAULT_KEY]).toBe(remotePayload)
   })
 

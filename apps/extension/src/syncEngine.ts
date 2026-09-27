@@ -113,16 +113,23 @@ function readChunks(area: Record<string, unknown>): SyncChunk[] {
   return chunks
 }
 
-/** 远端 settings 整体采用，但 syncEnabled 位保留本端值（缺失/损坏时保留语义等价于 false） */
-async function mergeRemoteSettingsKeepingLocalSyncEnabled(remoteRaw: string): Promise<string> {
+/** 远端 settings 整体采用，但 syncEnabled 位保留本端值（缺失/损坏时保留语义等价于 false）。
+ *  B10：远端坏 JSON 时放弃 merge、保留本端原样（本端无 settings 键 → null，调用点跳过写 settings）——
+ *  坏串不得落盘替换本端 settings。本端读失败/损坏仅影响开关位（按 false），不影响其余字段采用远端 */
+async function mergeRemoteSettingsKeepingLocalSyncEnabled(remoteRaw: string): Promise<string | null> {
+  let remote: Record<string, unknown>
+  try {
+    remote = JSON.parse(remoteRaw) as Record<string, unknown>
+  } catch {
+    const localRaw = (await ext!.storage.local.get([SETTINGS_KEY]))[SETTINGS_KEY]
+    return typeof localRaw === 'string' ? localRaw : null
+  }
+  let localEnabled = false
   try {
     const localRaw = (await ext!.storage.local.get([SETTINGS_KEY]))[SETTINGS_KEY]
-    const remote = JSON.parse(remoteRaw) as Record<string, unknown>
-    const localEnabled = typeof localRaw === 'string' && (JSON.parse(localRaw) as Record<string, unknown>).syncEnabled === true
-    return JSON.stringify({ ...remote, syncEnabled: localEnabled })
-  } catch {
-    return remoteRaw // 本端 settings 损坏等异常：退化为整体采用远端
-  }
+    localEnabled = typeof localRaw === 'string' && (JSON.parse(localRaw) as Record<string, unknown>).syncEnabled === true
+  } catch { /* 本端读失败/损坏：开关位按 false（「缺失/损坏保留等价 false」既有口径） */ }
+  return JSON.stringify({ ...remote, syncEnabled: localEnabled })
 }
 
 /** push 前拉取判定（纯函数便于编排层验证）：远端存在 meta 且 rev 大于本端已应用 rev → 有未应用的远端更新 */
@@ -259,8 +266,9 @@ async function pullOnce(): Promise<void> {
     }
     if (typeof syncAll[SETTINGS_SYNC_KEY] === 'string') {
       // 保留本端 syncEnabled 位：同步开关是每设备显式意志，远端 settings 整体采用但开关位不跟随
-      // （否则 B 关闭同步后 A 的推送会把 B 重新拉开）
-      batch[SETTINGS_KEY] = await mergeRemoteSettingsKeepingLocalSyncEnabled(syncAll[SETTINGS_SYNC_KEY])
+      // （否则 B 关闭同步后 A 的推送会把 B 重新拉开）。B10：远端坏 JSON 返回 null → 不写 settings 键
+      const merged = await mergeRemoteSettingsKeepingLocalSyncEnabled(syncAll[SETTINGS_SYNC_KEY])
+      if (merged !== null) batch[SETTINGS_KEY] = merged
     }
     batch[APPLIED_REV_KEY] = meta.rev
     await ext!.storage.local.set(batch)
