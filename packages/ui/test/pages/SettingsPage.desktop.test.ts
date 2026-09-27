@@ -14,7 +14,7 @@ async function readyStore() {
   return s
 }
 
-function devtoolsPlatform(cfg: DevtoolsConfigDto = { enabled: false, port: 9222 }) {
+function devtoolsPlatform(cfg: DevtoolsConfigDto = { enabled: false, port: 9222, envPreset: false }) {
   const platform = {
     getConfig: vi.fn().mockResolvedValue(cfg),
     setConfig: vi.fn().mockResolvedValue(undefined),
@@ -43,7 +43,7 @@ beforeEach(() => {
 describe('SettingsPage 开发者卡（devtoolsPlatform 注入）', () => {
   it('onMounted 预填：开关与端口来自 getConfig', async () => {
     const store = await readyStore()
-    const platform = devtoolsPlatform({ enabled: true, port: 9333 })
+    const platform = devtoolsPlatform({ enabled: true, port: 9333, envPreset: false })
     const w = mount(SettingsPage, { global: { plugins: [createTestI18n()] }, props: { store, showDesktop: true, devtoolsPlatform: platform } })
     await flushPromises()
     expect(platform.getConfig).toHaveBeenCalledTimes(1)
@@ -76,7 +76,7 @@ describe('SettingsPage 开发者卡（devtoolsPlatform 注入）', () => {
 
   it('端口非法（空/越界/非整数）：回显基线不提交；随后合法修改提交成功', async () => {
     const store = await readyStore()
-    const platform = devtoolsPlatform({ enabled: true, port: 9222 })
+    const platform = devtoolsPlatform({ enabled: true, port: 9222, envPreset: false })
     const w = mount(SettingsPage, { global: { plugins: [createTestI18n()] }, props: { store, showDesktop: true, devtoolsPlatform: platform } })
     await flushPromises()
     for (const bad of ['', '80', '65536', '9.5']) {
@@ -93,7 +93,7 @@ describe('SettingsPage 开发者卡（devtoolsPlatform 注入）', () => {
 
   it('保存失败：错误横幅（含原始 reject 文本）+ 回显基线', async () => {
     const store = await readyStore()
-    const platform = devtoolsPlatform({ enabled: true, port: 9222 })
+    const platform = devtoolsPlatform({ enabled: true, port: 9222, envPreset: false })
     platform.setConfig.mockRejectedValue('port conflict with MCP')
     const w = mount(SettingsPage, { global: { plugins: [createTestI18n()] }, props: { store, showDesktop: true, devtoolsPlatform: platform } })
     await flushPromises()

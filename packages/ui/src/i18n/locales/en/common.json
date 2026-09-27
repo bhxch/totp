@@ -694,6 +694,7 @@
     "devtoolsPort": "Debug port (default 9222)",
     "devtoolsRestart": "Takes effect after app restart",
     "devtoolsSaveFailed": "Save failed",
+    "devtoolsEnvPresetHint": "An external WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS was detected, so the in-app injection was skipped — if CDP won't connect, check that environment variable first",
     "releaseTitle": "Window resource release",
     "releasePause": "Pause after hiding (minutes)",
     "releaseDestroy": "Destroy window after pause (minutes)",

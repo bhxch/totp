@@ -2,6 +2,8 @@
 export interface DevtoolsConfigDto {
   enabled: boolean
   port: number
+  /** F8:外部已设 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS（注入被跳过） */
+  envPreset: boolean
 }
 
 /** 开发者平台能力（桌面宿主桥接 devtools_get_config / devtools_set_config 命令；扩展/Web 宿主不提供，开发者卡片不渲染） */

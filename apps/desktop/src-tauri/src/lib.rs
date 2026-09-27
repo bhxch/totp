@@ -129,10 +129,19 @@ fn apply_devtools_env() {
 /// devtools 设置读/写（明文 settings.json；读外壳经 read_settings_text 单点，写经
 /// write_section 单点合并既有键——settings.json 为 Rust 四组配置 + 前端 AppSettings 共写文件，
 /// 任何写侧均不得整文件覆盖丢外来键；落盘复用 write_text_atomic（审查 I-5 原子写））
+/// F8(B4)：get_config 返回形状单点（enabled/port/envPreset）——AppHandle 无关的可测核心
+/// （同 devtools_from_section 手法）。envPreset=外部已设 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS：
+/// 此时 apply_devtools_env 的注入被跳过（external_preset 分支），应用内开关虽开 CDP 也不生效，
+/// 随配置返回供前端提示「CDP 无响应的可能原因」
+fn devtools_config_json(enabled: bool, port: u16) -> serde_json::Value {
+    let env_preset = std::env::var_os("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").is_some();
+    serde_json::json!({ "enabled": enabled, "port": port, "envPreset": env_preset })
+}
+
 #[tauri::command]
 fn devtools_get_config<R: Runtime>(app: AppHandle<R>) -> Result<serde_json::Value, String> {
     let (enabled, port) = read_devtools_from_settings_text(&read_settings_text(&app));
-    Ok(serde_json::json!({ "enabled": enabled, "port": port }))
+    Ok(devtools_config_json(enabled, port))
 }
 
 #[tauri::command]
@@ -856,5 +865,27 @@ mod tests {
             "--external-sentinel"
         );
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    // F8(B4)：get_config 返回形状——envPreset 随外部 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
+    // 预设两态（env 判定为薄壳，EnvGuard 恢复现场防泄漏）；形状单点经 devtools_config_json
+    // （AppHandle 无关，同 devtools_from_section 的可测核心手法）
+    #[cfg(windows)]
+    #[test]
+    fn devtools_config_json_reports_env_preset() {
+        let _guard = EnvGuard::save();
+        std::env::remove_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS");
+        assert_eq!(
+            devtools_config_json(false, 9222),
+            serde_json::json!({ "enabled": false, "port": 9222, "envPreset": false })
+        );
+        std::env::set_var(
+            "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+            "--external-sentinel",
+        );
+        assert_eq!(
+            devtools_config_json(true, 9333),
+            serde_json::json!({ "enabled": true, "port": 9333, "envPreset": true })
+        );
     }
 }

@@ -15,6 +15,8 @@ const props = defineProps<{
 // ---------- WebView 远程调试（验收条目4，桌面专属）：开关+端口写 settings.json，重启后经环境注入生效 ----------
 const devtoolsEnabled = ref(false)
 const devtoolsPort = ref('9222')
+/** F8(B4)：外部已设 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS（应用内注入被跳过）——解释「已开启但 CDP 无响应」 */
+const devtoolsEnvPreset = ref(false)
 /** 最近一次成功提交（或后端返回）的配置：非法输入/写失败回显基准 */
 let devtoolsGood: { enabled: boolean; port: number } = { enabled: false, port: 9222 }
 /** 后端保存失败回显（审查 M6：端口与已启用 MCP 冲突被 Rust 拒绝等，须可见而非静默回滚） */
@@ -25,6 +27,7 @@ onMounted(async () => {
     const cfg = await props.platform.getConfig()
     devtoolsEnabled.value = cfg.enabled
     devtoolsPort.value = String(cfg.port)
+    devtoolsEnvPreset.value = cfg.envPreset
     devtoolsGood = cfg
   } catch {
     // 预填失败保持默认关（与后端缺省一致），不阻断设置页其余部分
@@ -63,6 +66,9 @@ async function commitDevtools(): Promise<void> {
         :aria-label="t('settingsPage.devtoolsTitle')" @update:model-value="devtoolsEnabled = $event; commitDevtools()"
       />
     </div>
+    <!-- F8(B4)：外部已预设 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS 时应用内注入被跳过——
+         提示与开关状态独立（预设时即使开关开着 CDP 也不生效） -->
+    <p v-if="devtoolsEnvPreset" class="meta">{{ t('settingsPage.devtoolsEnvPresetHint') }}</p>
     <div v-if="devtoolsEnabled" class="row devtools-port-row">
       <MdTextField
         v-model="devtoolsPort" class="devtools-port" type="number" min="1024" max="65535"
@@ -83,4 +89,5 @@ async function commitDevtools(): Promise<void> {
 .devtools-port-row { align-items: center; }
 .devtools-port { width: 140px; }
 .devtools-restart { font-size: var(--md-sys-typescale-body-small); opacity: .65; }
+.meta { font-size: var(--md-sys-typescale-body-small); opacity: .75; margin: 0; }
 </style>
