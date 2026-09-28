@@ -25,6 +25,8 @@ jobs:
       # 干净环境 typecheck 前必须先 prepare
       - run: pnpm --filter @totp/extension exec wxt prepare
       - run: pnpm typecheck
+      # C9 i18n 键双向校验（缺键/无引用），当前零误报（评审 2026-09-28 A4 接入）
+      - run: pnpm check:i18n
       # 版本落点一致性自检：--check 不带版本参数，以 apps/desktop/package.json 为基准
       - run: node scripts/bump.mjs --check
       - run: pnpm test

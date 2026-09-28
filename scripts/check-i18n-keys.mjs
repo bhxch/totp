@@ -18,6 +18,8 @@ const ROOTS = [
 ]
 
 // 已知豁免(非 t() 消费的字符串巧合/计划中的键);增删需在 commit 正文说明
+// 注意扫描面为 .vue/.ts 源码(walk 内按扩展名正则过滤):.mjs/.js 不在扫描面,
+// 若未来在脚本类文件引用 i18n 键会误报「无引用」,届时需同步扩该正则。
 const ALLOW = new Set([
   // app.title:生产零消费,仅 packages/ui/test/i18n.test.ts:17 作「资源就绪」哨兵断言(删键会破坏该测试)
   'app.title',
