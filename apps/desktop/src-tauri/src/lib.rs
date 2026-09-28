@@ -222,7 +222,13 @@ fn toggle_mini(app: &AppHandle) {
                     }
                 }
             }
-            let _ = mini.show();
+            let shown = mini.show();
+            // show 返回 Err 仅在窗口句柄失效等异常态，留痕；「show 成功但随即被
+            // 失焦自动隐藏收回」是 mini 的产品行为（Focused(false) 无条件 hide），
+            // 后台进程 SetForegroundWindow 被前台锁拒绝时即出现，非缺陷
+            if let Err(e) = shown {
+                eprintln!("[shortcut] toggle_mini: mini.show() failed: {e}");
+            }
             let _ = mini.set_focus();
         }
     }
@@ -421,12 +427,16 @@ fn apply_shortcut_override(app: &AppHandle) {
     let configured = read_shortcut_from_settings(app);
     if configured != "alt+shift+t" {
         let gs = app.global_shortcut();
-        if gs.unregister_all().is_ok() {
-            let _ = gs.on_shortcut(configured.as_str(), |a, _s, e| {
-                if e.state == ShortcutState::Pressed {
-                    toggle_mini(a);
-                }
-            });
+        // 错误留痕（真机排查实证：静默吞错时注册失败无从诊断）——失败仍不阻断启动
+        if let Err(e) = gs.unregister_all() {
+            eprintln!("[shortcut] unregister_all failed: {e}");
+        }
+        if let Err(e) = gs.on_shortcut(configured.as_str(), |a, _s, e| {
+            if e.state == ShortcutState::Pressed {
+                toggle_mini(a);
+            }
+        }) {
+            eprintln!("[shortcut] register '{configured}' failed: {e}");
         }
     }
 }
