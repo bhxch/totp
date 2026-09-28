@@ -17,8 +17,10 @@ export function addEntry(v: Vault, entry: OtpEntry): Vault {
       ...v.entries,
       {
         ...entry,
-        // R3：入库边界统一收口 digits（查 descriptor.forcedDigits：steam=5、yandex=8、其余 6/7/8；
-        // 幂等）——UI/导入路径的前置收口移除后由本边界兜底，防非法 digits 落盘被 loadVault 整体拒绝
+        // R3：入库边界统一收口 digits（查 descriptor.forcedDigits：steam=5、yandex=8、其余 6/7/8）——
+        // 非恒等收口（toOtpDigits(5,'totp')=6，理由同 newEntryFromUri：digits=5 仅在 URI 宽松解析期
+        // 被 typeProfiles 保留，不入库），UI/导入路径的前置收口移除后由本边界兜底，防非法 digits
+        // 落盘被 loadVault 整体拒绝
         digits: toOtpDigits(entry.digits, entry.type),
         order: maxOrder + 1,
         updatedAt: entry.updatedAt ?? entry.createdAt,

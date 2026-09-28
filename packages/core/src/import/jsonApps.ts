@@ -344,7 +344,8 @@ function parseFoxauthPlaintextObject(obj: Record<string, unknown>): ImportResult
 /**
  * FoxAuth 明文备份同步导入。独立导出供粘贴分发（import/paste.ts 的同步契约）使用，先例
  * importTotpAuthenticatorPlaintext；加密备份解密为异步链路（importFoxauth），不经本同步入口
- * ——D1 后粘贴通道对加密备份不再拦截引导口令通道，整串密文形态进本入口给出结构级报错。
+ * ——加密态在粘贴通道由 sniffFoxauthEncrypted 先行单判引导导入页文件通道（免口令自动解密），
+ * 不会误入本入口把密文当数据解析。
  */
 export function importFoxauthPlaintext(text: string): ImportResult {
   return parseFoxauthPlaintextObject(parseJsonObject(text, 'FoxAuth'))

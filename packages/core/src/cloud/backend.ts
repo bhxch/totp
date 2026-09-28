@@ -12,7 +12,10 @@ export interface CloudBackend {
   delete(path: string): Promise<void>
   exists(path: string): Promise<boolean>
   /** [可选] 列出该后端容器内可滚动的备份名（vault-{ts}.totpbackup）。keep-n 云源需要；
-   *  缺省=该后端不支持（enforceRemoteRetention 返回 -1，UI 对 keep 选项降级提示）。 */
+   *  缺省=该后端不支持（enforceRemoteRetention 返回 -1，UI 对 keep 选项降级提示）。
+   *  this 绑定契约：实现以方法调用形式消费（backend.listBackups()，this 绑定到 backend）——
+   *  聚合后端（s3/gdrive/onedrive）的薄包装实现依赖 this.listBackupsEx，消费方不得解构调用
+   *  （const { listBackups } = backend 会丢 this，薄包装取 listBackupsEx 抛错）。 */
   listBackups?(): Promise<string[]>
   /** [可选] listBackups 的截断感知版(F6):complete=false 表示分页达上限仍有更多对象,
    *  滚动删除可能不完整——UI 据此提示手动清理。实现方:三聚合后端(s3/gdrive/onedrive) */

@@ -117,13 +117,19 @@ const SPECS: Record<EntryType, TypeProfileSpec> = {
   },
 }
 
-/** 类型注册表：buildUriDefaults 由 default 字段派生组装，保证单一事实源 */
-export const TYPE_PROFILES: Record<EntryType, TypeProfile> = Object.fromEntries(
-  (Object.entries(SPECS) as [EntryType, TypeProfileSpec][]).map(([type, spec]) => [
-    type,
-    { ...spec, buildUriDefaults: { algorithm: spec.defaultAlgorithm, digits: spec.defaultDigits } },
-  ]),
-) as Record<EntryType, TypeProfile>
+/** spec → profile：buildUriDefaults 由 default 字段派生组装（单一事实源，防双写漂移） */
+function profileOf(spec: TypeProfileSpec): TypeProfile {
+  return { ...spec, buildUriDefaults: { algorithm: spec.defaultAlgorithm, digits: spec.defaultDigits } }
+}
+
+/** 类型注册表：逐键显式组装（不再 Object.fromEntries + as 盲断言）——Record 字面量缺键/多键
+ *  即编译错；键序 = SPECS 定义序（normalizeType 归一优先级依赖 Object.entries 遍历序，勿重排） */
+export const TYPE_PROFILES: Record<EntryType, TypeProfile> = {
+  yandex: profileOf(SPECS.yandex),
+  steam: profileOf(SPECS.steam),
+  hotp: profileOf(SPECS.hotp),
+  totp: profileOf(SPECS.totp),
+}
 
 /** otpauth host → 内部 type（host 大小写不敏感归一；未知 host 返回 null，由 parseOtpUri 拒绝） */
 export function otpTypeForHost(host: string): EntryType | null {

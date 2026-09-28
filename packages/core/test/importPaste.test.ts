@@ -27,9 +27,20 @@ describe('parsePastedText', () => {
       expect(r.entries[0]).toMatchObject({ type: 'totp', issuer: 'GitHub', label: 'a@b.c', secret: 'JBSWY3DPEHPK3PXP' })
     }
   })
-  it('FoxAuth 加密备份免口令直接解析（D1）：不再拦截引导口令通道，密文形态交由解析器报结构错误', () => {
-    expect(() => parsePastedText(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: {} })))
-      .toThrow('FoxAuth 文件结构非法：缺少 accountInfos 数组')
+  it('FoxAuth 加密备份（整串密文形态）引导导入页文件通道：粘贴通道无解密能力不进明文解析', () => {
+    const r = parsePastedText(JSON.stringify({ accountInfos: 'CIPHER', isEncrypted: true, passwordInfo: {} }))
+    expect(r).toEqual({ unsupported: '检测到加密 FoxAuth 备份，请通过导入页选择文件导入（将自动解密）' })
+  })
+  it('FoxAuth 加密备份（数组形态：仅三字段密文）同样命中引导，不散落「secret 非法 base32」单条错误', () => {
+    const json = JSON.stringify({
+      accountInfos: [
+        { localIssuer: 'GitHub', localAccountName: 'a@b.c', localSecretToken: 'c2lsbHljaXBoZXJ0b2tlbg==' },
+      ],
+      isEncrypted: true,
+      passwordInfo: { encryptPassword: btoa('pw'), encryptIV: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] },
+    })
+    const r = parsePastedText(json)
+    expect(r).toEqual({ unsupported: '检测到加密 FoxAuth 备份，请通过导入页选择文件导入（将自动解密）' })
   })
   it('Aegis 加密 vault（db 为密文 Base64 串）拦截引导至导入页口令通道，不走明文解析', () => {
     // 结构对齐真实加密导出：header 带 slots/params、顶层 db 为 Base64 密文字符串（sniffAegis.encrypted=true）
