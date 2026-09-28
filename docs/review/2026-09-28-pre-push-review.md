@@ -81,3 +81,26 @@
 1. A1/A2/A3 建议推送前或紧随其后的一个小修复批闭环(A1 与 A2 也可裁定为「有意后置」挂账,但需明确记录);A4 前两点(check:i18n 接 CI、R16⑤ 挂账)建议随手做,后两点勘误已由本文件按约定记录。
 2. B1-B3 挂 backlog(2026-09-22-review-backlog.md),与安全边界相关建议排前。
 3. Minor 随后续批次顺手处理,不设专门批次。
+
+## 修复处置(2026-09-28 当日闭环记录)
+
+同日修复批已落地,机械验证:全仓 typecheck 四包绿;vitest core 1040 / ui 1069 / extension 286 / desktop 339 全过;cargo test 118 过、clippy 零告警;check:i18n 绿。
+
+| 项 | 处置 | commit |
+|---|---|---|
+| A1 粘贴通道加密 FoxAuth 引导 | 方案 (a):paste.ts 分派前单判 `sniffFoxauthEncrypted` 给引导文案;删已死 foxauth 口令文案;测试从固化回归改断言引导 | 84a9945 |
+| A2 onPersistError 未接线 | **待用户决策**(接线需新增横幅 UX:文案/展示策略/覆盖窗口;或重新裁定挂账) | — |
+| A3 props 接线探针 | NavStub 恢复基线 props+shellOf,补四 platform 接线断言;实测摘掉 `:sync-platform` 即红;现 App.vue 无漏传 | b655ecf |
+| A4 check:i18n 接 CI | ci.yml web job typecheck 后接入;脚本头补扫描面注释 | 0ecec9f |
+| A4 批次 E 两处勘误 | 本文件上文已按约定记录(基线实为 447f8cd;场景 6 按三组口径,shortcutToggleMini 待真机补验) | d9c1dc6 |
+| B1/B2/B3 存量三项 | GrantSource 来源标记(dir 落盘/file 仅会话内,磁盘格式向后兼容);读/bytes 写通道 symlink_metadata 拒绝 reparse 叶子;抽 parse_persisted_dirs 纯函数补测(含 roundtrip) | 1ef1561 |
+| Minor rust | ensure_extension 拆 exact/ci 包装;stashed_dek 测试自净化;default_true 按 C6 裁定保持 | 1ef1561 |
+| Minor core | vault.ts 注释如实化;backend.ts 补 listBackups this 绑定契约;typeProfiles 消除 as 断言改显式组装 | 84a9945 |
+| Minor extension | syncEngine 非对象 JSON 形状守卫('null'/'123'/数组);notify() 补 .catch 并修 chromeShim MV3 Promise 语义;clipboardNote 两形态断言;revSeal 死再导出删除。offscreen ack rejection 用例核实树上已有(offscreen.test.ts:122-146),无需新增 | b655ecf |
+| Minor ui/desktop | MdSwitch onChange 末尾回写 DOM checked;saveConflictBackup 契约统一 (key,bytes)(5 源文件+测试);desktopShell 两注释如实化;storeAccess dispose 逐项 try/catch(补 3 用例);dirOverride 死参数删;MiniApp 行号注释清理 | 18d28f8 |
+| popup 包体(待验证项) | 基线 24ad8a1 popup chunk 11222 B vs 当前 10074 B,反而略小约 1.1 kB,chunk 数相同(20),无回归 | — |
+
+评审 Minor 中按裁定**不修**(评审员明确建议保持/留观,修复属退化或与旧版一致):os sink 滚动删除多 N-1 次 IPC(等价且对 token 失效更鲁棒);手动同步排队期「排队中」反馈(影响极小,留观;如需可后续加);卡片常量 setup 期取词不随 locale 切换(与旧一致);host/** 覆盖率盲区(vitest.config 已声明,收紧 CI 覆盖率时处理);release_policy default_true 单行函数(C6 裁定产物);M2 源码改动混入 docs 提交(历史已发生,正文有披露);cleanup-design F10/F1 落点回标与 09-26 记录「受阻」括注(历史文档不回改,本文件已记录)。
+
+遗留待办:①A2 决策;②场景 6 第四组(shortcutToggleMini)真机补验;③如 A2 选挂账则 backlog 登记一行。
+
