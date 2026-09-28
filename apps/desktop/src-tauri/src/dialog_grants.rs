@@ -21,17 +21,27 @@ const GRANT_CAP: usize = 16;
 /// 跨会话授权文件（AppData 下：目录对话框登记时后端写入，启动时装载）
 const GRANTS_FILE: &str = "dialog_grants.json";
 
-/** 对话框授权登记：token（OS CSPRNG 随机，不可预测）→ canonical 目录。
+/// 登记来源（B1 持久化边界）：Dir=目录对话框（备份源目录，跨会话落盘）；
+/// File=文件对话框父目录（导出/恢复/导入，仅会话内、不落盘）
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GrantSource {
+    Dir,
+    File,
+}
+
+/** 对话框授权登记：token（OS CSPRNG 随机，不可预测）→ canonical 目录 + 来源。
  *  跨会话说明：备份源目录的自动/手动备份在重启后仍需静默写盘，无法要求每次重弹对话框，
  *  故 pick_dir_os 登记时把目录持久化到 GRANTS_FILE、启动时装载。诚实边界：该文件位于
  *  webview 可写的 AppData（fs:allow-appdata-write-recursive），被持久化 XSS 污染的下一个
  *  会话可借篡改该文件登记任意目录——跨会话授权弱于本会话对话框登记；本设计消除的是
- *  运行中会话「自证参数直通任意路径」的读/写/删原语。文件对话框（导出/恢复/导入）只在
- *  会话内登记，不落盘。 */
+ *  运行中会话「自证参数直通任意路径」的读/写/删原语。持久化范围（B1）：仅 Dir 来源
+ *  （目录对话框登记项）落盘——persist/load 均按来源过滤，磁盘格式保持纯字符串数组
+ *  （装载项一律按 Dir 来源登记，旧文件天然兼容）；File 来源（文件对话框登记的父目录）
+ *  只在会话内可用，不落盘。 */
 #[derive(Default)]
 pub struct DialogGrants {
     // 简易 LRU：front=最旧（登记/命中序），容量 GRANT_CAP
-    entries: Mutex<Vec<(String, std::path::PathBuf)>>,
+    entries: Mutex<Vec<(String, std::path::PathBuf, GrantSource)>>,
 }
 
 fn random_token() -> String {
@@ -41,30 +51,37 @@ fn random_token() -> String {
 }
 
 impl DialogGrants {
-    /** 登记目录（须已 canonicalize）：同目录复用既有 token（刷新为最近使用），超限逐出最旧 */
-    fn register(&self, canonical: std::path::PathBuf) -> String {
+    /** 登记目录（须已 canonicalize）：同目录复用既有 token（刷新为最近使用），超限逐出最旧。
+     *  来源只升不降：同目录先经目录对话框授权（Dir，已落盘）后再被文件对话框复登记（File）
+     *  不降级，已持久化授权保持重启可装载 */
+    fn register(&self, canonical: std::path::PathBuf, source: GrantSource) -> String {
         let mut g = self.entries.lock().unwrap();
-        if let Some(i) = g.iter().position(|(_, d)| *d == canonical) {
-            let (token, dir) = g.remove(i);
-            g.push((token.clone(), dir));
+        if let Some(i) = g.iter().position(|(_, d, _)| *d == canonical) {
+            let (token, dir, prev) = g.remove(i);
+            let merged = if prev == GrantSource::Dir {
+                GrantSource::Dir
+            } else {
+                source
+            };
+            g.push((token.clone(), dir, merged));
             return token;
         }
         if g.len() >= GRANT_CAP {
             g.remove(0);
         }
         let token = random_token();
-        g.push((token.clone(), canonical));
+        g.push((token.clone(), canonical, source));
         token
     }
 
     /** token 反查登记目录（命中刷新为最近使用）；未知 token 拒绝 */
     fn resolve(&self, token: &str) -> Result<std::path::PathBuf, String> {
         let mut g = self.entries.lock().unwrap();
-        let Some(i) = g.iter().position(|(t, _)| t == token) else {
+        let Some(i) = g.iter().position(|(t, _, _)| t == token) else {
             return Err("unknown dir token".into());
         };
-        let (t, d) = g.remove(i);
-        g.push((t, d.clone()));
+        let (t, d, s) = g.remove(i);
+        g.push((t, d.clone(), s));
         Ok(d)
     }
 
@@ -74,16 +91,18 @@ impl DialogGrants {
             .lock()
             .unwrap()
             .iter()
-            .find(|(_, d)| d == canonical)
-            .map(|(t, _)| t.clone())
+            .find(|(_, d, _)| d == canonical)
+            .map(|(t, _, _)| t.clone())
     }
 
-    fn canonical_dirs(&self) -> Vec<std::path::PathBuf> {
+    /// 仅 Dir 来源目录（persist_grants 序列化的唯一来源：File 来源项仅会话内，不落盘）
+    fn persistable_dirs(&self) -> Vec<std::path::PathBuf> {
         self.entries
             .lock()
             .unwrap()
             .iter()
-            .map(|(_, d)| d.clone())
+            .filter(|(_, _, s)| *s == GrantSource::Dir)
+            .map(|(_, d, _)| d.clone())
             .collect()
     }
 }
@@ -92,7 +111,23 @@ fn grants_store_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     app.path().app_data_dir().ok().map(|d| d.join(GRANTS_FILE))
 }
 
-/// 启动装载：持久化授权 → 会话登记（目录已不存在则丢弃）
+/// 持久化装载核心（B3 抽纯函数，不依赖 AppHandle，便于单测）：JSON 字符串数组 → 逐项
+/// canonicalize（回调注入） → 过滤失败项（目录已删/不可达）。仅接受字符串数组——磁盘格式
+/// 自始即 Vec<String>，旧文件天然兼容，装载项一律按 Dir 来源登记；非数组/元素类型不符/
+/// 解析失败返回空（与既有 load_grants 静默忽略口径一致）
+fn parse_persisted_dirs(
+    text: &str,
+    canonicalize: impl Fn(&str) -> std::io::Result<std::path::PathBuf>,
+) -> Vec<std::path::PathBuf> {
+    let Ok(dirs) = serde_json::from_str::<Vec<String>>(text) else {
+        return Vec::new();
+    };
+    dirs.into_iter()
+        .filter_map(|d| canonicalize(&d).ok())
+        .collect()
+}
+
+/// 启动装载：持久化授权 → 会话登记（目录已不存在则丢弃；装载项一律 Dir 来源）
 pub fn load_grants(app: &tauri::AppHandle) {
     let Some(p) = grants_store_path(app) else {
         return;
@@ -100,23 +135,20 @@ pub fn load_grants(app: &tauri::AppHandle) {
     let Ok(text) = std::fs::read_to_string(p) else {
         return;
     };
-    let Ok(dirs) = serde_json::from_str::<Vec<String>>(&text) else {
-        return;
-    };
     let state = app.state::<DialogGrants>();
-    for d in dirs {
-        if let Ok(c) = std::fs::canonicalize(&d) {
-            state.register(c);
-        }
+    for c in parse_persisted_dirs(&text, |d| std::fs::canonicalize(d)) {
+        state.register(c, GrantSource::Dir);
     }
 }
 
-/// 目录登记后的持久化（best-effort：写失败不影响本会话授权，仅影响重启后的自动备份）
+/// 目录登记后的持久化（best-effort：写失败不影响本会话授权，仅影响重启后的自动备份）。
+/// 只序列化 Dir 来源项（B1）：文件对话框登记项仅会话内，不随任一 grant_dir 触发的持久化落盘
 fn persist_grants(app: &tauri::AppHandle) {
     let Some(p) = grants_store_path(app) else {
         return;
     };
-    if let Ok(json) = serde_json::to_string_pretty(&app.state::<DialogGrants>().canonical_dirs()) {
+    if let Ok(json) = serde_json::to_string_pretty(&app.state::<DialogGrants>().persistable_dirs())
+    {
         // 原子写（同审查 I-5 口径）：grants 文件与 settings.json 同级，写一半崩溃不再留半截 JSON
         let _ = write_text_atomic(&p, &json);
     }
@@ -142,6 +174,21 @@ fn ensure_within(path: &std::path::Path, allowed_dir: &std::path::Path) -> Resul
         return Err("path outside allowed dir".into());
     }
     Ok(())
+}
+
+/// 叶子 symlink/reparse 判定（B2 叶子穿透防护；meta 须来自 symlink_metadata，不跟随末尾组件）。
+/// Windows 以 FILE_ATTRIBUTE_REPARSE_POINT（0x400）判定，覆盖 symlink/junction 等一切
+/// reparse point（Rust 的 FileType::is_symlink 对 junction 不恒真）；Unix 以 is_symlink 判定
+fn leaf_is_reparse(meta: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        meta.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    {
+        meta.file_type().is_symlink()
+    }
 }
 
 // ---------- 扩展名白名单（R11 单点：5 个文件命令共用 ensure_extension，白名单按命令用途分组） ----------
@@ -175,13 +222,20 @@ fn import_byte_extensions() -> Vec<&'static str> {
 
 /// 扩展名白名单守护（R11 抽取，5 个文件命令共用）：exts 任一后缀命中即放行，否则报 msg。
 /// 仅守护骨架（白名单步骤）——写盘通道各命令保持有意不同（text=write_text_atomic 原子写、
-/// bytes=std::fs::write 直写，不得统一）。大小写敏感性由调用方以传入形态决定：
-/// 读备份传原样（既有大小写敏感语义），导出/导入组传 to_lowercase（既有大小写不敏感语义）
-fn ensure_extension(path: &str, exts: &[&str], msg: &str) -> Result<(), String> {
+/// bytes=std::fs::write 直写，不得统一）。大小写语义内聚为两个包装（Minor-1）：exact 原样
+/// 比较（读备份既有大小写敏感语义），ci 内部归一小写后比较（导出/导入组既有大小写不敏感
+/// 语义），调用点按命令用途二选一，不再依赖调用方自行传入 lowercase 形态
+fn ensure_extension_exact(path: &str, exts: &[&str], msg: &str) -> Result<(), String> {
     if !exts.iter().any(|ext| path.ends_with(ext)) {
         return Err(msg.into());
     }
     Ok(())
+}
+
+/// 大小写不敏感包装：路径 to_ascii_lowercase 后按 exact 比较（扩展名白名单均为 ASCII，
+/// 后缀命中只发生在 ASCII 段，非 ASCII 文件名字符不受归一影响）
+fn ensure_extension_ci(path: &str, exts: &[&str], msg: &str) -> Result<(), String> {
+    ensure_extension_exact(&path.to_ascii_lowercase(), exts, msg)
 }
 
 // ---------- 对话框命令（F4：授权源头收归后端）----------
@@ -201,10 +255,12 @@ pub struct DialogFilter {
     extensions: Vec<String>,
 }
 
-/// 登记选中「目录」本身（备份源目录），并持久化跨会话授权
+/// 登记选中「目录」本身（备份源目录，Dir 来源），并持久化跨会话授权
 fn grant_dir(app: &tauri::AppHandle, dir: std::path::PathBuf) -> Result<PickedPath, String> {
     let canonical = std::fs::canonicalize(&dir).map_err(|e| e.to_string())?;
-    let token = app.state::<DialogGrants>().register(canonical);
+    let token = app
+        .state::<DialogGrants>()
+        .register(canonical, GrantSource::Dir);
     persist_grants(app);
     Ok(PickedPath {
         dir_token: token,
@@ -212,7 +268,7 @@ fn grant_dir(app: &tauri::AppHandle, dir: std::path::PathBuf) -> Result<PickedPa
     })
 }
 
-/// 登记选中「文件所在父目录」（导出保存/打开读取为单次会话流，不落盘）。
+/// 登记选中「文件所在父目录」（导出保存/打开读取为单次会话流，File 来源不落盘）。
 /// save 选中的新文件尚不存在，须对父目录 canonicalize（对话框保证父目录已存在）
 fn grant_file_parent(
     app: &tauri::AppHandle,
@@ -223,7 +279,9 @@ fn grant_file_parent(
         .ok_or_else(|| "invalid path: no parent".to_string())?
         .to_path_buf();
     let canonical = std::fs::canonicalize(&dir).map_err(|e| e.to_string())?;
-    let token = app.state::<DialogGrants>().register(canonical);
+    let token = app
+        .state::<DialogGrants>()
+        .register(canonical, GrantSource::File);
     Ok(PickedPath {
         dir_token: token,
         path: file.to_string_lossy().to_string(),
@@ -355,14 +413,22 @@ pub fn list_backup_files_os(
 
 /// 读取守护链公共段（is_file + dirToken 反查登记目录遏制，canonicalize 双侧防逃逸），
 /// 白名单由各命令按用途前置（read_text 大小写敏感、import 组大小写不敏感，语义各自保留），
-/// 返回经校验的路径供读取
+/// 返回经校验的路径供读取。
+/// B2 叶子穿透防护：is_file 改以 symlink_metadata 判定（不跟随末尾组件），叶子为
+/// symlink/reparse point 一律按「路径越界」同类错误拒绝（不读穿目录外目标、不泄漏目标
+/// 信息）。TOCTOU 诚实边界：canonicalize(parent) 与最终 read 之间窗口仍在，本检查收窄
+/// 窗口而非完全关闭 TOCTOU（不引入 openat 复杂度）
 fn read_granted_file_core(
     grants: &DialogGrants,
     path: &str,
     dir_token: &str,
 ) -> Result<std::path::PathBuf, String> {
     let p = std::path::Path::new(path);
-    if !p.is_file() {
+    let meta = std::fs::symlink_metadata(p).map_err(|_| "not a file".to_string())?;
+    if leaf_is_reparse(&meta) {
+        return Err("path outside allowed dir".into());
+    }
+    if !meta.is_file() {
         return Err("not a file".into());
     }
     ensure_within(p, &grants.resolve(dir_token)?)?;
@@ -376,7 +442,7 @@ fn read_text_file_granted(
     path: &str,
     dir_token: &str,
 ) -> Result<String, String> {
-    ensure_extension(path, &[BACKUP_EXTENSION], "invalid backup file extension")?;
+    ensure_extension_exact(path, &[BACKUP_EXTENSION], "invalid backup file extension")?;
     let p = read_granted_file_core(grants, path, dir_token)?;
     std::fs::read_to_string(p).map_err(|e| e.to_string())
 }
@@ -402,11 +468,7 @@ fn write_text_file_granted(
     // 扩展名白名单：本命令用途是备份导出（.totpbackup）与文本导出（批① §2.3：otpauth 文本
     // .txt / Aegis JSON .json，均经 pick_save_file_os 对话框授权）；CSP 为 null 的现状下，
     // 任意路径+任意内容写入等于 XSS 任意文件覆写原语，故仍限定扩展名集合
-    ensure_extension(
-        &path.to_lowercase(),
-        &EXPORT_EXTENSIONS,
-        "invalid export file extension",
-    )?;
+    ensure_extension_ci(&path, &EXPORT_EXTENSIONS, "invalid export file extension")?;
     let p = std::path::Path::new(&path);
     if p.is_dir() {
         return Err("path is a directory".into());
@@ -441,16 +503,21 @@ fn write_bytes_file_granted(
     if path.is_empty() {
         return Err("empty path".into());
     }
-    ensure_extension(
-        &path.to_lowercase(),
-        &IMAGE_EXTENSIONS,
-        "invalid image file extension",
-    )?;
+    ensure_extension_ci(&path, &IMAGE_EXTENSIONS, "invalid image file extension")?;
     let p = std::path::Path::new(&path);
     if p.is_dir() {
         return Err("path is a directory".into());
     }
     ensure_within(p, &grants.resolve(dir_token)?)?;
+    // B2 叶子穿透防护：直写通道跟随 symlink 会覆写目录外目标，叶子为 symlink/reparse point
+    // 一律按「路径越界」同类错误拒绝（text 通道 rename 落盘替换链接本身、无此穿透，保持
+    // 不动）。TOCTOU 诚实边界：与 ensure_within 的 canonicalize 之间窗口仍在，本检查收窄
+    // 窗口而非完全关闭；路径不存在（新建文件）时 symlink_metadata 失败照常放行
+    if let Ok(meta) = std::fs::symlink_metadata(&path) {
+        if leaf_is_reparse(&meta) {
+            return Err("path outside allowed dir".into());
+        }
+    }
     // 直写通道（与 text 侧原子写有意不同）：PNG 等二进制不经 UTF-8 管道，rename 亦无增益
     std::fs::write(path, contents).map_err(|e| e.to_string())
 }
@@ -476,8 +543,8 @@ fn read_import_file_granted(
     path: &str,
     dir_token: &str,
 ) -> Result<String, String> {
-    ensure_extension(
-        &path.to_lowercase(),
+    ensure_extension_ci(
+        path,
         &IMPORT_TEXT_EXTENSIONS,
         "invalid import file extension",
     )?;
@@ -502,8 +569,8 @@ fn read_import_file_bytes_granted(
     path: &str,
     dir_token: &str,
 ) -> Result<Vec<u8>, String> {
-    ensure_extension(
-        &path.to_lowercase(),
+    ensure_extension_ci(
+        path,
         &import_byte_extensions(),
         "invalid import file extension",
     )?;
@@ -563,7 +630,7 @@ mod tests {
         let dir = std::env::temp_dir().join("totp_grants_roundtrip");
         std::fs::create_dir_all(&dir).unwrap();
         let canonical = std::fs::canonicalize(&dir).unwrap();
-        let token = g.register(canonical.clone());
+        let token = g.register(canonical.clone(), GrantSource::Dir);
         assert_eq!(g.resolve(&token).unwrap(), canonical);
         assert_eq!(g.token_for(&canonical).as_deref(), Some(token.as_str()));
         // 未登记目录无 token 可反查
@@ -576,7 +643,7 @@ mod tests {
         let g = DialogGrants::default();
         let dir = std::env::temp_dir().join("totp_grants_unknown");
         std::fs::create_dir_all(&dir).unwrap();
-        g.register(std::fs::canonicalize(&dir).unwrap());
+        g.register(std::fs::canonicalize(&dir).unwrap(), GrantSource::Dir);
         assert!(g.resolve("forged-token").is_err());
         assert!(g.resolve("").is_err());
         std::fs::remove_dir_all(&dir).ok();
@@ -588,10 +655,10 @@ mod tests {
         let dir = std::env::temp_dir().join("totp_grants_dedupe");
         std::fs::create_dir_all(&dir).unwrap();
         let canonical = std::fs::canonicalize(&dir).unwrap();
-        let t1 = g.register(canonical.clone());
-        let t2 = g.register(canonical.clone());
+        let t1 = g.register(canonical.clone(), GrantSource::Dir);
+        let t2 = g.register(canonical.clone(), GrantSource::Dir);
         assert_eq!(t1, t2);
-        assert_eq!(g.canonical_dirs().len(), 1);
+        assert_eq!(g.persistable_dirs().len(), 1);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -605,14 +672,119 @@ mod tests {
         for i in 0..=GRANT_CAP {
             let d = base.join(format!("d{i}"));
             std::fs::create_dir_all(&d).unwrap();
-            tokens.push(g.register(std::fs::canonicalize(&d).unwrap()));
+            tokens.push(g.register(std::fs::canonicalize(&d).unwrap(), GrantSource::Dir));
         }
         assert!(g.resolve(&tokens[0]).is_err(), "最旧授权必须被 LRU 逐出");
         assert!(
             g.resolve(&tokens[GRANT_CAP]).is_ok(),
             "最新授权必须仍在登记"
         );
-        assert_eq!(g.canonical_dirs().len(), GRANT_CAP);
+        assert_eq!(g.persistable_dirs().len(), GRANT_CAP);
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    // ---- B3：load_grants 持久化装载核心（parse_persisted_dirs 纯函数）单测 ----
+
+    #[test]
+    fn parse_persisted_dirs_keeps_existing_and_filters_missing() {
+        let base = std::env::temp_dir().join("totp_parse_grants");
+        let d = base.join("ok");
+        std::fs::create_dir_all(&d).unwrap();
+        let canon = std::fs::canonicalize(&d).unwrap();
+        // 正常数组：逐项 canonicalize 归一保留
+        let ok = serde_json::to_string(&vec![d.to_string_lossy().to_string()]).unwrap();
+        assert_eq!(
+            parse_persisted_dirs(&ok, |p| std::fs::canonicalize(p)),
+            vec![canon.clone()]
+        );
+        // 含非法项（目录已删/不可达）：失败项被过滤，成功项保留
+        let mixed = serde_json::to_string(&vec![
+            base.join("gone").to_string_lossy().to_string(),
+            d.to_string_lossy().to_string(),
+        ])
+        .unwrap();
+        assert_eq!(
+            parse_persisted_dirs(&mixed, |p| std::fs::canonicalize(p)),
+            vec![canon]
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn parse_persisted_dirs_rejects_non_string_array_and_empty() {
+        // 非数组/元素类型不符/解析失败：整体拒绝（静默返回空，与 load_grants 忽略口径一致）
+        for bad in [r#"{"dir":"C:/x"}"#, r#""C:/x""#, "[1,2]", "null"] {
+            assert!(
+                parse_persisted_dirs(bad, |p| std::fs::canonicalize(p)).is_empty(),
+                "非字符串数组必须拒绝: {bad}"
+            );
+        }
+        // 空串/空数组幂等：装载结果为空，不报错
+        assert!(parse_persisted_dirs("", |p| std::fs::canonicalize(p)).is_empty());
+        assert!(parse_persisted_dirs("[]", |p| std::fs::canonicalize(p)).is_empty());
+    }
+
+    // ---- B1/B3 协同：持久化 roundtrip——Dir 来源落盘并可装载，File 来源仅会话内 ----
+
+    #[test]
+    fn persist_roundtrip_keeps_dir_source_drops_file_source() {
+        let base = std::env::temp_dir().join("totp_grants_roundtrip_src");
+        let d1 = base.join("d1");
+        let d2 = base.join("d2");
+        std::fs::create_dir_all(&d1).unwrap();
+        std::fs::create_dir_all(&d2).unwrap();
+        let c1 = std::fs::canonicalize(&d1).unwrap();
+        let c2 = std::fs::canonicalize(&d2).unwrap();
+        let g = DialogGrants::default();
+        g.register(c1.clone(), GrantSource::Dir);
+        g.register(c2.clone(), GrantSource::File);
+        // persist：仅序列化 Dir 来源项（模拟 persist_grants 的序列化段），写盘后读回
+        let p = base.join(GRANTS_FILE);
+        std::fs::write(
+            &p,
+            serde_json::to_string_pretty(&g.persistable_dirs()).unwrap(),
+        )
+        .unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        // Windows canonical 路径带 \\?\ 前缀与反斜杠，JSON 转义后子串匹配不成立，按解析值比较
+        let persisted: Vec<String> = serde_json::from_str(&text).unwrap();
+        assert!(
+            persisted.iter().any(|s| std::path::Path::new(s) == c1),
+            "Dir 来源项必须落盘: {persisted:?}"
+        );
+        assert!(
+            !persisted.iter().any(|s| std::path::Path::new(s) == c2),
+            "File 来源项不得落盘"
+        );
+        // load：装载项一律 Dir 来源（磁盘格式=纯字符串数组，旧文件天然兼容）
+        let g2 = DialogGrants::default();
+        for c in parse_persisted_dirs(&text, |s| std::fs::canonicalize(s)) {
+            g2.register(c, GrantSource::Dir);
+        }
+        assert_eq!(g2.persistable_dirs(), vec![c1.clone()]);
+        assert!(g2.token_for(&c1).is_some(), "Dir 来源项重启后可重取句柄");
+        assert!(
+            g2.token_for(&c2).is_none(),
+            "File 来源项不得经持久化装载复活"
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    // B1 来源标记协同：同目录复登记来源只升不降——File→Dir 升级（目录对话框明确授权后落盘），
+    // Dir→File 不降级（已落盘授权保持重启可装载）
+    #[test]
+    fn grants_source_upgrade_only_never_downgrades() {
+        let base = std::env::temp_dir().join("totp_grants_source_merge");
+        let d = base.join("d");
+        std::fs::create_dir_all(&d).unwrap();
+        let c = std::fs::canonicalize(&d).unwrap();
+        let g = DialogGrants::default();
+        g.register(c.clone(), GrantSource::File);
+        assert!(g.persistable_dirs().is_empty(), "File 来源不落盘");
+        g.register(c.clone(), GrantSource::Dir);
+        assert_eq!(g.persistable_dirs(), vec![c.clone()], "File→Dir 升级后落盘");
+        g.register(c.clone(), GrantSource::File);
+        assert_eq!(g.persistable_dirs(), vec![c], "Dir→File 不降级");
         std::fs::remove_dir_all(&base).ok();
     }
 
@@ -622,7 +794,7 @@ mod tests {
         let allowed = base.join("allowed");
         std::fs::create_dir_all(&allowed).unwrap();
         let grants = DialogGrants::default();
-        let token = grants.register(std::fs::canonicalize(&allowed).unwrap());
+        let token = grants.register(std::fs::canonicalize(&allowed).unwrap(), GrantSource::Dir);
         let name = "vault-20260916-120000.totpbackup";
         let target = allowed.join(name);
         std::fs::write(&target, "x").unwrap();
@@ -648,7 +820,7 @@ mod tests {
         let allowed = base.join("allowed");
         std::fs::create_dir_all(&allowed).unwrap();
         let grants = DialogGrants::default();
-        let token = grants.register(std::fs::canonicalize(&allowed).unwrap());
+        let token = grants.register(std::fs::canonicalize(&allowed).unwrap(), GrantSource::Dir);
         // 登记目录内合法备份名：写入成功
         let target = allowed.join("vault-20260916-120000.totpbackup");
         write_text_file_granted(
@@ -702,7 +874,7 @@ mod tests {
         let allowed = base.join("allowed");
         std::fs::create_dir_all(&allowed).unwrap();
         let grants = DialogGrants::default();
-        let token = grants.register(std::fs::canonicalize(&allowed).unwrap());
+        let token = grants.register(std::fs::canonicalize(&allowed).unwrap(), GrantSource::Dir);
         // 登记目录内 .png（大小写不敏感）：字节写入成功且内容保真
         let png = allowed.join("totp-qr-sheet.PNG");
         let bytes: Vec<u8> = vec![0x89, 0x50, 0x4E, 0x47, 0x00, 0xFF];
@@ -731,6 +903,73 @@ mod tests {
         std::fs::remove_dir_all(&base).ok();
     }
 
+    /// 创建指向 target 的文件 symlink；无特权环境（Windows 非开发者模式）创建失败返回
+    /// false，调用方跳过用例（Unix 恒可建）
+    fn create_file_symlink(target: &std::path::Path, link: &std::path::Path) -> bool {
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_file(target, link).is_ok()
+        }
+        #[cfg(not(windows))]
+        {
+            std::os::unix::fs::symlink(target, link).is_ok()
+        }
+    }
+
+    // B2 叶子穿透防护：授权目录内被植入的 symlink 叶子不得穿透——读通道
+    // （read_granted_file_core，覆盖 read_text/import/bytes 三读命令）与 bytes 直写通道对
+    // reparse 叶子一律按「路径越界」同类错误拒绝，目录外目标不被读取/覆写。
+    // Windows 无特权（非开发者模式）创建 symlink 常失败，创建失败即跳过
+    #[test]
+    fn symlink_leaf_inside_granted_dir_rejected_for_read_and_direct_write() {
+        let base = std::env::temp_dir().join("totp_symlink_leaf_test");
+        let allowed = base.join("allowed");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&allowed).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let grants = DialogGrants::default();
+        let token = grants.register(std::fs::canonicalize(&allowed).unwrap(), GrantSource::Dir);
+
+        // 读通道：allowed 内 symlink 叶子（白名单内 .totpbackup 名）指向目录外 secret → 拒绝
+        let secret = outside.join("vault-20260916-120000.totpbackup");
+        std::fs::write(&secret, "secret").unwrap();
+        let read_link = allowed.join("vault-20260916-120000.totpbackup");
+        if !create_file_symlink(&secret, &read_link) {
+            eprintln!("skip symlink_leaf 用例：symlink 创建无特权");
+            std::fs::remove_dir_all(&base).ok();
+            return;
+        }
+        assert_eq!(
+            read_text_file_granted(&grants, read_link.to_str().unwrap(), &token).unwrap_err(),
+            "path outside allowed dir",
+            "symlink 叶子必须按路径越界拒绝，不得读穿"
+        );
+        // bytes 直写通道：allowed 内 .png symlink 指向目录外 payload → 拒绝且目标不被覆写
+        let payload = outside.join("payload.png");
+        std::fs::write(&payload, b"orig").unwrap();
+        let png_link = allowed.join("qr.png");
+        assert!(
+            create_file_symlink(&payload, &png_link),
+            "同环境第二个 symlink 应同样可建"
+        );
+        assert_eq!(
+            write_bytes_file_granted(
+                &grants,
+                png_link.to_str().unwrap().into(),
+                vec![1, 2, 3],
+                &token,
+            )
+            .unwrap_err(),
+            "path outside allowed dir"
+        );
+        assert_eq!(
+            std::fs::read(&payload).unwrap(),
+            b"orig",
+            "目录外目标不得被穿透覆写"
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
+
     // 审查 I12（F4 重写）：授权基准不再有 allowed_dir IPC 入参；等价保障为「非规范形态的
     // 目录路径（大小写差异/\\?\ verbatim 前缀，对话框或持久化值可能携带）canonicalize 后
     // 与登记目录归一，文件路径同样归一命中」。仅 Windows 可跑（依赖 NTFS 大小写不敏感与 \\?\ 语义）
@@ -745,8 +984,8 @@ mod tests {
         assert!(canonical.to_str().unwrap().starts_with(r"\\?\"));
         // 形态一：小写形态登记（canonicalize 归一为磁盘实际大小写）与真实形态为同一登记
         let lower = std::fs::canonicalize(allowed.to_str().unwrap().to_lowercase()).unwrap();
-        let t_lower = grants.register(lower);
-        let t_canonical = grants.register(canonical.clone());
+        let t_lower = grants.register(lower, GrantSource::Dir);
+        let t_canonical = grants.register(canonical.clone(), GrantSource::Dir);
         assert_eq!(t_lower, t_canonical, "同目录不同大小写形态归一为同一登记");
         // 形态二：verbatim 形态文件路径删除命中同一登记（ensure_within canonicalize(父) 归一）；
         // canonical 本身即 \\?\ 前缀形态，直接拼子路径构造 verbatim 文件路径
@@ -773,7 +1012,7 @@ mod tests {
             std::fs::write(base.join(n), "x").unwrap();
         }
         let grants = DialogGrants::default();
-        let token = grants.register(std::fs::canonicalize(&base).unwrap());
+        let token = grants.register(std::fs::canonicalize(&base).unwrap(), GrantSource::Dir);
         let names = list_backup_files_granted(&grants, &token).unwrap();
         assert_eq!(
             names,
@@ -800,7 +1039,7 @@ mod tests {
         let p = allowed.join(name);
         std::fs::write(&p, contents).unwrap();
         let grants = DialogGrants::default();
-        let token = grants.register(std::fs::canonicalize(&allowed).unwrap());
+        let token = grants.register(std::fs::canonicalize(&allowed).unwrap(), GrantSource::Dir);
         (grants, p.to_str().unwrap().to_string(), token)
     }
 
@@ -894,7 +1133,7 @@ mod tests {
         let allowed = base.join("allowed");
         std::fs::create_dir_all(&allowed).unwrap();
         let grants = DialogGrants::default();
-        let token = grants.register(std::fs::canonicalize(&allowed).unwrap());
+        let token = grants.register(std::fs::canonicalize(&allowed).unwrap(), GrantSource::Dir);
         for e in EXTS {
             let text_path = allowed.join(format!("text-f{e}"));
             assert_eq!(
@@ -938,6 +1177,24 @@ mod tests {
             read_import_file_granted(&g2, &p2, &t2).is_ok(),
             "导入组白名单必须保持大小写不敏感"
         );
+    }
+
+    // Minor-1：ensure_extension 两包装的大小写语义内聚锁定——exact 原样比较（读备份既有
+    // 大小写敏感语义），ci 内部归一小写（导出/导入组既有大小写不敏感语义）；大写扩展名
+    // 在 ci 放行、在 exact 拒绝，非白名单后缀两包装同拒
+    #[test]
+    fn ensure_extension_wrappers_lock_case_semantics() {
+        const EXTS: [&str; 1] = [".txt"];
+        assert!(ensure_extension_exact("a.txt", &EXTS, "no").is_ok());
+        assert!(
+            ensure_extension_exact("a.TXT", &EXTS, "no").is_err(),
+            "exact 包装保持大小写敏感"
+        );
+        assert!(
+            ensure_extension_ci("a.TXT", &EXTS, "no").is_ok(),
+            "ci 包装对大写扩展名放行"
+        );
+        assert!(ensure_extension_ci("a.exe", &EXTS, "no").is_err());
     }
 
     // 字节组 = 文本组 + 二进制组拼接派生（R11）：以字面量锁定派生源与顺序，防手工罗列回潮
