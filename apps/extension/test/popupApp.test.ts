@@ -51,6 +51,7 @@ vi.mock('../src/store', async () => {
     unsealWithDek: vi.fn(async () => null),
   }
   return {
+    persistFailed: ref(false),
     storageAdapter: { get: vi.fn(async () => null), set: vi.fn(async () => {}), delete: vi.fn(async () => {}) },
     store,
     settings,

@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { buildOtpUri, defaultDigitsFor, getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
-import { BatchPastePanel, createIconStore, EntryForm, iconView, LockScreen, MdButton, MdCheckbox, MdIconButton, MdMenu, MdSegmentedButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, OtpQrDialog, parseUriToEntryData, resolvePopupVisible, SearchBar, TagFilterRow, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
+import { BatchPastePanel, createIconStore, EntryForm, PersistErrorBanner, iconView, LockScreen, MdButton, MdCheckbox, MdIconButton, MdMenu, MdSegmentedButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, OtpQrDialog, parseUriToEntryData, resolvePopupVisible, SearchBar, TagFilterRow, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
 import { ext } from '../../src/extApi'
 import { createExtensionCloudRunner } from '../../src/cloudRunnerFactory'
 import { createFollowScheduler, scheduleClipboardClear } from '../../src/optionsPlatforms'
-import { storageAdapter } from '../../src/store'
+import { persistFailed, storageAdapter } from '../../src/store'
 import {
   addEntryOp, addTagOp, commitSettings, initStore, locked, registerStorageSync, removeEntryOp, settings, store, updateEntryOp, vault,
 } from '../../src/store'
@@ -356,6 +356,8 @@ function cancelAutoClose(): void {
 <template>
   <LockScreen v-if="locked" :store="store" :allow-passkey="false" />
   <main v-else @click="closeContextMenu">
+    <!-- R16⑤（评审 A2 方案 a）：落盘失败常驻告警（锁屏态 store 写路径不可达，仅解锁主体需要） -->
+    <PersistErrorBanner :show="persistFailed" :text="t('app.persistError')" />
     <header>
       <h1>{{ t('popup.title') }}</h1>
       <div class="header-ops">

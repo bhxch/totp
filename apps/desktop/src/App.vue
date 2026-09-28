@@ -2,7 +2,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { StorageAdapter } from '@totp/core'
-import { LockScreen, NavigationShell, type IconStore, type VueStore } from '@totp/ui'
+import { LockScreen, NavigationShell, PersistErrorBanner, type IconStore, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createDesktopAutoChannels } from './autoBackup'
 import { createBackupPlatform, createImportSchemesApi } from './backupPlatform'
@@ -11,7 +11,7 @@ import { createDesktopCopy } from './desktopCopy'
 import McpConsentDialog from './McpConsentDialog.vue'
 import {
   createDesktopApprovalQueue, createDesktopMcpDeps, createDesktopShell, createDevtoolsPlatform, createLegacyMigrations,
-  createMcpConsentFlow, createMcpPlatform, createReleasePlatform, useDesktopI18n,
+  createMcpConsentFlow, createMcpPlatform, createReleasePlatform, persistFailed, useDesktopI18n,
 } from './desktopShell'
 import { createSecurityPlatform } from './securityPlatform'
 import { desktopUaFlags, unlockNamingFor } from './unlockNaming'
@@ -107,6 +107,8 @@ const railActions = [{ get label() { return tr('desktop.hideToTray') }, onClick:
 </script>
 <template>
   <div v-if="copyFailed" class="copy-failed" role="alert">{{ tr('desktop.copyFailed') }}</div>
+  <!-- R16⑤（评审 A2 方案 a）：落盘失败常驻告警，与主体并列不互斥 -->
+  <PersistErrorBanner :show="persistFailed" :text="tr('app.persistError')" />
   <div v-if="loadError && !store" class="error">{{ tr('desktop.loadFailed', { message: loadError }) }}</div>
   <!-- 解锁成功回调补跑迁移（plan16 T14，幂等）：口令/PRF 解锁各路径在 LockScreen 内 emit unlocked -->
   <LockScreen v-else-if="store && locked" :store="store" :dpapi="dpapiOps" @unlocked="runLegacyMigrations" />

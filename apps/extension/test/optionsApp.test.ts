@@ -102,6 +102,7 @@ vi.mock('../src/store', async () => {
   }
   return {
     createExtensionStore: vi.fn(() => hostStore),
+    persistFailed: ref(false),
     storageAdapter: {
       get: vi.fn(async (key: string) => testScope.adapterData[key] ?? null),
       set: vi.fn(async (key: string, value: string) => {

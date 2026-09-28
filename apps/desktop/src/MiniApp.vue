@@ -2,10 +2,10 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { OtpListItem, createIconStore, iconView, useOtpCodes, useTheme, type IconStore, type VueStore } from '@totp/ui'
+import { OtpListItem, PersistErrorBanner, createIconStore, iconView, useOtpCodes, useTheme, type IconStore, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createTauriFs } from './tauriFs'
-import { bootDesktopStore, useDesktopI18n } from './desktopShell'
+import { bootDesktopStore, persistFailed, useDesktopI18n } from './desktopShell'
 import { createCopyAutoHide } from './miniAutoHide'
 import { sortMiniEntries } from './miniSort'
 import { createDesktopCopy } from './desktopCopy'
@@ -34,6 +34,11 @@ async function load() {
     const s = await bootDesktopStore(adapter, {
       windowId: 'mini',
       onLocked: () => { void invoke('clear_stashed_dek').catch(() => {}) },
+      // R16⑤（评审 A2 方案 a）：落盘失败置 persistFailed，模板常驻告警条
+      onPersistError: (e) => {
+        console.error('[store] persist failed:', e)
+        persistFailed.value = true
+      },
     })
     store.value = s
     // D1 i18n 挂载：设置已从盘载入（含 locale）；仅首次生效，重载不再装入
@@ -110,6 +115,8 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
 
 <template>
   <main class="mini">
+    <!-- R16⑤（评审 A2 方案 a）：落盘失败常驻告警，与主体并列不互斥 -->
+    <PersistErrorBanner :show="persistFailed" :text="tr('app.persistError')" />
     <div v-if="store && locked" class="empty">{{ tr('mini.lockedNote') }}</div>
     <div v-else-if="copyFailed" class="copy-error" role="alert">{{ tr('mini.copyFailed') }}</div>
     <div v-else-if="!store || sorted.length === 0" class="empty">{{ tr('mini.empty') }}</div>

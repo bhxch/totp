@@ -1,4 +1,5 @@
 import { SECRET_BAG_KEY } from '@totp/core'
+import { ref } from 'vue'
 import { createVueStore, type VueStore } from '@totp/ui'
 import { createDekSession } from './dekSession'
 import { createChromeStorage } from './storage'
@@ -7,6 +8,10 @@ import { ext } from './extApi'
 
 /** 共享 ext.storage.local 适配器：vault 与 icons 同源（popup/options 各自建 IconStore 用） */
 export const storageAdapter = createChromeStorage()
+
+/** R16⑤ 宿主接线（评审 A2 方案 a）：本上下文任一落盘失败置真——popup/options 各自的
+ *  PersistErrorBanner 数据源。MV3 popup/options 是独立 JS 上下文，模块各有一份实例，天然隔离 */
+export const persistFailed = ref(false)
 
 /** 浏览器同步推送调度：syncEnabled=false 短路不发消息，否则立即 sendMessage。
  *  不在页面端 debounce——popup 发完即可能失焦销毁，1s 合并窗口由 background 承接（SW 收到消息后合并） */
@@ -34,12 +39,15 @@ export function createExtensionStore(
     dekPersist?: { get(): Promise<string | null>; set(dek: Uint8Array): Promise<void>; clear(): Promise<void> }
     /** 自写抑制窗口透传（ui createVueStore 同名参数，默认 500）；测试注入 0 验证远端通知即时生效 */
     selfWriteSuppressMs?: number
+    /** R16⑤ 宿主接线：落盘失败上报（横幅置位见 persistFailed；未传保持 ui 层 console.error 兜底） */
+    onPersistError?: (e: unknown) => void
   } = {},
 ): VueStore {
   const s = createVueStore(storageAdapter, {
     windowId,
     dekPersist: opts.dekPersist,
     selfWriteSuppressMs: opts.selfWriteSuppressMs,
+    onPersistError: opts.onPersistError,
     registerSync: (cb) =>
       ext?.storage.onChanged.addListener((changes, area) => {
         if (area !== 'local') return
@@ -72,8 +80,15 @@ export async function commitSettings(): Promise<void> {
 // ---------- popup 单例 ----------
 /** popup 入口独立 store（windowId='popup'）：与 options 隔离，spec §7 末尾窗口独立解锁。
  *  dekPersist（plan16 T12）：popup 与 options 是不同上下文但共享同一 session 区——
- *  必须传才能读到 options 侧解锁写入的 DEK（「options 解锁 popup 即解锁」） */
-export const store = createExtensionStore('popup', { dekPersist: createDekSession() })
+ *  必须传才能读到 options 侧解锁写入的 DEK（「options 解锁 popup 即解锁」）；
+ *  onPersistError：落盘失败置 persistFailed（popup App.vue 的常驻告警条数据源） */
+export const store = createExtensionStore('popup', {
+  dekPersist: createDekSession(),
+  onPersistError: (e) => {
+    console.error('[store] persist failed:', e)
+    persistFailed.value = true
+  },
+})
 
 export const {
   vault, initStore, registerStorageSync,

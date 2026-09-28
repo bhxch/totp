@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { createAutoRunScheduler } from '@totp/core'
-import { createAppI18n, createIconStore, LockScreen, NavigationShell, useTheme } from '@totp/ui'
+import { createAppI18n, createIconStore, LockScreen, NavigationShell, PersistErrorBanner, useTheme } from '@totp/ui'
 import { getCurrentInstance, onMounted, onUnmounted, ref, watch } from 'vue'
 import { createExtensionCloudRunner } from '../../src/cloudRunnerFactory'
 import { hasLegacyCloudKeys, migrateLegacySources } from '../../src/cloudCredStore'
@@ -11,7 +11,7 @@ import {
 } from '../../src/optionsPlatforms'
 import { createIdleLockWatcher } from '../../src/lockEnforcer'
 import { createDekSession } from '../../src/dekSession'
-import { createExtensionStore, storageAdapter } from '../../src/store'
+import { createExtensionStore, persistFailed, storageAdapter } from '../../src/store'
 
 // spec §7 末尾：options 窗口独立解锁——windowId='options' 与 popup 隔离，各持各的 DEK。
 // plan16 T12：dekPersist 接 ext.storage.session——解锁态 DEK 入会话存储，popup 经共享
@@ -21,6 +21,11 @@ import { createExtensionStore, storageAdapter } from '../../src/store'
 const store = createExtensionStore('options', {
   onCommittedExtra: () => scheduler.notifyChanged(),
   dekPersist: createDekSession(),
+  // R16⑤ 宿主接线（评审 A2 方案 a）：落盘失败置 persistFailed，模板常驻告警条（PersistErrorBanner）
+  onPersistError: (e) => {
+    console.error('[store] persist failed:', e)
+    persistFailed.value = true
+  },
 })
 // D1 i18n 挂载：store 在本组件 setup 创建（页面生命周期内唯一实例），装入当前 app 供全部子组件
 // useI18n/$t。appContext.app 须在 setup 同步段取；装入发生在 setup 中段，本组件自身的 script setup
@@ -195,6 +200,8 @@ const cloudPlatform = createOptionsCloudPlatform({
   <template v-else>
     <div v-if="loadError" class="error">{{ loadError }}</div>
     <template v-else>
+      <!-- R16⑤（评审 A2 方案 a）：落盘失败常驻告警，与主体并列不互斥 -->
+      <PersistErrorBanner :show="persistFailed" :text="tr('app.persistError')" />
       <!-- 迁移提示与主体并列（非互斥）：一次性提示，下次挂载重跑迁移=0 后不再出现；
            legacyNote（审查 I6）：迁移跳过/失败且旧键仍在时提示，成功迁移后消失 -->
       <div v-if="migrateNote" class="migrate-note">{{ migrateNote }}</div>

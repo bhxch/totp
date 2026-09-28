@@ -184,3 +184,24 @@ describe('sync-push 推送调度（scheduleSyncPush 三路径）与具名 commit
     expect(spy).toHaveBeenCalledWith({ type: 'sync-push' })
   })
 })
+
+describe('R16⑤ onPersistError 宿主接线（评审 A2 方案 a）', () => {
+  it('saveVault 落盘失败 → onPersistError 收到错误，队列不传染（后续写恢复）', async () => {
+    installChrome()
+    const onPersistError = vi.fn()
+    const { storageAdapter } = await import('../src/store')
+    const s = createExtensionStore('test', { onPersistError })
+    await s.initStore()
+    await s.enableEncryption('masterpw')
+    const err = new Error('quota exceeded')
+    const spy = vi.spyOn(storageAdapter, 'set').mockRejectedValueOnce(err)
+    await s.addTagOp('t1')
+    await flush()
+    expect(onPersistError).toHaveBeenCalledWith(err)
+    // 队列不传染：恢复 adapter 后下一次写正常提交且不再上报
+    spy.mockRestore()
+    await s.addTagOp('t2')
+    await flush()
+    expect(onPersistError).toHaveBeenCalledTimes(1)
+  })
+})

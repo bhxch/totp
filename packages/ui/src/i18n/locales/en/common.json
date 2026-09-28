@@ -1,6 +1,7 @@
 {
   "app": {
-    "title": "TOTP Code Tool"
+    "title": "TOTP Code Tool",
+    "persistError": "Failed to save data: recent changes may not have been written. Check disk/storage and retry; export a backup if needed."
   },
   "nav": {
     "codes": "Codes",

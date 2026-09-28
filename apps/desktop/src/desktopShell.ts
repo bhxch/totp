@@ -19,7 +19,7 @@ import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { base64ToBytes, bytesToBase64, type StorageAdapter } from '@totp/core'
 import { createAppI18n, createIconStore, createVueStore, useTheme, type DevtoolsConfigDto, type DevtoolsPlatform, type IconStore, type McpConfigWithStatusDto, type McpPlatform, type ReleasePolicyDto, type ReleasePlatform, type VueStore } from '@totp/ui'
-import { getCurrentInstance, shallowRef, type Ref, type ShallowRef } from 'vue'
+import { getCurrentInstance, ref, shallowRef, type Ref, type ShallowRef } from 'vue'
 import type { DesktopAutoRunner } from './autoBackup'
 import { createIdleLockExecutor } from './idleLock'
 import { BACKUP_DIR_KEY, migrateLegacyCloudSources, migrateLegacyLocalSource } from './legacyMigrate'
@@ -66,13 +66,23 @@ export function useDesktopI18n(): DesktopI18n {
   }
 }
 
+/** R16⑤ 宿主接线（评审 A2 方案 a）：本窗口落盘失败置真——App.vue/MiniApp.vue 的
+ *  PersistErrorBanner 数据源。main/mini 是独立 WebView 上下文，模块各有一份实例，天然隔离 */
+export const persistFailed = ref(false)
+
 /** 双窗口 store boot 共享（spec §7 末尾：windowId 独立解锁——DEK/locked 按 windowId 索引）：
- *  createVueStore + initStore 两步序列（原主窗 init 与 mini load 各持一份） */
+ *  createVueStore + initStore 两步序列（原主窗 init 与 mini load 各持一份）；
+ *  onPersistError：落盘失败上报（未传保持 ui 层 console.error 兜底） */
 export async function bootDesktopStore(
   adapter: StorageAdapter,
-  opts: { windowId: string; onCommitted?: () => void; onLocked?: () => void },
+  opts: { windowId: string; onCommitted?: () => void; onLocked?: () => void; onPersistError?: (e: unknown) => void },
 ): Promise<VueStore> {
-  const s = createVueStore(adapter, { windowId: opts.windowId, onCommitted: opts.onCommitted, onLocked: opts.onLocked })
+  const s = createVueStore(adapter, {
+    windowId: opts.windowId,
+    onCommitted: opts.onCommitted,
+    onLocked: opts.onLocked,
+    onPersistError: opts.onPersistError,
+  })
   await s.initStore()
   return s
 }
@@ -302,6 +312,11 @@ export function createDesktopShell(deps: DesktopShellDeps): DesktopShellControll
         windowId: 'main',
         onCommitted: () => deps.auto.notifyChanged(),
         onLocked: () => { void invoke('clear_stashed_dek').catch(() => {}) },
+        // R16⑤（评审 A2 方案 a）：落盘失败置 persistFailed，App.vue 常驻告警条
+        onPersistError: (e) => {
+          console.error('[store] persist failed:', e)
+          persistFailed.value = true
+        },
       })
       // 释放策略联动（spec 批⑧ §7.4-7.5，Task 14）：锁库事件 + 不锁库路径的 DEK 暂存回注。
       // 监听容错注册（safeListen：失败仅该联动降级，不放大为整屏 loadError）
