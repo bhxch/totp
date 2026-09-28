@@ -74,3 +74,22 @@ C5_recovered 全恢复           GPU 3.5–4.4  CPU ~0.9   WS ~464MB
 ```
 
 原始数据：`.temp/perf/samples2.csv`（gitignore 内）；trace：`.temp/perf/trace_on.json`、`trace_off.json`、`trace_switch.json`。
+
+## 修复实施与复测（2026-09-28 当日闭环）
+
+裁定：P0 方案 b（去补间、看齐 Aegis）+ 顺手 reduced-motion；P1 按建议实施；次级项优化。
+commit：`bae01cd`（渲染侧：OtpListItem 去 transition + CloudCard spinner reduced-motion）、`01bc717`（CPU 侧：useOtpCodes 窗口缓存 + hidden 停表 + 慢轮次防重入，三端共用组件直受益；新增行为测试 5 例，ui 1076 / desktop 339 / extension 287 全绿）。
+
+复测（release 重构建，同口径采样）：
+
+| 场景 | GPU 占用 | CPU | 此前 |
+|---|---|---|---|
+| codes 页可见 | **0–0.23%** | ~0.1% | GPU 3.3–4.4% / CPU ~1% |
+| 主窗隐藏（托盘态） | ~0.1% | ~0 | — |
+| 35s trace 主线程活动 | 1.7–5.9 ms/s，均匀无脉冲 | — | 每 30s 单秒脉冲 18–20% |
+
+### 勘误与真机补充发现（修正上文报告）
+
+1. **「codes.value 整表替换改原地更新」复核后无收益，未按原文实施**：Vue 响应式下 remaining 每秒必变，无论替换 Map 实例还是原地 set，全部行组件都必然重新求值，diff 量不变。改为实施 **HMAC 窗口缓存**（code 是「条目引用+窗口号」的纯函数，四类型均成立——totp/steam/yandex 按窗口取码、hotp 恒定）：每秒 CPU 从 O(N) 次 HMAC 降为仅窗口轮换条目重算，才是实质优化（commit 01bc717）。
+2. **Tauri/WebView2 下 `document.visibilityState` 不随窗口 hide 变化（真机实测恒 `visible`）**：P1 的 hidden 停表对 desktop「隐藏到托盘/mini 失焦隐藏」场景不生效，代码保留（extension popup 等浏览器环境有效，且无害）。desktop 隐藏态的低成本实际由两层达成：WebView2 occlusion 停渲染（GPU，profile 已实测）+ 窗口缓存消掉 HMAC 大头（CPU，隐藏态实测 ≈0）。若后续要在 desktop 精确停表，需 Rust 侧窗口可见性事件传播（@tauri-apps/api v2 无 onVisibleChanged，MiniApp.vue 注释有同款记录）。
+3. **30s CPU 脉冲已随 transition 移除消失**（修复后 35s trace 主线程 1.7–5.9ms/s 均匀、D1–D3 三轮采样无脉冲）：原脉冲系 30s 周期任务（调度 tick/备份 hash 等）触发整页失效重绘后，被 60fps 补间渲染管线放大成秒级峰值的表象，非独立性能问题，无需单独修。
