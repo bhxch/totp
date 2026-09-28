@@ -630,6 +630,25 @@ describe('pullSyncIfNewer（经 pullOnce）', () => {
     expect(local.data[VAULT_KEY]).toBe(remotePayload)
   })
 
+  it('远端 settings 为合法 JSON 但非对象（null/数值/数组）→ 放弃 merge 保留本端 settings（B10 姊妹防线）', async () => {
+    const remotePayload = JSON.stringify({ version: 2, entries: [], tags: [], updatedAt: 2 })
+    for (const junk of ['null', '123', '[1,2]']) {
+      const { local } = installChrome(
+        {
+          [VAULT_KEY]: JSON.stringify({ entries: ['old'] }),
+          [SETTINGS_KEY]: JSON.stringify({ syncEnabled: true, theme: 'dark' }),
+        },
+        { ...remotePush(remotePayload, 2), 'sync:settings': junk },
+      )
+
+      await pullSyncIfNewer()
+
+      // 非对象合法 JSON 不得产出残串（{syncEnabled:…}）整键替换本端 settings——按无有效远端状态处理
+      expect(local.data[SETTINGS_KEY]).toBe(JSON.stringify({ syncEnabled: true, theme: 'dark' }))
+      expect(local.data[VAULT_KEY]).toBe(remotePayload) // vault 更新不受 settings 放弃牵连
+    }
+  })
+
   it('远端 settings 合法但本端 settings 读失败 → merge 仍产出,开关位按 false（原 catch 降级语义收窄后）', async () => {
     const remotePayload = JSON.stringify({ version: 2, entries: [], tags: [], updatedAt: 2 })
     const remoteSettings = JSON.stringify({ syncEnabled: true, theme: 'light' })

@@ -57,9 +57,10 @@ vi.mock('@totp/ui', async () => {
 })
 
 import { createMemoryStorage, loadDeviceId, loadSyncState, saveSources, saveSyncState } from '@totp/core'
-import { createExtensionCloudRunner, revSeal } from '../src/cloudRunnerFactory'
+import { createExtensionCloudRunner } from '../src/cloudRunnerFactory'
 import { CONFLICT_COPIES_KEY, listConflictCopies } from '../src/conflictCopies'
 import { createCloudBackend, requestMergeConfirm, setSyncProgress } from '@totp/ui'
+import { createRevSeal } from '@totp/ui/host'
 import { installChromeShim } from './helpers/chromeShim'
 
 // ext 惰性桥：conflictBadge 的 badge 能力探测读 globalThis.chrome（badge 用例现场注入 shim）
@@ -128,19 +129,19 @@ describe('revSeal 三态（spec §1.2 静态保护，锁定态拒落明文）', 
       unsealWithDek: vi.fn(async (sealed: string) => atob(sealed.slice(4))),
     })
     const state = { lastKnownRemoteRev: 5, baseSnapshot: 'SECRET-BASE-SNAPSHOT' }
-    await saveSyncState(memoryAdapter() as never, 'src', state, revSeal(store))
+    await saveSyncState(memoryAdapter() as never, 'src', state, createRevSeal(store))
     const raw = testScope.adapterData['cloudSyncState']!
     expect(raw).toContain('ENC:')
     expect(raw).not.toContain('SECRET-BASE-SNAPSHOT')
-    expect(await loadSyncState(memoryAdapter() as never, 'src', revSeal(store))).toEqual(state)
+    expect(await loadSyncState(memoryAdapter() as never, 'src', createRevSeal(store))).toEqual(state)
   })
 
   it('未启用加密（seal 返回 null）→ 明文回落落盘；unseal 返回 null（非密文）→ 回落原文可解析', async () => {
     const store = makeStore() // sealWithDek/unsealWithDek 缺省 resolve null
     const state = { lastKnownRemoteRev: 2, baseSnapshot: 'PLAIN-BASE' }
-    await saveSyncState(memoryAdapter() as never, 'src', state, revSeal(store))
+    await saveSyncState(memoryAdapter() as never, 'src', state, createRevSeal(store))
     expect(testScope.adapterData['cloudSyncState']!).toContain('PLAIN-BASE') // 明文库明文落盘（与 core 缺省语义对齐）
-    expect(await loadSyncState(memoryAdapter() as never, 'src', revSeal(store))).toEqual(state)
+    expect(await loadSyncState(memoryAdapter() as never, 'src', createRevSeal(store))).toEqual(state)
   })
 
   it('锁定在途（sealWithDek 抛 vault locked）→ 整体失败上抛，绝不回落明文落盘', async () => {
@@ -150,7 +151,7 @@ describe('revSeal 三态（spec §1.2 静态保护，锁定态拒落明文）', 
       }),
     })
     await expect(
-      saveSyncState(memoryAdapter() as never, 'src', { lastKnownRemoteRev: 5, baseSnapshot: 'SECRET' }, revSeal(store)),
+      saveSyncState(memoryAdapter() as never, 'src', { lastKnownRemoteRev: 5, baseSnapshot: 'SECRET' }, createRevSeal(store)),
     ).rejects.toThrow('vault locked')
     expect(testScope.adapterData['cloudSyncState']).toBeUndefined() // 零明文落盘（按下轮重做处理）
   })

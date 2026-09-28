@@ -106,9 +106,9 @@ describe('contextMenus 与 notifications（P3a background 测试面）', () => {
     expect(seen).toEqual([{ menuItemId: 'm1', selectionText: 'x' }])
   })
 
-  it('notifications.create 记录选项并返回 id', () => {
+  it('notifications.create 记录选项并返回 id（MV3 无 callback 重载 Promise 化）', async () => {
     const shim = installChromeShim()
-    expect(shim.notifications.create({ type: 'basic', message: 'm' })).toBe('notification-1')
+    await expect(shim.notifications.create({ type: 'basic', message: 'm' })).resolves.toBe('notification-1')
     expect(shim.notifications.created).toEqual([{ type: 'basic', message: 'm' }])
   })
 })

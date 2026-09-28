@@ -130,8 +130,8 @@ export function createOptionsCloudPlatform(deps: OptionsCloudPlatformDeps): Clou
     // 审查 I11 在 desktop 侧(合并写保留并发本地源);extension 无本地源,core 直写即全量语义
     saveSources: (list: BackupSource[]) => saveSourcesImpl(storageAdapter, list),
     // 冲突副本入 storage.local 列表(spec §4,限 5 份滚动删):不自动触发浏览器下载,
-    // 导出仅由 UI 显式触发;sourceId 仅用于副本命名区分来源
-    saveConflictBackup: (bytes, sourceId) => addConflictCopy(storageAdapter, bytes, sourceId),
+    // 导出仅由 UI 显式触发;key=源 id 仅用于副本命名区分来源(参数序与 runner 侧契约一致)
+    saveConflictBackup: (key, bytes) => addConflictCopy(storageAdapter, bytes, key),
     // T11 冲突区块:副本元数据列表 + 手动导出(唯一下载出口;desktop 无此二能力=不渲染副本区)
     listConflictCopies: async () => (await listConflictCopies(storageAdapter)).map((c) => ({ name: c.name, at: c.at })),
     exportConflictCopy: (name) => exportConflictCopy(storageAdapter, name),

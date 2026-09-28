@@ -119,7 +119,8 @@ export interface ContextMenusShim {
 
 export interface NotificationsShim {
   created: Array<Record<string, unknown>>
-  create(opts: Record<string, unknown>): string
+  /** MV3 无 callback 重载返回 Promise（background.notify 通道 .catch 消费；断言仍走 created 记录） */
+  create(opts: Record<string, unknown>): Promise<string>
 }
 
 export interface OffscreenShim {
@@ -279,7 +280,7 @@ export function installChromeShim(opts: ChromeShimOptions = {}): ChromeShim {
     created: [],
     create(opts) {
       this.created.push(opts)
-      return `notification-${this.created.length}`
+      return Promise.resolve(`notification-${this.created.length}`)
     },
   }
 

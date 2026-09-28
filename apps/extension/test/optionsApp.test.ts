@@ -17,7 +17,9 @@
  *   popup 形态 intervalMs null 不轮询。
  * App.vue 生命周期编排（onMounted 挂载序列/旧数据迁移提示/badge 对账/卸载停 watcher）由文末
  * 「App.vue 挂载冒烟」薄 mount 用例承载（终审修复回补：R4 改写曾删 8 项编排断言且 E2E 文档
- * 未承接，现以薄 mount 保留单测覆盖——壳组件 stub，只验编排不重复平台语义）；runner 装配接线
+ * 未承接，现以薄 mount 保留单测覆盖——壳组件 stub，只验编排不重复平台语义；NavigationShell
+ * 桩保留 props 声明，四 platform 接线另有回归探针（A3：漏传任一 :xxx-platform 时 vue-tsc 无
+ * 信号——props 可选，探针从壳收到的 props 取装配产物断言，漏传即红））；runner 装配接线
  * （deps 逐成员/run 包装）由 cloudRunnerFactory.test.ts 承载，syncScheduler 本体由
  * syncScheduler.test.ts 承载。
  *
@@ -144,7 +146,7 @@ vi.mock('../src/conflictBadge', () => ({ setConflictBadge: testScope.setConflict
 
 // ---- 挂载冒烟专用替身（直测不经这些模块面；本体语义各有直测文件，宿主只断言编排接线）----
 vi.mock('../src/cloudRunnerFactory', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../src/cloudRunnerFactory')>()), // revSeal 保持真实
+  ...(await importOriginal<typeof import('../src/cloudRunnerFactory')>()), // 其余导出保持真实（revSeal 死再导出已删）
   createExtensionCloudRunner: vi.fn(() => ({ run: testScope.runMock })),
 }))
 vi.mock('../src/cloudCredStore', async (importOriginal) => ({
@@ -321,7 +323,7 @@ describe('createOptionsCloudPlatform（host 装配 + extension 差异注入）',
     const { platform } = makePlatform()
 
     // 副本入列表（storage.local conflictCopies 键，限 5 滚动删——本体 conflictCopies.test.ts 已测）
-    const name = await platform.saveConflictBackup!(new Uint8Array([1]), 's1')
+    const name = await platform.saveConflictBackup!('s1', new Uint8Array([1]))
     expect(name).toMatch(/^conflict-s1-\d{8}-\d{6}\.totpbackup$/)
     expect(testScope.adapterData[CONFLICT_COPIES_KEY]).toContain('s1')
     const list = await platform.listConflictCopies!()
@@ -380,6 +382,18 @@ describe('createOptionsSecurityPlatform（host security ops + ext 差异）', ()
     await sec.setPopupCloseDelay!(5000)
     expect(store.settings.popupCloseDelayMs).toBe(5000)
     expect(store.commitSettings).toHaveBeenCalled()
+  })
+
+  it('F5 clipboardNote：Firefox 形态（无 offscreen）注入降级哨兵；Chromium 形态不注入', () => {
+    // 默认 shim 无 offscreen（Firefox 形态）：SecurityCard 依此切换 clipboardHintFirefox 降级说明键
+    const sec = createOptionsSecurityPlatform(makeStore() as never)
+    expect((sec as SecurityPlatform).clipboardNote).toBe('firefox')
+
+    // Chromium 对照：offscreen 能力在 → 无哨兵（30s 清空承诺可用，用默认说明键）
+    shim.restore()
+    shim = installChromeShim({ offscreen: {} })
+    const chromium = createOptionsSecurityPlatform(makeStore() as never)
+    expect((chromium as SecurityPlatform).clipboardNote).toBeUndefined()
   })
 })
 
@@ -628,13 +642,39 @@ import { createTestI18n } from './helpers/i18n'
 import { initStore, locked, registerStorageSync, settings, store as hostStore } from '../src/store'
 import { hasLegacyCloudKeys, migrateLegacySources } from '../src/cloudCredStore'
 
-/** NavigationShell 桩：仅标记 shell 渲染与否（与锁定分支互斥的探针） */
-const NavStub = { name: 'NavigationShellStub', template: '<div data-test="shell" />' }
+/** NavigationShell 桩：保留 props 声明——装配好的四 platform 经 props 取出直测（基线同款：
+ *  App.vue 漏传任一 :xxx-platform 时 vue-tsc 无信号（props 可选），此处即回归探针） */
+const NavStub = {
+  name: 'NavigationShellStub',
+  props: ['store', 'platform', 'securityPlatform', 'syncPlatform', 'cloudPlatform', 'cloudAuthFailed', 'icons', 'schemesApi'],
+  template: '<div data-test="shell" />',
+}
 /** LockScreen 桩：click 即 emit unlocked（解锁回调补跑迁移的触发通道） */
 const LockScreenStub = {
   name: 'LockScreenStub',
   emits: ['unlocked'],
   template: '<button data-test="lock-stub" @click="$emit(\'unlocked\')">lock</button>',
+}
+
+/** 从挂载结果取出壳实际收到的平台 props（探针断言通道，基线同款） */
+function shellOf(w: VueWrapper): {
+  platform: unknown
+  securityPlatform: any
+  syncPlatform: any
+  cloudPlatform: any
+  schemesApi: unknown
+  cloudAuthFailed: boolean
+} {
+  const stub = w.findComponent(NavStub)
+  if (!stub.exists()) throw new Error('shellOf: NavStub not found; html=' + w.html().slice(0, 400))
+  return {
+    platform: stub.props('platform'),
+    securityPlatform: stub.props('securityPlatform'),
+    syncPlatform: stub.props('syncPlatform'),
+    cloudPlatform: stub.props('cloudPlatform'),
+    schemesApi: stub.props('schemesApi'),
+    cloudAuthFailed: stub.props('cloudAuthFailed'),
+  }
 }
 
 // 真实导出为 Ref/ComputedRef（类型只读口径）；mock 模块内是可写 ref，测试经断言直写（基线同款）
@@ -773,5 +813,21 @@ describe('App.vue 挂载冒烟（编排覆盖回补）', () => {
     await flushPromises()
     expect(migrateLegacySources).toHaveBeenCalledTimes(1) // 解锁后补跑
     expect(w.find('[data-test="shell"]').exists()).toBe(true)
+  })
+
+  it('四 platform 经 props 接入壳（A3 回归探针：App.vue 漏传任一 :xxx-platform 即红）', async () => {
+    const w = await mountApp()
+    const shell = shellOf(w)
+    // syncPlatform：真实装配成员（shim 有 storage.sync 区 → canSync true）
+    expect(shell.syncPlatform).toMatchObject({ canSync: true })
+    // securityPlatform：ext 差异注入在位（默认 shim 无 offscreen = Firefox 形态 → F5 降级哨兵）
+    expect(shell.securityPlatform).toMatchObject({
+      clipboardNote: 'firefox',
+      lockPrefs: { unsupported: ['lockOnRestart'] },
+    })
+    // cloudPlatform（host 装配 + ext 差异）/ backupPlatform（platform prop）/ schemesApi：装配产物非空壳
+    expect(typeof shell.cloudPlatform.loadSourceState).toBe('function')
+    expect(typeof (shell.platform as { createBackup: unknown }).createBackup).toBe('function')
+    expect(shell.schemesApi).toBeTruthy()
   })
 })

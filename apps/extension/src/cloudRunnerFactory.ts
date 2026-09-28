@@ -16,15 +16,11 @@
 import type { VueStore } from '@totp/ui'
 // host 工厂经 '@totp/ui/host' 子出口导入(理由见 host/index.ts 头注释:宿主测试对 '@totp/ui'
 // 的全量 vi.mock 只需覆盖 runner/桥四件;host 内部自引用 '@totp/ui' 命中同一 mock)
-import { createCloudSyncRunnerForStore, createRevSeal } from '@totp/ui/host'
+import { createCloudSyncRunnerForStore } from '@totp/ui/host'
 import { retentionDeletedNote } from './cloudCredStore'
 import { setConflictBadge } from './conflictBadge'
 import { addConflictCopy } from './conflictCopies'
 import { storageAdapter } from './store'
-
-/** rev 基线 seal:实现收敛至 ui host(R4);手动通道(cloudPlatform.loadSourceState/saveSourceState)
- *  与 runner 通道共用同一 seal 形态——共享 cloudSyncState 键互不互踩(审查 Critical 1) */
-export { createRevSeal as revSeal }
 
 export interface ExtensionCloudRunnerDeps {
   /** 宿主 store(locked/backupSecret/vault/credsCache/settings/replaceAllOp 均取自它) */

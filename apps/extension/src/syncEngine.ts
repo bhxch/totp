@@ -115,15 +115,18 @@ function readChunks(area: Record<string, unknown>): SyncChunk[] {
 
 /** 远端 settings 整体采用，但 syncEnabled 位保留本端值（缺失/损坏时保留语义等价于 false）。
  *  B10：远端坏 JSON 时放弃 merge、保留本端原样（本端无 settings 键 → null，调用点跳过写 settings）——
- *  坏串不得落盘替换本端 settings。本端读失败/损坏仅影响开关位（按 false），不影响其余字段采用远端 */
+ *  坏串不得落盘替换本端 settings。远端为合法 JSON 但非 plain object（'null'/'123'/'"str"'/数组）时
+ *  同途返回 null：spread 会产出仅剩开关位的残串整键替换本端 settings。本端读失败/损坏仅影响开关位
+ *  （按 false），不影响其余字段采用远端 */
 async function mergeRemoteSettingsKeepingLocalSyncEnabled(remoteRaw: string): Promise<string | null> {
-  let remote: Record<string, unknown>
+  let remote: unknown
   try {
-    remote = JSON.parse(remoteRaw) as Record<string, unknown>
+    remote = JSON.parse(remoteRaw)
   } catch {
     const localRaw = (await ext!.storage.local.get([SETTINGS_KEY]))[SETTINGS_KEY]
     return typeof localRaw === 'string' ? localRaw : null
   }
+  if (remote === null || typeof remote !== 'object' || Array.isArray(remote)) return null
   let localEnabled = false
   try {
     const localRaw = (await ext!.storage.local.get([SETTINGS_KEY]))[SETTINGS_KEY]

@@ -19,12 +19,16 @@ const QR_IMAGE_MENU_ID = 'qr-decode-image'
 
 /** 桌面通知单点（R16⑪ 三连收敛）：basic 通知样式恒同（图标/标题），仅 message 差异 */
 function notify(message: string): void {
-  void ext!.notifications.create({
-    type: 'basic',
-    iconUrl: '/icon/128.png',
-    title: 'TOTP 验证码工具',
-    message,
-  })
+  // MV3 create 无 callback 重载返回 Promise：创建失败（图标缺失/上下文失效）会 reject——
+  // fire-and-forget 吞掉，与 background 其余通道「吞 rejection」口径对齐，防 unhandled rejection
+  void ext!.notifications
+    .create({
+      type: 'basic',
+      iconUrl: '/icon/128.png',
+      title: 'TOTP 验证码工具',
+      message,
+    })
+    .catch(() => {})
 }
 
 /** 确保 offscreen document 存在：每扩展仅允许一个，重复 createDocument 会抛错，捕获即「已存在」 */
