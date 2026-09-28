@@ -56,7 +56,9 @@ const displayed = computed(() => {
 const RING_R = 16
 const CIRCUMFERENCE = 2 * Math.PI * RING_R
 
-/** I61：环形按剩余比例绘制；外层 CSS transition: stroke-dashoffset 1s linear 实现平滑过渡（每秒一次重算 progress） */
+/** I61：环形按剩余比例绘制。每秒一次离散跳变（Aegis 等主流 TOTP 应用同款）——刻意不用 CSS
+ * transition 补间：stroke-dashoffset 是 paint 属性无合成器加速，1s linear 补间会把每秒一次
+ * 的跳变放大为每条目常驻 ~60fps SVG 重绘（2026-09-28 GPU profile 实锤 9 条目即 4% GPU） */
 const dashOffset = computed(() => CIRCUMFERENCE * (1 - props.progress))
 
 /** 批④ §5：无图标时首字母 avatar 按 issuer 哈希从主题 10 子色取底色；有图标时 undefined 保留 .avatar 默认底色 */
@@ -145,6 +147,6 @@ function onContextMenu(e: MouseEvent): void {
 .show-qr { font-size: var(--md-sys-typescale-body-medium); }
 .ring { width: 32px; height: 32px; transform: rotate(-90deg); }
 .ring-bg { fill: none; stroke: var(--md-sys-color-outline-variant); stroke-width: 3; }
-.ring-fg { fill: none; stroke: var(--md-sys-color-primary); stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset 1s linear; }
+.ring-fg { fill: none; stroke: var(--md-sys-color-primary); stroke-width: 3; stroke-linecap: round; }
 .ring-text { transform: rotate(90deg); transform-origin: 18px 18px; font-size: 11px; /* 豁免:SVG text 字号,按 SVG 视口定位,不接字阶 token */ fill: currentColor; }
 </style>

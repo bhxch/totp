@@ -756,5 +756,6 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .spinner { width: 14px; height: 14px; border-radius: 50%; flex: none;
   border: 2px solid var(--md-sys-color-primary); border-top-color: transparent;
   animation: cloud-spin 1s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
 @keyframes cloud-spin { to { transform: rotate(360deg); } }
 </style>
