@@ -817,8 +817,15 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
-    // 端到端接线（薄壳 env 读写）：单一用例内完成 env 改写/断言/恢复，进程内其他测试
-    // 不触碰 APPDATA 与 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS，无并行竞态。
+    // 触碰进程级 env 的测试须串行：std::env::set_var/remove_var 非线程安全，且两测试
+    // （apply_devtools_env_end_to_end… 与 devtools_config_json_reports_env_preset）并行交错时，
+    // 一方的 remove/set 会落在另一方的「注入」与「断言」之间，看到中间态——CI 曾实锤 flaky
+    // （apply_devtools_env_end_to_end 864 行 unwrap NotPresent）。poison 后 into_inner 续行防死锁。
+    #[cfg(windows)]
+    static ENV_TESTS_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    // 端到端接线（薄壳 env 读写）：单一用例内完成 env 改写/断言/恢复，经 ENV_TESTS_SERIAL
+    // 与 devtools_config_json_reports_env_preset 串行（并行交错会互相踩 env，见上）。
     // EnvGuard（Drop 恢复现场）：断言失败 panic 时改写的 env 也随栈展开还原，
     // 不向同进程其他测试泄漏 APPDATA 重定向与外部哨兵值
     #[cfg(windows)]
@@ -854,6 +861,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn apply_devtools_env_end_to_end_injects_and_preserves_external_preset() {
+        let _env_serial = ENV_TESTS_SERIAL.lock().unwrap_or_else(|p| p.into_inner());
         let _guard = EnvGuard::save();
         let root = devtools_appdata("e2e", Some(r#"{"devtools":{"enabled":true,"port":9333}}"#));
         std::env::set_var("APPDATA", &root);
@@ -883,6 +891,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn devtools_config_json_reports_env_preset() {
+        let _env_serial = ENV_TESTS_SERIAL.lock().unwrap_or_else(|p| p.into_inner());
         let _guard = EnvGuard::save();
         std::env::remove_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS");
         assert_eq!(
