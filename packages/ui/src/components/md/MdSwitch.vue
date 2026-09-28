@@ -5,7 +5,12 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
 // change 只 emit;父层拒绝/回滚(modelValue 未变)时开关视觉与真实状态一致。
 // 已核实消费方无「乐观改视觉」依赖(McpServerCard 回滚走 cfg DTO 赋值,受控化后更正确)
 function onChange(e: Event) {
-  emit('update:modelValue', (e.target as HTMLInputElement).checked)
+  const el = e.target as HTMLInputElement
+  emit('update:modelValue', el.checked)
+  // 强制回写 DOM checked=modelValue：父层拒绝回写(modelValue 未变)时组件不重渲染,残留翻转的
+  // checked 会让下次点击的 change 先发出反向值(用户需再点一次);回写后每次 change 恒是对当前
+  // modelValue 的取反。视觉不受影响(轨道类由 modelValue 驱动,input 为 sr-only)
+  el.checked = props.modelValue
 }
 </script>
 <template>

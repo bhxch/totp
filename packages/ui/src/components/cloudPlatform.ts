@@ -79,8 +79,9 @@ export interface CloudPlatform {
   /** 采用云端数据（恢复链路：卡内 parseVaultJson 校验+两步确认 → 宿主整体替换本地存储） */
   persistDownloaded(json: string): Promise<void>
   /** [可选] 冲突副本落盘（desktop=AppData/backups；extension=storage.local 冲突列表），返回副本名回填提示；
-   *  sourceId=源 id（多源场景副本名 conflict-{sourceId}-{ts} 区分来源） */
-  saveConflictBackup?(bytes: Uint8Array, sourceId?: string): Promise<string | null>
+   *  key=源 id（多源场景副本名 conflict-{key}-{ts} 区分来源）。参数序与 core onConflictBackup
+   *  及 runner 侧契约一致（(key, bytes)，防两套序写反） */
+  saveConflictBackup?(key: string, bytes: Uint8Array): Promise<string | null>
   /** [可选] 冲突副本列表（T11 冲突区块：extension storage.local conflictCopies 元数据视图；
    *  desktop 副本在备份恢复列表可见，不提供=CloudCard 不渲染副本区） */
   listConflictCopies?(): Promise<Array<{ name: string; at: number }>>

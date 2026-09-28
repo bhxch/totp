@@ -47,25 +47,13 @@ describe('saveConflictBackupToDir（云同步冲突副本）', () => {
   })
 
   it('带 sourceId：命名 conflict-{sourceId}-{ts}（desktop 侧拼接），落在 READABLE_BACKUP_RE 白名单内（恢复侧可见）', async () => {
-    const name = await saveConflictBackupToDir(bytes, null, 'webdav')
+    const name = await saveConflictBackupToDir(bytes, 'webdav')
     expect(name).toMatch(/^conflict-webdav-\d{8}-\d{6}\.totpbackup$/)
     expect(READABLE_BACKUP_RE.test(name)).toBe(true)
 
     // 旧迁移源 id=backend 单段、新源 uuid 五段连字符均在白名单口径内
-    const uuidName = await saveConflictBackupToDir(bytes, null, '2dc4bf8a-5ca7-4087-8b3e-2f1a4d5c6b7e')
+    const uuidName = await saveConflictBackupToDir(bytes, '2dc4bf8a-5ca7-4087-8b3e-2f1a4d5c6b7e')
     expect(READABLE_BACKUP_RE.test(uuidName)).toBe(true)
-  })
-
-  it('显式 dirOverride（历史签名兼容）：走 os 通道 dir_token_os→write_text_file_os，同样不滚动删除', async () => {
-    tauriMock.onReturn('dir_token_os', 'tok')
-    const name = await saveConflictBackupToDir(bytes, 'C:\\bk', 'gist')
-    expect(name).toMatch(/^conflict-gist-\d{8}-\d{6}\.totpbackup$/)
-    expect(tauriMock.calls('dir_token_os')).toEqual([{ command: 'dir_token_os', args: { dir: 'C:\\bk' } }])
-    expect(tauriMock.calls('write_text_file_os')).toEqual([
-      { command: 'write_text_file_os', args: { path: `C:\\bk\\${name}`, contents: '{"v":1}', dirToken: 'tok' } },
-    ])
-    expect(tauriMock.calls('list_backup_files_os')).toEqual([])
-    expect(tauriMock.fs.writeTextFile).not.toHaveBeenCalled()
   })
 })
 

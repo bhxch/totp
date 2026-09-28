@@ -48,7 +48,7 @@ export function createCloudPlatform(deps: CloudPlatformDeps): CloudPlatform {
     {
       // 审查 I11：合并写入——保留并发改动中的本地源（BackupCard 通道），仅覆盖本卡提交的云源列表
       saveSources: (list) => saveCloudSourcesPreservingLocal(requireAdapter(deps.getAdapter), list),
-      saveConflictBackup: async (bytes, sourceId) => saveConflictBackupToDir(bytes, null, sourceId),
+      saveConflictBackup: async (key, bytes) => saveConflictBackupToDir(bytes, key),
       autoPrefs: {
         get: () => loadCloudPrefs(),
         set: (p) => persistCloudPrefs(p),
@@ -70,7 +70,7 @@ export function createDesktopCloudSync(deps: CloudPlatformDeps) {
       contentHash: { load: async () => readCloudContentHash(), save: async (h) => writeCloudContentHash(h) },
       // 审查 I9：Promise 原样交回 runner/core（syncWithCloudRev await 冲突回调）——写盘失败让该目标
       // 同步失败（recordStatus 记失败），不再静默吞掉后照常采纳远端并回推覆盖云端旧版本
-      saveConflictBackup: (key, bytes) => saveConflictBackupToDir(bytes, null, key),
+      saveConflictBackup: (key, bytes) => saveConflictBackupToDir(bytes, key),
       // D2 抽串：记录时取词（摘要持久化于 cloudAutoStatus，展示端按落盘内容显示）
       retentionNote: (name, deleted) =>
         deleted >= 0 ? tr('desktop.retentionCleaned', { name, count: deleted }) : tr('desktop.retentionUnsupported', { name }),

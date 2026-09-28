@@ -128,7 +128,7 @@ describe('createCloudPlatform：源模型与凭据保管区', () => {
   it('saveConflictBackup：conflict-{sourceId}-{ts}.totpbackup 恒写默认目录（plugin-fs 原子写）并返回名', async () => {
     const { platform } = makePlatform()
     const bytes = new TextEncoder().encode('{"conflict":true}')
-    const name = await platform.saveConflictBackup!(bytes, 'w1')
+    const name = await platform.saveConflictBackup!('w1', bytes)
     expect(name).toMatch(/^conflict-w1-\d{8}-\d{6}\.totpbackup$/)
     const renameArgs = tauriMock.fs.rename.mock.calls.at(-1) as unknown as [string, string, unknown]
     expect(renameArgs[1]).toBe(`backups/${name}`)
@@ -242,10 +242,10 @@ describe('createDesktopCloudSync：runner deps 接线（类型视图直调）', 
     createDesktopCloudSync({ getStore: () => store, getAdapter: () => adapter, tr: echoTr })
     await deps().saveSyncState!('w1', { lastKnownRemoteRev: 1, baseSnapshot: null })
     expect(await adapter.get(SYNC_STATE_KEY)).toBeTruthy()
-    // saveConflictBackup(key, bytes) → saveConflictBackupToDir(bytes, null, key)：探针接线形状
+    // saveConflictBackup(key, bytes) → saveConflictBackupToDir(bytes, key)：探针接线形状
     const spy = vi.spyOn(await import('../src/backupService'), 'saveConflictBackupToDir')
     await deps().saveConflictBackup!('w1', new TextEncoder().encode('x'))
-    expect(spy).toHaveBeenCalledWith(new TextEncoder().encode('x'), null, 'w1')
+    expect(spy).toHaveBeenCalledWith(new TextEncoder().encode('x'), 'w1')
     spy.mockRestore()
   })
 

@@ -30,8 +30,9 @@ export interface StoreBackedCloudPlatformOverrides {
   saveSources(list: BackupSource[]): Promise<void>
   /** 云同步自动触发偏好读写(CloudCard 自动区;get 允许异步返回,卡片 await 兼容两种形态) */
   autoPrefs: { get(): CloudAutoPrefs | Promise<CloudAutoPrefs>; set(p: CloudAutoPrefs): void | Promise<void> }
-  /** 冲突副本落盘(sourceId 仅用于副本命名区分来源);返回副本名回填提示。缺省=不落副本 */
-  saveConflictBackup?(bytes: Uint8Array, sourceId?: string): Promise<string | null>
+  /** 冲突副本落盘(key=源 id,参数序与 CloudRunnerOverrides.saveConflictBackup 一致防写反);
+   *  返回副本名回填提示。缺省=不落副本 */
+  saveConflictBackup?(key: string, bytes: Uint8Array): Promise<string | null>
   /** 「上次自动同步」状态文本(宿主自 cloudAutoStatus 键 JSON {at,ok,summary} 格式化);缺省不显示状态行 */
   loadAutoStatus?(): Promise<string | null>
   /** 冲突副本元数据列表(extension 独有);缺省=CloudCard 不渲染副本区 */
@@ -73,7 +74,7 @@ export function createStoreBackedCloudPlatform(
     },
     persistDownloaded: (json) => requireStore().replaceAllOp(JSON.parse(json) as Vault),
     saveConflictBackup: overrides.saveConflictBackup
-      ? (bytes, sourceId) => overrides.saveConflictBackup!(bytes, sourceId)
+      ? (key, bytes) => overrides.saveConflictBackup!(key, bytes)
       : undefined,
     ...(overrides.listConflictCopies ? { listConflictCopies: overrides.listConflictCopies } : {}),
     ...(overrides.exportConflictCopy ? { exportConflictCopy: overrides.exportConflictCopy } : {}),

@@ -413,7 +413,7 @@ async function onSync(): Promise<void> {
         vaultJson: p.readVaultJson(),
         password: secret,
         deviceId: await p.deviceId(),
-        onConflictBackup: (key: string, bytes: Uint8Array) => p.saveConflictBackup?.(bytes, key),
+        onConflictBackup: (key: string, bytes: Uint8Array) => p.saveConflictBackup?.(key, bytes),
         profile: p.kdfProfile?.(),
       }
       const pv = await syncMultipleTargets({ ...baseOpts, mode: 'preview' })

@@ -37,7 +37,7 @@ function fakeBackend(initial?: Uint8Array): CloudBackend & { store: Map<string, 
 }
 
 /** 与 App.vue cloudSync deps 逐字同构的接线（防止接线回退为 .catch 吞错的回归探针） */
-const saveConflictBackup = (key: string, bytes: Uint8Array) => saveConflictBackupToDir(bytes, null, key)
+const saveConflictBackup = (key: string, bytes: Uint8Array) => saveConflictBackupToDir(bytes, key)
 
 describe('审查 I9：冲突副本写盘失败传播（desktop 接线）', () => {
   it('saveConflictBackupToDir 拒绝 → 该目标同步失败：不采纳远端、删基线、状态行记失败、云端不被覆盖', async () => {
@@ -65,9 +65,8 @@ describe('审查 I9：冲突副本写盘失败传播（desktop 接线）', () =>
     }).run()
     // 副本落盘被调用且带 sourceId（写盘语义不变，只是失败不再被吞）
     expect(saveConflictBackupToDirMock).toHaveBeenCalledTimes(1)
-    const [bytes, dirOverride, key] = saveConflictBackupToDirMock.mock.calls[0]!
+    const [bytes, key] = saveConflictBackupToDirMock.mock.calls[0]!
     expect(key).toBe('s1')
-    expect(dirOverride).toBeNull()
     expect(ArrayBuffer.isView(bytes)).toBe(true)
     // 该目标失败的连锁表现：本地不被远端覆盖（persistAdopted 未调）、rev 基线原样回写
     // （saveSyncState('s1', 原样 state)，失败源=入参原样幂等——下轮按原基线重做）、

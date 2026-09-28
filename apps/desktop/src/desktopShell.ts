@@ -37,7 +37,9 @@ export type McpApprovalQueue = ReturnType<typeof createMcpApprovalQueue>
 /** desktop i18n 胶水（D1 挂载/D2 取词的收敛实现）：app 引用必须在组件 setup 同步段获取
  *  （onMounted await 之后 instance 上下文已失效），故 useDesktopI18n 须在 setup 同步段调用；
  *  i18n 插件只能装入一次（store 重建/窗口重载时 mountI18n 重复调用为 no-op），仅首次就绪的
- *  store 驱动 locale；未装入（初始化失败等）时 tr 兜底回原文 key */
+ *  store 驱动 locale；未装入（初始化失败等）时 tr 兜底回原文 key。
+ *  与原 App.vue 版的微差：app 为 undefined（非 setup 上下文调用）时仍创建 i18n 实例并赋
+ *  i18nRef（installed 不置位）——生产恒在 setup 同步段调用、app 恒存在，无可观察影响 */
 export interface DesktopI18n {
   /** 壳层取词（script setup 内 useI18n 注入不可用，沿 options 页口径走捕获的 i18n 实例） */
   tr(key: string, params?: Record<string, unknown>): string
@@ -58,6 +60,7 @@ export function useDesktopI18n(): DesktopI18n {
         app.use(inst)
         installed = true
       }
+      // 微差（见上）：app 为 undefined 时也赋 i18nRef（原 App.vue 版仅在装入成功后赋值）
       i18nRef.value = inst
     },
   }
@@ -275,7 +278,7 @@ export function createDesktopShell(deps: DesktopShellDeps): DesktopShellControll
 
   async function init(): Promise<void> {
     // 系统锁屏事件（plan16 T15）：WTS_SESSION_LOCK → system-lock 广播 → 按设置锁定
-    // （注册不容错：失败随主 try 进 loadError——与原行为一致）
+    // （注册不容错：失败随 init 整体失败——与原行为一致，不经 loadError）
     unlistens.track(await listen('system-lock', () => {
       if (deps.store.value?.settings.lockOnSystemLock) deps.store.value?.lock()
     }))

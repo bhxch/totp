@@ -64,7 +64,16 @@ export class DisposableBag {
   }
 
   dispose(): void {
-    for (const dispose of this.items.splice(0)) dispose()
+    // 逐项 shift + 逐项 try/catch：单个 unlisten 抛错不阻断余项清算（原 splice(0) 先清队再遍历，
+    // 抛错点之后的项已出队、永不再执行）；warn 留痕不放大。全部尝试完毕数组必空，
+    // 重复调用安全（幂等语义不变）
+    for (let dispose = this.items.shift(); dispose; dispose = this.items.shift()) {
+      try {
+        dispose()
+      } catch (e) {
+        console.warn('[DisposableBag] unlisten 清算失败（余项继续）', e)
+      }
+    }
   }
 }
 

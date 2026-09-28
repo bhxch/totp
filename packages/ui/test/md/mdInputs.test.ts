@@ -126,6 +126,21 @@ describe('MdSwitch', () => {
     await w.setProps({ modelValue: false })
     expect(w.classes()).not.toContain('md-switch--checked')
   })
+  it('父层不回写时连点两次:第二次 change 仍是对当前 modelValue 的取反(DOM checked 强制回写)', async () => {
+    // setValue 是「置值+change」,表达不了浏览器点击的原生翻转语义;以「先翻转 checked 再
+    // 派发 change」模拟真实连点——无回写时残留翻转的 DOM checked 会令第二次发出漂移值 false
+    const w = mount(MdSwitch, { props: { modelValue: false } })
+    const clickLikeUser = async () => {
+      const input = w.find('input[type=checkbox]')
+      ;(input.element as HTMLInputElement).checked = !(input.element as HTMLInputElement).checked
+      await input.trigger('change')
+    }
+    await clickLikeUser()
+    expect(w.emitted('update:modelValue')![0]).toEqual([true])
+    // 父层拒绝(modelValue 仍 false):第二次 change 不得因 checked 残留漂移
+    await clickLikeUser()
+    expect(w.emitted('update:modelValue')![1]).toEqual([true])
+  })
   it('disabled 时不触发 update', async () => {
     const w = mount(MdSwitch, { props: { modelValue: false, disabled: true } })
     expect(w.classes()).toContain('md-switch--disabled')

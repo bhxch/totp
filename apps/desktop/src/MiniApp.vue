@@ -55,7 +55,7 @@ let unlistenForceLock: (() => void) | null = null
 
 onMounted(async () => {
   await load()
-  // store 就绪后再挂监听（App.vue 同款，App.vue L742）；容错注册，失败仅该联动降级
+  // store 就绪后再挂监听（App.vue 同款，见 App.vue 的对应初始化段：store 建立后才注册锁定联动）；容错注册，失败仅该联动降级
   unlistenForceLock = await listen('force-lock', () => {
     store.value?.lock()
   }).catch(() => null)
