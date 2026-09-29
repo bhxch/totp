@@ -25,6 +25,7 @@
 ### 桌面（Tauri 2）
 
 - 从 [GitHub Releases](https://github.com/bhxch/totp/releases) 下载对应平台安装包：Windows（NSIS `.exe`）/ macOS（Universal `.dmg`）/ Linux（`.deb`、`.AppImage`）
+  - 安装包未做代码签名/公证：Windows 首次运行触发 SmartScreen 时点「更多信息」→「仍要运行」；macOS 被 Gatekeeper 拦截时右键 App 选「打开」，或在「系统设置 → 隐私与安全性」中放行
 - 源码构建与开发命令见下文[桌面版（Tauri）](#桌面版tauri)与[开发与构建](#开发与构建)
 
 ## 快速上手

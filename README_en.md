@@ -25,6 +25,7 @@ Design doc: [docs/plans/2026-09-13-totp-tool-design.md](docs/plans/2026-09-13-to
 ### Desktop (Tauri 2)
 
 - Download the installer for your platform from [GitHub Releases](https://github.com/bhxch/totp/releases): Windows (NSIS `.exe`) / macOS (Universal `.dmg`) / Linux (`.deb`, `.AppImage`)
+  - The installers are not code-signed/notarized: on Windows, if SmartScreen appears on first run, click "More info" → "Run anyway"; on macOS, if Gatekeeper blocks the app, right-click it and choose "Open", or allow it under "System Settings → Privacy & Security"
 - For source builds and dev commands see [Desktop (Tauri)](#desktop-tauri) and [Development and build](#development-and-build) below
 
 ## Quick start
@@ -357,11 +358,10 @@ Docs index:
 See the [plan13-16 full code review](docs/review/2026-09-18-plan13-16-full-code-review.md) and the [batch-8 six-spec review and verification](docs/review/2026-09-22-six-specs-review-and-verification.md).
 
 - **Manual cloud sync has no content gate**: a manual run always pushes and pulls in full (the cloud object is rewritten even when nothing changed); automatic runs go through a persistent content gate and degrade to pull-only — nothing is uploaded when the content is unchanged, and two devices both sitting idle no longer kick each other into conflict copies
-- **Google Drive's "keep latest N" currently behaves as "overwrite"** (timestamped names do not apply to gdrive; only one remote object ever exists)
-- **Desktop auto backup advances the baseline on partial failure**: if any directory write fails the baseline still advances and the status line records "success"; no automatic retry follows — write a manual backup to catch up
-- **The desktop "keep locked after restart" toggle currently has no effect** (the desktop has no session-level DEK storage and is always locked after restart); the "lock on system lock" trigger is unavailable on mac/Linux (backlog)
+- **Google Drive keeps only 1 remote object** (timestamped names do not apply to gdrive — the backend overwrites by name; the keep config is hidden for this backend)
+- **The "keep locked after restart" toggle is currently greyed out and disabled on both desktop and extension** (neither has session-level credential storage: the desktop is always locked after restart; the extension keeps credentials in session storage only, cleared when the browser exits); the "lock on system lock" trigger is unavailable on mac/Linux (backlog)
 - **Firefox (MV3)**: clipboard auto-clear unavailable (no offscreen API, clearing degrades to foreground-only, unscheduled); idle/lock auto-lock is supported per MDN compatibility (including the `locked` state, min_version 140) — if anything misbehaves on real hardware, rely on the runtime degradation notice; Passkey (PRF) unlock is limited — the entry hides itself when probing fails
-- **No pagination for cloud listings**: when objects under a single directory/prefix exceed the cloud API's page cap (e.g. 1000 for S3), rolling deletion may miss the oldest backups
+- **No pagination for cloud listings**: when objects under a single directory/prefix exceed the cloud API's page cap (e.g. 1000 for S3), rolling deletion may miss the oldest backups; when the cap is reached the status line prompts manual cleanup (truncation awareness implemented for gdrive/onedrive/s3)
 
 ## License
 
