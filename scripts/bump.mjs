@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 版本单一来源：apps/desktop/package.json → 同步 5 处落点（验收条目6 spec §1）
+// 版本单一来源：apps/desktop/package.json → 同步 7 处落点（验收条目6 spec §1）
 // 用法: node scripts/bump.mjs <x.y.z> [--check] | node scripts/bump.mjs --check
 //       （--check 不带版本参数时，以 apps/desktop/package.json 当前版本为基准）
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -13,14 +13,23 @@ let version = args.find((a) => a !== '--check')
 if (!version && check) {
   version = JSON.parse(readFileSync(resolve(root, 'apps/desktop/package.json'), 'utf8')).version
 }
-if (!version || !/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(version)) {
-  console.error('用法: pnpm bump <x.y.z> [--check] | pnpm bump --check')
+// 只接受纯数字 x.y.z：manifest 的 version 字段（WXT 注入）与 Tauri 打包均不接受
+// prerelease 后缀，放行会产出 Chrome/AMO 拒绝加载的非法 manifest；需要 beta 版时
+// 须先在 wxt.config.ts 落 version_name 拆分策略再放宽此处
+if (!version || !/^\d+\.\d+\.\d+$/.test(version)) {
+  console.error('用法: pnpm bump <x.y.z> [--check] | pnpm bump --check（仅接受纯数字 x.y.z，不支持 -prerelease 后缀）')
   process.exit(2)
 }
 
-// 落点 5 处：3 个 JSON + Cargo.toml + Cargo.lock
+// 落点 7 处：5 个 JSON + Cargo.toml + Cargo.lock
 //（根 package.json 为 workspace 根、无 version 字段，不作落点）
-const jsonFiles = ['apps/desktop/package.json', 'apps/extension/package.json', 'apps/desktop/src-tauri/tauri.conf.json']
+const jsonFiles = [
+  'apps/desktop/package.json',
+  'apps/extension/package.json',
+  'apps/desktop/src-tauri/tauri.conf.json',
+  'packages/core/package.json',
+  'packages/ui/package.json',
+]
 const cargoFile = 'apps/desktop/src-tauri/Cargo.toml'
 const lockFile = 'apps/desktop/src-tauri/Cargo.lock'
 let dirty = false
