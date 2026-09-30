@@ -260,11 +260,15 @@ function mapSecretData(secretDataText: string, name: string, typeAttr: string | 
   if (secretBytes.length === 0) return { error: '缺少 secret' }
 
   const type = normalizeTypeAttr(typeAttr)
+  // name 拆 issuer:label（与 Aegis/URI 导入口径一致：首个冒号）；WinAuth XML 无独立
+  // 服务名字段（仅 <name> 一个显示名），name 无服务前缀（无冒号/前缀为空）时
+  // issuer 兜底同 label，避免导入后列表服务名主行空白
+  const sep = name.indexOf(':')
+  const label = sep >= 0 ? name.slice(sep + 1) : name
   const parsed: ParsedEntry = {
     type,
-    // name 拆 issuer:label（与 Aegis/URI 导入口径一致：首个冒号）
-    issuer: name.includes(':') ? name.slice(0, name.indexOf(':')) : '',
-    label: name.includes(':') ? name.slice(name.indexOf(':') + 1) : name,
+    issuer: sep > 0 ? name.slice(0, sep) : label,
+    label,
     // 统一存储口径：secret 还原为字节后 base32（RFC4648 大写）——见简报与 base32Encode
     secret: base32Encode(secretBytes),
     algorithm: fields[2] === 'SHA256' || fields[2] === 'SHA512' ? fields[2] : 'SHA1',

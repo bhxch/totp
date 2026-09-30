@@ -323,14 +323,14 @@ describe('importWinauth XML 边角与条目字段边角（盘点 B8 #30-31）', 
     expect(r.entries[2]).toMatchObject({ type: 'hotp', algorithm: 'SHA1', period: 60, counter: 7 })
   })
 
-  it('name 无冒号 → issuer 空、label 全名；digits/period 非正回退 6/30', async () => {
+  it('name 无冒号 → issuer 兜底同 label（账户名）；digits/period 非正回退 6/30', async () => {
     const xml = `<WinAuth version="3.6.4.2">` +
       ENTRY_XML('NoIssuer', secretData(0, 'SHA1', 0)) +
       ENTRY_XML('Neg:ative', secretData(-3, 'SHA1', -5)) +
       `</WinAuth>`
     const r = await importWinauth(xml)
     expect(r.failures).toHaveLength(0)
-    expect(r.entries[0]).toMatchObject({ issuer: '', label: 'NoIssuer', digits: 6, period: 30 })
+    expect(r.entries[0]).toMatchObject({ issuer: 'NoIssuer', label: 'NoIssuer', digits: 6, period: 30 })
     expect(r.entries[1]).toMatchObject({ issuer: 'Neg', label: 'ative', digits: 6, period: 30 })
   })
 
