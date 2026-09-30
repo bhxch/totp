@@ -260,7 +260,7 @@ describe('CloudCard（源列表 plan16 T8）', () => {
     const inputs = mockedSync.mock.calls[0]![0].targets
     expect(inputs[0]!.path).toMatch(/^dir\/vault-\d{8}-\d{6}\.totpbackup$/)
     // 滚动删除走真实 enforceRemoteRetention：keep=2 删最旧 1 份（conflict/非 vault 名不参与由 core 保证）
-    expect(mockedRetention).toHaveBeenCalledWith(backend, 2)
+    expect(mockedRetention).toHaveBeenCalledWith(backend, 2, 0)
     expect(backend.deleted).toEqual(['dir/vault-20260101-000000.totpbackup'])
     expect(w.text()).toContain('已上传（滚动清理 1 份）')
   })
@@ -282,7 +282,7 @@ describe('CloudCard（源列表 plan16 T8）', () => {
     })
     const w = await mountCard(p)
     await clickSync(w)
-    expect(mockedRetention).toHaveBeenCalledWith(plain, 2)
+    expect(mockedRetention).toHaveBeenCalledWith(plain, 2, 0)
     expect(delSpy).not.toHaveBeenCalled()
     // 时间戳文件已写入（主流程 uploaded 不改写），仅清理能力缺失如实提示
     expect(w.text()).toContain('已上传（该后端不支持自动清理，历史备份会累积，可手动清理或改用覆盖模式）')

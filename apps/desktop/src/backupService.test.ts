@@ -307,6 +307,23 @@ describe('R10 守卫：os 授权目录/默认目录读写路径（双通道行�
     expect(invokeMock).not.toHaveBeenCalledWith('remove_backup_file', { name: 'notes.txt' })
   })
 
+  it('days 透传（默认目录 keep）：超份数但未超龄的备份不删——retention.days 经 selectBackupsToKeep 第三参生效', async () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(new Date(2026, 8, 30, 12, 0, 0).getTime())
+    fsMocks.readDir.mockResolvedValue([
+      { name: 'vault-20260901-120000.totpbackup' }, // 龄 29 天 > 7：删
+      { name: 'vault-20260929-120000.totpbackup' }, // 龄 1 天 < 7：超份数但受天数保护
+      { name: 'vault-20260930-120000.totpbackup' }, // 最新份（keep n=1 保位）
+    ])
+    try {
+      await createBackupToSources([{ id: 'b', name: '办公室', dir: null, retention: { type: 'keep', n: 1, days: 7 }, enabled: true }], '{}', 'pw')
+    } finally {
+      nowSpy.mockRestore()
+    }
+    expect(invokeMock).toHaveBeenCalledTimes(1)
+    expect(invokeMock).toHaveBeenCalledWith('remove_backup_file', { name: 'vault-20260901-120000.totpbackup' })
+    expect(invokeMock).not.toHaveBeenCalledWith('remove_backup_file', { name: 'vault-20260929-120000.totpbackup' })
+  })
+
   it('R10 口径对齐：os 分支与默认分支对同一文件集合产出相同可见集合（Rust 白名单放行的宽中段名两分支都不再列出）', async () => {
     // 模拟 Rust list_backup_files_granted 输出（已升序）：vault-notes / conflict-Weird_Name
     // 为「前缀+.totpbackup 后缀即放行」的宽口径名，READABLE_BACKUP_RE 拒绝；

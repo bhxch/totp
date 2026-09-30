@@ -13,8 +13,9 @@ export interface RetentionOutcome {
   truncated: boolean
 }
 
-/** 返回 {deleted, truncated}；backend 不支持 listBackups/listBackupsEx 返回 {deleted: -1, truncated: false} */
-export async function enforceRemoteRetention(backend: CloudBackend, keep: number): Promise<RetentionOutcome> {
+/** 返回 {deleted, truncated}；backend 不支持 listBackups/listBackupsEx 返回 {deleted: -1, truncated: false}；
+ *  days 透传 ③ 天数保护（selectBackupsToKeep 同口径：>0 时仅删超龄者），缺省 0=忽略天数（旧调用方兼容） */
+export async function enforceRemoteRetention(backend: CloudBackend, keep: number, days = 0): Promise<RetentionOutcome> {
   if (!backend.listBackupsEx && !backend.listBackups) return { deleted: -1, truncated: false }
   if (!Number.isInteger(keep) || keep < 1) return { deleted: 0, truncated: false }
   const listed = backend.listBackupsEx
@@ -23,7 +24,7 @@ export async function enforceRemoteRetention(backend: CloudBackend, keep: number
   // 名单口径与本地一致（BACKUP_NAME_RE、字典序=时间序、conflict/overwrite 名不参与）——按 basename 判定；
   // 删除用 list 原名：webdav/s3/onedrive 返回 dir/name 完整路径域，须与 put/get/delete 同域才能删中目标
   const originalByBasename = new Map(listed.names.map((p) => [basenameOf(p), p]))
-  const stale = selectBackupsToKeep([...originalByBasename.keys()], keep)
+  const stale = selectBackupsToKeep([...originalByBasename.keys()], keep, days)
   let deleted = 0
   for (const name of stale) {
     try {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { enforceRemoteRetention } from '../src/cloud/retention'
+import type { CloudBackend } from '../src/cloud/backend'
 import { selectBackupsToKeep } from '../src/backup/policy'
 import { createWebdavBackend } from '../src/cloud/webdav'
 import { createS3Backend } from '../src/cloud/s3'
@@ -57,6 +58,15 @@ describe('远端滚动删除', () => {
   it('仅 listBackups 的后端 → truncated 恒 false(回退兼容)', async () => {
     const r = await enforceRemoteRetention({ listBackups: async () => names, delete: async () => {} } as never, 3)
     expect(r.truncated).toBe(false)
+  })
+  it('days 透传：超份数但未超龄的远端备份不删（③）', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(new Date(2026, 8, 30, 12, 0, 0).getTime())
+    const names = ['vault-20260901-120000.totpbackup', 'vault-20260929-120000.totpbackup', 'vault-20260930-120000.totpbackup']
+    const deleted: string[] = []
+    const backend = { listBackups: async () => names, delete: async (p: string) => { deleted.push(p) } }
+    await enforceRemoteRetention(backend as unknown as CloudBackend, 1, 7)
+    expect(deleted).toEqual(['vault-20260901-120000.totpbackup']) // 29 日份龄 1 天受天数保护
+    vi.restoreAllMocks()
   })
 })
 

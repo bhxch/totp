@@ -96,7 +96,7 @@ export async function runKeepRetention(
     const input = inputs.find((x) => x.key === res.key)
     if (!input || input.source.retention.type !== 'keep') continue
     try {
-      const r = await enforceRemoteRetention(input.backend, input.source.retention.n)
+      const r = await enforceRemoteRetention(input.backend, input.source.retention.n, input.source.retention.days ?? 0)
       onDeleted(res.key, r.deleted, r.truncated)
     } catch {
       onFailed?.(res.key)

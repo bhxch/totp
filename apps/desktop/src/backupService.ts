@@ -149,7 +149,7 @@ async function writeSourceBackup(dirOverride: string | null, contents: string, r
   const name = backupFileName(new Date())
   await sink.write(name, contents)
   // 滚动删除：列表与删除走同一 sink（授权同源、名单口径同 filterReadableNames；Rust 端另有白名单守护）
-  const stale = selectBackupsToKeep(await sink.listNames(), retention.n)
+  const stale = selectBackupsToKeep(await sink.listNames(), retention.n, retention.days ?? 0)
   for (const staleName of stale) await sink.remove(staleName)
   return 'created'
 }
