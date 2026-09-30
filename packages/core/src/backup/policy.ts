@@ -27,8 +27,23 @@ export const BACKUP_NAME_RE = /^vault-\d{8}-\d{6}\.totpbackup$/
 // 滚动删除仍仅认 BACKUP_NAME_RE（overwrite 名与 conflict 名永不滚动删除）
 export const READABLE_BACKUP_RE = /^(vault-(\d{8}-\d{6}|backup)|conflict-(?:[a-z0-9]+-)*\d{8}-\d{6})\.totpbackup$/
 
-export function selectBackupsToKeep(names: string[], keep: number): string[] {
+/** 从 vault-YYYYMMDD-HHMMSS 名解析本地时间戳（ms）；不匹配返回 null */
+export function backupNameTimestampMs(name: string): number | null {
+  const m = /^vault-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})\.totpbackup$/.exec(name)
+  if (!m) return null
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6])).getTime()
+}
+
+/** 滚动删除名单（③ 加 days 维度）：字典序=时间序；候选=超出最近 keep 份的超额名单；
+ *  days>0 时仅删「超 keep 份 且 文件龄 > days 天」者（任一条件不满足即保留）。
+ *  days 缺省/0=忽略天数条件，行为与旧版逐字节一致。 */
+export function selectBackupsToKeep(names: string[], keep: number, days = 0): string[] {
   const valid = names.filter((n) => BACKUP_NAME_RE.test(n)).sort() // 字典序=时间序
   const excess = keep > 0 ? valid.slice(0, Math.max(0, valid.length - keep)) : valid
-  return excess
+  if (!(days > 0)) return excess
+  const now = Date.now()
+  return excess.filter((n) => {
+    const ts = backupNameTimestampMs(n)
+    return ts !== null && now - ts > days * 86_400_000
+  })
 }

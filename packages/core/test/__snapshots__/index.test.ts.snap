@@ -60,6 +60,7 @@ exports[`@totp/core 桶导出面（防漏导出/改名破坏消费方） > 导�
   "authyRowsToEntries",
   "awsUriEncode",
   "backupFileName",
+  "backupNameTimestampMs",
   "base32Decode",
   "base32Encode",
   "base64ToBytes",

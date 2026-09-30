@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { backupFileName, conflictBackupFileName, OVERWRITE_NAME, READABLE_BACKUP_RE, selectBackupsToKeep } from '../src/backup/policy'
+import { describe, expect, it, vi } from 'vitest'
+import { backupFileName, backupNameTimestampMs, conflictBackupFileName, OVERWRITE_NAME, READABLE_BACKUP_RE, selectBackupsToKeep } from '../src/backup/policy'
 
 describe('backupFileName', () => {
   it('本地时区格式', () => {
@@ -52,5 +52,36 @@ describe('selectBackupsToKeep', () => {
   })
   it('冲突副本不计入滚动删除', () => {
     expect(selectBackupsToKeep(['conflict-20260913-150405.totpbackup', 'vault-20260912-090000.totpbackup'], 1)).toEqual([])
+  })
+})
+
+describe('backupNameTimestampMs', () => {
+  it('解析本地时间戳；非 vault 时间戳名返回 null', () => {
+    expect(backupNameTimestampMs('vault-20260901-120000.totpbackup')).toBe(new Date(2026, 8, 1, 12, 0, 0).getTime())
+    expect(backupNameTimestampMs('vault-backup.totpbackup')).toBeNull()
+    expect(backupNameTimestampMs('conflict-20260901-120000.totpbackup')).toBeNull()
+    expect(backupNameTimestampMs('vault-20260901-120000.totpbackup/../../evil')).toBeNull()
+  })
+})
+
+describe('selectBackupsToKeep days 维度（③ 保留最近 n 天）', () => {
+  const OLD = 'vault-20260901-120000.totpbackup' // 相对 mock now 约 29 天前
+  const MID = 'vault-20260927-120000.totpbackup' // 约 3 天前（> 3 且 < 7，横跨两个断言）
+  const NEW = 'vault-20260930-120000.totpbackup' // 当天
+
+  it('days 缺省/0：与旧版一致（仅份数）', () => {
+    expect(selectBackupsToKeep([OLD, MID, NEW], 2)).toEqual([OLD])
+    expect(selectBackupsToKeep([OLD, MID, NEW], 2, 0)).toEqual([OLD])
+  })
+  it('days>0：超额但未超龄的保留——超 n 份且超 n 天才删', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(new Date(2026, 8, 30, 12, 30, 0).getTime())
+    expect(selectBackupsToKeep([OLD, MID, NEW], 1, 7)).toEqual([OLD]) // MID 超 1 份但龄 3 天 < 7 天，保留
+    expect(selectBackupsToKeep([OLD, MID, NEW], 1, 3)).toEqual([OLD, MID]) // 两份均超 1 份且超 3 天龄
+    vi.restoreAllMocks()
+  })
+  it('龄恰等于 days 天不删（严格大于才删）', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(new Date(2026, 8, 8, 12, 0, 0).getTime())
+    expect(selectBackupsToKeep(['vault-20260901-120000.totpbackup'], 0, 7)).toEqual([])
+    vi.restoreAllMocks()
   })
 })

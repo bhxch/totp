@@ -26,6 +26,23 @@ describe('BackupSource 存取', () => {
     expect(isBackupSource({ ...src(), retention: 'keep' })).toBe(false)
     expect(isBackupSource({ ...src(), retention: 3 })).toBe(false)
   })
+  it('normalizeRetention：days 缺省/0=忽略天数条件（不落字段，兼容旧数据）；存在但非法归 0', () => {
+    expect(normalizeRetention({ type: 'keep', n: 3 })).toEqual({ type: 'keep', n: 3 })
+    expect(normalizeRetention({ type: 'keep', n: 3, days: 0 })).toEqual({ type: 'keep', n: 3 })
+    expect(normalizeRetention({ type: 'keep', n: 3, days: 7 })).toEqual({ type: 'keep', n: 3, days: 7 })
+    expect(normalizeRetention({ type: 'keep', n: 3, days: -1 })).toEqual({ type: 'keep', n: 3 })
+    expect(normalizeRetention({ type: 'keep', n: 3, days: 1.5 })).toEqual({ type: 'keep', n: 3 })
+    expect(normalizeRetention({ type: 'keep', n: 3, days: 'x' })).toEqual({ type: 'keep', n: 3 })
+  })
+  it('isBackupSource：days 缺省/0/非负整数合法；days 存在但非法 → 整条拒绝（fail-closed）', () => {
+    const keep = (days: unknown): BackupSource => src({ retention: { type: 'keep', n: 3, days: days as number } })
+    expect(isBackupSource(keep(undefined))).toBe(true)
+    expect(isBackupSource(keep(0))).toBe(true)
+    expect(isBackupSource(keep(7))).toBe(true)
+    expect(isBackupSource(keep(-1))).toBe(false)
+    expect(isBackupSource(keep(1.5))).toBe(false)
+    expect(isBackupSource(keep('x'))).toBe(false)
+  })
   it('loadSources：坏 JSON/缺键 → 空数组；非法条目过滤不抛', async () => {
     const a = createMemoryStorage()
     await expect(loadSources(a)).resolves.toEqual([])

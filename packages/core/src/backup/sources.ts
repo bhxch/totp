@@ -7,7 +7,7 @@ import type { StorageAdapter } from '../storage/adapter'
  *  本联合自动跟进——原形态漏改时新 kind 源经 isBackupSource 的 KINDS 过滤被运行时静默丢弃；
  *  local=桌面本地目录源（desktop BackupCard 通道，不参与云同步）。 */
 export type SourceKind = 'local' | CloudBackend['id']
-export type Retention = { type: 'overwrite' } | { type: 'keep'; n: number }
+export type Retention = { type: 'overwrite' } | { type: 'keep'; n: number; days?: number }
 export type SourceRole = 'primary' | 'replica'
 
 export interface BackupSource {
@@ -49,8 +49,12 @@ const KIND_TABLE = {
 const KINDS = Object.keys(KIND_TABLE) as SourceKind[]
 
 export function normalizeRetention(x: unknown): Retention {
-  const r = x as { type?: unknown; n?: unknown } | null
-  if (r?.type === 'keep' && typeof r.n === 'number' && Number.isInteger(r.n) && r.n >= 1) return { type: 'keep', n: r.n }
+  const r = x as { type?: unknown; n?: unknown; days?: unknown } | null
+  if (r?.type === 'keep' && typeof r.n === 'number' && Number.isInteger(r.n) && r.n >= 1) {
+    // days 缺省=0=忽略天数条件（向后兼容旧数据无 days 字段）；存在但非法一律归 0
+    const days = typeof r.days === 'number' && Number.isInteger(r.days) && r.days >= 0 ? r.days : 0
+    return days > 0 ? { type: 'keep', n: r.n, days } : { type: 'keep', n: r.n }
+  }
   return { type: 'overwrite' }
 }
 
@@ -69,10 +73,14 @@ export function isBackupSource(x: unknown): x is BackupSource {
 }
 
 function isRetentionShape(x: unknown): boolean {
-  const r = x as { type?: unknown; n?: unknown } | null
+  const r = x as { type?: unknown; n?: unknown; days?: unknown } | null
   if (r === null || typeof r !== 'object') return false
   if (r.type === 'overwrite') return true
-  return r.type === 'keep' && typeof r.n === 'number' && Number.isInteger(r.n) && r.n >= 1
+  // days 缺省合法（存量数据无此字段）；存在时须非负整数，非法整条拒绝（fail-closed）
+  return (
+    r.type === 'keep' && typeof r.n === 'number' && Number.isInteger(r.n) && r.n >= 1 &&
+    (r.days === undefined || (typeof r.days === 'number' && Number.isInteger(r.days) && r.days >= 0))
+  )
 }
 
 /** 活动目标单选归一（设计 §2）：首个 enabled 且非 local 的源=primary，其余（含 disabled 与 local）
