@@ -29,6 +29,8 @@ export interface WebdavCred {
   password: string
   /** 云端目标对象路径，缺省 DEFAULT_OBJECT_PATH（见 targetPath.ts）。 */
   objectPath?: string
+  /** 每源网络代理（2026-09-30 CORS/代理设计）：缺省直连；仅桌面版宿主生效（扩展端置灰提示走浏览器代理） */
+  proxy?: CloudProxy
 }
 
 export interface GistCred {
@@ -39,6 +41,8 @@ export interface GistCred {
   public?: boolean
   /** 云端目标对象路径，缺省 DEFAULT_OBJECT_PATH（见 targetPath.ts）。 */
   objectPath?: string
+  /** 每源网络代理（2026-09-30 CORS/代理设计）：缺省直连；仅桌面版宿主生效（扩展端置灰提示走浏览器代理） */
+  proxy?: CloudProxy
 }
 
 export interface S3Cred {
@@ -57,6 +61,8 @@ export interface S3Cred {
   forcePathStyle?: boolean
   /** 云端目标对象路径，缺省 DEFAULT_OBJECT_PATH（见 targetPath.ts）。 */
   objectPath?: string
+  /** 每源网络代理（2026-09-30 CORS/代理设计）：缺省直连；仅桌面版宿主生效（扩展端置灰提示走浏览器代理） */
+  proxy?: CloudProxy
 }
 
 /** OAuth 自动刷新模式三元组（spec §5⑦）：用户自建 OAuth client 的凭据，敏感字段随 CloudCred
@@ -79,6 +85,8 @@ export interface GDriveCred {
   fileId?: string
   /** 云端目标对象路径，缺省 DEFAULT_OBJECT_PATH（见 targetPath.ts）。 */
   objectPath?: string
+  /** 每源网络代理（2026-09-30 CORS/代理设计）：缺省直连；仅桌面版宿主生效（扩展端置灰提示走浏览器代理） */
+  proxy?: CloudProxy
 }
 
 export interface OneDriveCred {
@@ -88,23 +96,52 @@ export interface OneDriveCred {
   oauth?: OAuthRefreshConfig
   /** 云端目标对象路径，缺省 DEFAULT_OBJECT_PATH（见 targetPath.ts）。 */
   objectPath?: string
+  /** 每源网络代理（2026-09-30 CORS/代理设计）：缺省直连；仅桌面版宿主生效（扩展端置灰提示走浏览器代理） */
+  proxy?: CloudProxy
 }
 
 /** 云后端凭据判别联合。 */
 export type CloudCred = WebdavCred | GistCred | S3Cred | GDriveCred | OneDriveCred
 
+/** 每源网络代理配置（③）：none=显式直连；system=宿主环境默认代理（桌面 reqwest env/浏览器代理）；
+ *  custom=自定义 url（http:// https:// socks5:// socks5h://） */
+export interface CloudProxy {
+  mode: 'none' | 'system' | 'custom'
+  url?: string
+}
+
+export type CloudFetchImpl = (label: string, url: string, init?: RequestInit, proxy?: CloudProxy) => Promise<Response>
+
+let fetchImpl: CloudFetchImpl = (_label, url, init) => fetch(url, init)
+
+/** 宿主注入网络实现（扩展 background 代理 / 桌面 Rust command）。未注入=全局 fetch（core 测试与未注入宿主零变化） */
+export function setCloudFetch(impl: CloudFetchImpl): void {
+  fetchImpl = impl
+}
+
+/** 测试隔离：恢复默认全局 fetch（先例 __resetOAuthCacheForTest 同款） */
+export function __resetCloudFetchForTest(): void {
+  fetchImpl = (_label, url, init) => fetch(url, init)
+}
+
+/** provider 统一取源代理参数：缺省直连 */
+export function proxyOf(cred: CloudCred): CloudProxy {
+  return cred.proxy ?? { mode: 'none' }
+}
+
 /** fetch 网络层包装：连接失败/中断等 reject 统一转为中文错误。
  *  TypeError: Failed to fetch 与 NetworkError when attempting to fetch resource 是浏览器对
  *  CORS 拒绝/连接中断的统一表现（无具体响应）；自建 WebDAV/S3(MinIO) 等场景下绝大多数成因是
  *  服务端未配置 Access-Control-Allow-Origin/-Methods/-Headers，主动追加提示以减少误判。
- *  错误信息附 host+pathname（不含 query）便于排错，刻意不附完整 url 以免泄漏 token/query 参数。 */
-export async function cloudFetch(label: string, url: string, init?: RequestInit): Promise<Response> {
+ *  错误信息附 host+pathname（不含 query）便于排错，刻意不附完整 url 以免泄漏 token/query 参数。
+ *  第四参 proxy 由 provider 从 cred 透传 */
+export async function cloudFetch(label: string, url: string, init?: RequestInit, proxy?: CloudProxy): Promise<Response> {
   try {
-    return await fetch(url, init)
+    return await fetchImpl(label, url, init, proxy)
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
     const isCorsLikely = err instanceof TypeError
-      && /fetch failed|NetworkError when attempting to fetch resource/i.test(reason)
+      && /fetch failed|failed to fetch|NetworkError when attempting to fetch resource/i.test(reason)
     const hint = isCorsLikely ? ' — 若为自建 WebDAV/S3(MinIO)请检查服务端 CORS 配置' : ''
     const where = describeUrl(url)
     throw new Error(`${label} 网络请求失败：${reason}${hint}（${where}）`)
