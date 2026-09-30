@@ -23,6 +23,9 @@ export default defineConfig({
       ...(browser === 'chrome' ? ['offscreen'] : []),
       'clipboardRead',
     ],
+    // 云同步（WebDAV/S3 等）请求全部经 background SW 出网：SW 携 host_permissions 时
+    // fetch 不受页面 CORS 限制，页面层 setCloudFetch 注入 background 代理（cloudFetchProxy）
+    host_permissions: ['http://*/*', 'https://*/*'],
     ...(browser === 'firefox'
       ? {
           // 稳定 ID（AMO 一经发布不可改）：email 形式合规且表达 GitHub 归属；

@@ -2,6 +2,7 @@ import { parseOtpUri } from '@totp/core'
 import { PENDING_OTPAUTH_KEY } from '../src/pendingOtpauth'
 import { decodeImageBytesToUri } from '../src/qrDecode'
 import { pullSyncIfNewer, pushSync } from '../src/syncEngine'
+import { handleCloudFetch } from '../src/cloudFetchHandler'
 import { canOpenPopup, ext } from '../src/extApi'
 
 /** 清剪贴板 alarm 名（同名 create 即覆盖 = 重复复制重置计时） */
@@ -136,7 +137,12 @@ export default defineBackground(() => {
   // 页面端写路径成功后立即发 {type:'sync-push'}（popup 发完即可能销毁，页面端不做 debounce）：
   // SW 内 1s 合并窗口把连写合并为一次推送；SW 被杀时消息本身会唤醒 SW 重新计时，推送不丢
   let syncPushTimer: ReturnType<typeof setTimeout> | undefined
-  ext!.runtime.onMessage.addListener((msg) => {
+  ext!.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    // 页面端云请求代理（③）：host_permissions 内 SW fetch 不受 CORS 限制，应答经 sendResponse 回传
+    if (msg?.type === 'cloud-fetch') {
+      void handleCloudFetch(msg.url, msg.method, msg.headers, msg.bodyB64).then(sendResponse)
+      return true // MV3：异步应答保持通道开放
+    }
     // popup/options 复制后发 {type:'schedule-clipboard-clear', delayMs}——popup 即将关闭，30s 清空须由后台承载
     if (msg?.type === 'schedule-clipboard-clear') {
       // when 绝对时间触发；delayMs 为 30s 满足 Chrome 120+ 的 alarms 最小间隔 30s
