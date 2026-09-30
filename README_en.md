@@ -353,6 +353,10 @@ Docs index:
 - Implementation plans (per milestone): [docs/plans/](docs/plans/)
 - Review and end-to-end verification reports (incl. the MCP real-machine test): [docs/review/](docs/review/)
 
+## Permissions
+
+Why the extension requests access to all http/https sites (host_permissions): cloud backup targets are user-configured (WebDAV / S3 / GitHub Gist / Google Drive / OneDrive — the address can be any service), and browsers enforce CORS on cross-origin requests made from extension pages. Cloud backup requests are therefore routed through the extension background, which requires host_permissions to reach the network. These permissions are used solely for backup data exchange with the backup targets you configure and the OAuth token endpoints — never for reading web page content.
+
 ## Known limitations
 
 See the [plan13-16 full code review](docs/review/2026-09-18-plan13-16-full-code-review.md) and the [batch-8 six-spec review and verification](docs/review/2026-09-22-six-specs-review-and-verification.md).

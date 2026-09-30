@@ -353,6 +353,10 @@ pnpm typecheck     # 类型检查：core 为纯 tsc；ui/extension/desktop 为 v
 - 实施计划（按里程碑）：[docs/plans/](docs/plans/)
 - 审查与端到端验证报告（含 MCP 真机测试）：[docs/review/](docs/review/)
 
+## 权限说明
+
+扩展申请全部 http/https 站点权限（host_permissions）的原因：云备份目标由您自行配置（WebDAV / S3 / GitHub Gist / Google Drive / OneDrive，地址可以是任意服务），而浏览器会对页面直连的跨源请求施加 CORS 限制；因此云备份请求统一由扩展 background 发出，host_permissions 是其出网前提。这些权限仅用于与您配置的备份目标及 OAuth 令牌端点之间的备份数据往返，不用于读取任何网页内容。
+
 ## 已知限制
 
 详见 [plan13-16 全量代码审查](docs/review/2026-09-18-plan13-16-full-code-review.md)与[批⑧六规格审查与验证](docs/review/2026-09-22-six-specs-review-and-verification.md)。
