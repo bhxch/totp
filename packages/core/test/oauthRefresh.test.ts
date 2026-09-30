@@ -90,14 +90,17 @@ describe('oauthRefresh：refreshAccessToken', () => {
     expect(fetchMock).toHaveBeenCalledOnce()
   })
 
-  it('token 端点网络失败 → 独立中文错误：非 CloudHttpError（不判凭据失效），文案不附 host/path', async () => {
+  it('token 端点网络失败 → 独立中文错误：非 CloudHttpError（不判凭据失效）；经注入层，url 无敏感参数、密钥不进文案', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed') }))
     const cred = { backend: 'gdrive' as const, accessToken: '', oauth: OAUTH }
     const err = await refreshAccessToken(cred).then(() => null, (e: unknown) => e)
     expect(err).toBeInstanceOf(Error)
     expect(isAuthError(err)).toBe(false)
     expect((err as Error).message).toContain('OAuth 刷新请求网络失败')
-    expect((err as Error).message).not.toContain('oauth2.googleapis.com')
+    // token url 本身无敏感参数（client_secret/refresh_token 只在请求体），host+path 可入文案；
+    // 密钥永不随 url 进错误提示（2026-09-30 token 端点改走 cloudFetch 注入层后依旧成立）
+    expect((err as Error).message).not.toContain('sec-1')
+    expect((err as Error).message).not.toContain('rtok-1')
   })
 
   it('onedrive：token 端点为 login.microsoftonline.com/common/oauth2/v2.0/token，参数同 gdrive', async () => {
@@ -215,7 +218,9 @@ describe('oauthRefresh：refreshAccessToken', () => {
     const err = await refreshAccessToken(cred).then(() => null, (e: unknown) => e)
     expect(err).toBeInstanceOf(Error)
     expect(isAuthError(err)).toBe(false)
-    expect((err as Error).message).toContain('OAuth 刷新请求网络失败：network dead')
+    // 独立成句不变；经 cloudFetch 注入层后原因先经内层归一再入外层文案（「network dead」原样保留）
+    expect((err as Error).message).toContain('OAuth 刷新请求网络失败')
+    expect((err as Error).message).toContain('network dead')
   })
 
   it('credKey 稳定性：同 clientId+refreshToken 的不同 cred 实例共享缓存（凭据明文不直接作 key）', async () => {

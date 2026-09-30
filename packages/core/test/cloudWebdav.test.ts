@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createWebdavBackend, joinDavUrl } from '../src/cloud/webdav'
 import { createGistBackend } from '../src/cloud/gist'
+import { setCloudFetch, __resetCloudFetchForTest } from '../src/cloud/backend'
+import type { CloudProxy } from '../src/cloud/backend'
 
 const PATH = 'totp-backup.totpbackup'
 const DAV = 'https://dav.example.com'
@@ -219,5 +221,21 @@ describe('Gist 后端', () => {
     expect(await backend.listBackups!()).toEqual([])
     vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 401 })))
     await expect(backend.listBackups!()).rejects.toThrow('Gist 请求失败（HTTP 401）')
+  })
+})
+
+describe('WebDAV proxy 透传（③）', () => {
+  afterEach(() => __resetCloudFetchForTest())
+
+  it('cred.proxy 经 cloudFetch 第 4 参到达注入层', async () => {
+    const seen: Array<CloudProxy | undefined> = []
+    setCloudFetch(async (_label, _url, _init, proxy) => {
+      seen.push(proxy)
+      return new Response(null, { status: 200 })
+    })
+    const cred = { backend: 'webdav' as const, serverUrl: 'https://dav', username: 'u', password: 'p', objectPath: 'a.totpbackup', proxy: { mode: 'custom' as const, url: 'socks5h://127.0.0.1:7890' } }
+    await createWebdavBackend(cred).put('a.totpbackup', new Uint8Array([1]))
+    expect(seen.length).toBeGreaterThan(0)
+    expect(seen[0]).toEqual({ mode: 'custom', url: 'socks5h://127.0.0.1:7890' })
   })
 })

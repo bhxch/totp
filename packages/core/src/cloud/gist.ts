@@ -1,5 +1,5 @@
 import type { CloudBackend, GistCred } from './backend'
-import { cloudFetch, ensureHttpOk } from './backend'
+import { cloudFetch, ensureHttpOk, proxyOf } from './backend'
 import { BACKUP_NAME_RE } from '../backup/policy'
 
 const LABEL = 'Gist'
@@ -25,7 +25,7 @@ export function createGistBackend(cred: GistCred, opts: { onCredChange?: (cred: 
   const headers = (extra: Record<string, string> = {}) => ({ Authorization: `Bearer ${cred.token}`, ...extra })
 
   const fetchGist = async (): Promise<{ public?: boolean } & GistApiResponse> => {
-    const res = await cloudFetch(LABEL, url, { method: 'GET', headers: headers() })
+    const res = await cloudFetch(LABEL, url, { method: 'GET', headers: headers() }, proxyOf(cred))
     if (res.status === 404) return {}
     ensureHttpOk(LABEL, res)
     const json = (await res.json()) as ({ public?: boolean } & GistApiResponse)
@@ -40,7 +40,7 @@ export function createGistBackend(cred: GistCred, opts: { onCredChange?: (cred: 
       method: 'PATCH',
       headers: headers({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ files: { [path]: { content } } }),
-    })
+    }, proxyOf(cred))
     ensureHttpOk(LABEL, res)
   }
 

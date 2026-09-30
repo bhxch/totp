@@ -1,12 +1,13 @@
 import type { GDriveCred, OneDriveCred } from './backend'
-import { CloudHttpError, cloudFetch } from './backend'
+import { CloudHttpError, cloudFetch, proxyOf } from './backend'
 import { sha256Hex } from './canonical'
 
 /**
  * GDrive/OneDrive OAuth refresh_token 自动刷新（spec §5⑦）。
- * token 端点（oauth2.googleapis.com / login.microsoftonline.com）非各后端 API 域：刻意走原生
- * fetch 而不经 cloudFetch——错误文案独立成句、不附 url（防 client_secret/refresh_token 随
- * host+path 进错误提示），也不套用「CORS/自建服务」提示语境。
+ * token 端点（oauth2.googleapis.com / login.microsoftonline.com）跨源同样受 CORS/代理约束：
+ * 经 cloudFetch('oauth', …) 走注入层（2026-09-30 起随 cred.proxy 走每源代理），label 独立于各后端。
+ * 错误文案仍以「OAuth 刷新请求网络失败」独立成句（外层 catch 再包装）；client_secret/refresh_token
+ * 只在请求体，token url 无敏感参数，host+path 入错误提示无泄漏风险。
  */
 
 const GDRIVE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -56,10 +57,10 @@ export function createAuthFetch<C extends GDriveCred | OneDriveCred>(
 ): { auth: { Authorization: string }; authFetch: (url: string, init?: RequestInit) => Promise<Response> } {
   const auth = { Authorization: `Bearer ${cred.accessToken}` }
   const authFetch = async (url: string, init?: RequestInit): Promise<Response> => {
-    const res = await cloudFetch(label, url, init)
+    const res = await cloudFetch(label, url, init, proxyOf(cred))
     if (res.status !== 401 || !cred.oauth) return res
     auth.Authorization = `Bearer ${await refreshAccessToken(cred, { onCredChange: opts?.onCredChange })}`
-    return cloudFetch(label, url, { ...init, headers: { ...(init?.headers as Record<string, string>), Authorization: auth.Authorization } })
+    return cloudFetch(label, url, { ...init, headers: { ...(init?.headers as Record<string, string>), Authorization: auth.Authorization } }, proxyOf(cred))
   }
   return { auth, authFetch }
 }
@@ -111,7 +112,7 @@ export async function refreshAccessToken<C extends GDriveCred | OneDriveCred>(
   const refreshing = (async (): Promise<string> => {
     let res: Response
     try {
-      res = await fetch(tokenUrlOf(cred.backend), {
+      res = await cloudFetch('oauth', tokenUrlOf(cred.backend), {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
@@ -120,7 +121,7 @@ export async function refreshAccessToken<C extends GDriveCred | OneDriveCred>(
           client_secret: oauth.clientSecret,
           refresh_token: oauth.refreshToken,
         }),
-      })
+      }, proxyOf(cred))
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
       throw new Error(`${label} OAuth 刷新请求网络失败：${reason}`)

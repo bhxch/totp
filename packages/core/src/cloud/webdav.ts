@@ -1,5 +1,5 @@
 import type { CloudBackend, WebdavCred } from './backend'
-import { cloudFetch, ensureHttpOk } from './backend'
+import { cloudFetch, ensureHttpOk, proxyOf } from './backend'
 import { BACKUP_NAME_RE } from '../backup/policy'
 import { resolveDirPath } from './targetPath'
 
@@ -41,21 +41,21 @@ export function createWebdavBackend(cred: WebdavCred): CloudBackend {
         method: 'PUT',
         headers: { Authorization: auth },
         body: new Uint8Array(data),
-      })
+      }, proxyOf(cred))
       ensureHttpOk(LABEL, res)
     },
     async get(path) {
-      const res = await cloudFetch(LABEL, urlOf(path), { method: 'GET', headers: { Authorization: auth } })
+      const res = await cloudFetch(LABEL, urlOf(path), { method: 'GET', headers: { Authorization: auth } }, proxyOf(cred))
       if (res.status === 404) return null
       ensureHttpOk(LABEL, res)
       return new Uint8Array(await res.arrayBuffer())
     },
     async delete(path) {
-      const res = await cloudFetch(LABEL, urlOf(path), { method: 'DELETE', headers: { Authorization: auth } })
+      const res = await cloudFetch(LABEL, urlOf(path), { method: 'DELETE', headers: { Authorization: auth } }, proxyOf(cred))
       ensureHttpOk(LABEL, res)
     },
     async exists(path) {
-      const res = await cloudFetch(LABEL, urlOf(path), { method: 'GET', headers: { Authorization: auth } })
+      const res = await cloudFetch(LABEL, urlOf(path), { method: 'GET', headers: { Authorization: auth } }, proxyOf(cred))
       if (res.status === 404) return false
       ensureHttpOk(LABEL, res)
       return res.ok
@@ -67,7 +67,7 @@ export function createWebdavBackend(cred: WebdavCred): CloudBackend {
       const res = await cloudFetch(LABEL, urlOf(dir ? `${dir}/` : ''), {
         method: 'PROPFIND',
         headers: { Authorization: auth, Depth: '1' },
-      })
+      }, proxyOf(cred))
       ensureHttpOk(LABEL, res)
       return hrefNames(await res.text())
         .filter((n) => BACKUP_NAME_RE.test(n))

@@ -1,5 +1,5 @@
 import type { CloudBackend, S3Cred } from './backend'
-import { cloudFetch, ensureHttpOk } from './backend'
+import { cloudFetch, ensureHttpOk, proxyOf } from './backend'
 import { BACKUP_NAME_RE } from '../backup/policy'
 import { sha256Hex } from './canonical'
 import { resolveDirPath } from './targetPath'
@@ -157,21 +157,21 @@ export function createS3Backend(cred: S3Cred, opts: S3BackendOptions = {}): Clou
         method: 'PUT',
         headers: await signedHeadersOf('PUT', urlOf(path), new Uint8Array(data)),
         body: new Uint8Array(data),
-      })
+      }, proxyOf(cred))
       ensureHttpOk(LABEL, res)
     },
     async get(path) {
-      const res = await cloudFetch(LABEL, urlOf(path), { method: 'GET', headers: await signedHeadersOf('GET', urlOf(path), undefined) })
+      const res = await cloudFetch(LABEL, urlOf(path), { method: 'GET', headers: await signedHeadersOf('GET', urlOf(path), undefined) }, proxyOf(cred))
       if (res.status === 404) return null
       ensureHttpOk(LABEL, res)
       return new Uint8Array(await res.arrayBuffer())
     },
     async delete(path) {
-      const res = await cloudFetch(LABEL, urlOf(path), { method: 'DELETE', headers: await signedHeadersOf('DELETE', urlOf(path), undefined) })
+      const res = await cloudFetch(LABEL, urlOf(path), { method: 'DELETE', headers: await signedHeadersOf('DELETE', urlOf(path), undefined) }, proxyOf(cred))
       ensureHttpOk(LABEL, res)
     },
     async exists(path) {
-      const res = await cloudFetch(LABEL, urlOf(path), { method: 'HEAD', headers: await signedHeadersOf('HEAD', urlOf(path), undefined) })
+      const res = await cloudFetch(LABEL, urlOf(path), { method: 'HEAD', headers: await signedHeadersOf('HEAD', urlOf(path), undefined) }, proxyOf(cred))
       if (res.status === 404) return false
       ensureHttpOk(LABEL, res)
       return res.ok
@@ -193,7 +193,7 @@ export function createS3Backend(cred: S3Cred, opts: S3BackendOptions = {}): Clou
         const query: Record<string, string> = { 'list-type': '2', prefix: listPrefix }
         if (token !== null) query['continuation-token'] = token
         const url = `${endpoint}${pathStyle ? `/${cred.bucket}` : ''}/?${buildCanonicalQueryString(query)}`
-        const res = await cloudFetch(LABEL, url, { method: 'GET', headers: await signedHeadersOf('GET', url, undefined, query) })
+        const res = await cloudFetch(LABEL, url, { method: 'GET', headers: await signedHeadersOf('GET', url, undefined, query) }, proxyOf(cred))
         ensureHttpOk(LABEL, res)
         const xml = await res.text()
         for (const m of xml.matchAll(/<Key>([^<]+)<\/Key>/g)) {
