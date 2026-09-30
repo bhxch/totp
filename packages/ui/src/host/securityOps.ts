@@ -61,7 +61,7 @@ export function createSecurityOpsFromStore(store: VueStore, overrides: SecurityO
         sources: computed(() => store.prfSources.value.map((p) => ({ credentialId: p.credentialId }))),
         prfSupported: () => prfSupported(),
         async add() {
-          // 绑定盐:注册期 create 与权威 get 均以该盐求值,解锁期用同一盐复现(同认证器+同盐→同输出)
+          // 绑定盐：create 优先取值、无输出时 get 静默兜底，均以该盐求值，解锁期用同一盐复现（同认证器+同盐→同输出）
           const salt = randomBytes(32)
           const created = await createPrfCredential('TOTP 验证码工具', salt, {
             excludeCredentialIds: store.prfSources.value.map((p) => p.credentialId),

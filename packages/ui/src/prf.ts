@@ -1,9 +1,10 @@
 // WebAuthn PRF 扩展封装：passkey 解锁的浏览器侧能力探测 / 凭据创建 / PRF 求值。
 // credentialId 统一以 base64url 存储（WebAuthn rawId 的标准传输编码）。
 // PRF 输出约定与 core 对齐：取 results.first 前 32 字节作为 KEK_prf。
-// 绑定语义（Yubico PRF 指南流程）：注册期 create 即带 eval{first:盐} 请求求值，
-// create 成功后立即对同一盐执行 get —— get 的 results 是权威绑定输出
-//（同认证器 + 同盐 → 同输出）；解锁期 getPrfOutput 以同一盐求值即可复现。
+// 绑定语义（Yubico PRF 指南流程）：PRF 求值优先采用 create 阶段结果；若 create 未返回
+// 有效 PRF（如 Windows Hello 部分环境——WebView2 下 create 成功而 get 期求值直接报
+// "Something went wrong"，2026-09-30 真机），则静默回退到 get 阶段求值。两阶段使用
+// 相同盐值和 UV 策略（同认证器 + 同盐 → 同输出），解锁期 getPrfOutput 以同一盐求值即可复现。
 
 import { base64ToBytes, randomBytes } from '@totp/core'
 
@@ -100,9 +101,10 @@ async function requestPrfOutput(credentialId: string, salt: Uint8Array): Promise
 }
 
 /** 创建用于 PRF 解锁的 passkey 凭据：
- *  1. create 带 extensions.prf={eval:{first:盐}}（部分认证器注册期即可求值并建立内部状态）；
- *  2. create 成功后立即对该盐执行 get —— PRF 输出的权威来源（认证器支持 PRF 的可靠保证）。
- *  用户取消 / 认证器不支持 PRF / 无输出 → null（调用方提示，不抛错） */
+ *  1. create 带 extensions.prf={eval:{first:盐}}，PRF 求值优先采用 create 阶段返回的结果；
+ *  2. create 未返回有效 PRF（如 Windows Hello 部分环境）→ 静默回退 get 求值，不向用户暴露中间失败。
+ *  两阶段同一盐、同一 UV 策略（PRF 确定性：同认证器+同盐→同输出），绑定输出解锁期同盐可复现。
+ *  用户取消 / 认证器不支持 PRF / 两阶段均无输出 → null（调用方提示，不抛错） */
 export async function createPrfCredential(
   rpName: string,
   salt: Uint8Array,
@@ -128,8 +130,8 @@ export async function createPrfCredential(
     })) as unknown as WebAuthnCredentialLike | null
     if (!cred) return null
     const credentialId = toBase64Url(new Uint8Array(cred.rawId))
-    // 注册期 outputs 不作绑定依据（create 期 results 仅为部分认证器行为），以 get 求值为准
-    const prfOutput = await requestPrfOutput(credentialId, salt)
+    // 绑定输出：优先 create 期 results；为空 → 静默回退 get（同盐复验，兼容 create 期不回结果的认证器）
+    const prfOutput = firstPrfOutput(cred) ?? (await requestPrfOutput(credentialId, salt))
     if (!prfOutput) return null
     return { credentialId, prfOutput }
   } catch {

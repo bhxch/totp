@@ -72,8 +72,8 @@ describe('prfSupported', () => {
   })
 })
 
-describe('createPrfCredential（注册期带盐求值 + create 后立即 get 权威取值）', () => {
-  it('create 带 prf.eval{first:盐}；随后 get 绑定同盐；返回 base64url credentialId 与 get 输出前 32B', async () => {
+describe('createPrfCredential（PRF 求值 create 优先，get 静默兜底）', () => {
+  it('create 无 PRF 输出 → 静默回退 get：eval.first=同盐、allowCredentials 指向新凭据，绑定 get 输出前 32B', async () => {
     const rawId = new Uint8Array([1, 2, 3, 4])
     const salt = new Uint8Array(32).fill(7)
     const prfValue = new Uint8Array(64).fill(7)
@@ -102,6 +102,20 @@ describe('createPrfCredential（注册期带盐求值 + create 后立即 get 权
     // credentialId 为 base64url(rawId)；prfOutput 取 get results.first 前 32B
     expect(out!.credentialId).toBe('AQIDBA')
     expect(out!.prfOutput).toEqual(prfValue.slice(0, 32))
+  })
+
+  it('create 期已返回 PRF results → 直接采用并跳过 get（Windows Hello get 期报错环境可完成绑定）', async () => {
+    const rawId = new Uint8Array([5])
+    const prfValue = new Uint8Array(64).fill(3)
+    installCredentials({
+      create: async () => credWithPrf(rawId, prfValue),
+      get: async () => credWithPrf(rawId, new Uint8Array(64).fill(9)),
+    })
+    const out = await createPrfCredential('rp', new Uint8Array(32))
+    expect(out).not.toBeNull()
+    expect(out!.credentialId).toBe('BQ')
+    expect(out!.prfOutput).toEqual(prfValue.slice(0, 32))
+    expect(credApi().get).not.toHaveBeenCalled()
   })
 
   it('excludeCredentialIds 透传为 excludeCredentials（防认证器残留重复凭据）', async () => {
@@ -133,7 +147,7 @@ describe('createPrfCredential（注册期带盐求值 + create 后立即 get 权
     expect(credApi().get).not.toHaveBeenCalled()
   })
 
-  it('create 成功但 get 抛错 → null', async () => {
+  it('create 无输出且 get 抛错（用户取消/Hello 报错）→ null', async () => {
     installCredentials({
       create: async () => credWithPrf(new Uint8Array([9])),
       get: async () => { throw new DOMException('NotAllowedError', 'NotAllowedError') },
@@ -188,7 +202,7 @@ describe('绑定→解锁闭环（同认证器+同盐→同输出的绑定语义
 
     const { security, dek } = await setupVaultEncryption('{"v":1}', 'p')
     const bound = await addPrfSource(security, dek, created!.credentialId, created!.prfOutput, bytesToBase64(salt))
-    // 绑定输出即绑定盐求值结果（get 为权威来源）
+    // 绑定输出即绑定盐求值结果（此桩 create 无输出 → get 兜底求值）
     expect(created!.prfOutput).toEqual(prfOf(salt).slice(0, 32))
     // 解锁期同盐 → 同输出 → 解锁成功
     const unlocked = await getPrfOutput(created!.credentialId, salt)
