@@ -10,6 +10,8 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 /// 验收条目13：无头 MCP 启动参数解析（--headless-mcp / --mcp-port / --mcp-token）
 mod cli;
+// 云备份出网 command（2026-09-30 CORS/代理设计）：reqwest 无 CORS，每源 proxy 在 command 内生效
+mod cloud_http;
 // 对话框授权登记（F4）与备份/导入文件命令（dirToken 遏制 + 扩展名白名单）
 mod dialog_grants;
 mod lock_events;
@@ -690,7 +692,8 @@ pub fn run() {
             mcp_server::mcp_regenerate_token,
             mcp_server::mcp_approval_response,
             mcp_server::mcp_respond,
-            mcp_server::mcp_revoke_approvals
+            mcp_server::mcp_revoke_approvals,
+            cloud_http::cloud_http_fetch
         ])
         // build+run（回调形态）：RunEvent::Exit 时注销系统锁屏监听（plan16 T15）；
         // 正常运行路径行为与直接 .run(context) 完全一致

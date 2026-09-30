@@ -51,6 +51,23 @@ tokio-util = "0.7"
 # tower 随 axum/rmcp 已在树（Cargo.lock 0.5），显式声明不新增编译产物
 tower = "0.5"
 
+# 云备份出网通道（2026-09-30 CORS/代理设计）：reqwest 天然无 CORS，替代 WebView fetch；
+# 版本与 Cargo.lock 既有传递依赖 0.13.5 对齐避免重复编译。关 default features 仅取所需：
+# rustls-no-provider（TLS：0.13 已移除公开 native-tls；选 ring provider 而非默认 aws-lc-rs
+# 免 cmake/NASM 构建负担；platform-verifier 随 feature 带入，Windows 用系统证书库）+
+# system-proxy（system 模式语义：hyper-util 读 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY）+
+# socks（socks5(h) 代理）；http/1.1 恒开，不开 http2 免引 h2 树。base64 0.22 已在树
+# （lock 0.22.1）不新增编译产物
+base64 = "0.22"
+reqwest = { version = "0.13", default-features = false, features = [
+    "rustls-no-provider",
+    "system-proxy",
+    "socks",
+] }
+# reqwest rustls-no-provider 的进程级 CryptoProvider：ring（预生成汇编，无 cmake/NASM 外部依赖）；
+# std+tls12 与 reqwest 内部 hyper-rustls(http1,tls12) 对齐（老 WebDAV 服务器多停在 TLS1.2）
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+
 [dev-dependencies]
 # plan17：mcp_auth_middleware 的 oneshot 直测（审查 I-6）需要 tower::ServiceExt（util feature，
 # 仅测试构建生效，与上方主依赖特性叠加）
