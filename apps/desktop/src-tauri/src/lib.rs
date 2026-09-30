@@ -32,8 +32,9 @@ use dialog_grants::{
 };
 use platform_security::{decrypt_dpapi, os_auto_forget, os_auto_protect, os_auto_unprotect};
 use session_vaults::{
-    clear_clipboard_if_staged, clear_stashed_dek, clipboard_clear_if_staged, dek_slot_clear,
-    stage_clipboard_write, stash_dek, take_stashed_dek, CLIPBOARD_STAGE, STASHED_DEK,
+    clear_clipboard_if_staged, clear_mini_dek, clear_stashed_dek, clipboard_clear_if_staged,
+    dek_slot_clear, peek_mini_dek, set_mini_dek, stage_clipboard_write, stash_dek,
+    take_stashed_dek, CLIPBOARD_STAGE, STASHED_DEK,
 };
 use settings_io::{
     read_section_text, read_settings_text, read_shortcut_from_settings, settings_path,
@@ -679,6 +680,9 @@ pub fn run() {
             stash_dek,
             take_stashed_dek,
             clear_stashed_dek,
+            set_mini_dek,
+            peek_mini_dek,
+            clear_mini_dek,
             stage_clipboard_write,
             clipboard_clear_if_staged,
             mcp_server::mcp_get_config,

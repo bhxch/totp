@@ -99,6 +99,28 @@ pub fn clear_stashed_dek() {
     dek_slot_clear(&STASHED_DEK);
 }
 
+/// mini 迷你窗跟随主窗解锁的 DEK 槽（仅进程内存，不落盘；2026-09-30 设计）：主窗解锁 set、
+/// 锁定 clear、mini 启动/聚焦重建 peek——peek 保留槽值（mini 每次重建 store 都要能再取）
+pub static MINI_DEK: Mutex<Option<String>> = Mutex::new(None);
+
+/// 主窗解锁成功后下发 mini 窗解锁用 DEK（base64；前端 bytesToBase64）
+#[tauri::command]
+pub fn set_mini_dek(dek: String) {
+    dek_slot_stash(&MINI_DEK, dek);
+}
+
+/// mini 窗读取槽中 DEK（保留语义，非 take；无则 null=主窗未解锁）
+#[tauri::command]
+pub fn peek_mini_dek() -> Option<String> {
+    MINI_DEK.lock().ok().and_then(|s| s.clone())
+}
+
+/// 主窗锁定时清空 mini 槽（mini 收事件同步锁窗）
+#[tauri::command]
+pub fn clear_mini_dek() {
+    dek_slot_clear(&MINI_DEK);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,5 +173,25 @@ mod tests {
         dek_slot_clear(&slot);
         dek_slot_clear(&slot);
         assert!(slot.lock().unwrap().is_none());
+    }
+}
+
+#[cfg(test)]
+mod mini_dek_tests {
+    use super::*;
+
+    fn peek_inner() -> Option<String> {
+        MINI_DEK.lock().ok().and_then(|s| s.clone())
+    }
+
+    #[test]
+    fn mini_dek_set_peek_clear_cycle() {
+        dek_slot_clear(&MINI_DEK);
+        assert_eq!(peek_inner(), None);
+        dek_slot_stash(&MINI_DEK, "ZGVr".into());
+        assert_eq!(peek_inner(), Some("ZGVr".into()));
+        assert_eq!(peek_inner(), Some("ZGVr".into())); // peek 保留语义：mini 聚焦重建 store 依赖此
+        dek_slot_clear(&MINI_DEK);
+        assert_eq!(peek_inner(), None);
     }
 }
