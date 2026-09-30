@@ -256,12 +256,22 @@ function onRetentionType(s: LocalSourceView, v: string | number): void {
   void persistSource(s)
 }
 /** keep 份数输入 → 源 retention：空串/非数字回落 3（与本地源默认一致），数字钳下限 1。
- *  update:model-value 只更新内存（逐键不落盘，同 onName），change（blur/回车）才落盘（审查 Minor） */
+ *  update:model-value 只更新内存（逐键不落盘，同 onName），change（blur/回车）才落盘（审查 Minor）。
+ *  重建对象带既有 days（③ 天数保护，份数编辑不丢已填保留天数；非 keep 态防御兜底 0） */
 function onKeepN(s: LocalSourceView, v: string | number): void {
   const parsed = v === '' ? NaN : Number(v)
-  s.retention = { type: 'keep', n: Number.isFinite(parsed) ? Math.max(1, Math.round(parsed)) : 3 }
+  s.retention = { type: 'keep', n: Number.isFinite(parsed) ? Math.max(1, Math.round(parsed)) : 3, days: s.retention.type === 'keep' ? (s.retention.days ?? 0) : 0 }
 }
 function onKeepNCommit(s: LocalSourceView): void {
+  void persistSource(s)
+}
+/** keep 天数输入 → 源 retention（③）：空串/非数字回落 0=仅按份数滚动，数字钳下限 0；落盘通道与份数同型 */
+function onKeepDays(s: LocalSourceView, v: string | number): void {
+  if (s.retention.type !== 'keep') return
+  const parsed = v === '' ? NaN : Number(v)
+  s.retention = { type: 'keep', n: s.retention.n, days: Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : 0 }
+}
+function onKeepDaysCommit(s: LocalSourceView): void {
   void persistSource(s)
 }
 
@@ -446,6 +456,12 @@ function onBackupProfileChange(v: string | number): void {
               v-if="s.retention.type === 'keep'" class="keep-n"
               :model-value="String(s.retention.n)" type="number" :label="t('backupCard.keepCountLabel')" :aria-label="t('backupCard.keepCountLabel')"
               @update:model-value="onKeepN(s, $event)" @change="onKeepNCommit(s)"
+            />
+            <!-- ③ 保留天数：>0 时仅删「超份数且超龄」的本地旧份（days=0=仅按份数），change（blur/回车）落盘 -->
+            <MdTextField
+              v-if="s.retention.type === 'keep'" class="keep-days"
+              :model-value="String(s.retention.days ?? 0)" type="number" :min="0" :label="t('backupCard.keepDaysLabel')" :aria-label="t('backupCard.keepDaysLabel')"
+              @update:model-value="onKeepDays(s, $event)" @change="onKeepDaysCommit(s)"
             />
           </div>
         </div>

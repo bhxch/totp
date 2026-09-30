@@ -75,7 +75,7 @@ describe('BackupCard 本地源列表（plan16 T9）', () => {
     expect(w2.findAll('button').some((b) => b.text() === '添加目录…')).toBe(false)
   })
 
-  it('L2 retention 编辑回写：切保留最近落 {keep,3}；份数逐键（input）不落盘、change 落 {keep,5}、0 钳 1、切回覆盖落 overwrite', async () => {
+  it('L2 retention 编辑回写：切保留最近落 {keep,3}；份数逐键（input）不落盘、change 落 {keep,5}、0 钳 1、天数 change 落盘且改份数不丢已填 days、切回覆盖落 overwrite', async () => {
     const p = makePlatform({
       listLocalSources: vi.fn(async () => [src({ id: 's1', retention: { type: 'overwrite' } })]),
       saveLocalSource: vi.fn(async () => {}),
@@ -84,6 +84,7 @@ describe('BackupCard 本地源列表（plan16 T9）', () => {
     const w = await mountCard(p)
     await w.find('button.source-toggle').trigger('click') // 展开配置
     expect(w.find('input[aria-label="保留份数"]').exists()).toBe(false) // 默认覆盖无份数输入
+    expect(w.find('input[aria-label="保留天数"]').exists()).toBe(false)
     await w.findAll('.md-seg__item').find((b) => b.text() === '保留最近')!.trigger('click')
     await vi.waitFor(() => expect(p.saveLocalSource).toHaveBeenLastCalledWith(expect.objectContaining({ id: 's1', retention: { type: 'keep', n: 3 } })))
     const n = w.find('input[aria-label="保留份数"]')
@@ -96,15 +97,24 @@ describe('BackupCard 本地源列表（plan16 T9）', () => {
     await n.trigger('input') // 再键入不 blur：不落盘
     await flushPromises()
     expect(vi.mocked(p.saveLocalSource!).mock.calls.length).toBe(callsAfterChange)
-    // blur（change）落盘：改 5 落 {keep,5}
+    // blur（change）落盘：改 5 落 {keep,5,days:0}（重建 retention 显式带缺省 days=0，与 ③ 口径一致）
     await n.setValue('5')
-    await vi.waitFor(() => expect(p.saveLocalSource).toHaveBeenLastCalledWith(expect.objectContaining({ retention: { type: 'keep', n: 5 } })))
+    await vi.waitFor(() => expect(p.saveLocalSource).toHaveBeenLastCalledWith(expect.objectContaining({ retention: { type: 'keep', n: 5, days: 0 } })))
     // 非法输入钳下限 1（与 T8 CloudCard 口径一致）
     await n.setValue('0')
-    await vi.waitFor(() => expect(p.saveLocalSource).toHaveBeenLastCalledWith(expect.objectContaining({ retention: { type: 'keep', n: 1 } })))
-    // 切回覆盖：份数输入消失、retention 回 overwrite
+    await vi.waitFor(() => expect(p.saveLocalSource).toHaveBeenLastCalledWith(expect.objectContaining({ retention: { type: 'keep', n: 1, days: 0 } })))
+    // ③ 保留天数：change（blur/回车）落盘 days=30；再改份数不丢已填 days（天数保护不随份数编辑丢失）
+    const d = w.find('input[aria-label="保留天数"]')
+    expect(d.exists()).toBe(true)
+    expect((d.element as HTMLInputElement).value).toBe('0')
+    await d.setValue('30')
+    await vi.waitFor(() => expect(p.saveLocalSource).toHaveBeenLastCalledWith(expect.objectContaining({ retention: { type: 'keep', n: 1, days: 30 } })))
+    await n.setValue('2')
+    await vi.waitFor(() => expect(p.saveLocalSource).toHaveBeenLastCalledWith(expect.objectContaining({ retention: { type: 'keep', n: 2, days: 30 } })))
+    // 切回覆盖：份数/天数输入消失、retention 回 overwrite
     await w.findAll('.md-seg__item').find((b) => b.text() === '覆盖')!.trigger('click')
     expect(w.find('input[aria-label="保留份数"]').exists()).toBe(false)
+    expect(w.find('input[aria-label="保留天数"]').exists()).toBe(false)
     await vi.waitFor(() => expect(p.saveLocalSource).toHaveBeenLastCalledWith(expect.objectContaining({ retention: { type: 'overwrite' } })))
   })
 

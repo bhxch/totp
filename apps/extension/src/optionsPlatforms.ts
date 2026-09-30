@@ -149,6 +149,8 @@ export function createOptionsCloudPlatform(deps: OptionsCloudPlatformDeps): Clou
       }
     },
     onManualSynced: deps.onManualSynced,
+    // ③ 每源代理：浏览器无法 per-request 代理，扩展端不渲染代理控件（UI 提示走浏览器/系统代理）
+    proxySupport: false,
   })
 }
 

@@ -154,11 +154,12 @@ describe('CloudCard（源列表 plan16 T8）', () => {
     }
   })
 
-  it('S3 保留策略编辑：覆盖→保留最近出现份数输入（默认 3），改 5 后保存落 {keep,5}；切回覆盖输入消失', async () => {
+  it('S3 保留策略编辑：覆盖→保留最近出现份数输入（默认 3），改 5 后保存落 {keep,5,days:0}；天数保存落 {keep,7,30} 且改份数不丢已填 days；切回覆盖输入消失', async () => {
     const p = makePlatform({ loadSources: vi.fn().mockResolvedValue([src({ id: 's1' })]), creds: { s1: WEBDAV_CRED } })
     const w = await mountCard(p)
     await w.find('button.target-toggle').trigger('click')
     expect(w.find('input[aria-label="保留份数"]').exists()).toBe(false) // 默认覆盖无份数输入
+    expect(w.find('input[aria-label="保留天数"]').exists()).toBe(false)
     await w.findAll('.md-seg__item').find((b) => b.text() === '保留最近')!.trigger('click')
     const n = w.find('input[aria-label="保留份数"]')
     expect(n.exists()).toBe(true)
@@ -166,16 +167,25 @@ describe('CloudCard（源列表 plan16 T8）', () => {
     await n.setValue('5')
     await w.find('button.creds-save').trigger('click')
     await flushPromises()
-    expect(p.saveSources).toHaveBeenCalledWith([src({ id: 's1', retention: { type: 'keep', n: 5 } })])
-    // 切回覆盖：份数输入消失、retention 回 overwrite
+    expect(p.saveSources).toHaveBeenCalledWith([src({ id: 's1', retention: { type: 'keep', n: 5, days: 0 } })])
+    // ③ 保留天数：输入 30 随「保存凭据」统一落盘；再改份数不丢已填 days（天数保护不随份数编辑丢失）
+    const d = w.find('input[aria-label="保留天数"]')
+    expect((d.element as HTMLInputElement).value).toBe('0')
+    await d.setValue('30')
+    await n.setValue('7')
+    await w.find('button.creds-save').trigger('click')
+    await flushPromises()
+    expect(p.saveSources).toHaveBeenLastCalledWith([src({ id: 's1', retention: { type: 'keep', n: 7, days: 30 } })])
+    // 切回覆盖：份数/天数输入消失、retention 回 overwrite
     await w.findAll('.md-seg__item').find((b) => b.text() === '覆盖')!.trigger('click')
     expect(w.find('input[aria-label="保留份数"]').exists()).toBe(false)
+    expect(w.find('input[aria-label="保留天数"]').exists()).toBe(false)
     await w.find('button.creds-save').trigger('click')
     await flushPromises()
     expect(p.saveSources).toHaveBeenLastCalledWith([src({ id: 's1' })])
   })
 
-  it('S3b 保留份数非法输入钳制：空串回落 3、0/负数钳 1', async () => {
+  it('S3b 保留份数非法输入钳制：空串回落 3、0/负数钳 1（days 缺省 0）', async () => {
     const p = makePlatform({ loadSources: vi.fn().mockResolvedValue([src({ id: 's1' })]), creds: { s1: WEBDAV_CRED } })
     const w = await mountCard(p)
     await w.find('button.target-toggle').trigger('click')
@@ -184,11 +194,11 @@ describe('CloudCard（源列表 plan16 T8）', () => {
     await n.setValue('0')
     await w.find('button.creds-save').trigger('click')
     await flushPromises()
-    expect(p.saveSources).toHaveBeenLastCalledWith([src({ id: 's1', retention: { type: 'keep', n: 1 } })])
+    expect(p.saveSources).toHaveBeenLastCalledWith([src({ id: 's1', retention: { type: 'keep', n: 1, days: 0 } })])
     await n.setValue('')
     await w.find('button.creds-save').trigger('click')
     await flushPromises()
-    expect(p.saveSources).toHaveBeenLastCalledWith([src({ id: 's1', retention: { type: 'keep', n: 3 } })])
+    expect(p.saveSources).toHaveBeenLastCalledWith([src({ id: 's1', retention: { type: 'keep', n: 3, days: 0 } })])
   })
 
   it('gdrive 源不渲染保留策略配置(D4:该后端 keep 等价覆盖,隐藏防误配)', async () => {

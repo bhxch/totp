@@ -202,13 +202,20 @@ function addTarget(b: BackendId): void {
 
 /** 保留策略二选（MdSegmentedButton 选项；R7 收 cardShared 选项工厂） */
 const RETENTION_OPTIONS = retentionOptions(t, 'cloudCard')
-/** keep 份数输入 → 源 retention：空串/非数字回落 3（与本地源默认一致），数字钳下限 1 */
+/** keep 份数输入 → 源 retention：空串/非数字回落 3（与本地源默认一致），数字钳下限 1；
+ *  重建对象带既有 days（③ 天数保护，份数编辑不丢已填保留天数；非 keep 态防御兜底 0） */
 function onKeepN(s: BackupSource, v: string | number): void {
   const parsed = v === '' ? NaN : Number(v)
-  s.retention = { type: 'keep', n: Number.isFinite(parsed) ? Math.max(1, Math.round(parsed)) : 3 }
+  s.retention = { type: 'keep', n: Number.isFinite(parsed) ? Math.max(1, Math.round(parsed)) : 3, days: s.retention.type === 'keep' ? (s.retention.days ?? 0) : 0 }
 }
 function onRetentionType(s: BackupSource, v: string | number): void {
   s.retention = v === 'keep' ? { type: 'keep', n: 3 } : { type: 'overwrite' }
+}
+/** keep 天数输入 → 源 retention（③）：空串/非数字回落 0=仅按份数滚动，数字钳下限 0；随「保存凭据」统一落盘 */
+function onKeepDays(s: BackupSource, v: string | number): void {
+  if (s.retention.type !== 'keep') return
+  const parsed = v === '' ? NaN : Number(v)
+  s.retention = { type: 'keep', n: s.retention.n, days: Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : 0 }
 }
 
 /**
@@ -641,12 +648,18 @@ const hasDuplicateNames = computed(() => {
               :model-value="String(s.retention.n)" type="number" :label="t('cloudCard.keepCountLabel')" :aria-label="t('cloudCard.keepCountLabel')"
               :disabled="busy" @update:model-value="onKeepN(s, $event)"
             />
+            <!-- ③ 保留天数：>0 时仅删「超份数且超龄」的云端旧份（days=0=仅按份数），随保存凭据统一落盘 -->
+            <MdTextField
+              v-if="s.retention.type === 'keep'" class="keep-days"
+              :model-value="String(s.retention.days ?? 0)" type="number" :min="0" :label="t('cloudCard.keepDaysLabel')" :aria-label="t('cloudCard.keepDaysLabel')"
+              :disabled="busy" @update:model-value="onKeepDays(s, $event)"
+            />
           </div>
         </div>
         <!-- 单源凭据字段区抽 CloudCredFields 子组件（R7）：gdrive/onedrive 两段逐字模板经
              isOAuthCapableDraft 守卫合并为一段（token 文案按 backend 三元取键）；嵌套字段就地
              编辑=编辑副本语义不变，草稿整体替换仍在父级 credDrafts；retention 供目标路径预览分支 -->
-        <CloudCredFields :draft="credDrafts[s.id]" :busy="busy" :retention="s.retention" />
+        <CloudCredFields :draft="credDrafts[s.id]" :busy="busy" :retention="s.retention" :proxy-support="platform.proxySupport === true" />
       </template>
       <span v-if="statusFor(s.id)" class="target-status">{{ statusFor(s.id) }}</span>
       <MdButton

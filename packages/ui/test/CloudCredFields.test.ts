@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import type { CloudCred, Retention } from '@totp/core'
 import CloudCredFields from '../src/components/CloudCredFields.vue'
 import { createTestI18n } from './helpers/i18n'
@@ -43,5 +43,33 @@ describe('CloudCredFields 目标路径实时预览（bounded ②）', () => {
   it('draft 为 undefined（未配置源）时不渲染预览', () => {
     const w = mountFields(undefined)
     expect(w.find('.path-preview').exists()).toBe(false)
+  })
+})
+
+describe('CloudCredFields 每源代理（③）', () => {
+  const mountP = (draft: CloudCred | undefined, proxySupport: boolean) =>
+    mount(CloudCredFields, { global: { plugins: [createTestI18n()] }, props: { draft, busy: false, retention: OVERWRITE, proxySupport } })
+
+  it('proxySupport=false：不渲染代理控件，显示扩展端提示', () => {
+    const w = mountP(WEBDAV, false)
+    expect(w.text()).toContain('扩展端不支持每源代理')
+    expect(w.find('.proxy-mode').exists()).toBe(false)
+  })
+  it('三段切换与 url 输入：custom 出地址框，none 清 proxy 字段', async () => {
+    const draft: CloudCred = { ...WEBDAV }
+    const w = mountP(draft, true)
+    await w.find('.proxy-mode button:nth-child(3)').trigger('click') // 第 3 段=自定义（MdSegmentedButton button 即 emit 先例）
+    await flushPromises()
+    expect(draft.proxy?.mode).toBe('custom')
+    await w.find('input[aria-label="代理地址"]').setValue('socks5h://127.0.0.1:7890')
+    expect(draft.proxy).toEqual({ mode: 'custom', url: 'socks5h://127.0.0.1:7890' })
+    // 切回直连（none）：清 proxy 字段
+    await w.find('.proxy-mode button:nth-child(1)').trigger('click')
+    expect(draft.proxy).toBeUndefined()
+  })
+  it('draft 为 undefined 时代理控件与提示均不渲染', () => {
+    const w = mountP(undefined, true)
+    expect(w.find('.proxy-mode').exists()).toBe(false)
+    expect(w.text()).not.toContain('扩展端不支持每源代理')
   })
 })

@@ -16,6 +16,8 @@ const props = defineProps<{
   busy: boolean
   /** 该源保留策略（路径预览按 overwrite/keep 分支展示实际目标；缺省按 overwrite 展示） */
   retention?: Retention
+  /** 宿主是否支持每源网络代理（③，CloudPlatform.proxySupport 透传）：false 不渲染代理控件并显示提示 */
+  proxySupport?: boolean
 }>()
 
 const { t } = useI18n()
@@ -59,6 +61,21 @@ function onAuthMode(d: CloudCred | undefined, mode: string | number): void {
  *  整对象替换断开共享（放弃编辑/重进页面即恢复已存值）。oauth 缺失时惰性兜底创建。 */
 function setOauthField(d: GDriveCred | OneDriveCred, field: 'clientId' | 'clientSecret' | 'refreshToken', v: string): void {
   d.oauth = { ...(d.oauth ?? { clientId: '', clientSecret: '', refreshToken: '' }), [field]: v }
+}
+
+// ---------- ③ 每源网络代理（proxySupport 宿主声明驱动；proxy 随凭据整体落 secretBag，无需改保存链） ----------
+/** 代理模式三选（MdSegmentedButton）：直连=显式清 proxy；系统/自定义=建 proxy 对象（url 保留供切回 custom） */
+const PROXY_MODE_OPTIONS = [
+  { value: 'none', label: t('cloudCard.proxyModeNone') },
+  { value: 'system', label: t('cloudCard.proxyModeSystem') },
+  { value: 'custom', label: t('cloudCard.proxyModeCustom') },
+]
+function onProxyMode(d: CloudCred, mode: string | number): void {
+  d.proxy = mode === 'none' ? undefined : { mode: mode as 'system' | 'custom', url: d.proxy?.url }
+}
+function onProxyUrl(d: CloudCred, v: string): void {
+  if (d.proxy?.mode !== 'custom') return
+  d.proxy = { mode: 'custom', url: v.trim() }
 }
 </script>
 
@@ -126,6 +143,19 @@ function setOauthField(d: GDriveCred | OneDriveCred, field: 'clientId' | 'client
       <p v-else class="warn path-preview" role="alert">{{ t('cloudCard.pathPreviewInvalid') }}</p>
       <p v-if="pathPreview.state === 'ok' && (d.backend === 'gdrive' || d.backend === 'gist')" class="hint">{{ t('cloudCard.pathPreviewFlatHint') }}</p>
     </template>
+    <!-- ③ 每源网络代理：桌面 reqwest 生效；扩展端不渲染控件（浏览器无法 per-request 代理），提示走浏览器/系统代理 -->
+    <template v-if="d && proxySupport">
+      <MdSegmentedButton
+        class="proxy-mode" :options="PROXY_MODE_OPTIONS" :model-value="d.proxy?.mode ?? 'none'"
+        :aria-label="t('cloudCard.proxyModeAria')" @update:model-value="onProxyMode(d, $event)"
+      />
+      <MdTextField
+        v-if="d.proxy?.mode === 'custom'" :model-value="d.proxy.url ?? ''" :label="t('cloudCard.proxyUrlLabel')"
+        :placeholder="t('cloudCard.proxyUrlPlaceholder')" :aria-label="t('cloudCard.proxyUrlLabel')" autocomplete="off"
+        @update:model-value="onProxyUrl(d, $event)"
+      />
+    </template>
+    <p v-if="d && !proxySupport" class="hint">{{ t('cloudCard.proxyUnsupportedHint') }}</p>
   </template>
 </template>
 

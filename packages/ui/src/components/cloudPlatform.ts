@@ -102,6 +102,8 @@ export interface CloudPlatform {
    *  后触发——extension 宿主借此复位云凭据失效警示并重启跟随轮询（重新授权闭环，无需重开页面）；
    *  缺省不通知（desktop 无跟随调度器，零影响） */
   onManualSynced?(): void
+  /** [可选] 宿主是否支持每源网络代理（③ desktop reqwest 生效；扩展 false——UI 不渲染代理控件并提示走浏览器/系统代理） */
+  proxySupport?: boolean
   /** KDF 档位（备份设置所选，信封生成用）；缺省 balanced */
   kdfProfile?: () => KdfProfile
 }

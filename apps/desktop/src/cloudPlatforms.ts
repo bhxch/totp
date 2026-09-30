@@ -54,6 +54,8 @@ export function createCloudPlatform(deps: CloudPlatformDeps): CloudPlatform {
         set: (p) => persistCloudPrefs(p),
       },
       loadAutoStatus: async () => readAutoStatusText(CLOUD_AUTO_STATUS_KEY),
+      // ③ 每源代理：desktop reqwest 支持 per-request 代理，CloudCredFields 渲染代理控件
+      proxySupport: true,
     },
   )
 }
