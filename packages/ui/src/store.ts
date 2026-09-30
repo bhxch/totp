@@ -32,6 +32,8 @@ export function createVueStore(
     /** DEK 持久化（设计 §1 锁定策略·重启即锁）：宿主提供会话级存取（extension=chrome.storage.session base64）；
      *  缺省=不持久化（desktop 内存级，重启天然锁定）。lock() 必清；解锁/自动恢复必写。 */
     dekPersist?: { get(): Promise<string | null>; set(dek: Uint8Array): Promise<void>; clear(): Promise<void> }
+    /** 解锁成功回调（① mini 跟随主窗解锁）：所有解锁路径在 applyDekAndUnlock 成功完成后触发一次 */
+    onUnlocked?: () => void
     /** 冲突裁决成功后的未裁决计数回调：extension 桥到持久计数键 + action badge 即时对账
      *  （与 runner onConflicts 同口径，消除「自动同步关闭时 badge 等下轮同步才清」的滞后）；
      *  desktop 不传则零行为 */
@@ -162,6 +164,7 @@ export function createVueStore(
     adapter,
     windowId,
     dekPersist: opts.dekPersist,
+    onUnlock: opts.onUnlocked,
     enqueue,
     selfWrite: lastSelfWrite,
     bag: bagStore,

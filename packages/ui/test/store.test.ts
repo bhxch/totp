@@ -762,3 +762,20 @@ describe('removeEntriesOp（④B 批量删除）', () => {
     expect(raw.entries.map((e: { uuid: string }) => e.uuid)).toEqual(['u2'])
   })
 })
+
+describe('onUnlocked（① mini 跟随主窗解锁）', () => {
+  it('解锁路径（口令）触发一次 onUnlocked；锁定后不触发', async () => {
+    const adapter = createMemoryStorage()
+    const onUnlocked = vi.fn()
+    const s = createVueStore(adapter, { onUnlocked })
+    await s.initStore()
+    // 启用加密并锁定，再口令解锁（既有先例套路：enableEncryption 内经 core setupVaultEncryption，
+    // 不走 applyDekAndUnlock，不应触发回调）
+    await s.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await s.enableEncryption('test-passphrase-123')
+    s.lock()
+    expect(onUnlocked).not.toHaveBeenCalled()
+    await s.unlock('test-passphrase-123')
+    expect(onUnlocked).toHaveBeenCalledTimes(1)
+  })
+})

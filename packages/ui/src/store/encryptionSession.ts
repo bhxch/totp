@@ -14,6 +14,8 @@ export interface EncryptionSessionDeps {
   windowId: string
   /** DEK 持久化（设计 §1 锁定策略·重启即锁）：宿主提供会话级存取；缺省=不持久化（desktop 内存级） */
   dekPersist?: { get(): Promise<string | null>; set(dek: Uint8Array): Promise<void>; clear(): Promise<void> }
+  /** 解锁成功回调（① mini 跟随主窗解锁）：口令/unlockWithDek/initStore 恢复三路在 applyDekAndUnlock 成功完成后触发 */
+  onUnlock?: () => void
   /** 提交队列：enable/disable/改口令/KEK 来源 op 与 vault/settings 写同队列串行 */
   enqueue: <T>(task: () => Promise<T>) => Promise<T>
   /** 自写抑制窗口（与主层三通道共享对象）：security 键写入复用 vault 通道自写窗口
@@ -418,6 +420,8 @@ export function createEncryptionSession(deps: EncryptionSessionDeps) {
     adoptDek(key)
     // 合并冲突记录随解锁重装载（记录含整条目秘密，锁定已清）
     await conflicts.reload()
+    // ① 解锁汇聚点回调（口令/unlockWithDek/initStore 恢复三路均经此；desktop 宿主经此同步 mini 窗）
+    deps.onUnlock?.()
   }
 
   /** passkey 解锁第二跳：外部经 core unlockWithPrf 解出 DEK 后注入。
