@@ -749,3 +749,16 @@ describe('lock() 与在途 commit 竞态（F1）', () => {
     expect(raw.entries).toHaveLength(2)
   })
 })
+
+describe('removeEntriesOp（④B 批量删除）', () => {
+  it('批量删除一次 commit 落盘：内存与 adapter 同步少条', async () => {
+    const adapter = createMemoryStorage()
+    const s = createVueStore(adapter)
+    await s.initStore()
+    for (const [i, u] of ['u1', 'u2', 'u3'].entries()) await s.addEntryOp({ ...newEntryFromUri('otpauth://totp/A:x?secret=JBSWY3DPEHPK3PXP', 1000 + i), uuid: u })
+    await s.removeEntriesOp(['u1', 'u3'])
+    expect(s.vault.entries.map((e) => e.uuid)).toEqual(['u2'])
+    const raw = JSON.parse((await adapter.get('vault'))!)
+    expect(raw.entries.map((e: { uuid: string }) => e.uuid)).toEqual(['u2'])
+  })
+})

@@ -33,6 +33,12 @@ export function removeEntry(v: Vault, uuid: string): Vault {
   return withVault(v, { entries: v.entries.filter((e) => e.uuid !== uuid) })
 }
 
+/** ④B 批量删除：单次不可变过滤（store 单 commit 原子落盘），未知 uuid 忽略 */
+export function removeEntries(v: Vault, uuids: string[]): Vault {
+  const dead = new Set(uuids)
+  return withVault(v, { entries: v.entries.filter((e) => !dead.has(e.uuid)) })
+}
+
 export function updateEntry(v: Vault, uuid: string, patch: Partial<Omit<OtpEntry, 'uuid'>>): Vault {
   return withVault(v, {
     entries: v.entries.map((e) => (e.uuid === uuid ? { ...e, ...patch, updatedAt: Date.now() } : e)),

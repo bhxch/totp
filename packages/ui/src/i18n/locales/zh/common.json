@@ -641,6 +641,7 @@
     "entryCount": "条目（{count}）",
     "select": "选择",
     "cancelSelect": "取消选择",
+    "deleteSelected": "删除所选（{count}）",
     "manageTags": "管理标签",
     "empty": "暂无条目，点击右下「添加」录入。",
     "noMatch": "无匹配条目",

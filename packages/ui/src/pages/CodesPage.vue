@@ -92,7 +92,7 @@ function onBatchAdded(count: number) {
   if (batchToastTimer) clearTimeout(batchToastTimer)
   batchToastTimer = setTimeout(() => (batchToast.value = ''), 4000)
 }
-onUnmounted(() => { if (batchToastTimer) clearTimeout(batchToastTimer) })
+onUnmounted(() => { if (batchToastTimer) clearTimeout(batchToastTimer); if (batchConfirmTimer) clearTimeout(batchConfirmTimer) })
 
 /** 展示排序走 entriesSort 单点（R14，与 desktop MiniApp 共用；pinned 优先 → order 升序） */
 const sorted = computed(() => sortEntries(props.store.vault.entries))
@@ -209,6 +209,20 @@ function cancelSelection() {
   selecting.value = false
   selected.value = new Set()
 }
+/** ④B 批量删除两击确认（3s 超时与单条删除同款）：确认后单 commit 批量落盘并退出选择模式 */
+const confirmingBatchDelete = ref(false)
+let batchConfirmTimer: ReturnType<typeof setTimeout> | null = null
+async function removeSelected() {
+  if (!confirmingBatchDelete.value) {
+    confirmingBatchDelete.value = true
+    if (batchConfirmTimer) clearTimeout(batchConfirmTimer)
+    batchConfirmTimer = setTimeout(() => (confirmingBatchDelete.value = false), 3000)
+    return
+  }
+  confirmingBatchDelete.value = false
+  await props.store.removeEntriesOp([...selected.value])
+  cancelSelection()
+}
 /** 拼版 Dialog：条目取选中集合按展示顺序（pinned/order），不受当前搜索/标签过滤影响
  *  （勾选时行可见即入集合；过滤变化不隐式丢条目） */
 const sheetOpen = ref(false)
@@ -274,8 +288,10 @@ function openSheet() {
     <!-- 新建入口：MdFab 替代原「＋ 添加」text button，触发同一 creating 态 -->
     <MdFab class="page-fab" :aria-label="t('codesPage.addEntry')" :title="t('codesPage.addEntry')" @click="creating = true; editing = null">＋</MdFab>
 
-    <!-- 选择模式底部浮动操作条（spec §2.5）：有选中才出现；取消=清空并退出 -->
+    <!-- 选择模式底部浮动操作条（spec §2.5）：有选中才出现；取消=清空并退出；④B 删除两击确认 -->
     <div v-if="selected.size > 0" class="select-bar" data-test="select-bar">
+      <MdButton v-if="!confirmingBatchDelete" data-test="select-delete" danger @click="removeSelected">{{ t('codesPage.deleteSelected', { count: selected.size }) }}</MdButton>
+      <MdButton v-else data-test="select-delete-confirm" danger @click="removeSelected">{{ t('codesPage.confirmDelete') }}</MdButton>
       <MdButton data-test="sheet-open" @click="openSheet">{{ t('codesPage.generateQr', { count: selected.size }) }}</MdButton>
       <MdButton data-test="select-cancel" variant="text" @click="cancelSelection">{{ t('codesPage.cancel') }}</MdButton>
     </div>

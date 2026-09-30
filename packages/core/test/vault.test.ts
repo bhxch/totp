@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createVault, addEntry, removeEntry, updateEntry, addTag, renameTag, removeTag, ensureTag, reorderEntries, newEntryFromUri } from '../src/vault'
+import { createVault, addEntry, removeEntry, removeEntries, updateEntry, addTag, renameTag, removeTag, ensureTag, reorderEntries, newEntryFromUri } from '../src/vault'
 import type { OtpEntry } from '../src/model'
 
 const mkEntry = (uuid: string, order = 0): OtpEntry => ({
@@ -149,5 +149,26 @@ describe('entry updatedAt', () => {
     expect(v.entries[0]!.updatedAt).toBe(2000)
     expect(v.entries[0]!.createdAt).toBe(1000)
     vi.restoreAllMocks()
+  })
+})
+
+describe('removeEntries（④B 批量删除）', () => {
+  it('批量移除多条一次返回新对象；未知 uuid 忽略；入参 vault 不变', () => {
+    let v = createVault()
+    v = addEntry(v, mkEntry('a', 0))
+    v = addEntry(v, mkEntry('b', 1))
+    v = addEntry(v, mkEntry('c', 2))
+    const before = JSON.stringify(v)
+    const v2 = removeEntries(v, ['a', 'ghost', 'c'])
+    expect(v2.entries.map((e) => e.uuid)).toEqual(['b'])
+    expect(v2).not.toBe(v)
+    expect(JSON.stringify(v)).toBe(before)
+  })
+  it('空名单：结构仍返回新 vault（updatedAt 推进通道一致），条目原样', () => {
+    let v = createVault()
+    v = addEntry(v, mkEntry('a'))
+    const v2 = removeEntries(v, [])
+    expect(v2.entries).toHaveLength(1)
+    expect(v2).not.toBe(v)
   })
 })

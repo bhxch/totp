@@ -1,7 +1,7 @@
 import {
   DEFAULT_SETTINGS, SECURITY_KEY, VAULT_KEY, VAULT_REV_WATERMARK_KEY, VaultRollbackError, addEntry,
   addTag, base64ToBytes, createVault, dekFingerprint, decryptVaultWithDekDetailed, encryptVaultWithDek,
-  isEncryptedVault, loadSettings, removeEntry, removeTag, renameTag, reorderEntries, saveSettings, saveVault,
+  isEncryptedVault, loadSettings, removeEntry, removeEntries, removeTag, renameTag, reorderEntries, saveSettings, saveVault,
   updateEntry, validateVaultObject,
   type AppSettings, type EncryptedVault, type OtpEntry, type SecuritySettings, type StorageAdapter, type Vault,
   type VaultRevWatermark,
@@ -448,6 +448,8 @@ export function createVueStore(
     addEntryOp: (entry: OtpEntry) => commit((v) => addEntry(v, entry)),
     updateEntryOp: (uuid: string, patch: Partial<Omit<OtpEntry, 'uuid'>>) => commit((v) => updateEntry(v, uuid, patch)),
     removeEntryOp: (uuid: string) => commit((v) => removeEntry(v, uuid)),
+    /** ④B 批量删除：单 commit 原子落盘（多选删除不走循环 removeEntryOp） */
+    removeEntriesOp: (uuids: string[]) => commit((v) => removeEntries(v, uuids)),
     /** 建 tag 并回传 id（同名幂等复用）：EntryForm 内联建 tag 自动勾选依赖此返回值 */
     addTagOp: (name: string): Promise<string> => {
       let tagId = ''

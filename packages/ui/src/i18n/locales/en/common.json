@@ -641,6 +641,7 @@
     "entryCount": "Entries ({count})",
     "select": "Select",
     "cancelSelect": "Cancel selection",
+    "deleteSelected": "Delete selected ({count})",
     "manageTags": "Manage tags",
     "empty": "No entries yet. Tap \"Add\" at the bottom right to create one.",
     "noMatch": "No matching entries",
