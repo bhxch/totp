@@ -645,8 +645,8 @@ const hasDuplicateNames = computed(() => {
         </div>
         <!-- 单源凭据字段区抽 CloudCredFields 子组件（R7）：gdrive/onedrive 两段逐字模板经
              isOAuthCapableDraft 守卫合并为一段（token 文案按 backend 三元取键）；嵌套字段就地
-             编辑=编辑副本语义不变，草稿整体替换仍在父级 credDrafts -->
-        <CloudCredFields :draft="credDrafts[s.id]" :busy="busy" />
+             编辑=编辑副本语义不变，草稿整体替换仍在父级 credDrafts；retention 供目标路径预览分支 -->
+        <CloudCredFields :draft="credDrafts[s.id]" :busy="busy" :retention="s.retention" />
       </template>
       <span v-if="statusFor(s.id)" class="target-status">{{ statusFor(s.id) }}</span>
       <MdButton

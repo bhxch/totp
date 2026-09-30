@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import type { CloudCred, GDriveCred, OneDriveCred } from '@totp/core'
-import { DEFAULT_OBJECT_PATH } from '@totp/core'
+import type { CloudCred, GDriveCred, OneDriveCred, Retention } from '@totp/core'
+import { DEFAULT_OBJECT_PATH, previewObjectPath } from '@totp/core'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { hasPlaintextUrl, isGistDraft, isOAuthCapableDraft, isOneDriveDraft, isS3Draft, isWebdavDraft } from './cardShared'
 import MdCheckbox from './md/MdCheckbox.vue'
@@ -13,9 +14,25 @@ const props = defineProps<{
   draft: CloudCred | undefined
   /** 全卡忙碌态：objectPath 等输入随 busy 禁用 */
   busy: boolean
+  /** 该源保留策略（路径预览按 overwrite/keep 分支展示实际目标；缺省按 overwrite 展示） */
+  retention?: Retention
 }>()
 
 const { t } = useI18n()
+
+// ---------- 目标路径实时预览（bounded ②）：输入即算，语义与上传链同源（core previewObjectPath） ----------
+const pathPreview = computed(() => {
+  const d = props.draft
+  if (!d) return null
+  return previewObjectPath(d, { type: props.retention?.type ?? 'overwrite' })
+})
+const pathPreviewText = computed(() => {
+  const p = pathPreview.value
+  if (!p || p.state !== 'ok') return ''
+  if (p.keepNamePlaceholder === undefined) return t('cloudCard.pathPreviewOverwrite', { path: p.path })
+  const dir = p.path === '' ? t('cloudCard.pathPreviewRoot') : p.path
+  return t('cloudCard.pathPreviewKeep', { dir, name: p.keepNamePlaceholder })
+})
 
 // ---------- OAuth 模式切换（spec §5⑦，仅 gdrive/onedrive）：oauth 三元组存在即 OAuth 模式 ----------
 /** 凭据模式二选（MdSegmentedButton）：与后端约定一致——cred.oauth 存在=OAuth 自动刷新，缺省=手工 token */
@@ -103,6 +120,12 @@ function setOauthField(d: GDriveCred | OneDriveCred, field: 'clientId' | 'client
     </div>
     <!-- v-if="d" 兼作类型窄化：v-for 单元素 d 在守卫链外无 undefined 窄化，vue-tsc 会报 TS18048 -->
     <MdTextField v-if="d" :model-value="d.objectPath ?? ''" :label="t('cloudCard.objectPathLabel')" :placeholder="DEFAULT_OBJECT_PATH" :aria-label="t('cloudCard.objectPathLabel')" :disabled="busy" @update:model-value="d.objectPath = $event.trim()" />
+    <!-- 目标路径实时预览（bounded ②）：与上传链同语义（keep 仅目录生效、文件名自动生成） -->
+    <template v-if="d && pathPreview">
+      <p v-if="pathPreview.state === 'ok'" class="hint path-preview">{{ pathPreviewText }}</p>
+      <p v-else class="warn path-preview" role="alert">{{ t('cloudCard.pathPreviewInvalid') }}</p>
+      <p v-if="pathPreview.state === 'ok' && (d.backend === 'gdrive' || d.backend === 'gist')" class="hint">{{ t('cloudCard.pathPreviewFlatHint') }}</p>
+    </template>
   </template>
 </template>
 

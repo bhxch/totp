@@ -45,3 +45,31 @@ export function resolveDirPath(cred: CloudCred): string {
   const idx = p.lastIndexOf('/')
   return idx > 0 ? p.slice(0, idx) : ''
 }
+
+/** keep 模式路径预览的文件名占位（真实上传名由 resolveTimestampPath 按当时时间签发） */
+export const KEEP_NAME_PLACEHOLDER = 'vault-YYYYMMDD-HHMMSS.totpbackup'
+
+/** 「目标文件路径」实时预览结果 */
+export interface ObjectPathPreview {
+  /** 'ok'=可展示；'invalid'=resolveObjectPath 会抛的非法路径（\0/相对段），UI 据此展示错误文案 */
+  state: 'ok' | 'invalid'
+  /** overwrite：实际完整目标；keep：目录部分（''=根目录） */
+  path: string
+  /** keep 模式自动生成的文件名占位；overwrite 时缺省 */
+  keepNamePlaceholder?: string
+}
+
+/** 「目标文件路径」实时预览（②）：与上传链同语义（resolveObjectPath/resolveDirPath 单点复用）、
+ *  纯只读——绝不调用 resolveTimestampPath（其会推进同秒防撞记忆，预览不得产生副作用），keep
+ *  文件名以固定占位展示。resolveObjectPath 的两类抛错折叠为 state:'invalid'，不向 UI 抛异常。
+ *  retention 参数收 Retention 联合的超集形状（n 可选），调用方可直接传源 retention。 */
+export function previewObjectPath(cred: CloudCred, retention: { type: 'overwrite' | 'keep'; n?: number }): ObjectPathPreview {
+  let resolved: string
+  try {
+    resolved = resolveObjectPath(cred)
+  } catch {
+    return { state: 'invalid', path: '' }
+  }
+  if (retention.type === 'overwrite') return { state: 'ok', path: resolved }
+  return { state: 'ok', path: resolveDirPath(cred), keepNamePlaceholder: KEEP_NAME_PLACEHOLDER }
+}

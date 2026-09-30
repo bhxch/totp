@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { DEFAULT_OBJECT_PATH, __resetForTest, resolveDirPath, resolveObjectPath, resolveTimestampPath } from '../src/cloud/targetPath'
+import {
+  DEFAULT_OBJECT_PATH, KEEP_NAME_PLACEHOLDER, __resetForTest,
+  previewObjectPath, resolveDirPath, resolveObjectPath, resolveTimestampPath,
+} from '../src/cloud/targetPath'
 
 describe('resolveObjectPath', () => {
   it('无 objectPath 时各后端用默认值', () => {
@@ -91,5 +94,37 @@ describe('__resetForTest（模块级同秒防撞记忆清空，防跨用例污�
     __resetForTest()
     // 记忆已清：同一 NOW 不再被判同秒撞名，重新签发整秒名
     expect(resolveTimestampPath(cred, NOW)).toBe('reset/vault-20260917-123456.totpbackup')
+  })
+})
+
+describe('previewObjectPath（②路径实时预览：与上传链同语义、纯只读不签发）', () => {
+  const base = { backend: 'webdav', serverUrl: 's', username: 'u', password: 'p' } as const
+
+  it('overwrite：返回实际完整目标（缺省回落默认值、自定义值 trim 归一）', () => {
+    expect(previewObjectPath(base, { type: 'overwrite' })).toEqual({ state: 'ok', path: DEFAULT_OBJECT_PATH })
+    expect(previewObjectPath({ ...base, objectPath: ' dav/sub/my.totpbackup ' }, { type: 'overwrite' })).toEqual({ state: 'ok', path: 'dav/sub/my.totpbackup' })
+  })
+  it('keep：仅目录生效，文件名返回固定占位；仅文件名/空值时目录为根', () => {
+    expect(previewObjectPath({ ...base, objectPath: 'docs/sub/my.totpbackup' }, { type: 'keep', n: 3 })).toEqual({
+      state: 'ok', path: 'docs/sub', keepNamePlaceholder: KEEP_NAME_PLACEHOLDER,
+    })
+    expect(previewObjectPath({ ...base, objectPath: 'onlyname.totpbackup' }, { type: 'keep', n: 1 })).toEqual({
+      state: 'ok', path: '', keepNamePlaceholder: KEEP_NAME_PLACEHOLDER,
+    })
+    expect(previewObjectPath({ ...base }, { type: 'keep', n: 1 })).toEqual({
+      state: 'ok', path: '', keepNamePlaceholder: KEEP_NAME_PLACEHOLDER,
+    })
+  })
+  it('invalid：\\0 与相对段折叠为 state:\'invalid\'（不抛出，UI 据此展示错误文案）', () => {
+    expect(previewObjectPath({ ...base, objectPath: 'a/../b' }, { type: 'overwrite' })).toEqual({ state: 'invalid', path: '' })
+    expect(previewObjectPath({ ...base, objectPath: 'a\u0000b' }, { type: 'keep', n: 3 })).toEqual({ state: 'invalid', path: '' })
+  })
+  it('纯只读：预览不推进同秒防撞记忆（预览后 resolveTimestampPath 仍从整秒签发）', () => {
+    __resetForTest()
+    const cred = { ...base, objectPath: 'preview/totp-backup.totpbackup' }
+    const NOW = new Date(2026, 8, 30, 22, 12, 51)
+    previewObjectPath(cred, { type: 'keep', n: 3 })
+    previewObjectPath(cred, { type: 'keep', n: 3 })
+    expect(resolveTimestampPath(cred, NOW)).toBe('preview/vault-20260930-221251.totpbackup')
   })
 })
