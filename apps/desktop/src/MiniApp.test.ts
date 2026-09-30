@@ -1,7 +1,8 @@
 /**
  * MiniApp 挂载冒烟（P4，盘点 B10.33-36 双窗口缺口）：windowId='mini' 独立 store（与 main 隔离）、
- * 未加密可读/加密恒锁定提示、复制编排（HOTP 复制旧 counter 码→递增→500ms 自动隐藏）、
- * stage 失败→copyFailed 保持可见且 HOTP 不推进、force-lock 联动、mini 不监听回注事件。
+ * 未加密可读/加密经槽 peek 自动解锁（①跟随主窗解锁）、复制编排（HOTP 复制旧 counter 码→递增→
+ * 500ms 自动隐藏）、stage 失败→copyFailed 保持可见且 HOTP 不推进、force-lock/mini-session 事件联动、
+ * mini 不监听回注事件。
  * Tauri 边界走 test/mocks/tauri（fs 以内存 map 供给）；store 走真实 createTauriFs+createVueStore
  * （createVueStore 局部包装仅记录 windowId 实参）；i18n 用真实 createAppI18n（断言 zh 文案）。
  */
@@ -10,7 +11,7 @@ import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import {
-  addEntry, createVault, setupVaultEncryption, SECURITY_KEY, VAULT_KEY,
+  addEntry, bytesToBase64, createVault, setupVaultEncryption, SECURITY_KEY, VAULT_KEY,
   type OtpEntry, type Vault,
 } from '@totp/core'
 import { tauriMock } from '../test/mocks/tauri'
@@ -112,7 +113,7 @@ describe('加密库恒锁定（mini 无解锁 UI 也拿不到主窗会话 DEK）
     files.set(`${VAULT_KEY}.json`, JSON.stringify(encrypted))
     files.set(`${SECURITY_KEY}.json`, JSON.stringify(security))
     const wrapper = await mountMini()
-    expect(wrapper.text()).toContain('加密启用后迷你窗不可用，请在主窗口解锁使用')
+    expect(wrapper.text()).toContain('主窗口解锁后此窗口可用')
     expect(wrapper.find('[data-test="item"]').exists()).toBe(false)
   })
 })
@@ -193,10 +194,54 @@ describe('force-lock 联动（释放策略暂停/销毁）', () => {
   it('force-lock → 锁定提示；锁库路径 onLocked → 清 Rust DEK 暂存槽（与主窗同口径）', async () => {
     await seedVault([TOTP])
     const wrapper = await mountMini()
-    expect(wrapper.text()).not.toContain('加密启用后迷你窗不可用')
+    expect(wrapper.text()).not.toContain('主窗口解锁后此窗口可用')
     tauriMock.emit('force-lock', null)
     await flushPromises()
-    expect(wrapper.text()).toContain('加密启用后迷你窗不可用，请在主窗口解锁使用')
+    expect(wrapper.text()).toContain('主窗口解锁后此窗口可用')
     expect(tauriMock.calls('clear_stashed_dek')).toHaveLength(1)
+  })
+})
+
+describe('mini 跟随主窗解锁（①槽 peek 自动恢复 + mini-session 事件联动）', () => {
+  /** 加密库种子（复用 force-lock 前置）：返回盘上密文的真实 DEK base64（等价主窗解锁后写入 mini 槽的值） */
+  async function seedEncryptedVault(entries: OtpEntry[]): Promise<string> {
+    const vault = await seedVault(entries)
+    const { security, encrypted, dek } = await setupVaultEncryption(JSON.stringify(vault), 'pw-test')
+    files.set(`${VAULT_KEY}.json`, JSON.stringify(encrypted))
+    files.set(`${SECURITY_KEY}.json`, JSON.stringify(security))
+    return bytesToBase64(dek)
+  }
+
+  it('boot 传 dekPersist（peek_mini_dek）；槽有 DEK 时 initStore 自动解锁渲染条目', async () => {
+    const dekB64 = await seedEncryptedVault([TOTP])
+    tauriMock.onReturn('peek_mini_dek', dekB64)
+    const wrapper = await mountMini()
+    // 槽 DEK 解密走 WebCrypto 线程池（宏任务）：flushPromises 不够，轮询等 boot 链完全收敛
+    // （mini-session/force-lock 监听注册 + 槽 DEK 解锁渲染）——不等会让未收敛链跨用例晚注册（僵尸监听）
+    await vi.waitFor(() => {
+      expect(tauriMock.listenerCount('mini-session')).toBe(1) // 主窗解锁态联动已接线
+      expect(wrapper.find('[data-test="item"]').exists()).toBe(true) // 槽 DEK 解密成功 → 条目渲染
+    })
+    expect(tauriMock.calls('peek_mini_dek')).toHaveLength(1) // boot 经 dekPersist.get peek 主窗槽
+    expect(wrapper.text()).not.toContain('主窗口解锁后此窗口可用') // 锁定文案未出现
+  })
+
+  it('mini-session locked:true → store.lock()（清 Rust 暂存槽）；locked:false 且锁定中 → 重载再 peek 自动解锁', async () => {
+    const dekB64 = await seedEncryptedVault([TOTP]) // 槽空（peek 缺省 null）→ boot 后锁定
+    const wrapper = await mountMini()
+    expect(wrapper.text()).toContain('主窗口解锁后此窗口可用')
+    expect(tauriMock.calls('peek_mini_dek')).toHaveLength(1)
+    // 锁定路径无解密不跨宏任务，但先等监听就绪防时序误判（同上）
+    await vi.waitFor(() => expect(tauriMock.listenerCount('mini-session')).toBe(1))
+    tauriMock.emit('mini-session', { locked: true }) // 主窗锁库广播 → mini 跟随锁定
+    await flushPromises()
+    expect(tauriMock.calls('clear_stashed_dek')).toHaveLength(1) // lock() 路径 onLocked 清暂存槽
+    expect(wrapper.find('[data-test="item"]').exists()).toBe(false)
+    tauriMock.onReturn('peek_mini_dek', dekB64) // 主窗解锁：同一库 DEK 入 mini 槽
+    tauriMock.emit('mini-session', { locked: false }) // 通知 mini 重载
+    await flushPromises()
+    expect(tauriMock.calls('peek_mini_dek').length).toBeGreaterThanOrEqual(2) // load 重建再 peek
+    await vi.waitFor(() => expect(wrapper.find('[data-test="item"]').exists()).toBe(true)) // 重载经槽 DEK 自动解锁
+    expect(wrapper.text()).not.toContain('主窗口解锁后此窗口可用')
   })
 })

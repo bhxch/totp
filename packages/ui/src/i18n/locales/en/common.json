@@ -761,7 +761,7 @@
     "unlockKeyring": "Keyring auto-unlock"
   },
   "mini": {
-    "lockedNote": "Mini window is unavailable while encryption is enabled; unlock in the main window",
+    "lockedNote": "Available once the main window is unlocked",
     "empty": "No entries",
     "copyFailed": "Copy failed: clipboard busy"
   },

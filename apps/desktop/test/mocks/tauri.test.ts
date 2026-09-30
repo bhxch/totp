@@ -109,9 +109,9 @@ describe('事件 listen/emit', () => {
     expect(b).toHaveLength(1)
   })
 
-  it('事件清单覆盖 6 类（onFocusChanged 走 window）', () => {
-    expect(EVENTS).toHaveLength(6)
-    for (const ev of ['system-lock', 'force-lock', 'stash-dek-request', 'mcp://approval', 'mcp://tool-approval', 'mcp://req']) {
+  it('事件清单覆盖 7 类（onFocusChanged 走 window）', () => {
+    expect(EVENTS).toHaveLength(7)
+    for (const ev of ['system-lock', 'force-lock', 'stash-dek-request', 'mini-session', 'mcp://approval', 'mcp://tool-approval', 'mcp://req']) {
       expect(EVENTS).toContain(ev)
     }
   })

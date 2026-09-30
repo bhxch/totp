@@ -25,12 +25,12 @@ const { tr, mountI18n } = useDesktopI18n()
 async function load() {
   try {
     const adapter = await createTauriFs()
-    // spec §7 末尾：mini 窗口独立保持锁定（即使主窗口已解锁）——windowId='mini' 与 'main' 隔离 DEK，
-    // 双方互不可见对方的会话密钥。store 初值 locked=false（未加密库 mini 直接可读）；加密库由 initStore
-    // 按密文置 locked=true，而 mini 无解锁 UI 也拿不到主窗会话 DEK → 加密库在 mini 恒锁定（store.commit
-    // 拒绝 locked 态写，spec 要求 mini 与 App 交互一致但读不到密文）。
-    // onLocked：mini 的锁库路径（force-lock 联动）同样清 Rust DEK 暂存槽，保证「锁库后不再回注」语义闭环
-    // （boot 序列收敛至 desktopShell.bootDesktopStore，R13）
+    // ① mini 跟随主窗解锁态：槽 peek + mini-session 事件（2026-09-30 设计）——boot 注入 dekPersist.get=peek_mini_dek，
+    // 槽有 DEK（主窗已解锁）即 initStore 自动恢复；set/clear 恒 no-op——槽由主窗写清（publishMiniUnlock/publishMiniLock），
+    // mini 只读。store 初值 locked=false（未加密库 mini 直接可读）；加密库槽无 DEK 时 initStore 置 locked=true，
+    // 等 mini-session locked:false 通知重载（store.commit 拒绝 locked 态写，spec 要求 mini 与 App 交互一致）。
+    // onLocked：mini 的锁库路径（force-lock/mini-session locked:true 联动）同样清 Rust DEK 暂存槽，保证
+    // 「锁库后不再回注」语义闭环（boot 序列收敛至 desktopShell.bootDesktopStore，R13）
     const s = await bootDesktopStore(adapter, {
       windowId: 'mini',
       onLocked: () => { void invoke('clear_stashed_dek').catch(() => {}) },
@@ -38,6 +38,12 @@ async function load() {
       onPersistError: (e) => {
         console.error('[store] persist failed:', e)
         persistFailed.value = true
+      },
+      // ① mini 跟随主窗解锁：槽有 DEK（主窗已解锁）即自动恢复；set/clear no-op——槽由主窗写清
+      dekPersist: {
+        get: () => invoke<string | null>('peek_mini_dek').catch(() => null),
+        set: async () => {},
+        clear: async () => {},
       },
     })
     store.value = s
@@ -57,12 +63,21 @@ async function load() {
 // store（mini 聚焦即重建 store 实例）；不监听 stash-dek-request（mini 只读无回注路径，backlog），
 // 但锁库本身经 onLocked 清 Rust 暂存槽（见 load 内注入）
 let unlistenForceLock: (() => void) | null = null
+// ① mini 跟随主窗解锁：主窗解锁/锁库广播（desktopShell.publishMiniUnlock/publishMiniLock → miniSession）
+let unlistenMiniSession: (() => void) | null = null
 
 onMounted(async () => {
   await load()
   // store 就绪后再挂监听（App.vue 同款，见 App.vue 的对应初始化段：store 建立后才注册锁定联动）；容错注册，失败仅该联动降级
   unlistenForceLock = await listen('force-lock', () => {
     store.value?.lock()
+  }).catch(() => null)
+  // ① 跟随主窗解锁态：locked:true 跟随锁库（onLocked 清 Rust 暂存槽）；locked:false 且当前锁定 →
+  // 整链重建（槽可能已有主窗解锁写入的 DEK，load 内 dekPersist.get=peek 自动恢复）。与 force-lock 同款
+  // 容错注册，失败仅该联动降级
+  unlistenMiniSession = await listen<{ locked: boolean }>('mini-session', (e) => {
+    if (e.payload.locked) store.value?.lock()
+    else if (store.value && locked.value) void load()
   }).catch(() => null)
   // mini 常驻隐藏，重新显示时从盘重载（initStore 幂等不刷新内存，故重建 store）。
   // 修复真实 bug：@tauri-apps/api v2 Window 无 onVisibleChanged（仅 focus/resized/scale 等 7 个
@@ -75,6 +90,7 @@ onMounted(async () => {
 
 onScopeDispose(() => {
   unlistenForceLock?.()
+  unlistenMiniSession?.()
 })
 
 /** 列表排序：pinned 优先 → order 升序（sortMiniEntries 纯函数，与 CodesPage.vue 同口径，跨宿主顺序一致） */

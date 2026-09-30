@@ -74,11 +74,12 @@ export const INVOKE_COMMANDS = [
   'release_policy_set',
 ] as const
 
-/** src 实际 listen 的事件（onFocusChanged 属 window API，见 window mock） */
+/** src 实际 listen 的事件（onFocusChanged 属 window API，见 window mock；mini-session 见 MiniApp 跟随主窗解锁联动） */
 export const EVENTS = [
   'system-lock',
   'force-lock',
   'stash-dek-request',
+  'mini-session',
   'mcp://approval',
   'mcp://tool-approval',
   'mcp://req',
