@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useOtpCodes } from '../composables/useOtpCodes'
 import { iconView, type IconStore } from '../iconStore'
 import { searchEntries } from '../popupFilter'
-import { sortEntries } from '../entriesSort'
+import { moveToIndex, moveWithinPartition, sortEntries } from '../entriesSort'
 import type { VueStore } from '../store'
 import EntryFormDialog from '../components/EntryFormDialog.vue'
 import TagFilterRow from '../components/TagFilterRow.vue'
@@ -223,6 +223,60 @@ async function removeSelected() {
   await props.store.removeEntriesOp([...selected.value])
   cancelSelection()
 }
+
+// ---------- ④C 拖拽排序 + 序号定位移动（全序语义：仅「非选择模式 + 无搜索/标签过滤」开放） ----------
+const dragEnabled = computed(() => !selecting.value && query.value.trim() === '' && selectedTagIds.value.length === 0)
+/** 悬停指示：before=落点上缘（插其前），否则下缘 */
+const dragOver = ref<{ uuid: string; before: boolean } | null>(null)
+let dragUuid: string | null = null
+const indexEditing = ref<string | null>(null)
+
+function onDragStart(e: DragEvent, uuid: string) {
+  dragUuid = uuid
+  if (e.dataTransfer) {
+    e.dataTransfer.setData('text/plain', uuid)
+    e.dataTransfer.effectAllowed = 'move'
+  }
+}
+function onDragOver(e: DragEvent, uuid: string) {
+  if (!dragUuid || uuid === dragUuid) return
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  dragOver.value = { uuid, before: e.clientY < rect.top + rect.height / 2 }
+  e.preventDefault()
+}
+/** drop 落库：moveWithinPartition 求新全序（跨区返回 null 回弹不提交），单 commit reorderOp */
+async function onDrop() {
+  const src = dragUuid
+  const over = dragOver.value
+  endDrag()
+  if (!src || !over) return
+  const entries = sorted.value
+  const next = moveWithinPartition(
+    entries.map((e2) => e2.uuid), src, over.uuid, over.before,
+    new Set(entries.filter((e2) => e2.pinned).map((e2) => e2.uuid)),
+  )
+  if (next) await props.store.reorderOp(next)
+}
+function endDrag() {
+  dragUuid = null
+  dragOver.value = null
+}
+function startIndexEdit(uuid: string) {
+  if (dragEnabled.value) indexEditing.value = uuid
+}
+/** 序号定位移动：Enter/失焦确认（Esc 取消后的 blur 经 guard 跳过），moveToIndex 钳位后 reorderOp */
+async function confirmIndexMove(uuid: string, ev: Event) {
+  if (indexEditing.value !== uuid) return
+  const parsed = Number.parseInt((ev.target as HTMLInputElement).value, 10)
+  indexEditing.value = null
+  if (!Number.isFinite(parsed)) return
+  const entries = sorted.value
+  const next = moveToIndex(
+    entries.map((e2) => e2.uuid), uuid, parsed,
+    new Set(entries.filter((e2) => e2.pinned).map((e2) => e2.uuid)),
+  )
+  if (next) await props.store.reorderOp(next)
+}
 /** 拼版 Dialog：条目取选中集合按展示顺序（pinned/order），不受当前搜索/标签过滤影响
  *  （勾选时行可见即入集合；过滤变化不隐式丢条目） */
 const sheetOpen = ref(false)
@@ -257,7 +311,11 @@ function openSheet() {
       </div>
       <div v-if="sorted.length === 0" class="empty">{{ t('codesPage.empty') }}</div>
       <div v-else-if="visible.length === 0" class="empty">{{ t('codesPage.noMatch') }}</div>
-      <div v-for="(e, i) in visible" :key="e.uuid" class="row" @click="closeContextMenu">
+      <div
+        v-for="(e, i) in visible" :key="e.uuid" class="row"
+        :class="{ 'drag-above': dragOver?.uuid === e.uuid && dragOver.before, 'drag-below': dragOver?.uuid === e.uuid && !dragOver.before }"
+        @click="closeContextMenu" @dragover="onDragOver($event, e.uuid)" @drop.prevent="onDrop" @dragend="endDrag"
+      >
         <!-- 选择模式：行首勾选框（OtpListItem 之外，点击不触发条目复制） -->
         <MdCheckbox
           v-if="selecting" class="row-check" :model-value="selected.has(e.uuid)"
@@ -272,7 +330,25 @@ function openSheet() {
           @copy="onCopy(e)"
           @qr="qrEntry = e"
           @context="(ev) => onContextMenu(e, ev)"
-        />
+        >
+          <!-- ④C：行首序号列宿主形态——无过滤时 hover 切换拖拽把手、点击序号输入目标序号移动 -->
+          <template #lead>
+            <span
+              v-if="dragEnabled" class="handle" draggable="true" :title="t('codesPage.dragHandleTitle')"
+              :aria-label="t('codesPage.dragHandleTitle')" @click.stop @dragstart="onDragStart($event, e.uuid)"
+            >⠿</span>
+            <input
+              v-if="indexEditing === e.uuid" class="index-input" type="number" min="1" :value="i + 1"
+              :aria-label="t('codesPage.indexEditAria', { label: e.label })" @click.stop
+              @keydown.enter.prevent="confirmIndexMove(e.uuid, $event)" @keydown.esc.prevent="indexEditing = null"
+              @blur="confirmIndexMove(e.uuid, $event)"
+            />
+            <span
+              v-else class="index-num" :class="{ clickable: dragEnabled }"
+              :title="dragEnabled ? t('codesPage.indexEditTitle') : undefined" @click.stop="startIndexEdit(e.uuid)"
+            >{{ i + 1 }}</span>
+          </template>
+        </OtpListItem>
         <div class="ops">
           <template v-if="confirmingDelete === e.uuid">
             <MdButton danger @click.stop="askRemove(e.uuid)">{{ t('codesPage.confirmDelete') }}</MdButton>
@@ -342,6 +418,16 @@ h2 { margin: 0; font-size: var(--md-sys-typescale-title-medium); }
 .chips-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .row { position: relative; display: flex; align-items: center; }
 .row :deep(.otp-item) { flex: 1; }
+/* ④C：序号/把手 hover 切换（slot 内容属本组件作用域）；把手仅无过滤时渲染 */
+.handle { cursor: grab; opacity: .6; }
+.row .handle { display: none; }
+.row:hover .handle, .handle:active { display: inline; }
+.row:hover .index-num { display: none; }
+.index-num.clickable { cursor: pointer; }
+.index-input { width: 48px; text-align: center; font-size: var(--md-sys-typescale-body-small); border: 1px solid var(--md-sys-color-outline); border-radius: 4px; background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); }
+/* ④C：拖拽悬停插入指示线 */
+.row.drag-above { box-shadow: inset 0 2px 0 var(--md-sys-color-primary); }
+.row.drag-below { box-shadow: inset 0 -2px 0 var(--md-sys-color-primary); }
 .ops { display: flex; gap: 4px; opacity: 0; transition: opacity .15s; }
 .row:hover .ops, .ops:focus-within { opacity: 1; }
 .empty { text-align: center; opacity: .6; padding: 16px 0; }
