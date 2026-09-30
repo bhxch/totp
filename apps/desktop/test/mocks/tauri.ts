@@ -6,7 +6,8 @@
  * - invoke：全部 31 个 Rust 命令（INVOKE_COMMANDS），按命令名注册 handler/返回值；
  *   未注册的已知命令返回 null（与 Rust Option 返回一致）；清单外命令视为命令名笔误，抛错提示
  *   （on/onReturn/listen 注册侧同口径 fail-loud，emit 侧保持宽松）
- * - 事件：@tauri-apps/api/event listen 的 6 类事件（EVENTS）+ getCurrentWindow onFocusChanged
+ * - 事件：@tauri-apps/api/event listen 的 6 类事件（EVENTS）+ emitTo 定向派发记录
+ *   + getCurrentWindow onFocusChanged
  * - plugin-fs：tauriFs/backupService 用到的 8 个成员（含 BaseDirectory.AppData）
  * - 窗口：getCurrentWindow 的 label/hide/onFocusChanged
  *
@@ -36,6 +37,10 @@ export const INVOKE_COMMANDS = [
   'take_stashed_dek',
   'stash_dek',
   'clear_stashed_dek',
+  // mini DEK 进程内槽（主窗→mini 解锁态同步）
+  'set_mini_dek',
+  'peek_mini_dek',
+  'clear_mini_dek',
   // DPAPI / OS 解锁
   'os_auto_protect',
   'os_auto_unprotect',
@@ -150,6 +155,14 @@ export function listenerCount(event: string): number {
   return eventListeners.get(event)?.size ?? 0
 }
 
+/** emitTo（主窗→指定窗口定向派发，miniSession 'mini-session' 用）：宽松记录不校验清单 */
+export const emitTo = vi.fn(async (_target: string, _event: string, _payload?: unknown): Promise<void> => undefined)
+
+/** emitTo 调用记录：[target, event, payload] 元组列表（对齐 calls() 风格，内容断言用） */
+export function emitToCalls(): Array<[string, string, unknown]> {
+  return emitTo.mock.calls.map(([t, e, p]) => [t as string, e as string, p as unknown])
+}
+
 // ---------------------------------------------------------------------------
 // window：getCurrentWindow 的使用面（App.vue/MiniApp.vue：label/hide/onFocusChanged）
 // ---------------------------------------------------------------------------
@@ -201,7 +214,7 @@ export function invokeModule() {
   return { invoke }
 }
 export function eventModule() {
-  return { listen }
+  return { listen, emitTo }
 }
 export function windowModule() {
   return { getCurrentWindow: () => window }
@@ -225,6 +238,7 @@ export function reset(): void {
   commandHandlers.clear()
   invoke.mockClear()
   listen.mockClear()
+  emitTo.mockClear()
   eventListeners.clear()
   eventIdSeq = 0
   focusListeners.clear()
@@ -242,6 +256,8 @@ export const tauriMock = {
   calls,
   listen,
   emit,
+  emitTo,
+  emitToCalls,
   listenerCount,
   window,
   emitFocusChanged,

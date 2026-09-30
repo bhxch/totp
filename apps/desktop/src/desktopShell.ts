@@ -23,6 +23,7 @@ import { getCurrentInstance, ref, shallowRef, type Ref, type ShallowRef } from '
 import type { DesktopAutoRunner } from './autoBackup'
 import { createIdleLockExecutor } from './idleLock'
 import { BACKUP_DIR_KEY, migrateLegacyCloudSources, migrateLegacyLocalSource } from './legacyMigrate'
+import { publishMiniLock, publishMiniUnlock } from './miniSession'
 import { createMcpApprovalQueue, isToolConfirmItem, type McpApprovalAction } from './mcpApprovalQueue'
 import { createMcpTriggers, startMcpBridge, type McpBridgeDeps } from './mcpBridge'
 import { createTauriFs } from './tauriFs'
@@ -75,13 +76,24 @@ export const persistFailed = ref(false)
  *  onPersistError：落盘失败上报（未传保持 ui 层 console.error 兜底） */
 export async function bootDesktopStore(
   adapter: StorageAdapter,
-  opts: { windowId: string; onCommitted?: () => void; onLocked?: () => void; onPersistError?: (e: unknown) => void },
+  opts: {
+    windowId: string
+    onCommitted?: () => void
+    onLocked?: () => void
+    onPersistError?: (e: unknown) => void
+    /** ① mini 跟随主窗解锁：主窗 boot 传（Task 3），mini boot 不传 */
+    onUnlocked?: () => void
+    /** ① mini 侧 peek 主窗槽自动恢复；主窗不传 */
+    dekPersist?: { get(): Promise<string | null>; set(dek: Uint8Array): Promise<void>; clear(): Promise<void> }
+  },
 ): Promise<VueStore> {
   const s = createVueStore(adapter, {
     windowId: opts.windowId,
     onCommitted: opts.onCommitted,
     onLocked: opts.onLocked,
     onPersistError: opts.onPersistError,
+    onUnlocked: opts.onUnlocked,
+    dekPersist: opts.dekPersist,
   })
   await s.initStore()
   return s
@@ -308,10 +320,24 @@ export function createDesktopShell(deps: DesktopShellDeps): DesktopShellControll
       // spec §7 末尾：主窗口独立解锁——windowId='main' 与 mini 隔离 DEK；
       // onCommitted：任何经队列的写 op 成功后触发自动备份变更检测（锁定态由 runner 内 decideAutoRun 挡下）；
       // onLocked：手动/空闲/系统锁库走纯前端 lock()，经此同步清 Rust DEK 暂存槽（best-effort，失败不阻断锁定）
-      const s = await bootDesktopStore(adapter, {
+      //   并同步 mini（publishMiniLock：清 mini 槽 + 通知锁定，唯一接线点在 boot opts 此处，勿再在调用方重复）；
+      // onUnlocked：① mini 跟随主窗解锁——解锁汇聚点（口令/unlockWithDek/initStore 恢复三路汇于
+      //   applyDekAndUnlock）回调 DEK 入 mini 槽 + 通知 mini；闭包先声明 s 再 boot 以自引用当前实例，
+      //   整体 try/catch（ui 层回调同步抛错会把已成功的解锁倒转为锁——initStore 恢复路径尤其如此）
+      let s: VueStore | null = null
+      s = await bootDesktopStore(adapter, {
         windowId: 'main',
         onCommitted: () => deps.auto.notifyChanged(),
-        onLocked: () => { void invoke('clear_stashed_dek').catch(() => {}) },
+        onLocked: () => {
+          void invoke('clear_stashed_dek').catch(() => {})
+          void publishMiniLock().catch(() => {})
+        },
+        onUnlocked: () => {
+          try {
+            const dek = s?.getCurrentDek()
+            if (dek) void publishMiniUnlock(dek).catch(() => {})
+          } catch { /* mini 联动失败不影响主窗解锁 */ }
+        },
         // R16⑤（评审 A2 方案 a）：落盘失败置 persistFailed，App.vue 常驻告警条
         onPersistError: (e) => {
           console.error('[store] persist failed:', e)

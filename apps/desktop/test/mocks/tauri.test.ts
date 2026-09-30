@@ -64,10 +64,11 @@ describe('invoke 分发', () => {
     expect(tauriMock.invoke).toHaveBeenCalledWith('clipboard_clear_if_staged') // vi.fn 断言面同样可用
   })
 
-  it('命令清单覆盖盘点面（25 命令 + mcp_revoke_approvals 等，共 31 个）', () => {
-    expect(INVOKE_COMMANDS).toHaveLength(31)
+  it('命令清单覆盖盘点面（31 命令 + mini DEK 槽三命令，共 34 个）', () => {
+    expect(INVOKE_COMMANDS).toHaveLength(34)
     for (const cmd of [
       'stage_clipboard_write', 'clipboard_clear_if_staged', 'take_stashed_dek', 'stash_dek', 'clear_stashed_dek',
+      'set_mini_dek', 'peek_mini_dek', 'clear_mini_dek',
       'os_auto_protect', 'os_auto_unprotect', 'os_auto_forget', 'decrypt_dpapi',
       'pick_dir_os', 'pick_save_file_os', 'pick_open_file_os', 'dir_token_os',
       'read_text_file_os', 'write_text_file_os', 'write_bytes_file_os',
@@ -174,6 +175,7 @@ describe('reset 周期与 vi.mock 工厂入口', () => {
     tauriMock.onReturn('mcp_get_config', { enabled: true })
     await tauriMock.invoke('mcp_get_config')
     await tauriMock.listen('system-lock', () => {})
+    await tauriMock.emitTo('mini', 'mini-session', { locked: false })
     await tauriMock.fs.writeTextFile('x', 'y')
     tauriMock.fs.readTextFile.mockResolvedValue('dirty')
 
@@ -183,13 +185,14 @@ describe('reset 周期与 vi.mock 工厂入口', () => {
     await expect(tauriMock.invoke('mcp_get_config')).resolves.toBeNull() // handler 已清：回落默认 null
     expect(tauriMock.calls('mcp_get_config')).toEqual([{ command: 'mcp_get_config', args: undefined }])
     expect(tauriMock.listenerCount('system-lock')).toBe(0)
+    expect(tauriMock.emitToCalls()).toHaveLength(0) // emitTo 记录同步清空
     expect(await tauriMock.fs.readTextFile('x')).toBe('')
     expect(tauriMock.fs.writeTextFile).not.toHaveBeenCalled()
   })
 
   it('四个模块入口形状对齐真实模块的使用面', () => {
     expect(invokeModule()).toEqual({ invoke: tauriMock.invoke })
-    expect(eventModule()).toEqual({ listen: tauriMock.listen })
+    expect(eventModule()).toEqual({ listen: tauriMock.listen, emitTo: tauriMock.emitTo })
     expect(windowModule().getCurrentWindow()).toBe(tauriMock.window)
     expect(fsModule().BaseDirectory).toEqual(BaseDirectory)
     expect(fsModule()).toHaveProperty('writeTextFile')
