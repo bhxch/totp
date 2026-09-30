@@ -17,7 +17,7 @@ const EXPECTED_KEYS = [
   'saveSourceCredOp', 'removeSourceCredOp', 'migrateLegacySecrets',
   'getCurrentDek',
   'unlockWithDek', 'addPrfSourceOp', 'removePrfSourceOp', 'addDpapiSourceOp', 'removeDpapiSourceOp',
-  'addEntryOp', 'updateEntryOp', 'removeEntryOp', 'addTagOp', 'renameTagOp', 'removeTagOp', 'reorderOp', 'replaceAllOp',
+  'addEntryOp', 'updateEntryOp', 'removeEntryOp', 'removeEntriesOp', 'addTagOp', 'renameTagOp', 'removeTagOp', 'reorderOp', 'replaceAllOp',
 ].sort()
 
 /** 只读/缓存视图成员（computed 或 ref，读 .value）；store.ts:55-58 注释：类型须为非 undefined 的
