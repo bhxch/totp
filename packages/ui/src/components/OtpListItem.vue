@@ -20,6 +20,9 @@ const props = withDefaults(defineProps<{
   contextMenu?: boolean
   /** 是否渲染行内 QR 按钮（默认 true）；未接 QR 面板的宿主（mini）传 false 移除死入口 */
   showQr?: boolean
+  /** 行首展示序号（1-based，宿主按当前排序传入）；缺省不渲染序号列。
+   *  CodesPage 经 #lead slot 覆盖此区域为「拖拽把手/序号」hover 切换（④C） */
+  index?: number
 }>(), {
   // 注意：Boolean prop 有 Vue 运行时 casting（未传即 false），默认开启的两项必须显式给默认值
   contextMenu: true,
@@ -61,6 +64,9 @@ const CIRCUMFERENCE = 2 * Math.PI * RING_R
  * 的跳变放大为每条目常驻 ~60fps SVG 重绘（2026-09-28 GPU profile 实锤 9 条目即 4% GPU） */
 const dashOffset = computed(() => CIRCUMFERENCE * (1 - props.progress))
 
+/** ④A：周期最后三分之一（remaining ≤ period/3）倒计时环与数字转醒目错误色 */
+const urgent = computed(() => props.progress <= 1 / 3)
+
 /** 批④ §5：无图标时首字母 avatar 按 issuer 哈希从主题 10 子色取底色；有图标时 undefined 保留 .avatar 默认底色 */
 const avatarStyle = computed(() => (props.icon?.html || props.icon?.src ? undefined : avatarStyleOf(props.entry.issuer)))
 
@@ -93,6 +99,8 @@ function onContextMenu(e: MouseEvent): void {
     @keydown.shift.enter.prevent="onDblclick"
     @contextmenu="onContextMenu"
   >
+    <!-- ④A：行首序号列（index 传入即渲染）；#lead slot 供 CodesPage 覆盖为把手/序号 hover 切换 -->
+    <span v-if="$slots.lead || index !== undefined" class="index"><slot name="lead">{{ index }}</slot></span>
     <span class="avatar" :style="avatarStyle ?? undefined">
       <svg v-if="icon?.html" viewBox="0 0 24 24" class="icon-svg" aria-hidden="true" v-html="icon.html" />
       <img v-else-if="icon?.src" :src="icon.src" class="icon-img" alt="" />
@@ -110,7 +118,7 @@ function onContextMenu(e: MouseEvent): void {
            仅靠聚焦无法感知——polite 声明让揭示的真码与 8s 后的打回被自动播报;倒计时在
            aria-hidden 的 SVG 内,不会造成播报噪音 -->
       <span
-        :class="['code', { invalid: code === 'INVALID' }]"
+        :class="['code', { invalid: code === 'INVALID', revealed: revealed && code !== 'INVALID' }]"
         :title="code === 'INVALID' ? t('otpListItem.invalidTitle', { message: error ?? '' }) : undefined"
         aria-live="polite"
       >{{ displayed }}</span>
@@ -118,7 +126,7 @@ function onContextMenu(e: MouseEvent): void {
            （QR 弹窗打开瞬间底层码明文），按钮层须一并 stop dblclick -->
       <MdIconButton class="copy" :title="t('otpListItem.copyTitle')" :aria-label="t('otpListItem.copyTitle')" @click.stop="emit('copy')" @dblclick.stop>⧉</MdIconButton>
       <MdIconButton v-if="showQrButton" class="show-qr" :title="t('otpListItem.qrTitle')" :aria-label="t('otpListItem.qrTitle')" @click.stop="emit('qr')" @dblclick.stop>▣</MdIconButton>
-      <svg viewBox="0 0 36 36" class="ring" aria-hidden="true">
+      <svg viewBox="0 0 36 36" class="ring" :class="{ urgent }" aria-hidden="true">
         <circle cx="18" cy="18" r="16" class="ring-bg" />
         <circle
           cx="18" cy="18" r="16" class="ring-fg"
@@ -134,6 +142,8 @@ function onContextMenu(e: MouseEvent): void {
 <style scoped>
 .otp-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; cursor: pointer; border-radius: 8px; }
 .otp-item:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
+/* ④A：行首序号列（窄列定宽防跳字；tabular-nums 数字等宽） */
+.index { flex: none; min-width: 20px; text-align: center; font-variant-numeric: tabular-nums; font-size: var(--md-sys-typescale-body-small); opacity: .55; }
 .avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); display: grid; place-items: center; font-weight: 600; flex: none; overflow: hidden; }
 .icon-svg { width: 22px; height: 22px; fill: currentColor; }
 .icon-img { width: 100%; height: 100%; object-fit: cover; }
@@ -144,9 +154,14 @@ function onContextMenu(e: MouseEvent): void {
 .right { display: flex; align-items: center; gap: 8px; }
 .code { font-family: system-ui, sans-serif; font-weight: 700; font-variant-numeric: tabular-nums; font-size: var(--md-sys-typescale-code-large); letter-spacing: 1px; }
 .code.invalid { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-medium); cursor: help; }
+/* ④A：揭示态验证码转主题主色醒目（与倒计时紧急的错误红区分：主色=就绪可用，红=紧急） */
+.code.revealed { color: var(--md-sys-color-primary); }
 .show-qr { font-size: var(--md-sys-typescale-body-medium); }
 .ring { width: 32px; height: 32px; transform: rotate(-90deg); }
 .ring-bg { fill: none; stroke: var(--md-sys-color-outline-variant); stroke-width: 3; }
 .ring-fg { fill: none; stroke: var(--md-sys-color-primary); stroke-width: 3; stroke-linecap: round; }
 .ring-text { transform: rotate(90deg); transform-origin: 18px 18px; font-size: 11px; /* 豁免:SVG text 字号,按 SVG 视口定位,不接字阶 token */ fill: currentColor; }
+/* ④A：周期最后三分之一——环与数字转 error 醒目色（currentColor 由 svg color 下发，text 恒继承） */
+.ring.urgent { color: var(--md-sys-color-error); }
+.ring.urgent .ring-fg { stroke: currentColor; }
 </style>

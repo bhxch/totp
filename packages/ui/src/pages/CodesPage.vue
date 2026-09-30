@@ -243,7 +243,7 @@ function openSheet() {
       </div>
       <div v-if="sorted.length === 0" class="empty">{{ t('codesPage.empty') }}</div>
       <div v-else-if="visible.length === 0" class="empty">{{ t('codesPage.noMatch') }}</div>
-      <div v-for="e in visible" :key="e.uuid" class="row" @click="closeContextMenu">
+      <div v-for="(e, i) in visible" :key="e.uuid" class="row" @click="closeContextMenu">
         <!-- 选择模式：行首勾选框（OtpListItem 之外，点击不触发条目复制） -->
         <MdCheckbox
           v-if="selecting" class="row-check" :model-value="selected.has(e.uuid)"
@@ -253,6 +253,7 @@ function openSheet() {
         <OtpListItem
           :entry="e"
           :icon="iconView(e.icon, icons ?? undefined)"
+          :index="i + 1"
           v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }"
           @copy="onCopy(e)"
           @qr="qrEntry = e"

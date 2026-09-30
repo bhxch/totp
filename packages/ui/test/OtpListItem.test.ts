@@ -132,3 +132,31 @@ describe('OtpListItem ring 几何（I52 + I61）', () => {
     expect(Number(full.find('circle.ring-fg').attributes('stroke-dashoffset'))).toBeCloseTo(0, 6)
   })
 })
+
+describe('OtpListItem 序号 / 倒计时紧急色 / 揭示醒目色（④A 三宿主共享）', () => {
+  const idxMount = (props: Record<string, unknown>, slots: Record<string, string> = {}) =>
+    mount(OtpListItem, { global: { plugins: [createTestI18n()] }, props: { entry, ...base, ...props }, slots })
+
+  it('index 传入时行首渲染序号；未传不渲染（mini/popup 传，宿主自定）', () => {
+    expect(idxMount({ index: 3 }).find('.index').text()).toBe('3')
+    expect(idxMount({}).find('.index').exists()).toBe(false)
+  })
+  it('#lead slot 覆盖默认序号文本（CodesPage 把手/序号切换区）', () => {
+    const w = idxMount({ index: 2 }, { lead: '<span class="handle">⠿</span>' })
+    expect(w.find('.index .handle').exists()).toBe(true)
+    expect(w.find('.index').text()).not.toContain('2')
+  })
+  it('倒计时末三分之一：progress ≤ 1/3 时 ring 加 urgent（error 色 class 挂载点）', () => {
+    expect(idxMount({ code: '123456', remaining: 10, progress: 10 / 30 }).find('svg.ring.urgent').exists()).toBe(true)
+    expect(idxMount({ code: '123456', remaining: 11, progress: 11 / 30 }).find('svg.ring.urgent').exists()).toBe(false)
+  })
+  it('揭示态 .code 加 revealed 醒目色 class；INVALID 恒不加（错误文案非秘密但语义不同）', async () => {
+    const w = idxMount({})
+    expect(w.find('.code.revealed').exists()).toBe(false)
+    await w.find('.otp-item').trigger('dblclick')
+    expect(w.find('.code.revealed').exists()).toBe(true)
+    const inv = idxMount({ code: 'INVALID', remaining: 5, progress: 0.1, error: 'bad secret' })
+    await inv.find('.otp-item').trigger('dblclick')
+    expect(inv.find('.code.revealed').exists()).toBe(false)
+  })
+})
