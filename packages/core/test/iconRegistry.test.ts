@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import builtinData from '../src/icons/builtin.json'
-import { getBuiltinIcons, normalizeIssuer, recommendBuiltinIcon, suggestIcons } from '../src/icons/registry'
+import { getBuiltinIcons, normalizeIssuer, suggestIcons } from '../src/icons/registry'
 
 describe('iconRegistry', () => {
   it('内置集 ≥64 且 GitHub path 非空', () => {
@@ -15,15 +15,15 @@ describe('iconRegistry', () => {
     // 多连续分隔符（空白/点/连字符/下划线混排）折叠为空
     expect(normalizeIssuer('Git--Hub__..X  Y')).toBe('githubxy')
   })
-  it('推荐：精确/别名/大小写', () => {
-    expect(recommendBuiltinIcon('GitHub')!.id).toBe('github')
-    expect(recommendBuiltinIcon('github.com')!.id).toBe('github')
-    expect(recommendBuiltinIcon('谷歌')!.id).toBe('google')
-    expect(recommendBuiltinIcon('不存在的服务')).toBeNull()
+  it('推荐：精确/别名/大小写命中排第一，未命中返回空', () => {
+    expect(suggestIcons('GitHub')[0]!.id).toBe('github')
+    expect(suggestIcons('github.com')[0]!.id).toBe('github') // 别名 githubcom
+    expect(suggestIcons('谷歌')[0]!.id).toBe('google')
+    expect(suggestIcons('不存在的服务')).toEqual([])
   })
-  it('推荐：normalize 后为空（纯分隔符输入）→ null', () => {
-    expect(recommendBuiltinIcon('   .-_ ')).toBeNull()
-    expect(recommendBuiltinIcon('')).toBeNull()
+  it('推荐：normalize 后为空（纯分隔符输入）→ 空数组', () => {
+    expect(suggestIcons('   .-_ ')).toEqual([])
+    expect(suggestIcons('')).toEqual([])
   })
   it('suggestIcons 前缀包含', () => {
     const s = suggestIcons('git', 5)
@@ -52,12 +52,12 @@ describe('iconRegistry', () => {
     expect(suggestIcons('谷狗')[0]!.id).toBe('google') // 谷歌 距离 1
     expect(suggestIcons('哔哩')[0]!.id).toBe('bilibili') // 哔哩哔哩 子串包含
   })
-  it('推荐：悬空别名（别名指向不存在的图标 id）防御性返回 null', () => {
+  it('推荐：悬空别名（别名指向不存在的图标 id）防御性跳过', () => {
     const aliases = builtinData.aliases as Record<string, string>
     // 键须不含空白/点/连字符/下划线（normalizeIssuer 会折叠分隔符，导致查不到该别名）
     aliases['zzdanglingalias'] = '__no_such_icon__'
     try {
-      expect(recommendBuiltinIcon('zzDanglingAlias')).toBeNull()
+      expect(suggestIcons('zzDanglingAlias').every((i) => i.id in getBuiltinIcons())).toBe(true)
     } finally {
       delete aliases['zzdanglingalias']
     }
@@ -78,7 +78,8 @@ describe('builtin icons 扩充回归', () => {
 
   it('高频 issuer 推荐命中不下降', () => {
     for (const issuer of ['GitHub', 'Google', 'Cloudflare', 'Discord', 'Bilibili', 'Steam', 'Bitwarden']) {
-      expect(recommendBuiltinIcon(issuer)).not.toBeNull()
+      expect(suggestIcons(issuer).length).toBeGreaterThan(0)
+      expect(suggestIcons(issuer)[0]!.id in getBuiltinIcons()).toBe(true)
     }
   })
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { base32Decode, getBuiltinIcons, recommendBuiltinIcon, type BuiltinIcon, type HashAlgorithm, type MatchRule, type MatchStrategy, type OtpEntry, type Tag } from '@totp/core'
+import { base32Decode, getBuiltinIcons, suggestIcons, type BuiltinIcon, type HashAlgorithm, type MatchRule, type MatchStrategy, type OtpEntry, type Tag } from '@totp/core'
 import { computed, onScopeDispose, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { readClipboardSnapshot, resolveTextIntent } from '../clipboardImport'
@@ -8,6 +8,7 @@ import { blobToPixels } from '../qr/imageSource'
 import { decodeQrToUri } from '../qr/decodeQr'
 import { parseUriToEntryData } from '../otpauthFlow'
 import type { IconStore } from '../iconStore'
+import IconPickerDialog from './IconPickerDialog.vue'
 import MdButton from './md/MdButton.vue'
 import MdCheckbox from './md/MdCheckbox.vue'
 import MdIconButton from './md/MdIconButton.vue'
@@ -227,7 +228,8 @@ const base32Hint = computed(() => {
  *  M25（intentional）：iconTouched 仅在表单实例生命周期内有效 —— 用户手动清除图标后不会再显示推荐，
  *  这是有意行为：避免「清空即重置推荐 → 推荐又立刻填充」的视觉跳跃；推荐应只在首次进入表单时介入一次。 */
 const iconTouched = ref(props.initial?.icon !== undefined)
-const recommended = ref<BuiltinIcon | null>(null)
+/** 推荐候选（莱文斯坦模糊匹配，精确命中距离 0 排第一） */
+const recommendations = ref<BuiltinIcon[]>([])
 let recommendTimer: ReturnType<typeof setTimeout> | null = null
 // I67：组件卸载时清理防抖定时器，避免异步回调在 unmount 后写 ref 触发警告
 onScopeDispose(() => {
@@ -242,17 +244,21 @@ watch(
   (v) => {
     if (recommendTimer) clearTimeout(recommendTimer)
     recommendTimer = setTimeout(() => {
-      recommended.value = props.icons && !iconTouched.value && !form.icon ? recommendBuiltinIcon(v.trim()) : null
+      recommendations.value = props.icons && !iconTouched.value && !form.icon ? suggestIcons(v.trim(), 3) : []
     }, 300)
   },
 )
-const recommendVisible = computed(() => props.icons !== undefined && !iconTouched.value && !form.icon && recommended.value !== null)
+const recommendVisible = computed(() => props.icons !== undefined && !iconTouched.value && !form.icon && recommendations.value.length > 0)
 
-function useRecommended() {
-  if (!recommended.value) return
-  form.icon = { kind: 'builtin', id: recommended.value.id }
+/** 图标库选择器对话框（图标区内「从图标库选择」入口） */
+const pickerOpen = ref(false)
+
+/** 从推荐气泡或选择器点选内置图标：回填 + 标记手动设置（推荐随之收起，不再自动推荐） */
+function applyBuiltinIcon(icon: BuiltinIcon) {
+  form.icon = { kind: 'builtin', id: icon.id }
   iconTouched.value = true
-  recommended.value = null
+  recommendations.value = []
+  pickerOpen.value = false
 }
 
 // ---------- 图标选择区（details 默认收起） ----------
@@ -421,10 +427,14 @@ function submit() {
       :model-value="form.type" :options="TYPE_OPTIONS" @update:model-value="onTypeSelect"
     />
     <MdTextField v-model="form.issuer" :label="t('entryForm.issuerLabel')" :placeholder="t('entryForm.issuerPlaceholder')" :aria-label="t('entryForm.issuerLabel')" />
-    <div v-if="recommendVisible && recommended" class="icon-recommend">
+    <div v-if="recommendVisible" class="icon-recommend">
       {{ t('entryForm.iconDetected') }}
-      <svg viewBox="0 0 24 24" class="icon-preview" aria-hidden="true" v-html="builtinHtml(recommended.path)" />
-      <MdButton variant="text" class="use-recommend-icon" @click="useRecommended">{{ t('entryForm.useIcon') }}</MdButton>
+      <button
+        v-for="rec in recommendations" :key="rec.id" type="button" class="recommend-item"
+        :title="rec.title" :aria-label="`${t('entryForm.useIcon')} ${rec.title}`" @click="applyBuiltinIcon(rec)"
+      >
+        <svg viewBox="0 0 24 24" class="icon-preview" aria-hidden="true" v-html="builtinHtml(rec.path)" />
+      </button>
     </div>
     <MdTextField v-model="form.label" :label="t('entryForm.labelLabel')" :aria-label="t('entryForm.labelLabel')" />
     <div class="secret-row">
@@ -490,6 +500,7 @@ function submit() {
         <span v-else class="icon-none">{{ t('entryForm.iconNone') }}</span>
       </div>
       <div class="icon-actions">
+        <MdButton variant="text" class="choose-builtin" @click="pickerOpen = true">{{ t('entryForm.chooseFromLibrary') }}</MdButton>
         <MdButton v-if="iconStore" variant="text" class="upload-icon" @click="fileInput?.click()">{{ t('entryForm.upload') }}</MdButton>
         <input ref="fileInput" type="file" accept="image/*" class="icon-file" @change="onIconFile" />
         <MdButton v-if="iconStore" variant="text" class="import-pack" :disabled="packBusy" @click="packInput?.click()">{{ t('entryForm.importIconPack') }}</MdButton>
@@ -505,6 +516,10 @@ function submit() {
       <div v-if="packMessage" class="pack-message">{{ packMessage }}</div>
       <div v-if="iconError" class="error">{{ iconError }}</div>
     </details>
+    <IconPickerDialog
+      v-if="icons" :open="pickerOpen" :builtin="icons.builtin" :issuer="form.issuer"
+      @select="applyBuiltinIcon" @close="pickerOpen = false"
+    />
     <!-- matchRules 编辑区 -->
     <fieldset>
       <legend>{{ t('entryForm.matchRulesLegend') }}</legend>
@@ -560,6 +575,8 @@ fieldset { border: 1px solid var(--md-sys-color-outline-variant); border-radius:
 .rule-row .rule-pattern.invalid :deep(.md-text-field__box) { border-bottom-color: var(--md-sys-color-error); }
 .rule-error { font-size: var(--md-sys-typescale-label-small); color: var(--md-sys-color-error); flex-basis: 100%; }
 .icon-recommend { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); padding: 4px 8px; background: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent); border-radius: 6px; }
+.icon-recommend .recommend-item { display: grid; place-items: center; padding: 2px; border: none; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
+.icon-recommend .recommend-item:hover { background: color-mix(in srgb, var(--md-sys-color-primary) 16%, transparent); }
 .icon-preview { width: 20px; height: 20px; fill: currentColor; flex: none; }
 .icon-current-img { width: 20px; height: 20px; object-fit: contain; flex: none; }
 .icon-picker summary { cursor: pointer; font-weight: 600; }

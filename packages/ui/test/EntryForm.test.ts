@@ -228,15 +228,28 @@ describe('EntryForm 图标推荐与选择', () => {
   const icons = () => ({ builtin: getBuiltinIcons(), stored: {} as Readonly<Record<string, string>> })
   const issuerInput = (w: VueWrapper) => w.find('input[placeholder="服务名（如 GitHub）"]')
 
-  it('issuer 输入 github 防抖后出现推荐气泡，点「使用」后 save 携带 builtin icon', async () => {
+  it('issuer 输入 github 防抖后出现推荐气泡，点推荐图标后 save 携带 builtin icon', async () => {
     const w = mount(EntryForm, { global: { plugins: [createTestI18n()] }, props: { initial: null, tags: [], icons: icons() } })
     expect(w.text()).not.toContain('检测到图标')
     await issuerInput(w).setValue('github')
     // 300ms 防抖后才显示推荐
     await vi.waitFor(() => expect(w.text()).toContain('检测到图标'))
     expect(w.find('.icon-recommend svg.icon-preview').exists()).toBe(true)
-    await w.find('button.use-recommend-icon').trigger('click')
+    // 推荐区多条候选（github 精确命中距离 0 排第一），点图标即用
+    await w.find('.icon-recommend button.recommend-item').trigger('click')
     expect(w.text()).not.toContain('检测到图标')
+    await w.find('form').trigger('submit')
+    expect(w.emitted('save')![0]![0]).toMatchObject({ icon: { kind: 'builtin', id: 'github' } })
+  })
+
+  it('issuer 拼写错误（githb）防抖后模糊推荐出现，点选后 save 携带 github', async () => {
+    const w = mount(EntryForm, { global: { plugins: [createTestI18n()] }, props: { initial: null, tags: [], icons: icons() } })
+    await issuerInput(w).setValue('githb')
+    // 莱文斯坦纠错：不再要求完全匹配
+    await vi.waitFor(() => expect(w.text()).toContain('检测到图标'))
+    const first = w.findAll('.icon-recommend button.recommend-item')[0]!
+    expect(first.attributes('title')).toBe('GitHub')
+    await first.trigger('click')
     await w.find('form').trigger('submit')
     expect(w.emitted('save')![0]![0]).toMatchObject({ icon: { kind: 'builtin', id: 'github' } })
   })
@@ -245,6 +258,22 @@ describe('EntryForm 图标推荐与选择', () => {
     const w = mount(EntryForm, { global: { plugins: [createTestI18n()] }, props: { initial: null, tags: [], icons: icons() } })
     await issuerInput(w).setValue('zzz-不存在的服务')
     await new Promise((r) => setTimeout(r, 400)) // 越过 300ms 防抖
+    expect(w.text()).not.toContain('检测到图标')
+  })
+
+  it('「从图标库选择」打开选择器，点选后 save 携带 builtin 且不再弹推荐气泡', async () => {
+    const w = mount(EntryForm, { global: { plugins: [createTestI18n()] }, props: { initial: null, tags: [], icons: icons() } })
+    await w.find('details.icon-picker summary').trigger('click')
+    await w.find('button.choose-builtin').trigger('click')
+    // 选择器网格渲染全部内置图标（≥200），按 title 找到 GitLab 点选
+    const cells = w.findAll('.md-dialog .picker-grid--all button')
+    expect(cells.length).toBeGreaterThanOrEqual(200)
+    await cells.find((c) => c.attributes('title') === 'GitLab')!.trigger('click')
+    await w.find('form').trigger('submit')
+    expect(w.emitted('save')![0]![0]).toMatchObject({ icon: { kind: 'builtin', id: 'gitlab' } })
+    // 手动选择后 iconTouched：再输 issuer 不弹推荐气泡
+    await issuerInput(w).setValue('github')
+    await new Promise((r) => setTimeout(r, 400))
     expect(w.text()).not.toContain('检测到图标')
   })
 

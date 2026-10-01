@@ -25,15 +25,6 @@ export function normalizeIssuer(name: string): string {
   return name.toLowerCase().replace(/[\s._-]+/g, '')
 }
 
-/** 依次：normalize 后精确 id → 别名表 → null */
-export function recommendBuiltinIcon(issuer: string): BuiltinIcon | null {
-  const key = normalizeIssuer(issuer)
-  if (!key) return null
-  const id = key in ICONS ? key : ALIASES[key]
-  if (!id) return null
-  return ICONS[id] ?? null
-}
-
 function levenshtein(a: string, b: string): number {
   if (a === b) return 0
   let prev = Array.from({ length: b.length + 1 }, (_, j) => j)
