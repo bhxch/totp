@@ -3,7 +3,7 @@ import type { CloudCred, GDriveCred, OneDriveCred, Retention } from '@totp/core'
 import { DEFAULT_OBJECT_PATH, previewObjectPath } from '@totp/core'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { hasPlaintextUrl, isGistDraft, isOAuthCapableDraft, isOneDriveDraft, isS3Draft, isWebdavDraft } from './cardShared'
+import { customProxyUrlError, hasPlaintextUrl, isGistDraft, isOAuthCapableDraft, isOneDriveDraft, isS3Draft, isWebdavDraft } from './cardShared'
 import MdCheckbox from './md/MdCheckbox.vue'
 import MdSegmentedButton from './md/MdSegmentedButton.vue'
 import MdTextField from './md/MdTextField.vue'
@@ -71,12 +71,18 @@ const PROXY_MODE_OPTIONS = [
   { value: 'custom', label: t('cloudCard.proxyModeCustom') },
 ]
 function onProxyMode(d: CloudCred, mode: string | number): void {
-  d.proxy = mode === 'none' ? undefined : { mode: mode as 'system' | 'custom', url: d.proxy?.url }
+  // 云-I2：切 custom 且无已存 url 时暂存空串（而非 undefined）——空串是「未填写」判据，
+  // customProxyUrlError 据此在保存前拦截；system 仍保留 url 供切回 custom
+  d.proxy = mode === 'none'
+    ? undefined
+    : { mode: mode as 'system' | 'custom', url: d.proxy?.url ?? (mode === 'custom' ? '' : undefined) }
 }
 function onProxyUrl(d: CloudCred, v: string): void {
   if (d.proxy?.mode !== 'custom') return
   d.proxy = { mode: 'custom', url: v.trim() }
 }
+/** 云-I2：custom 代理地址为空/非法的就地错误行（路径预览错误同款 warn 展示；保存拦截在 CloudCard） */
+const proxyUrlError = computed(() => customProxyUrlError(props.draft?.proxy))
 </script>
 
 <template>
@@ -154,6 +160,9 @@ function onProxyUrl(d: CloudCred, v: string): void {
         :placeholder="t('cloudCard.proxyUrlPlaceholder')" :aria-label="t('cloudCard.proxyUrlLabel')" autocomplete="off"
         @update:model-value="onProxyUrl(d, $event)"
       />
+      <p v-if="proxyUrlError" class="warn proxy-url-error" role="alert">
+        {{ proxyUrlError === 'empty' ? t('cloudCard.proxyUrlEmpty') : t('cloudCard.proxyUrlInvalid') }}
+      </p>
     </template>
     <p v-if="d && !proxySupport" class="hint">{{ t('cloudCard.proxyUnsupportedHint') }}</p>
   </template>

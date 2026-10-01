@@ -7,7 +7,7 @@ import type { VueStore } from '../store'
 import { useConfirmPattern } from '../composables/confirmPattern'
 import { useAsyncMessage } from '../composables/useAsyncMessage'
 import { useAutoPrefs } from '../composables/useAutoPrefs'
-import { blankCred, hasPlaintextUrl, intervalOptions, isBlankCred, newSourceId, retentionOptions } from './cardShared'
+import { blankCred, customProxyUrlError, hasPlaintextUrl, intervalOptions, isBlankCred, newSourceId, retentionOptions } from './cardShared'
 import { createCloudBackend } from './cloudPlatform'
 import type { CloudPlatform } from './cloudPlatform'
 import { actionStatusLabelKey, allTargetsSettled, buildSyncTargets, runExclusive, runKeepRetention } from './cloudSyncShared'
@@ -329,16 +329,25 @@ const needsPlaintextAck = computed(() => sources.value.some((s) => {
 /** 明文传输显式确认（仅卡内内存，不持久化「永久确认」）：保存成功即复位——确认按保存会话独立，再次保存需重新勾选 */
 const plaintextAck = ref(false)
 
+/** 云-I2：任一源草稿 custom 代理地址为空/非法 → 整体拦截保存（不落盘任何内容）；字段区已有就地错误行 */
+const hasInvalidProxy = computed(() => sources.value.some((s) => customProxyUrlError(credDrafts.value[s.id]?.proxy) !== null))
+
 /**
  * 保存凭据：源元数据整列表落盘 + 逐源把编辑副本写入保管区（含禁用源——凭据与启用态独立，
  * 跳过会造成编辑静默丢失；空白凭据跳过并提示——空白行从未配置过，写入只会污染保管区）。
  * F11：存在非本机 http 明文地址且未勾选确认 → 整体拦截（不落盘任何内容），提示改用 https 或显式确认。
+ * 云-I2：存在空/非法自定义代理地址 → 同点整体拦截（落库后该源每个请求才在 reqwest 侧失败，前端即拦）。
  */
 async function onSaveCreds(): Promise<void> {
   const p = props.platform
   if (!p) return
   if (needsPlaintextAck.value && !plaintextAck.value) {
     msg.value = t('cloudCard.plaintextAckWarn')
+    msgKind.value = 'err'
+    return
+  }
+  if (hasInvalidProxy.value) {
+    msg.value = t('cloudCard.proxyUrlSaveBlocked')
     msgKind.value = 'err'
     return
   }

@@ -1,4 +1,4 @@
-import type { CloudCred, GDriveCred, GistCred, OneDriveCred, S3Cred, WebdavCred } from '@totp/core'
+import type { CloudCred, CloudProxy, GDriveCred, GistCred, OneDriveCred, S3Cred, WebdavCred } from '@totp/core'
 import { isPlaintextHttpUrl } from './cloudPlatform'
 
 /**
@@ -63,6 +63,26 @@ export function hasPlaintextUrl(d: CloudCred): boolean {
   if (isWebdavDraft(d)) return isPlaintextHttpUrl(d.serverUrl)
   if (isS3Draft(d)) return isPlaintextHttpUrl(d.endpoint ?? '')
   return false
+}
+
+/**
+ * 自定义代理地址校验（云-I2）：custom 模式保存前拦截空地址与非法格式——两者落库后该源每个
+ * 请求都会在桌面 reqwest 侧失败（「custom 代理缺 url」/「代理地址无效」），此处前端即拦。
+ * scheme 与 UI placeholder/桌面 Proxy::all 支持一致：http/https/socks5/socks5h；host 为空
+ * （如 `http:/x`）同样判非法（reqwest 解析亦会失败）。返回错误码（映射 i18n 文案），
+ * null=通过或非 custom 模式（none/system 无地址语义恒通过）。
+ */
+export function customProxyUrlError(proxy: CloudProxy | undefined): 'empty' | 'invalid' | null {
+  if (proxy?.mode !== 'custom') return null
+  const url = (proxy.url ?? '').trim()
+  if (url === '') return 'empty'
+  try {
+    const u = new URL(url)
+    if (!['http:', 'https:', 'socks5:', 'socks5h:'].includes(u.protocol) || u.hostname === '') return 'invalid'
+  } catch {
+    return 'invalid'
+  }
+  return null
 }
 
 /** 定时（自动同步/备份）间隔档位，value=分钟数（MdSelect number 直传回写，不经字符串转换）。
