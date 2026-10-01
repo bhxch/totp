@@ -31,6 +31,11 @@ async function load() {
     // 等 mini-session locked:false 通知重载（store.commit 拒绝 locked 态写，spec 要求 mini 与 App 交互一致）。
     // onLocked：mini 的锁库路径（force-lock/mini-session locked:true 联动）同样清 Rust DEK 暂存槽，保证
     // 「锁库后不再回注」语义闭环（boot 序列收敛至 desktopShell.bootDesktopStore，R13）
+    // Minor-1（2026-09-30 终审）：在途 load 期间主窗可能已锁定（清槽+发事件早于本 load 完成，
+    // locked:true 只锁到旧 store）——本次若经槽恢复了解锁，赋值后复查槽：已空（peek 失败视为
+    // 不确定，保守不动等事件/聚焦）则立即锁本窗，闭合「主窗已锁 mini 仍持明文」窄窗；
+    // 明文库主窗从不 set 槽，restoredFromSlot 恒 false 不受影响
+    let restoredFromSlot = false
     const s = await bootDesktopStore(adapter, {
       windowId: 'mini',
       onLocked: () => { void invoke('clear_stashed_dek').catch(() => {}) },
@@ -41,12 +46,20 @@ async function load() {
       },
       // ① mini 跟随主窗解锁：槽有 DEK（主窗已解锁）即自动恢复；set/clear no-op——槽由主窗写清
       dekPersist: {
-        get: () => invoke<string | null>('peek_mini_dek').catch(() => null),
+        get: async () => {
+          const v = await invoke<string | null>('peek_mini_dek').catch(() => null)
+          restoredFromSlot = restoredFromSlot || v !== null
+          return v
+        },
         set: async () => {},
         clear: async () => {},
       },
     })
     store.value = s
+    if (restoredFromSlot && !s.locked.value) {
+      const dekStillThere = await invoke<string | null>('peek_mini_dek').catch(() => 'gone')
+      if (dekStillThere === null) s.lock()
+    }
     // D1 i18n 挂载：设置已从盘载入（含 locale）；仅首次生效，重载不再装入
     mountI18n(s)
     // 主题接线:initStore 成功后挂 useTheme(设置已加载为真实值;首帧属性由 html 内联脚本负责)

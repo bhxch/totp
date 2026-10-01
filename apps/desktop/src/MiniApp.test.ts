@@ -222,7 +222,7 @@ describe('mini 跟随主窗解锁（①槽 peek 自动恢复 + mini-session 事�
       expect(tauriMock.listenerCount('mini-session')).toBe(1) // 主窗解锁态联动已接线
       expect(wrapper.find('[data-test="item"]').exists()).toBe(true) // 槽 DEK 解密成功 → 条目渲染
     })
-    expect(tauriMock.calls('peek_mini_dek')).toHaveLength(1) // boot 经 dekPersist.get peek 主窗槽
+    expect(tauriMock.calls('peek_mini_dek')).toHaveLength(2) // boot 经 dekPersist.get peek + Minor-1 赋值后复查 peek
     expect(wrapper.text()).not.toContain('主窗口解锁后此窗口可用') // 锁定文案未出现
   })
 
@@ -243,5 +243,19 @@ describe('mini 跟随主窗解锁（①槽 peek 自动恢复 + mini-session 事�
     expect(tauriMock.calls('peek_mini_dek').length).toBeGreaterThanOrEqual(2) // load 重建再 peek
     await vi.waitFor(() => expect(wrapper.find('[data-test="item"]').exists()).toBe(true)) // 重载经槽 DEK 自动解锁
     expect(wrapper.text()).not.toContain('主窗口解锁后此窗口可用')
+  })
+
+  it('Minor-1：在途 load 期间主窗锁定（槽清空）→ boot 后复查槽并锁定本窗，闭合明文窄窗', async () => {
+    const dekB64 = await seedEncryptedVault([TOTP])
+    // peek 序列：首次（boot initStore）返回 DEK → 解锁；其后 null（主窗在 load 完成前已锁定清槽，
+    // locked:true 事件只锁到旧 store——无后续事件来锁本 store，终审 Minor-1 的明文窄窗序列）
+    let n = 0
+    tauriMock.on('peek_mini_dek', () => (n++ === 0 ? dekB64 : null))
+    const wrapper = await mountMini()
+    // 复查逻辑：boot 赋值后二次 peek 发现槽空 → lock()（→ onLocked 清暂存槽）
+    await vi.waitFor(() => expect(tauriMock.calls('clear_stashed_dek').length).toBeGreaterThanOrEqual(1))
+    expect(tauriMock.calls('peek_mini_dek').length).toBeGreaterThanOrEqual(2) // boot peek + 赋值后复查 peek
+    expect(wrapper.find('[data-test="item"]').exists()).toBe(false) // 不持明文
+    expect(wrapper.text()).toContain('主窗口解锁后此窗口可用')
   })
 })
