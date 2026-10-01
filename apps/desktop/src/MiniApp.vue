@@ -156,7 +156,7 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
     <!-- 终审 Important-1：@dblclick 未在 OtpListItem emits 声明，经 attrs fallthrough 合并到组件根元素，
          与组件内部揭示 onDblclick 合并共存（Vue 3 mergeProps 依次调用）——双击即揭示并取消 500ms 自动隐藏
          （审查 I-1：控制器内部递增揭示代次，使 await 期间在途的 copy 不再武装自动隐藏） -->
-    <OtpListItem v-for="(e, i) in sorted" :key="e.uuid" :entry="e" :icon="iconView(e.icon, icons ?? undefined)" :index="i + 1" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" :context-menu="false" :show-qr="false" @copy="copy(e)" @dblclick="autoHide.onDblclick" />
+    <OtpListItem v-for="(e, i) in sorted" :key="e.uuid" :entry="e" :icon="iconView(e.icon, icons ?? undefined)" :index="i + 1" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 1 }" :context-menu="false" :show-qr="false" @copy="copy(e)" @dblclick="autoHide.onDblclick" />
   </main>
 </template>
 

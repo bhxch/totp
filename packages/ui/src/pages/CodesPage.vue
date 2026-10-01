@@ -326,7 +326,7 @@ function openSheet() {
           :entry="e"
           :icon="iconView(e.icon, icons ?? undefined)"
           :index="i + 1"
-          v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }"
+          v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 1 }"
           @copy="onCopy(e)"
           @qr="qrEntry = e"
           @context="(ev) => onContextMenu(e, ev)"

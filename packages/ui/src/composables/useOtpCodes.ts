@@ -12,8 +12,9 @@ export interface CodeState {
   error?: string
 }
 
-/** 探测期/未到刷新窗口占位符：'------'，与 secret 非法区分（INVALID） */
-const PLACEHOLDER = '------'
+/** 探测期/未到刷新窗口占位符：'------'，与 secret 非法区分（INVALID）。
+ *  导出供 OtpListItem 等渲染层引用：占位码无到期语义，不参与倒计时紧急色判定（杂-I1） */
+export const CODE_PLACEHOLDER = '------'
 
 /**
  * 窗口缓存：code 是「条目内容 + 窗口号 counter=floor(nowSec/period)」的纯函数
@@ -105,5 +106,5 @@ export function useOtpCodes(entries: Ref<OtpEntry[]>) {
     stopTimer()
   })
 
-  return { codes, nowMs, /** 仅供渲染层对照，区分 INVALID/------ 占位 */ placeholder: PLACEHOLDER }
+  return { codes, nowMs, /** 仅供渲染层对照，区分 INVALID/------ 占位 */ placeholder: CODE_PLACEHOLDER }
 }

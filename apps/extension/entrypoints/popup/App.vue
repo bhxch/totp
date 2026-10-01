@@ -411,7 +411,7 @@ function cancelAutoClose(): void {
     <div v-else-if="loaded && visible.length === 0" class="empty">{{ t('popup.noMatch') }}</div>
     <div v-for="(e, i) in visible" :key="e.uuid" class="item-wrap" @click="closeContextMenu">
       <!-- 终审 Important-1：@dblclick 经 attrs fallthrough 与组件内部揭示 onDblclick 合并共存——双击即揭示并取消自动关闭 -->
-      <OtpListItem :entry="e" :icon="iconView(e.icon, icons)" :index="i + 1" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 0 }" @copy="copy(e)" @qr="qrEntry = e" @context="(ev) => onContextMenu(e, ev)" @dblclick="cancelAutoClose" />
+      <OtpListItem :entry="e" :icon="iconView(e.icon, icons)" :index="i + 1" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 1 }" @copy="copy(e)" @qr="qrEntry = e" @context="(ev) => onContextMenu(e, ev)" @dblclick="cancelAutoClose" />
       <div class="ops">
         <template v-if="confirmingDelete === e.uuid">
           <MdButton danger @click.stop="askRemove(e.uuid)">{{ t('popup.confirmDelete') }}</MdButton>

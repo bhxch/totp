@@ -4,6 +4,7 @@ import { computed, onScopeDispose, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import MdIconButton from './md/MdIconButton.vue'
 import { avatarStyleOf } from './avatarColor'
+import { CODE_PLACEHOLDER } from '../composables/useOtpCodes'
 
 const { t } = useI18n()
 
@@ -64,8 +65,11 @@ const CIRCUMFERENCE = 2 * Math.PI * RING_R
  * 的跳变放大为每条目常驻 ~60fps SVG 重绘（2026-09-28 GPU profile 实锤 9 条目即 4% GPU） */
 const dashOffset = computed(() => CIRCUMFERENCE * (1 - props.progress))
 
-/** ④A：周期最后三分之一（remaining ≤ period/3）倒计时环与数字转醒目错误色 */
-const urgent = computed(() => props.progress <= 1 / 3)
+/** ④A：周期最后三分之一（remaining ≤ period/3）倒计时环与数字转醒目错误色。
+ *  杂-I1：仅限会过期的码——hotp 按计数取码永不过期（环末三分之一转红无语义）；
+ *  占位码 '------'（首帧 codes 未就绪）无到期概念，且 fallback progress 落 1/3 区间
+ *  会闪一帧红，两者均排除。totp/steam/yandex 均时间基（yandex counter 亦由 nowMs 推导） */
+const urgent = computed(() => props.progress <= 1 / 3 && props.entry.type !== 'hotp' && props.code !== CODE_PLACEHOLDER)
 
 /** 批④ §5：无图标时首字母 avatar 按 issuer 哈希从主题 10 子色取底色；有图标时 undefined 保留 .avatar 默认底色 */
 const avatarStyle = computed(() => (props.icon?.html || props.icon?.src ? undefined : avatarStyleOf(props.entry.issuer)))

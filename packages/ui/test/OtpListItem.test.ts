@@ -150,6 +150,26 @@ describe('OtpListItem 序号 / 倒计时紧急色 / 揭示醒目色（④A 三�
     expect(idxMount({ code: '123456', remaining: 10, progress: 10 / 30 }).find('svg.ring.urgent').exists()).toBe(true)
     expect(idxMount({ code: '123456', remaining: 11, progress: 11 / 30 }).find('svg.ring.urgent').exists()).toBe(false)
   })
+  it('杂-I1：hotp 码不过期，即使 progress 落末三分之一也不 urgent', () => {
+    const hotpEntry: OtpEntry = { ...entry, type: 'hotp', counter: 5 }
+    const w = mount(OtpListItem, { global: { plugins: [createTestI18n()] },
+      props: { entry: hotpEntry, code: '123456', remaining: 2, progress: 2 / 30 } })
+    expect(w.find('svg.ring.urgent').exists()).toBe(false)
+  })
+  it('杂-I1：占位码 ------（首帧 codes 未就绪）不 urgent，TOTP 实码同 progress 仍 urgent', () => {
+    const placeholder = mount(OtpListItem, { global: { plugins: [createTestI18n()] },
+      props: { entry, code: '------', remaining: 0, progress: 0 } })
+    expect(placeholder.find('svg.ring.urgent').exists()).toBe(false)
+    const real = mount(OtpListItem, { global: { plugins: [createTestI18n()] },
+      props: { entry, code: '123456', remaining: 0, progress: 0 } })
+    expect(real.find('svg.ring.urgent').exists()).toBe(true)
+  })
+  it('杂-I1：yandex 亦时间基（counter 由 nowMs 推导），末三分之一仍 urgent', () => {
+    const yandexEntry: OtpEntry = { ...entry, type: 'yandex', pin: '1234' }
+    const w = mount(OtpListItem, { global: { plugins: [createTestI18n()] },
+      props: { entry: yandexEntry, code: 'abcdefgh', remaining: 9, progress: 9 / 30 } })
+    expect(w.find('svg.ring.urgent').exists()).toBe(true)
+  })
   it('揭示态 .code 加 revealed 醒目色 class；INVALID 恒不加（错误文案非秘密但语义不同）', async () => {
     const w = idxMount({})
     expect(w.find('.code.revealed').exists()).toBe(false)
