@@ -2,7 +2,7 @@ import { parseOtpUri } from '@totp/core'
 import { PENDING_OTPAUTH_KEY } from '../src/pendingOtpauth'
 import { decodeImageBytesToUri } from '../src/qrDecode'
 import { pullSyncIfNewer, pushSync } from '../src/syncEngine'
-import { handleCloudFetch } from '../src/cloudFetchHandler'
+import { handleCloudFetchMessage } from '../src/cloudFetchHandler'
 import { canOpenPopup, ext } from '../src/extApi'
 
 /** 清剪贴板 alarm 名（同名 create 即覆盖 = 重复复制重置计时） */
@@ -137,11 +137,13 @@ export default defineBackground(() => {
   // 页面端写路径成功后立即发 {type:'sync-push'}（popup 发完即可能销毁，页面端不做 debounce）：
   // SW 内 1s 合并窗口把连写合并为一次推送；SW 被杀时消息本身会唤醒 SW 重新计时，推送不丢
   let syncPushTimer: ReturnType<typeof setTimeout> | undefined
-  ext!.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    // 页面端云请求代理（③）：host_permissions 内 SW fetch 不受 CORS 限制，应答经 sendResponse 回传
+  ext!.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    // 页面端云请求代理（③）：host_permissions 内 SW fetch 不受 CORS 限制，应答经 sendResponse 回传。
+    // 云-I3：仅本扩展内部页面可驱动（sender.id === 自身 runtime id）；外部来源同步回结构化拒绝。
+    // 无 externally_connectable 时外部页面 sender.id 为 undefined 天然被拒——将来加 content script
+    // 也不会静默变成任意网页可驱动的出网中继。
     if (msg?.type === 'cloud-fetch') {
-      void handleCloudFetch(msg.url, msg.method, msg.headers, msg.bodyB64).then(sendResponse)
-      return true // MV3：异步应答保持通道开放
+      return handleCloudFetchMessage(msg, sender, sendResponse, ext!.runtime.id)
     }
     // popup/options 复制后发 {type:'schedule-clipboard-clear', delayMs}——popup 即将关闭，30s 清空须由后台承载
     if (msg?.type === 'schedule-clipboard-clear') {
