@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CloudHttpError, isAuthError } from '../src/cloud/backend'
+import { CloudHttpError, __resetCloudFetchForTest, isAuthError, setCloudFetch, type CloudProxy } from '../src/cloud/backend'
 import { __resetOAuthCacheForTest, refreshAccessToken } from '../src/cloud/oauthRefresh'
 
 const GDRIVE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -227,7 +227,7 @@ describe('oauthRefresh：refreshAccessToken', () => {
     let hits = 0
     vi.stubGlobal('fetch', vi.fn(async () => {
       hits++
-      return new Response(JSON.stringify({ access_token: 'tokShared', expires_in: 3600 }), { status: 200 })
+      return new Response(JSON.stringify({ access_token: 'tokShared', expires_in: 3600 }))
     }))
     // 两次调用来自不同 cred 对象（accessToken 等外围字段不同），OAuth 三元组相同 → 同 credKey
     const cred1 = { backend: 'gdrive' as const, accessToken: 'aaa', oauth: { ...OAUTH } }
@@ -236,7 +236,24 @@ describe('oauthRefresh：refreshAccessToken', () => {
     expect(await refreshAccessToken(cred2)).toBe('tokShared')
     expect(hits).toBe(1) // 第二次命中缓存：同凭据稳定同 key
     // 换 refreshToken → 不同 key → 重新请求
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'tokOther', expires_in: 3600 }), { status: 200 })))
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ access_token: 'tokOther', expires_in: 3600 }))))
     expect(await refreshAccessToken({ backend: 'gdrive', accessToken: 'aaa', oauth: { ...OAUTH, refreshToken: 'rtok-2' } })).toBe('tokOther')
+  })
+})
+
+describe('oauthRefresh：token 端点代理透传（③，云-M2）', () => {
+  afterEach(() => __resetCloudFetchForTest())
+
+  it('cred.proxy 经 cloudFetch 第 4 参随 token 刷新请求到达注入层（改走注入层的关键变更直接断言）', async () => {
+    const seen: Array<{ label: string; proxy: CloudProxy | undefined }> = []
+    setCloudFetch(async (label, url, _init, proxy) => {
+      seen.push({ label, proxy })
+      expect(url).toBe(GDRIVE_TOKEN_URL)
+      return new Response(JSON.stringify({ access_token: 'tokViaInjected', expires_in: 3600 }), { status: 200 })
+    })
+    const proxy: CloudProxy = { mode: 'custom', url: 'socks5://127.0.0.1:7890' }
+    const cred = { backend: 'gdrive' as const, accessToken: '', oauth: { ...OAUTH }, proxy }
+    expect(await refreshAccessToken(cred)).toBe('tokViaInjected')
+    expect(seen).toEqual([{ label: 'oauth', proxy }])
   })
 })

@@ -62,6 +62,23 @@ describe('backupNameTimestampMs', () => {
     expect(backupNameTimestampMs('conflict-20260901-120000.totpbackup')).toBeNull()
     expect(backupNameTimestampMs('vault-20260901-120000.totpbackup/../../evil')).toBeNull()
   })
+
+  it('日历段边界值仍解析（云-M3 不回归）：12 月/31 日/23 时/59 分/59 秒、闰日 2 月 29', () => {
+    expect(backupNameTimestampMs('vault-20261231-235959.totpbackup')).toBe(new Date(2026, 11, 31, 23, 59, 59).getTime())
+    expect(backupNameTimestampMs('vault-20240229-000000.totpbackup')).toBe(new Date(2024, 1, 29, 0, 0, 0).getTime())
+    expect(backupNameTimestampMs('vault-20260101-000000.totpbackup')).toBe(new Date(2026, 0, 1, 0, 0, 0).getTime())
+  })
+
+  it('非日历数字串拒绝（云-M3）：new Date 静默进位的段返回 null 走「不识别」路径', () => {
+    expect(backupNameTimestampMs('vault-20261301-120000.totpbackup')).toBeNull() // 13 月
+    expect(backupNameTimestampMs('vault-20260001-120000.totpbackup')).toBeNull() // 0 月
+    expect(backupNameTimestampMs('vault-20260132-120000.totpbackup')).toBeNull() // 32 日
+    expect(backupNameTimestampMs('vault-20260100-120000.totpbackup')).toBeNull() // 0 日
+    expect(backupNameTimestampMs('vault-20260101-991200.totpbackup')).toBeNull() // 99 时
+    expect(backupNameTimestampMs('vault-20260101-241200.totpbackup')).toBeNull() // 24 时
+    expect(backupNameTimestampMs('vault-20260101-126000.totpbackup')).toBeNull() // 60 分
+    expect(backupNameTimestampMs('vault-20260101-120060.totpbackup')).toBeNull() // 60 秒
+  })
 })
 
 describe('selectBackupsToKeep days 维度（③ 保留最近 n 天）', () => {

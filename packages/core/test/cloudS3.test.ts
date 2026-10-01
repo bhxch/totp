@@ -1,5 +1,6 @@
 import { createHash, createHmac } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { __resetCloudFetchForTest, setCloudFetch, type CloudProxy } from '../src/cloud/backend'
 import {
   awsUriEncode,
   buildCanonicalQueryString,
@@ -567,3 +568,19 @@ function expectedS3AuthorizationWithToken(
   const signature = createHmac('sha256', key).update(sts).digest('hex')
   return `AWS4-HMAC-SHA256 Credential=${cred.accessKeyId}/${scope}, SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token, Signature=${signature}`
 }
+
+describe('S3 proxy 透传（③，云-M2：put 链直达注入层）', () => {
+  afterEach(() => __resetCloudFetchForTest())
+
+  it('cred.proxy 经 cloudFetch 第 4 参到达注入层（签名照常携带）', async () => {
+    const seen: Array<CloudProxy | undefined> = []
+    setCloudFetch(async (_label, _url, _init, proxy) => {
+      seen.push(proxy)
+      return new Response(null, { status: 200 })
+    })
+    const proxy: CloudProxy = { mode: 'custom', url: 'http://127.0.0.1:7890' }
+    const backend = createS3Backend({ backend: 's3', region: 'us-east-1', bucket: 'mybucket', accessKeyId: AKID, secretAccessKey: SECRET, proxy }, { now: () => new Date('2015-08-30T12:36:00Z') })
+    await backend.put(PATH, new TextEncoder().encode('hello'))
+    expect(seen).toEqual([proxy])
+  })
+})

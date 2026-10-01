@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createWebdavBackend, joinDavUrl } from '../src/cloud/webdav'
 import { createGistBackend } from '../src/cloud/gist'
 import { setCloudFetch, __resetCloudFetchForTest } from '../src/cloud/backend'
@@ -224,18 +224,29 @@ describe('Gist 后端', () => {
   })
 })
 
-describe('WebDAV proxy 透传（③）', () => {
+describe('provider proxy 透传（③，云-M2：各链路直达注入层）', () => {
   afterEach(() => __resetCloudFetchForTest())
 
-  it('cred.proxy 经 cloudFetch 第 4 参到达注入层', async () => {
-    const seen: Array<CloudProxy | undefined> = []
-    setCloudFetch(async (_label, _url, _init, proxy) => {
-      seen.push(proxy)
-      return new Response(null, { status: 200 })
-    })
+  const capture: Array<CloudProxy | undefined> = []
+  const impl = async (_label: string, _url: string, _init: RequestInit | undefined, proxy?: CloudProxy): Promise<Response> => {
+    capture.push(proxy)
+    return new Response(null, { status: 200 })
+  }
+  beforeEach(() => capture.length = 0)
+
+  it('webdav：cred.proxy 经 cloudFetch 第 4 参到达注入层（put 链）', async () => {
+    setCloudFetch(impl)
     const cred = { backend: 'webdav' as const, serverUrl: 'https://dav', username: 'u', password: 'p', objectPath: 'a.totpbackup', proxy: { mode: 'custom' as const, url: 'socks5h://127.0.0.1:7890' } }
     await createWebdavBackend(cred).put('a.totpbackup', new Uint8Array([1]))
-    expect(seen.length).toBeGreaterThan(0)
-    expect(seen[0]).toEqual({ mode: 'custom', url: 'socks5h://127.0.0.1:7890' })
+    expect(capture.length).toBeGreaterThan(0)
+    expect(capture[0]).toEqual({ mode: 'custom', url: 'socks5h://127.0.0.1:7890' })
+  })
+
+  it('gist：cred.proxy 经 cloudFetch 第 4 参到达注入层（put 链）', async () => {
+    setCloudFetch(impl)
+    const cred = { backend: 'gist' as const, token: 'tok', gistId: 'gid123', proxy: { mode: 'system' as const } }
+    await createGistBackend(cred).put(PATH, new TextEncoder().encode('hello'))
+    expect(capture.length).toBeGreaterThan(0)
+    expect(capture[0]).toEqual({ mode: 'system' })
   })
 })

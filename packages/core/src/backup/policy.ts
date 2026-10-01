@@ -27,11 +27,16 @@ export const BACKUP_NAME_RE = /^vault-\d{8}-\d{6}\.totpbackup$/
 // 滚动删除仍仅认 BACKUP_NAME_RE（overwrite 名与 conflict 名永不滚动删除）
 export const READABLE_BACKUP_RE = /^(vault-(\d{8}-\d{6}|backup)|conflict-(?:[a-z0-9]+-)*\d{8}-\d{6})\.totpbackup$/
 
-/** 从 vault-YYYYMMDD-HHMMSS 名解析本地时间戳（ms）；不匹配返回 null */
+/** 从 vault-YYYYMMDD-HHMMSS 名解析本地时间戳（ms）；不匹配或日历段非法返回 null（云-M3：
+ *  13 月、32 日、99 时等 \d{2} 匹配但非日历值的段会被 new Date 静默进位，年龄计算偏移——
+ *  按既有时间戳格式的段位范围校验：月 01-12、日 01-31、时 00-23、分/秒 00-59） */
 export function backupNameTimestampMs(name: string): number | null {
   const m = /^vault-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})\.totpbackup$/.exec(name)
   if (!m) return null
-  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6])).getTime()
+  const y = Number(m[1]); const mo = Number(m[2]); const d = Number(m[3])
+  const h = Number(m[4]); const mi = Number(m[5]); const s = Number(m[6])
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 59) return null
+  return new Date(y, mo - 1, d, h, mi, s).getTime()
 }
 
 /** 滚动删除名单（③ 加 days 维度）：字典序=时间序；候选=超出最近 keep 份的超额名单；
