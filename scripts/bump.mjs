@@ -1,12 +1,15 @@
 #!/usr/bin/env node
-// 版本单一来源：apps/desktop/package.json → 同步 7 处落点（验收条目6 spec §1）
+// 版本单一来源：apps/desktop/package.json → 同步 8 处落点（验收条目6 spec §1）
 // 用法: node scripts/bump.mjs <x.y.z> [--check] | node scripts/bump.mjs --check
 //       （--check 不带版本参数时，以 apps/desktop/package.json 当前版本为基准）
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+// 测试注入口（scripts/bump.test.mjs 专用）：BUMP_ROOT 指定 fixture 根目录，正常发版不得设置
+const root = process.env.BUMP_ROOT
+  ? resolve(process.env.BUMP_ROOT)
+  : resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
 const check = args.includes('--check')
 let version = args.find((a) => a !== '--check')
@@ -21,7 +24,7 @@ if (!version || !/^\d+\.\d+\.\d+$/.test(version)) {
   process.exit(2)
 }
 
-// 落点 7 处：5 个 JSON + Cargo.toml + Cargo.lock
+// 落点 8 处：5 个 JSON + Cargo.toml + Cargo.lock + core 版本常量
 //（根 package.json 为 workspace 根、无 version 字段，不作落点）
 const jsonFiles = [
   'apps/desktop/package.json',
@@ -83,6 +86,28 @@ if (lockMatch) {
   }
 } else {
   console.error(`${lockFile} 未找到 totp-desktop 包条目`)
+  dirty = true
+}
+
+// 落点 8：core 版本常量 CORE_VERSION（packages/core 桶导出的公共 API 面，快照守卫锁定；
+// 此前游离在落点清单外，任何消费方出现即与包版本漂移，收口进 bump 保证单一来源）
+const coreVersionFile = 'packages/core/src/index.ts'
+const coreRe = /^(export const CORE_VERSION\s*=\s*)'([^']*)'/m
+const coreText = readFileSync(resolve(root, coreVersionFile), 'utf8')
+const coreMatch = coreText.match(coreRe)
+if (coreMatch) {
+  const coreCur = coreMatch[2]
+  if (coreCur === version) {
+    // 已一致
+  } else if (check) {
+    console.error(`${coreVersionFile} CORE_VERSION 为 ${coreCur}，期望 ${version}`)
+    dirty = true
+  } else {
+    writeFileSync(resolve(root, coreVersionFile), coreText.replace(coreRe, `$1'${version}'`))
+    console.log(`${coreVersionFile} (CORE_VERSION) → ${version}`)
+  }
+} else {
+  console.error(`${coreVersionFile} 未找到 CORE_VERSION 常量行`)
   dirty = true
 }
 
