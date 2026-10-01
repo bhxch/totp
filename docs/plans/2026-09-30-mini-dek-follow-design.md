@@ -20,6 +20,9 @@ Miniapp（桌面迷你窗，`apps/desktop` 独立 WebView 窗口，`mini.html` +
 新增独立槽与三个 command（模式参照现有 `STASHED_DEK`，语义为 set/clear/peek 而非 take——mini 聚焦时会重建 store 从盘重载，每次都要能再取）：
 
 - `set_mini_dek(dek: Vec<u8>)`：写入 `MINI_DEK` 槽（`Mutex<Option<Vec<u8>>>`，进程内存）。
+
+> 裁定（2026-10-01）：签名以实施计划 Task 1 为准，采用 base64 String 传输。
+> （后续审查加固：入参经 base64 解码校验 32 字节；set/clear 仅 main、peek 仅 mini，见 session_vaults.rs 所有权约定。）
 - `clear_mini_dek()`：清空槽。
 - `peek_mini_dek() -> Option<Vec<u8>>`：读取（槽保留，不清除）。
 
