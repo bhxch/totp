@@ -35,8 +35,8 @@ use dialog_grants::{
 use platform_security::{decrypt_dpapi, os_auto_forget, os_auto_protect, os_auto_unprotect};
 use session_vaults::{
     clear_clipboard_if_staged, clear_mini_dek, clear_stashed_dek, clipboard_clear_if_staged,
-    dek_slot_clear, peek_mini_dek, set_mini_dek, stage_clipboard_write, stash_dek,
-    take_stashed_dek, CLIPBOARD_STAGE, STASHED_DEK,
+    dek_slot_clear, dek_slots_clear_on_lock, peek_mini_dek, set_mini_dek, stage_clipboard_write,
+    stash_dek, take_stashed_dek, CLIPBOARD_STAGE, STASHED_DEK,
 };
 use settings_io::{
     read_section_text, read_settings_text, read_shortcut_from_settings, settings_path,
@@ -269,8 +269,11 @@ fn release_tick(app: &AppHandle) {
     match release_policy::plan_for(action, &cfg) {
         release_policy::ReleasePlan::LockAndSuspend => {
             let _ = app.emit("force-lock", ());
-            // 锁库即清 DEK 暂存槽（Task 14）：锁库路径绝不留跨重建的免解锁通道
-            dek_slot_clear(&STASHED_DEK);
+            // 锁库即清全部 DEK 槽（Task 14 + C1 审查修复 2026-10-01）：锁库路径绝不留跨重建的
+            // 免解锁通道——MINI_DEK 若只靠 force-lock 事件→主窗 JS→clear_mini_dek 两跳异步链清除，
+            // 本档 emit 后随即 TrySuspend，事件大概率来不及落地，下次 mini 聚焦重建会 peek 到残留
+            // DEK 自动解锁而主窗保持锁定（击穿「主窗已锁、mini 仍明文」不变量），故 Rust 侧同步清
+            dek_slots_clear_on_lock();
             for label in ["main", "mini"] {
                 try_suspend_window(app, label);
             }
@@ -330,10 +333,14 @@ fn try_suspend_window(_app: &AppHandle, _label: &str) {}
 fn destroy_releasable_windows(app: &AppHandle, cfg: &release_policy::ReleasePolicyConfig) -> bool {
     if cfg.lock_on_destroy {
         let _ = app.emit("force-lock", ());
-        // 锁库即清 DEK 暂存槽（Task 14）：同 release_tick Pause 分支，销毁锁库不留免解锁残留
-        dek_slot_clear(&STASHED_DEK);
+        // 锁库即清全部 DEK 槽（Task 14 + C1 审查修复 2026-10-01）：同 release_tick 锁库档——
+        // 销毁档 emit 后立即销毁窗口，clear_mini_dek 两跳链必然来不及落地，MINI_DEK 必须
+        // 与 STASHED_DEK 一并在 Rust 侧同步清，否则重建 mini peek 到残留 DEK 自动解锁而主窗锁定
+        dek_slots_clear_on_lock();
     } else {
-        // 不锁库：给前端 1s 窗口执行 stash_dek（Task 14 的监听器），再销毁
+        // 不锁库：给前端 1s 窗口执行 stash_dek（Task 14 的监听器），再销毁。
+        // 注意（C1 裁定）：本分支不锁库**不得清槽**——重建后主窗回注 stash DEK 并经 onUnlocked
+        // 重新 publish mini 槽覆盖，清了反而制造主窗解锁、mini 锁定的反向不一致
         let _ = app.emit("stash-dek-request", ());
         std::thread::sleep(Duration::from_secs(1));
     }
