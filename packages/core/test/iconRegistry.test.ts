@@ -38,6 +38,20 @@ describe('iconRegistry', () => {
     expect(suggestIcons(' .-_ ')).toEqual([])
     expect(suggestIcons('')).toEqual([])
   })
+  it('suggestIcons 模糊：拼写错误按莱文斯坦距离纠错', () => {
+    // github 距离 1；'githb' 反向包含 'git'（距离恰为长度差 2）仍排在纠错结果之后
+    expect(suggestIcons('githb').map((i) => i.id)).toEqual(['github', 'git'])
+    expect(suggestIcons('gtihub').map((i) => i.id)).toEqual(['github']) // h/t 换位，距离 2
+  })
+  it('suggestIcons 模糊：精确命中置顶，同缀候选按距离/字母序', () => {
+    // 距离：git 0、gitea/gitee 2、github/gitlab 3，同距按 id 字母序
+    expect(suggestIcons('git', 5).map((i) => i.id)).toEqual(['git', 'gitea', 'gitee', 'github', 'gitlab'])
+  })
+  it('suggestIcons 模糊：中文别名精确与近似', () => {
+    expect(suggestIcons('谷歌')[0]!.id).toBe('google')
+    expect(suggestIcons('谷狗')[0]!.id).toBe('google') // 谷歌 距离 1
+    expect(suggestIcons('哔哩')[0]!.id).toBe('bilibili') // 哔哩哔哩 子串包含
+  })
   it('推荐：悬空别名（别名指向不存在的图标 id）防御性返回 null', () => {
     const aliases = builtinData.aliases as Record<string, string>
     // 键须不含空白/点/连字符/下划线（normalizeIssuer 会折叠分隔符，导致查不到该别名）
