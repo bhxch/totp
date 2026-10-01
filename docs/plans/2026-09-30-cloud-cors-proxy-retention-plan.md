@@ -15,6 +15,7 @@
 - S3 SigV4 签名仍在页面层完成，代理只转发已签名 headers——签名逻辑零改动。
 - `proxy` 字段随 CloudCred 走现有 `saveCred` 通道（secretBag 加密持久化），不新增存储路径。
 - 保留语义：`n ≥ 1`（整数，默认 1）；`days ≥ 0`（整数，**缺省/0 = 忽略天数条件**）；删除条件 = 超出 n 份 **且**（days > 0 时）超过 n 天，两条件同时不满足才删。旧数据无 days 字段行为逐字节不变。
+  > 勘误（2026-10-01）：原文「同时不满足才删」系笔误，正确语义为「两条件都满足才删」，实现与测试均按此执行。
 - 扩展端每源代理不生效（浏览器无法 per-request 代理）：UI 置灰 + hint 文案，文档引导浏览器/系统代理。
 - extension 构建验证用 `pnpm exec wxt build -b chrome` 与 `pnpm exec wxt build -b firefox`（Firefox 必须显式 `-b firefox`）；CI 环境 typecheck 前先 `pnpm exec wxt prepare`。
 - 每任务结束跑所在包 vitest + `pnpm typecheck`；Rust 任务跑 `cargo test` + `cargo fmt` + `cargo clippy`。

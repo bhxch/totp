@@ -33,8 +33,9 @@ export function setCloudFetch(impl: CloudFetch): void  // 宿主启动时注入
 
 - `wxt.config.ts` 增加 `host_permissions: ['http://*/*', 'https://*/*']`。
 - `background.ts` 新增消息代理：`{ type: 'cloudFetch', url, method, headers, bodyB64, requestId }` → SW 内 `fetch`（有 host_permissions 即不受 CORS 限制）→ 返回 `{ ok, status, statusText, headers, bodyB64, error? }`。二进制体 base64 编解码；页面端用 `new Response(body, { status, statusText, headers })` 重建真 `Response`（`ok/status/arrayBuffer/text/json` 天然正确）。
+  > 裁定（2026-10-01）：消息类型以实施计划为准，采用 'cloud-fetch'。
 - 页面端注入 `setCloudFetch(backgroundProxiedFetch)`：popup/options 全部云请求经 background。S3 SigV4 签名仍在页面层算好、代理只转发 headers，签名逻辑不动。
-- MV3 SW 生命周期：请求进行中 SW 存活（分钟级内安全）；不做 keepalive，超长上传出现再补。
+- MV3 SW 生命周期：请求进行中 SW 存活（分钟级内安全）；不做 keepalive，超长上传出现再补。扩展端 background fetch 统一 60s 超时（与桌面 DEFAULT_TIMEOUT_MS 对齐），由实现层补齐（2026-10-01 补充）。
 - README（中/英）权限说明节写明理由：扩展需对用户任意配置的 WebDAV/S3/OAuth 端点出网，浏览器对页面层 fetch 施加 CORS，因此请求统一经 background（host_permissions 是其出网前提），故申请全站 host 权限；数据仅在备份往返中使用。
 
 ### 扩展端每源代理的限制
@@ -69,6 +70,7 @@ type Retention = { type: 'overwrite' } | { type: 'keep'; n: number; days?: numbe
 
 - `n ≥ 1`（整数，默认 1=现「保留最近」行为）；`days ≥ 0`（整数，**缺省/0 = 忽略天数条件**），向后兼容旧持久化数据（无 days 字段 = 0）。
 - 删除条件（keep 名单内，严格 `BACKUP_NAME_RE` 才参与，overwrite/conflict 名永不滚动删除——现状不变）：**超出 n 份 且 超过 n 天**（`days > 0` 时天数条件才生效），两条件同时不满足才删。
+  > 勘误（2026-10-01）：原文「同时不满足才删」系笔误，正确语义为「两条件都满足才删」，实现与测试均按此执行。
 - 文件年龄由文件名时间戳（`vault-YYYYMMDD-HHMMSS`）解析，`ageDays = floor((now - ts) / 86400s)`；名单本就只含可解析时间戳的严格名，无歧义。
 
 ### 核心改动
