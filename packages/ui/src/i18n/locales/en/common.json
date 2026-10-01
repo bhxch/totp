@@ -665,6 +665,7 @@
     "dragHandleTitle": "Drag to reorder",
     "indexEditTitle": "Click to move by index",
     "indexEditAria": "Target index for {label}",
+    "indexNumAria": "Move {label} by index (Enter to confirm)",
     "manageTags": "Manage tags",
     "empty": "No entries yet. Tap \"Add\" at the bottom right to create one.",
     "noMatch": "No matching entries",

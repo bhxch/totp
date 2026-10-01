@@ -313,7 +313,7 @@ function openSheet() {
       <div v-else-if="visible.length === 0" class="empty">{{ t('codesPage.noMatch') }}</div>
       <div
         v-for="(e, i) in visible" :key="e.uuid" class="row"
-        :class="{ 'drag-above': dragOver?.uuid === e.uuid && dragOver.before, 'drag-below': dragOver?.uuid === e.uuid && !dragOver.before }"
+        :class="{ 'drag-enabled': dragEnabled, 'drag-above': dragOver?.uuid === e.uuid && dragOver.before, 'drag-below': dragOver?.uuid === e.uuid && !dragOver.before }"
         @click="closeContextMenu" @dragover="onDragOver($event, e.uuid)" @drop.prevent="onDrop" @dragend="endDrag"
       >
         <!-- 选择模式：行首勾选框（OtpListItem 之外，点击不触发条目复制） -->
@@ -343,9 +343,17 @@ function openSheet() {
               @keydown.enter.prevent="confirmIndexMove(e.uuid, $event)" @keydown.esc.prevent="indexEditing = null"
               @blur="confirmIndexMove(e.uuid, $event)"
             />
+            <!-- 杂-I3：序号定位键盘可达——仅 dragEnabled（可交互）时声明 button 语义，
+                 Enter/Space 触发与 click 同一 handler；.stop 阻断冒泡（.otp-item 根的
+                 keydown.enter 会触发条目复制）。过滤态无此入口（拖拽/序号移动全序语义均禁） -->
             <span
               v-else class="index-num" :class="{ clickable: dragEnabled }"
-              :title="dragEnabled ? t('codesPage.indexEditTitle') : undefined" @click.stop="startIndexEdit(e.uuid)"
+              :title="dragEnabled ? t('codesPage.indexEditTitle') : undefined"
+              :tabindex="dragEnabled ? 0 : undefined" :role="dragEnabled ? 'button' : undefined"
+              :aria-label="dragEnabled ? t('codesPage.indexNumAria', { label: e.label }) : undefined"
+              @click.stop="startIndexEdit(e.uuid)"
+              @keydown.enter.stop.prevent="startIndexEdit(e.uuid)"
+              @keydown.space.stop.prevent="startIndexEdit(e.uuid)"
             >{{ i + 1 }}</span>
           </template>
         </OtpListItem>
@@ -422,7 +430,11 @@ h2 { margin: 0; font-size: var(--md-sys-typescale-title-medium); }
 .handle { cursor: grab; opacity: .6; }
 .row .handle { display: none; }
 .row:hover .handle, .handle:active { display: inline; }
-.row:hover .index-num { display: none; }
+/* 杂-I2：hover 隐藏序号仅限有把手时（行 drag-enabled class 随 dragEnabled 挂卸）——
+   搜索/标签过滤态把手不渲染，序号是行首唯一标识，hover 不再隐藏产生闪烁 */
+.row.drag-enabled:hover .index-num { display: none; }
+/* 杂-I3：键盘聚焦序号按钮时保持可见（鼠标恰悬停时 display:none 会让焦点元素不可见） */
+.row.drag-enabled .index-num:focus-visible { display: inline; }
 .index-num.clickable { cursor: pointer; }
 .index-input { width: 48px; text-align: center; font-size: var(--md-sys-typescale-body-small); border: 1px solid var(--md-sys-color-outline); border-radius: 4px; background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); }
 /* ④C：拖拽悬停插入指示线 */

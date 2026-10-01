@@ -665,6 +665,7 @@
     "dragHandleTitle": "拖动排序",
     "indexEditTitle": "点击输入序号移动",
     "indexEditAria": "输入 {label} 的目标序号",
+    "indexNumAria": "按序号移动 {label}（Enter 确认）",
     "manageTags": "管理标签",
     "empty": "暂无条目，点击右下「添加」录入。",
     "noMatch": "无匹配条目",

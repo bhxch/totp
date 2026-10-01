@@ -55,6 +55,20 @@ describe('CodesPage 拖拽排序（④C）', () => {
     await flushPromises()
     expect(w.find('.handle').exists()).toBe(false)
   })
+
+  it('杂-I2：行 drag-enabled class 随 dragEnabled 挂卸（hover 隐藏序号的 CSS 挂载点）', async () => {
+    const { w } = await mountPage()
+    expect(w.findAll('.row').map((r) => r.classes())).toEqual([
+      expect.arrayContaining(['drag-enabled']),
+      expect.arrayContaining(['drag-enabled']),
+      expect.arrayContaining(['drag-enabled']),
+    ])
+    await w.find('input[type="search"], .search input').setValue('A')
+    await flushPromises()
+    // 过滤态：把手不渲染且 drag-enabled 卸下，hover 规则不再隐藏序号
+    expect(w.findAll('.row').every((r) => !r.classes().includes('drag-enabled'))).toBe(true)
+    expect(w.find('.handle').exists()).toBe(false)
+  })
 })
 
 describe('CodesPage 序号定位移动（④C）', () => {
@@ -91,5 +105,33 @@ describe('CodesPage 序号定位移动（④C）', () => {
     await flushPromises()
     expect(issuers(store)).toEqual(['A', 'B', 'C'])
     expect(w.find('.index-input').exists()).toBe(false)
+  })
+
+  it('杂-I3：序号按钮仅 dragEnabled 时声明 button 语义（role/tabindex/aria-label），过滤态移除', async () => {
+    const { w } = await mountPage()
+    const num = w.findAll('.index-num')[0]!
+    expect(num.classes()).toContain('clickable')
+    expect(num.attributes('role')).toBe('button')
+    expect(num.attributes('tabindex')).toBe('0')
+    expect(num.attributes('aria-label')).toBe('按序号移动 one（Enter 确认）')
+    await w.find('input[type="search"], .search input').setValue('A')
+    await flushPromises()
+    const filtered = w.findAll('.index-num')[0]!
+    expect(filtered.classes()).not.toContain('clickable')
+    expect(filtered.attributes('role')).toBeUndefined()
+    expect(filtered.attributes('tabindex')).toBeUndefined()
+    expect(filtered.attributes('aria-label')).toBeUndefined()
+  })
+
+  it('杂-I3：键盘 Enter/Space 触发与 click 同一 handler（打开序号输入框）；Enter 不冒泡触发条目复制', async () => {
+    const { w } = await mountPage()
+    await w.findAll('.index-num')[0]!.trigger('keydown.enter')
+    expect(w.find('.index-input').exists()).toBe(true)
+    // .stop 阻断冒泡：.otp-item 根的 keydown.enter（emit copy）不被触发
+    expect(w.emitted('copy')).toBeUndefined()
+    await w.find('.index-input').trigger('keydown.esc')
+    expect(w.find('.index-input').exists()).toBe(false)
+    await w.findAll('.index-num')[1]!.trigger('keydown.space')
+    expect(w.find('.index-input').exists()).toBe(true)
   })
 })
