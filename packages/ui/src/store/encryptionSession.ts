@@ -14,7 +14,8 @@ export interface EncryptionSessionDeps {
   windowId: string
   /** DEK 持久化（设计 §1 锁定策略·重启即锁）：宿主提供会话级存取；缺省=不持久化（desktop 内存级） */
   dekPersist?: { get(): Promise<string | null>; set(dek: Uint8Array): Promise<void>; clear(): Promise<void> }
-  /** 解锁成功回调（① mini 跟随主窗解锁）：口令/unlockWithDek/initStore 恢复三路在 applyDekAndUnlock 成功完成后触发 */
+  /** DEK 前进回调（① mini 跟随主窗解锁）：applyDekAndUnlock 成功、enableEncryption 成功、
+   *  changePassphrase(rotateDek=true) 提交三个 DEK 前进点在确认未被锁定代数中止后触发 */
   onUnlock?: () => void
   /** 提交队列：enable/disable/改口令/KEK 来源 op 与 vault/settings 写同队列串行 */
   enqueue: <T>(task: () => Promise<T>) => Promise<T>
@@ -107,6 +108,15 @@ export function createEncryptionSession(deps: EncryptionSessionDeps) {
     const s = sessionOf(windowId)
     s.locked = value
     s.lockedRef.value = value
+  }
+
+  /** DEK 前进汇聚点回调（① mini 跟随主窗解锁）：unlock 汇聚（applyDekAndUnlock 尾部）与
+   *  enableEncryption / changePassphrase(rotateDek=true) 两个绕过 unlock 汇聚的 DEK 前进点共用——
+   *  宿主（desktop 主窗）经此把最新 DEK 同步进 mini 槽。I1 审查修复（2026-10-01）：此前两前进点
+   *  不触发，槽中残留旧 DEK 或无 DEK，mini 聚焦重建锁定而主窗解锁（换库场景 GCM 解密失败），
+   *  击穿「主窗解锁态下 mini 聚焦可用」跟随语义。调用方须先确认未被锁定代数中止（DEK 已确实前进） */
+  function notifyDekAdvanced(): void {
+    deps.onUnlock?.()
   }
 
   /** 持有 DEK 并退出锁定（enable/口令与 PRF/DPAPI 解锁汇合点）；「解锁必写」持久化随行
@@ -255,6 +265,7 @@ export function createEncryptionSession(deps: EncryptionSessionDeps) {
       ensureNotLockedSince(gen)
       security.value = r.security
       adoptDek(r.dek)
+      notifyDekAdvanced() // ① DEK 前进同步 mini 槽（I1）：末次 ensureNotLockedSince 已过，此后同步段无中止点
     })
   }
 
@@ -329,6 +340,7 @@ export function createEncryptionSession(deps: EncryptionSessionDeps) {
           sessionOf(windowId).dek = r.dek
           void deps.dekPersist?.set(r.dek)
           security.value = r.security
+          notifyDekAdvanced() // ① DEK 轮换前进同步 mini 槽（I1）：槽中旧 DEK 已失效，mini 聚焦重建会 GCM 解密失败
         }
       } else {
         // rotateDek=false 仅重包裹（DEK 不变，vault/bag 无需重写），security 落盘作唯一提交点（原语义不变）
@@ -418,10 +430,12 @@ export function createEncryptionSession(deps: EncryptionSessionDeps) {
     vaultIo.replace(loaded)
     await deps.advanceVaultRevWatermark(key, loaded)
     adoptDek(key)
+    // ① 解锁汇聚点回调（口令/unlockWithDek/initStore 恢复三路均经此；desktop 宿主经此同步 mini 窗）。
+    // M4 审查修复（2026-10-01）：置于 conflicts.reload 之前——adoptDek 完成即解锁态确立，
+    // reload 抛错不得吞掉回调（否则 mini 槽不同步，且失败方向为「主窗解锁 mini 锁定」的滞留态）
+    notifyDekAdvanced()
     // 合并冲突记录随解锁重装载（记录含整条目秘密，锁定已清）
     await conflicts.reload()
-    // ① 解锁汇聚点回调（口令/unlockWithDek/initStore 恢复三路均经此；desktop 宿主经此同步 mini 窗）
-    deps.onUnlock?.()
   }
 
   /** passkey 解锁第二跳：外部经 core unlockWithPrf 解出 DEK 后注入。

@@ -16,6 +16,17 @@ export async function publishMiniUnlock(dek: Uint8Array): Promise<void> {
 }
 
 export async function publishMiniLock(): Promise<void> {
-  await invoke('clear_mini_dek').catch(() => {})
+  // M3 审查修复（2026-10-01）：槽残留 = 主窗锁定后 mini 聚焦重建仍能 peek 旧 DEK 解锁（击穿
+  // 不变量），失败不可静默——重试一次尽力清，仍失败 console.error 留痕；不抛出打断锁定主流程
+  // （mini 收 locked:true 后自身锁窗清态，双保险见模块头注释）
+  try {
+    await invoke('clear_mini_dek')
+  } catch {
+    try {
+      await invoke('clear_mini_dek')
+    } catch (e) {
+      console.error('[miniSession] clear_mini_dek 重试后仍失败（mini 槽可能残留 DEK）:', e)
+    }
+  }
   await emitTo('mini', 'mini-session', { locked: true }).catch(() => {})
 }

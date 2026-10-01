@@ -169,21 +169,30 @@ describe('锁定链路（B2）', () => {
 })
 
 describe('mini 联动（① 主窗→mini 解锁态同步）', () => {
-  it('解锁汇聚点 onUnlocked → set_mini_dek + emitTo locked:false；锁库 onLocked → clear_mini_dek + emitTo locked:true', async () => {
+  it('DEK 前进点 onUnlocked → set_mini_dek + emitTo locked:false；锁库 onLocked → clear_mini_dek + emitTo locked:true', async () => {
     const { store } = await initShell()
     const s = store.value!
-    await s.enableEncryption('test-passphrase-123') // 启用加密（不经 applyDekAndUnlock，不触发回调）
-    expect(tauriMock.calls('set_mini_dek')).toHaveLength(0)
-    await s.unlock('test-passphrase-123') // 口令解锁 → onUnlocked → DEK 入槽 + 通知 mini
+    // I1 审查修复（2026-10-01）：enableEncryption 也是 DEK 前进点——启用加密即同步 mini 槽
+    // （mini 在明文库期已开，主窗启用加密后 mini 聚焦重建 peek 才有 DEK）
+    await s.enableEncryption('test-passphrase-123')
+    expect(tauriMock.calls('set_mini_dek')).toHaveLength(1)
+    expect(tauriMock.emitToCalls()).toEqual([['mini', 'mini-session', { locked: false }]])
+    s.lock() // 先锁定再解锁：口令解锁 → onUnlocked → DEK 入槽 + 通知 mini
+    await flushPromises()
+    expect(tauriMock.calls('clear_mini_dek')).toHaveLength(1)
+    await s.unlock('test-passphrase-123')
     await flushPromises()
     const dek = s.getCurrentDek()
     expect(dek).not.toBeNull()
-    expect(tauriMock.calls('set_mini_dek')).toEqual([{ command: 'set_mini_dek', args: { dek: bytesToBase64(dek!) } }])
-    expect(tauriMock.emitToCalls()).toEqual([['mini', 'mini-session', { locked: false }]])
-    s.lock() // 纯前端锁库 → onLocked → 清 mini 槽 + 通知 mini 锁定（clear_stashed_dek 同段既有接线不受影响）
-    await flushPromises()
-    expect(tauriMock.calls('clear_mini_dek')).toHaveLength(1)
-    expect(tauriMock.emitToCalls()).toEqual([['mini', 'mini-session', { locked: false }], ['mini', 'mini-session', { locked: true }]])
+    expect(tauriMock.calls('set_mini_dek')).toEqual([
+      { command: 'set_mini_dek', args: { dek: bytesToBase64(dek!) } },
+      { command: 'set_mini_dek', args: { dek: bytesToBase64(dek!) } }, // 同库 DEK，两次前进点同值
+    ])
+    expect(tauriMock.emitToCalls()).toEqual([
+      ['mini', 'mini-session', { locked: false }],
+      ['mini', 'mini-session', { locked: true }],
+      ['mini', 'mini-session', { locked: false }],
+    ])
   })
 })
 

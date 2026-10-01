@@ -321,8 +321,9 @@ export function createDesktopShell(deps: DesktopShellDeps): DesktopShellControll
       // onCommitted：任何经队列的写 op 成功后触发自动备份变更检测（锁定态由 runner 内 decideAutoRun 挡下）；
       // onLocked：手动/空闲/系统锁库走纯前端 lock()，经此同步清 Rust DEK 暂存槽（best-effort，失败不阻断锁定）
       //   并同步 mini（publishMiniLock：清 mini 槽 + 通知锁定，唯一接线点在 boot opts 此处，勿再在调用方重复）；
-      // onUnlocked：① mini 跟随主窗解锁——解锁汇聚点（口令/unlockWithDek/initStore 恢复三路汇于
-      //   applyDekAndUnlock）回调 DEK 入 mini 槽 + 通知 mini；闭包先声明 s 再 boot 以自引用当前实例，
+      // onUnlocked：① mini 跟随主窗解锁——DEK 前进汇聚点（unlock 汇聚 applyDekAndUnlock 三路 +
+      //   enableEncryption / changePassphrase(rotateDek=true) 提交点，I1 审查修复 2026-10-01）回调
+      //   DEK 入 mini 槽 + 通知 mini；闭包先声明 s 再 boot 以自引用当前实例，
       //   整体 try/catch（ui 层回调同步抛错会把已成功的解锁倒转为锁——initStore 恢复路径尤其如此）
       let s: VueStore | null = null
       s = await bootDesktopStore(adapter, {

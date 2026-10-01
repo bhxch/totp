@@ -80,18 +80,22 @@ let unlistenForceLock: (() => void) | null = null
 let unlistenMiniSession: (() => void) | null = null
 
 onMounted(async () => {
-  await load()
-  // store 就绪后再挂监听（App.vue 同款，见 App.vue 的对应初始化段：store 建立后才注册锁定联动）；容错注册，失败仅该联动降级
+  // I2 审查修复（2026-10-01）：锁定联动监听注册先于首次 load()——首 boot 的 load 内隔着
+  // mountI18n/useTheme/iconStore.init() 等多个 await，期间主窗锁定（清槽 + emit locked:true）
+  // 的事件若在监听注册前到达即丢失，mini webview 持明文直到下次聚焦才收敛。两回调本就动态
+  // 解引用 store（?. 与 store.value 判空），store 未就绪时安全 no-op：在途 boot 期的锁库由
+  // load 内 0d9c8fe 复查兜底；locked:false 在未就绪时跳过属失败安全方向（主窗解锁、mini 滞留
+  // 锁定，下次聚焦重建收敛），不操作未初始化的 store。容错注册，失败仅该联动降级
   unlistenForceLock = await listen('force-lock', () => {
     store.value?.lock()
   }).catch(() => null)
   // ① 跟随主窗解锁态：locked:true 跟随锁库（onLocked 清 Rust 暂存槽）；locked:false 且当前锁定 →
-  // 整链重建（槽可能已有主窗解锁写入的 DEK，load 内 dekPersist.get=peek 自动恢复）。与 force-lock 同款
-  // 容错注册，失败仅该联动降级
+  // 整链重建（槽可能已有主窗解锁写入的 DEK，load 内 dekPersist.get=peek 自动恢复）
   unlistenMiniSession = await listen<{ locked: boolean }>('mini-session', (e) => {
     if (e.payload.locked) store.value?.lock()
     else if (store.value && locked.value) void load()
   }).catch(() => null)
+  await load()
   // mini 常驻隐藏，重新显示时从盘重载（initStore 幂等不刷新内存，故重建 store）。
   // 修复真实 bug：@tauri-apps/api v2 Window 无 onVisibleChanged（仅 focus/resized/scale 等 7 个
   // 事件），原调用运行时 TypeError，「重显重载」从未生效——改用 onFocusChanged 近似（payload=是否

@@ -11,8 +11,8 @@ import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import {
-  addEntry, bytesToBase64, createVault, setupVaultEncryption, SECURITY_KEY, VAULT_KEY,
-  type OtpEntry, type Vault,
+  addEntry, base64ToBytes, bytesToBase64, changeVaultPassphrase, createVault, encryptVaultWithDek,
+  setupVaultEncryption, SECURITY_KEY, VAULT_KEY, type OtpEntry, type SecuritySettings, type Vault,
 } from '@totp/core'
 import { tauriMock } from '../test/mocks/tauri'
 import MiniApp from './MiniApp.vue'
@@ -257,5 +257,68 @@ describe('mini 跟随主窗解锁（①槽 peek 自动恢复 + mini-session 事�
     expect(tauriMock.calls('peek_mini_dek').length).toBeGreaterThanOrEqual(2) // boot peek + 赋值后复查 peek
     expect(wrapper.find('[data-test="item"]').exists()).toBe(false) // 不持明文
     expect(wrapper.text()).toContain('主窗口解锁后此窗口可用')
+  })
+
+  it('I2：boot 复查通过后、load 完成前主窗锁定 → locked:true 事件不再丢失，mini 即时收敛锁定', async () => {
+    const dekB64 = await seedEncryptedVault([TOTP])
+    tauriMock.onReturn('peek_mini_dek', dekB64) // boot peek 与复查 peek 期间槽尚有 DEK（复查通过）
+    files.set('icons.json', '{}') // 图标仓有存量：确保 iconStore.init 真正走到 readTextFile（门控点可达）
+    // 门控 icons.json（iconStore.init 首读）：把首 boot 挂在复查之后的最后一个 await 段
+    // ——此刻 store.value 已赋值、监听已注册（I2 修复后先于 load 注册）、槽复查已通过
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    let gated = false
+    ;(tauriMock.fs.readTextFile as Mock).mockImplementation(async (p: string) => {
+      if (p === 'icons.json' && !gated) {
+        gated = true
+        await gate
+      }
+      return files.get(p) ?? ''
+    })
+    const wrapper = await mountMini()
+    await vi.waitFor(() => {
+      expect(tauriMock.listenerCount('mini-session')).toBe(1) // 监听先于 load 注册（I2 修复点）
+      expect((tauriMock.fs.readTextFile as Mock).mock.calls.some(([p]) => p === 'icons.json')).toBe(true)
+    })
+    // 主窗锁定：清槽 + 广播 locked:true（旧排序下监听未注册，事件在此丢失 → mini 滞留明文）
+    tauriMock.onReturn('peek_mini_dek', null)
+    tauriMock.emit('mini-session', { locked: true })
+    await flushPromises()
+    release()
+    await flushPromises()
+    expect(tauriMock.calls('clear_stashed_dek').length).toBeGreaterThanOrEqual(1) // lock() → onLocked
+    expect(wrapper.text()).toContain('主窗口解锁后此窗口可用') // 收敛为锁定态
+    expect(wrapper.find('[data-test="item"]').exists()).toBe(false) // 无明文残留
+  })
+
+  it('I1：主窗改口令（rotateDek=true 轮换）槽更新 → mini 聚焦重建仍解锁（旧 DEK 残留场景闭合）', async () => {
+    // 内联种子（需留明文库 JSON 供轮换重加密）：加密库 + 空 mini 槽 → boot 锁定
+    const vault = addEntry(await seedVault([]), TOTP)
+    const plain = JSON.stringify(vault)
+    const { security, encrypted, dek: dek1 } = await setupVaultEncryption(plain, 'pw-test')
+    files.set(`${VAULT_KEY}.json`, JSON.stringify(encrypted))
+    files.set(`${SECURITY_KEY}.json`, JSON.stringify(security))
+    const wrapper = await mountMini()
+    await vi.waitFor(() => expect(tauriMock.listenerCount('mini-session')).toBe(1))
+    expect(wrapper.text()).toContain('主窗口解锁后此窗口可用')
+    // 主窗解锁：DEK1 入槽 + locked:false 广播 → mini 重载自动解锁
+    tauriMock.onReturn('peek_mini_dek', bytesToBase64(dek1))
+    tauriMock.emit('mini-session', { locked: false })
+    await vi.waitFor(() => expect(wrapper.find('[data-test="item"]').exists()).toBe(true))
+    // 主窗改口令（rotateDek=true）：全库以新 DEK 重加密写盘 + mini 槽更新为新 DEK（I1 修复：
+    // 主窗 changePassphrase 提交点触发 onUnlock → publishMiniUnlock 覆盖槽中旧 DEK）
+    const rotated = await changeVaultPassphrase(
+      JSON.parse(files.get(`${SECURITY_KEY}.json`)!) as SecuritySettings,
+      dek1, 'pw-2', { rotateDek: true },
+    )
+    files.set(`${VAULT_KEY}.json`, JSON.stringify(await encryptVaultWithDek(rotated.dek!, plain)))
+    files.set(`${SECURITY_KEY}.json`, JSON.stringify(rotated.security))
+    tauriMock.onReturn('peek_mini_dek', bytesToBase64(rotated.dek!))
+    tauriMock.emit('mini-session', { locked: false }) // publishMiniUnlock 广播（mini 已解锁 → 不重载）
+    tauriMock.emitFocusChanged(true) // 用户聚焦 mini → 整链重建 store，peek 到新 DEK
+    await vi.waitFor(() => {
+      expect(wrapper.find('[data-test="item"]').exists()).toBe(true) // 新 DEK 解密成功仍解锁
+      expect(wrapper.text()).not.toContain('主窗口解锁后此窗口可用')
+    })
   })
 })

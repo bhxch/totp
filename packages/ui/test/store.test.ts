@@ -763,19 +763,41 @@ describe('removeEntriesOp（④B 批量删除）', () => {
   })
 })
 
-describe('onUnlocked（① mini 跟随主窗解锁）', () => {
-  it('解锁路径（口令）触发一次 onUnlocked；锁定后不触发', async () => {
+describe('onUnlocked（① mini 跟随主窗解锁 / DEK 前进汇聚点）', () => {
+  it('解锁路径（口令）与 enableEncryption 各触发一次 onUnlocked；锁定后不触发', async () => {
     const adapter = createMemoryStorage()
     const onUnlocked = vi.fn()
     const s = createVueStore(adapter, { onUnlocked })
     await s.initStore()
-    // 启用加密并锁定，再口令解锁（既有先例套路：enableEncryption 内经 core setupVaultEncryption，
-    // 不走 applyDekAndUnlock，不应触发回调）
+    // 启用加密并锁定，再口令解锁（既有先例套路：enableEncryption 内经 core setupVaultEncryption）。
+    // I1 审查修复（2026-10-01）：enableEncryption 也是 DEK 前进点——槽同步 mini 必须在此时触发一次
+    // （mini 在明文库期已开，主窗启用加密后 mini 聚焦重建 peek 才有 DEK 可恢复）
     await s.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
     await s.enableEncryption('test-passphrase-123')
-    s.lock()
-    expect(onUnlocked).not.toHaveBeenCalled()
-    await s.unlock('test-passphrase-123')
     expect(onUnlocked).toHaveBeenCalledTimes(1)
+    s.lock()
+    await s.unlock('test-passphrase-123')
+    expect(onUnlocked).toHaveBeenCalledTimes(2)
+  })
+
+  it('changePassphrase：rotateDek=true（DEK 轮换）触发一次，rotateDek=false（DEK 不变）不触发', async () => {
+    const adapter = createMemoryStorage()
+    const onUnlocked = vi.fn()
+    const s = createVueStore(adapter, { onUnlocked })
+    await s.initStore()
+    await s.addEntryOp(newEntryFromUri('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP', 1700000000000))
+    await s.enableEncryption('pw-1')
+    expect(onUnlocked).toHaveBeenCalledTimes(1)
+    // rotateDek=false：仅重包裹，DEK 不变 → mini 槽无需同步，不触发
+    await s.changePassphrase('pw-2', { rotateDek: false })
+    expect(onUnlocked).toHaveBeenCalledTimes(1)
+    // rotateDek=true：DEK 轮换 → 槽中旧 DEK 已失效（mini 聚焦重建 GCM 解密失败），必须触发同步
+    await s.changePassphrase('pw-3', { rotateDek: true })
+    expect(onUnlocked).toHaveBeenCalledTimes(2)
+    // 轮换后库仍可用：新口令解锁成功（触发链与解锁正确性的交叉验证）
+    s.lock()
+    await s.unlock('pw-3')
+    expect(s.locked.value).toBe(false)
+    expect(s.vault.entries).toHaveLength(1)
   })
 })

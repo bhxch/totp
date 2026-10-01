@@ -28,10 +28,27 @@ describe('miniSession（① 主窗→mini 解锁态同步）', () => {
     expect(tauriMock.emitToCalls()).toEqual([['mini', 'mini-session', { locked: true }]])
   })
 
-  it('publishMiniLock：槽清失败不阻断 locked:true 事件', async () => {
+  it('M3：槽清失败重试一次，仍失败 console.error 留痕且不阻断 locked:true 事件', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     tauriMock.on('clear_mini_dek', () => { throw new Error('boom') })
     await publishMiniLock()
-    expect(tauriMock.calls('clear_mini_dek')).toHaveLength(1)
+    expect(tauriMock.calls('clear_mini_dek')).toHaveLength(2) // 首次 + 重试一次
+    expect(errSpy).toHaveBeenCalledTimes(1)
+    expect(String(errSpy.mock.calls[0]?.[0])).toContain('clear_mini_dek')
+    expect(tauriMock.emitToCalls()).toEqual([['mini', 'mini-session', { locked: true }]]) // 锁定主流程不中断
+    errSpy.mockRestore()
+  })
+
+  it('M3：槽清首试失败、重试成功 → 不留痕不报错，事件照发', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let n = 0
+    tauriMock.on('clear_mini_dek', () => {
+      if (n++ === 0) throw new Error('transient')
+    })
+    await publishMiniLock()
+    expect(tauriMock.calls('clear_mini_dek')).toHaveLength(2)
+    expect(errSpy).not.toHaveBeenCalled()
     expect(tauriMock.emitToCalls()).toEqual([['mini', 'mini-session', { locked: true }]])
+    errSpy.mockRestore()
   })
 })
