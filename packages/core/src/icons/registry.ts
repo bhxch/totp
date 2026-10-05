@@ -12,12 +12,25 @@ export interface BuiltinIcon {
   path: string
 }
 
+/** 推荐候选：builtin 项带 path；extra（stored 图标 id 等）无 path */
+export interface IconSuggestion {
+  id: string
+  title: string
+  source: 'builtin' | 'extra'
+  path?: string
+}
+
 const ICONS = data.icons as Record<string, BuiltinIcon>
 const ALIASES = data.aliases as Record<string, string>
 
 /** 全部内置图标，键为图标 id（Simple Icons slug） */
 export function getBuiltinIcons(): Record<string, BuiltinIcon> {
   return ICONS
+}
+
+/** 全量集（icons-full.json）加载后合并进注册表；幂等（同 id 覆盖） */
+export function registerIcons(icons: ReadonlyArray<BuiltinIcon>): void {
+  for (const icon of icons) ICONS[icon.id] = icon
 }
 
 /** 小写并去除空白/点/连字符/下划线，用于发行方匹配 */
@@ -39,38 +52,55 @@ function levenshtein(a: string, b: string): number {
 }
 
 /**
- * 图标推荐：normalize 后按莱文斯坦距离升序（含精确命中 dist 0），同距按 id 字母序。
- * 候选含 id/title/别名键；子串包含免距离阈值（前缀搜索补全），默认 5 条。
+ * 图标推荐：normalize 后按莱文斯坦距离升序（含精确命中 dist 0），同距 builtin 优先、
+ * 再按 id 字典序。候选含内置 id/title/别名键 + extra 候选（stored 图标 id，已 normalize）；
+ * 子串包含免距离阈值（前缀搜索补全），默认 5 条。
+ * extra 与内置同 id 时跳过（内置优先）。阈值随输入长度放宽（3 字符容差 1、6 字符容差 2），上限 3。
  */
-export function suggestIcons(issuer: string, limit: number = 5): BuiltinIcon[] {
+export function suggestIcons(
+  issuer: string,
+  limit: number = 5,
+  extra: ReadonlyArray<{ id: string; title?: string }> = [],
+): IconSuggestion[] {
   const key = normalizeIssuer(issuer)
   if (!key) return []
-  // 阈值随输入长度放宽（3 字符容差 1、6 字符容差 2），上限 3 防长输入过宽
   const maxDist = Math.min(3, Math.max(1, Math.floor(key.length / 3)))
   interface Hit {
-    icon: BuiltinIcon
+    title: string
+    path?: string
     /** 包含命中时恰为长度差，与纠错距离同轴可比 */
     dist: number
+    builtin: boolean
   }
   const best = new Map<string, Hit>()
-  const consider = (text: string, iconId: string) => {
-    const icon = ICONS[iconId]
-    if (!icon) return
+  const consider = (text: string, iconId: string, title: string, path: string | undefined, builtin: boolean) => {
     const norm = normalizeIssuer(text)
     if (!norm) return
     const included = norm.includes(key) || key.includes(norm)
     const dist = levenshtein(key, norm)
     if (!included && dist > maxDist) return
     const prev = best.get(iconId)
-    if (!prev || dist < prev.dist) best.set(iconId, { icon, dist })
+    if (!prev || dist < prev.dist) best.set(iconId, { title, path, dist, builtin })
   }
   for (const icon of Object.values(ICONS)) {
-    consider(icon.id, icon.id)
-    consider(icon.title, icon.id)
+    consider(icon.id, icon.id, icon.title, icon.path, true)
+    consider(icon.title, icon.id, icon.title, icon.path, true)
   }
-  for (const [alias, id] of Object.entries(ALIASES)) consider(alias, id)
-  return [...best.values()]
-    .sort((a, b) => a.dist - b.dist || a.icon.id.localeCompare(b.icon.id))
+  for (const [alias, id] of Object.entries(ALIASES)) {
+    const icon = ICONS[id]
+    if (icon) consider(alias, id, icon.title, icon.path, true)
+  }
+  for (const cand of extra) {
+    if (ICONS[cand.id]) continue
+    const title = cand.title ?? cand.id
+    consider(cand.id, cand.id, title, undefined, false)
+    if (cand.title) consider(cand.title, cand.id, title, undefined, false)
+  }
+  return [...best.entries()]
+    .map(([id, h]) => ({ id, title: h.title, source: h.builtin ? ('builtin' as const) : ('extra' as const), ...(h.path ? { path: h.path } : {}) }))
+    .sort((a, b) => {
+      const ha = best.get(a.id)!, hb = best.get(b.id)!
+      return ha.dist - hb.dist || (ha.builtin ? 0 : 1) - (hb.builtin ? 0 : 1) || a.id.localeCompare(b.id)
+    })
     .slice(0, limit)
-    .map((h) => h.icon)
 }

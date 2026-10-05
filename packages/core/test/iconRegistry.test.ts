@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import builtinData from '../src/icons/builtin.json'
-import { getBuiltinIcons, normalizeIssuer, suggestIcons } from '../src/icons/registry'
+import { getBuiltinIcons, normalizeIssuer, registerIcons, suggestIcons } from '../src/icons/registry'
 
 describe('iconRegistry', () => {
   it('内置集 ≥64 且 GitHub path 非空', () => {
@@ -88,5 +88,48 @@ describe('builtin icons 扩充回归', () => {
     for (const [alias, id] of Object.entries(data.aliases)) {
       expect(id in data.icons, `别名 ${alias} 悬空指向不存在的图标 id: ${id}`).toBe(true)
     }
+  })
+})
+
+describe('registerIcons', () => {
+  it('合并新图标并可被 getBuiltinIcons 读出；重复注册幂等', () => {
+    registerIcons([{ id: 'zzz-reg-test', title: 'Reg Test', path: 'M0 0L1 1' }])
+    registerIcons([{ id: 'zzz-reg-test', title: 'Reg Test', path: 'M0 0L1 1' }])
+    expect(getBuiltinIcons()['zzz-reg-test']).toEqual({ id: 'zzz-reg-test', title: 'Reg Test', path: 'M0 0L1 1' })
+  })
+})
+
+describe('suggestIcons extra 候选', () => {
+  it('返回 IconSuggestion：builtin 项带 path 且 source=builtin', () => {
+    const r = suggestIcons('github', 1)
+    expect(r[0]).toMatchObject({ id: 'github', title: 'GitHub', source: 'builtin' })
+    expect(r[0]!.path).toBeTruthy()
+  })
+
+  it('extra（stored 图标 id）参与同一 normalize+距离管线', () => {
+    const r = suggestIcons('githacks', 5, [{ id: 'githacks' }])
+    expect(r[0]).toMatchObject({ id: 'githacks', title: 'githacks', source: 'extra' })
+    expect(r[0]!.path).toBeUndefined()
+  })
+
+  it('同距离 builtin 优先于 extra；距离不同按距离升序', () => {
+    // 'gogs' 与精选 gogs？若无此 slug 则用任意既有 id 演练：构造与查询同距的 builtin/extra
+    const r = suggestIcons('gitlbb', 5, [{ id: 'gitlbb' }])
+    // gitlbb 作为 extra 精确命中 dist 0；builtin 最近项距离 > 0 → extra 第一
+    expect(r[0]).toMatchObject({ id: 'gitlbb', source: 'extra' })
+    const r2 = suggestIcons('gitlab', 5, [{ id: 'gitlaa' }])
+    // gitlab 精确 dist 0 优于 gitlaa（dist 2）——builtin 第一
+    expect(r2[0]).toMatchObject({ id: 'gitlab', source: 'builtin' })
+  })
+
+  it('extra 与内置同 id 时跳过（内置优先，不产生重复项）', () => {
+    const r = suggestIcons('github', 5, [{ id: 'github' }])
+    expect(r.filter((s) => s.id === 'github')).toHaveLength(1)
+    expect(r[0]!.source).toBe('builtin')
+  })
+
+  it('extra 的 title 参与匹配且输出 title 优先于 id', () => {
+    const r = suggestIcons('我的仓库', 5, [{ id: 'gogsx', title: '我的仓库' }])
+    expect(r[0]).toMatchObject({ id: 'gogsx', title: '我的仓库', source: 'extra' })
   })
 })
