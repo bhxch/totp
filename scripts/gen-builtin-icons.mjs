@@ -165,6 +165,20 @@ function main() {
   mkdirSync(dirname(outPath), { recursive: true })
   writeFileSync(outPath, JSON.stringify({ icons, aliases: ALIASES }, null, 2) + '\n')
   console.log(`builtin.json 已生成: ${Object.keys(icons).length} 个图标, ${Object.keys(ALIASES).length} 条别名`)
+
+  // 全量集：simple-icons 全部图标（含精选），供 ui 层懒加载（spec 2026-10-05 §1）。
+  // 断言 <5MB 防上游体积膨胀失控。
+  const full = {}
+  for (const slug of bySlug.keys()) {
+    const { title, path } = bySlug.get(slug)
+    full[slug] = { id: slug, title, path }
+  }
+  const fullJson = JSON.stringify({ icons: full }, null, 2) + '\n'
+  if (fullJson.length > 5 * 1024 * 1024) throw new Error(`icons-full 超过 5MB：${fullJson.length}`)
+  const fullOutPath = resolve(root, 'packages/ui/src/assets/icons-full.json')
+  mkdirSync(dirname(fullOutPath), { recursive: true })
+  writeFileSync(fullOutPath, fullJson)
+  console.log(`icons-full.json 已生成: ${Object.keys(full).length} 个图标`)
 }
 
 main()
