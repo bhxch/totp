@@ -47,6 +47,9 @@ function bytesToDataUrl(bytes: Uint8Array): string {
  *     保证不同平台/不同压缩顺序下「谁覆盖谁」完全确定。
  * I63：处理所有 png 条目（即使超过 max 也累计 imported/overwritten/skipped 计数），最后才 trim pending 到 max 上限。
  *     skipped 与 skippedLarge 细分：让 UI 可分别提示「文件过大」与「超出数量上限」。
+ * 包名与替换语义：pack.name 空白 → 解压前抛错；身份 normKey = normalizeIssuer(pack.name)，
+ *     导入完成 upsertPack 落注册表（显示名为 trim 后输入）；同名重导 = 整包替换（旧包中已消失的图标 removeMany），
+ *     返回值附 packName（trim 后显示名）。opts 保留为第四参（现有调用无人传，纯保留）。
  */
 /** 图标包 zip 输入字节上限（解压前拒绝） */
 export const MAX_ICON_PACK_ZIP_BYTES = 10 * 1024 * 1024
@@ -79,9 +82,14 @@ function hasEocd(b: Uint8Array): boolean {
 
 export async function importIconPackZip(
   zipBytes: Uint8Array,
-  icons: Pick<IconStore, 'putMany'>,
+  icons: Pick<IconStore, 'putMany' | 'removeMany' | 'upsertPack' | 'packs'>,
+  pack: { name: string },
   opts?: { max?: number; maxBytes?: number },
-): Promise<IconPackResult> {
+): Promise<IconPackResult & { packName: string }> {
+  const packName = pack.name.trim()
+  if (!packName) throw new Error('包名不能为空')
+  const normKey = normalizeIssuer(packName)
+  if (!normKey) throw new Error('包名不能为空')
   const max = opts?.max ?? DEFAULT_MAX
   const maxBytes = opts?.maxBytes ?? DEFAULT_MAX_BYTES
   if (zipBytes.length > MAX_ICON_PACK_ZIP_BYTES) {
@@ -177,8 +185,13 @@ export async function importIconPackZip(
       if (!keep.has(id)) delete pending[id]
     }
   }
+  // 同名重导 = 整包替换：旧包 iconIds 中不在新集合者 removeMany（孤儿清理），注册表收敛为新集合全集
+  const old = icons.packs[normKey]?.iconIds ?? []
+  const stale = old.filter((id) => !seen.has(id))
+  if (stale.length > 0) await icons.removeMany(stale)
   if (Object.keys(pending).length > 0) await icons.putMany(pending) // 一次落盘，避免逐条 put 的 O(n²) 写放大
-  return { imported, overwritten, skipped, skippedLarge, names: [...seen] }
+  await icons.upsertPack(normKey, { name: packName, iconIds: [...seen] })
+  return { imported, overwritten, skipped, skippedLarge, names: [...seen], packName }
 }
 
 /**

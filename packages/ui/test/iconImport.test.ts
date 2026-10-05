@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { deflateSync, strToU8, zipSync } from 'fflate'
 import { createMemoryStorage } from '@totp/core'
 import { createIconStore } from '../src/iconStore'
@@ -35,7 +35,7 @@ describe('importIconPackZip', () => {
     await icons.init()
     // 20MiB 零字节 deflate 后极小（远小于 10MB 输入门），但解压产出 20MiB > 8MiB 预算
     const zip = zipSync({ 'bomb.png': new Uint8Array(20 * 1024 * 1024) })
-    await expect(importIconPackZip(zip, icons)).rejects.toThrow('超过总量上限')
+    await expect(importIconPackZip(zip, icons, { name: '测试包' })).rejects.toThrow('超过总量上限')
     expect(icons.icons['bomb']).toBeUndefined()
   })
 
@@ -93,7 +93,7 @@ describe('importIconPackZip', () => {
     zip.set(cd, cdOffset)
     zip.set(eocd, cdOffset + cd.length)
 
-    const result = await importIconPackZip(zip, icons)
+    const result = await importIconPackZip(zip, icons, { name: '测试包' })
     expect(result.imported).toBe(1)
     expect(icons.resolve({ kind: 'stored', id: 'github' })).toBe(toDataUrl(PNG_BYTES))
   })
@@ -103,10 +103,10 @@ describe('importIconPackZip', () => {
     await icons.init()
     const many: Record<string, Uint8Array> = {}
     for (let i = 0; i < 501; i++) many[`p/${String(i).padStart(4, '0')}.png`] = PNG_BYTES
-    await expect(importIconPackZip(zipSync(many), icons)).rejects.toThrow('超过 500 个条目')
+    await expect(importIconPackZip(zipSync(many), icons, { name: '测试包' })).rejects.toThrow('超过 500 个条目')
 
     const big = new Uint8Array(MAX_ICON_PACK_ZIP_BYTES + 1)
-    await expect(importIconPackZip(big, icons)).rejects.toThrow('大小上限')
+    await expect(importIconPackZip(big, icons, { name: '测试包' })).rejects.toThrow('大小上限')
   })
 
   it('任意层级收 png；非 png 忽略、超 maxBytes 计 skipped；一律 stored id=normalizeIssuer', async () => {
@@ -118,7 +118,7 @@ describe('importIconPackZip', () => {
       'readme.txt': strToU8('not an icon'),
       'huge.png': new Uint8Array(50 * 1024 + 1),
     })
-    const result = await importIconPackZip(zip, icons)
+    const result = await importIconPackZip(zip, icons, { name: '测试包' })
     expect(result.imported).toBe(2)
     expect(result.skipped).toBe(1)
     expect(result.skippedLarge).toBe(1)
@@ -138,7 +138,7 @@ describe('importIconPackZip', () => {
     later[last] = later[last]! ^ 0xff // 与前者字节不同，验证覆盖生效
     // 文件名 normalize 后都是 'github'；用路径前缀 'a/' 'z/' 控制字典序
     const zip = zipSync({ 'a/github.png': PNG_BYTES, 'z/github.png': later })
-    const result = await importIconPackZip(zip, icons)
+    const result = await importIconPackZip(zip, icons, { name: '测试包' })
     expect(result.imported).toBe(1)
     expect(result.overwritten).toBe(1)
     expect(result.skipped).toBe(0)
@@ -155,7 +155,7 @@ describe('importIconPackZip', () => {
     later[0] = 0xff
     // a.png 在前，b.png 在后 → a 后于 b 字典序前，但 normalize 后都是 'a'/'b'
     const zip = zipSync({ 'b.png': earlier, 'a.png': later })
-    const result = await importIconPackZip(zip, icons)
+    const result = await importIconPackZip(zip, icons, { name: '测试包' })
     expect(result.imported).toBe(2)
     expect(result.overwritten).toBe(0)
     expect(icons.icons['a']).toBe(toDataUrl(later))
@@ -166,7 +166,7 @@ describe('importIconPackZip', () => {
     const icons = createIconStore(createMemoryStorage())
     await icons.init()
     const zip = zipSync({ 'a.png': PNG_BYTES, 'b.png': PNG_BYTES, 'c.png': PNG_BYTES })
-    const result = await importIconPackZip(zip, icons, { max: 2 })
+    const result = await importIconPackZip(zip, icons, { name: '测试包' }, { max: 2 })
     // 唯一 id 有 3 个，但 max=2 → 第三个计入 skipped
     expect(result.imported).toBe(3)
     expect(result.skipped).toBe(1)
@@ -185,7 +185,7 @@ describe('importIconPackZip', () => {
     const icons = createIconStore(createMemoryStorage())
     await icons.init()
     const zip = zipSync({ 'a.png': PNG_BYTES, 'a-copy.png': PNG_BYTES, 'b.png': PNG_BYTES })
-    const result = await importIconPackZip(zip, icons, { max: 2 })
+    const result = await importIconPackZip(zip, icons, { name: '测试包' }, { max: 2 })
     expect(result.imported).toBe(3)
     expect(result.overwritten).toBe(0)
     expect(result.skipped).toBe(1) // b 超出 max
@@ -205,7 +205,7 @@ describe('importIconPackZip', () => {
     later[0] = later[0]! ^ 0xff
     // 文件名：a.png normalize 后是 'a'；a_.png normalize 后是 'a'（normalizeIssuer 去下划线）
     const zip = zipSync({ 'a.png': PNG_BYTES, 'a_.png': later })
-    const result = await importIconPackZip(zip, icons, { max: 1 })
+    const result = await importIconPackZip(zip, icons, { name: '测试包' }, { max: 1 })
     expect(result.imported).toBe(1)
     expect(result.overwritten).toBe(1) // 同 id overwrite
     expect(result.skipped).toBe(0) // seen.size=1 = max，未触发 skip
@@ -217,7 +217,7 @@ describe('importIconPackZip', () => {
     const icons = createIconStore(createMemoryStorage())
     await icons.init()
     const zip = zipSync({ 'a.png': PNG_BYTES, 'b.png': PNG_BYTES, 'c.png': PNG_BYTES })
-    const result = await importIconPackZip(zip, icons, { max: 0 })
+    const result = await importIconPackZip(zip, icons, { name: '测试包' }, { max: 0 })
     expect(result.imported).toBe(3)
     expect(result.overwritten).toBe(0)
     expect(result.skipped).toBe(3)
@@ -225,6 +225,46 @@ describe('importIconPackZip', () => {
     expect(icons.icons['a']).toBeUndefined()
     expect(icons.icons['b']).toBeUndefined()
     expect(icons.icons['c']).toBeUndefined()
+  })
+})
+
+describe('包名与替换语义', () => {
+  // VALID_ZIP_BYTES：复用本文件既有 zipSync + PNG_BYTES 构造（两个真实 png 条目）
+  const VALID_ZIP_BYTES = zipSync({ 'github.png': PNG_BYTES, 'google.png': PNG_BYTES })
+
+  function makeStore() {
+    const store = {
+      icons: {} as Record<string, string>,
+      packs: {} as Record<string, { name: string; iconIds: string[] }>,
+      putMany: vi.fn(async (entries: Record<string, string>) => { Object.assign(store.icons, entries) }),
+      removeMany: vi.fn(async (ids: string[]) => { for (const id of ids) delete store.icons[id] }),
+      upsertPack: vi.fn(async (key: string, info: { name: string; iconIds: string[] }) => { store.packs[key] = info }),
+    }
+    return store
+  }
+
+  it('空白包名：解压前直接抛错', async () => {
+    const store = makeStore()
+    await expect(importIconPackZip(VALID_ZIP_BYTES, store, { name: '   ' })).rejects.toThrow('包名不能为空')
+    expect(store.putMany).not.toHaveBeenCalled()
+  })
+
+  it('写入包注册表：normKey 身份 + 显示名 + 新集合 iconIds；返回 packName', async () => {
+    const store = makeStore()
+    const r = await importIconPackZip(VALID_ZIP_BYTES, store, { name: ' My Pack ' })
+    expect(r.packName).toBe('My Pack')
+    expect(store.packs['mypack']).toEqual({ name: 'My Pack', iconIds: r.names })
+  })
+
+  it('同名重导整包替换：旧集合中不在新包的 id 被 removeMany', async () => {
+    const store = makeStore()
+    store.packs['mypack'] = { name: 'My Pack', iconIds: ['ghosticon', 'github'] }
+    store.icons['ghosticon'] = 'data:image/png;base64,AA'
+    const r = await importIconPackZip(VALID_ZIP_BYTES, store, { name: 'My Pack' })
+    const newIds = new Set(r.names)
+    expect(store.removeMany).toHaveBeenCalledWith(['ghosticon'].filter((id) => !newIds.has(id)))
+    if (!newIds.has('ghosticon')) expect(store.icons['ghosticon']).toBeUndefined()
+    expect(store.packs['mypack']!.iconIds).toEqual(r.names)
   })
 })
 

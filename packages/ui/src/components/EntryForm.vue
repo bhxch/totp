@@ -345,7 +345,7 @@ async function onPackFile(e: Event) {
       throw new Error(t('entryForm.iconPackTooLarge', { limit: Math.floor(MAX_ICON_PACK_ZIP_BYTES / 1024 / 1024) }))
     }
     const bytes = new Uint8Array(await file.arrayBuffer())
-    const result = await importIconPackZip(bytes, props.iconStore)
+    const result = await importIconPackZip(bytes, props.iconStore, { name: file.name.replace(/\.zip$/i, '') })
     packMessage.value = t('entryForm.iconPackImported', { imported: result.imported, skipped: result.skipped })
   } catch (err) {
     iconError.value = err instanceof Error ? err.message : String(err)
