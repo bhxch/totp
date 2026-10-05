@@ -17,6 +17,8 @@ export type FetchResult = { ok: true; dataUrl: string } | { ok: false; kind: Fet
 export interface IconStore {
   /** id→dataUrl 映射（含 'urlcache:'+id 拉取缓存键），reactive */
   icons: Readonly<Record<string, string>>
+  /** 包注册表（normKey → { 显示名, 图标 id 清单 }），reactive；来源筛选/替换/删除的单一事实源 */
+  packs: Readonly<Record<string, IconPackInfo>>
   /** 读 'icons' 键填充内存映射；幂等 */
   init(): Promise<void>
   put(id: string, dataUrl: string): Promise<void>
@@ -24,13 +26,26 @@ export interface IconStore {
   putMany(entries: Record<string, string>): Promise<void>
   /** I58：仅删除 id=图标 id 的键，不触碰 urlcache: 命名空间（URL 缓存独立管理） */
   remove(id: string): Promise<void>
+  /** 批量删除图标 id（不含 urlcache: 命名空间），单次落盘 */
+  removeMany(ids: string[]): Promise<void>
+  upsertPack(normKey: string, info: IconPackInfo): Promise<void>
+  /** 删除整包：移除该包全部图标 + 注册表条目；引用悬空由 UI 层回退（首字母） */
+  removePack(normKey: string): Promise<void>
   /** undefined→undefined；builtin→undefined（组件直接用 path 渲染）；stored→icons[id]；url→icons['urlcache:'+id] */
   resolve(ref: IconRef | undefined): string | undefined
   /** I59：fetch(url)→blob（>200KB 判失败）→FileReader dataURL→put('urlcache:'+id)→返回 ok/失败细分 */
   fetchAndCache(ref: { kind: 'url'; id: string; url: string }): Promise<FetchResult>
 }
 
+export interface IconPackInfo {
+  /** 显示名（保留用户输入原名） */
+  name: string
+  /** 归属该包的图标 id 清单 */
+  iconIds: string[]
+}
+
 const ICONS_KEY = 'icons'
+const PACKS_KEY = 'iconpacks'
 /** I58：URL 拉取缓存的独立命名空间前缀——与图标 id 物理隔离（避免图标 id 与 url 缓存键互相覆盖） */
 const URL_CACHE_PREFIX = 'urlcache:'
 /** URL 拉取缓存的单文件上限：超过直接判失败（防大文件撑爆存储） */
@@ -47,21 +62,35 @@ function blobToDataUrl(blob: Blob): Promise<string> {
 
 export function createIconStore(adapter: StorageAdapter): IconStore {
   const icons = reactive<Record<string, string>>({})
+  const packs = reactive<Record<string, IconPackInfo>>({})
   let inited = false
 
   async function persist(): Promise<void> {
     await adapter.set(ICONS_KEY, JSON.stringify(icons))
   }
 
+  async function persistPacks(): Promise<void> {
+    await adapter.set(PACKS_KEY, JSON.stringify(packs))
+  }
+
   async function init(): Promise<void> {
     if (inited) return
     inited = true
     const raw = await adapter.get(ICONS_KEY)
-    if (raw === null) return
-    try {
-      Object.assign(icons, JSON.parse(raw) as Record<string, string>)
-    } catch {
-      // 盘上数据损坏时按空存储处理，不阻断启动
+    if (raw !== null) {
+      try {
+        Object.assign(icons, JSON.parse(raw) as Record<string, string>)
+      } catch {
+        // 盘上数据损坏时按空存储处理，不阻断启动
+      }
+    }
+    const rawPacks = await adapter.get(PACKS_KEY)
+    if (rawPacks !== null) {
+      try {
+        Object.assign(packs, JSON.parse(rawPacks) as Record<string, IconPackInfo>)
+      } catch {
+        // 损坏按空注册表处理，不阻断启动
+      }
     }
   }
 
@@ -79,6 +108,25 @@ export function createIconStore(adapter: StorageAdapter): IconStore {
     // I58：URL 缓存键以 urlcache: 前缀，remove(id) 只删图标 id 本身，不触碰 url 缓存命名空间
     delete icons[id]
     await persist()
+  }
+
+  async function removeMany(ids: string[]): Promise<void> {
+    for (const id of ids) delete icons[id]
+    await persist()
+  }
+
+  async function upsertPack(normKey: string, info: IconPackInfo): Promise<void> {
+    packs[normKey] = info
+    await persistPacks()
+  }
+
+  async function removePack(normKey: string): Promise<void> {
+    const info = packs[normKey]
+    if (!info) return
+    for (const id of info.iconIds) delete icons[id]
+    delete packs[normKey]
+    await persist()
+    await persistPacks()
   }
 
   function resolve(ref: IconRef | undefined): string | undefined {
@@ -116,7 +164,7 @@ export function createIconStore(adapter: StorageAdapter): IconStore {
     }
   }
 
-  return { icons, init, put, putMany, remove, resolve, fetchAndCache }
+  return { icons, packs, init, put, putMany, remove, removeMany, removePack, upsertPack, resolve, fetchAndCache }
 }
 
 /**

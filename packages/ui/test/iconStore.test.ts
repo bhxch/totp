@@ -23,7 +23,7 @@ describe('createIconStore', () => {
     const s = createIconStore(adapter)
     await s.init()
     await s.init()
-    expect(get).toHaveBeenCalledTimes(1)
+    expect(get).toHaveBeenCalledTimes(2) // icons + iconpacks 各读一次；重复 init 不再加载
   })
 
   it('put/remove 落盘；新 store init 往返恢复', async () => {
