@@ -58,7 +58,8 @@ const canConfirm = computed(() => trimmed.value !== '' && !props.busy)
     </div>
     <p v-if="error" class="error">{{ error }}</p>
     <div class="actions">
-      <MdButton variant="text" :disabled="busy" @click="emit('close')">{{ t('entryForm.cancel') }}</MdButton>
+      <!-- 取消始终可点：busy 期间的逃生通道（审查 Important；防重复导入由确认键 canConfirm 守卫） -->
+      <MdButton variant="text" @click="emit('close')">{{ t('entryForm.cancel') }}</MdButton>
       <MdButton variant="filled" :disabled="!canConfirm" @click="emit('confirm', trimmed)">
         {{ t('entryForm.iconPackImportConfirm') }}
       </MdButton>
