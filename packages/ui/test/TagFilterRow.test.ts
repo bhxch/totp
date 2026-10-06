@@ -21,26 +21,54 @@ describe('TagFilterRow', () => {
     await w.findAll('button.md-chip')[1]!.trigger('click')
     expect(w.emitted('update:selectedIds')![0]).toEqual([['t2']])
   })
-  it('any/all 分段按钮：选中 <2 禁用（aria-disabled + 守卫不外抛），≥2 可直接点选目标模式', async () => {
+  it('模式切换：∧/∨ 单钮，单击翻转模式；<2 禁用不外抛', async () => {
     const w = mount(TagFilterRow, { global: { plugins: [createTestI18n()] }, props: { tags, selectedIds: ['t1'], mode: 'any' } })
-    const seg = w.find('.md-seg')
-    expect(seg.exists()).toBe(true)
-    // 禁用态：mode-seg--disabled 视觉降级 + aria-disabled 标注；点击不外抛（守卫）
-    expect(seg.classes()).toContain('mode-seg--disabled')
-    expect(seg.attributes('aria-disabled')).toBe('true')
-    const items = w.findAll('button.md-seg__item')
-    expect(items.map((b) => b.text())).toEqual(['任一', '全部'])
-    await items[1]!.trigger('click')
+    const btn = w.find('button.mode-toggle')
+    expect(btn.exists()).toBe(true)
+    expect(w.find('.md-seg').exists()).toBe(false)
+    expect(btn.text()).toBe('∨') // any → 逻辑或
+    expect(btn.classes()).toContain('mode-toggle--disabled')
+    expect(btn.attributes('aria-disabled')).toBe('true')
+    await btn.trigger('click')
     expect(w.emitted('update:mode')).toBeUndefined()
-    // 选中 ≥2 解禁，点「全部」直接切换到 all（替代原翻转钮的一次点击语义）
+    // ≥2 解禁：单击 any → all；再单击 all → any
     await w.setProps({ selectedIds: ['t1', 't2'] })
-    expect(seg.classes()).not.toContain('mode-seg--disabled')
-    expect(seg.attributes('aria-disabled')).toBeUndefined()
-    await items[1]!.trigger('click')
+    await btn.trigger('click')
     expect(w.emitted('update:mode')![0]).toEqual(['all'])
-    // 已在目标模式时重复点选不外抛
     await w.setProps({ mode: 'all' })
-    await items[1]!.trigger('click')
-    expect(w.emitted('update:mode')).toHaveLength(1)
+    expect(btn.text()).toBe('∧') // all → 逻辑与
+    await btn.trigger('click')
+    expect(w.emitted('update:mode')![1]).toEqual(['any'])
+  })
+
+  it('说明气泡：点击切换钮弹出当前模式说明；组件外 pointerdown 折叠', async () => {
+    const w = mount(TagFilterRow, {
+      global: { plugins: [createTestI18n()] },
+      props: { tags, selectedIds: ['t1', 't2'], mode: 'any' },
+      attachTo: document.body,
+    })
+    expect(w.find('.mode-pop').exists()).toBe(false)
+    await w.find('button.mode-toggle').trigger('click')
+    expect(w.find('.mode-pop').exists()).toBe(true)
+    expect(w.find('.mode-pop').text()).toContain('任一匹配')
+    // 组件外任意 pointerdown（capture 监听）→ 气泡折叠
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    await w.vm.$nextTick()
+    expect(w.find('.mode-pop').exists()).toBe(false)
+    // 再点按钮重新弹出；组件卸载不残留监听（不抛错即通过）
+    await w.find('button.mode-toggle').trigger('click')
+    expect(w.find('.mode-pop').exists()).toBe(true)
+    w.unmount()
+  })
+
+  it('manageable prop：默认 true 显示管理钮并 emit open-manage；false 隐藏', async () => {
+    const w = mount(TagFilterRow, { global: { plugins: [createTestI18n()] }, props: { tags, selectedIds: [], mode: 'any' } })
+    const btn = w.find('button.manage-btn')
+    expect(btn.exists()).toBe(true)
+    expect(btn.attributes('title')).toBeTruthy() // 悬浮提示
+    await btn.trigger('click')
+    expect(w.emitted('open-manage')).toHaveLength(1)
+    const w2 = mount(TagFilterRow, { global: { plugins: [createTestI18n()] }, props: { tags, selectedIds: [], mode: 'any', manageable: false } })
+    expect(w2.find('button.manage-btn').exists()).toBe(false)
   })
 })

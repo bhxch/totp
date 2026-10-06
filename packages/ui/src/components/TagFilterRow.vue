@@ -1,22 +1,25 @@
 <script setup lang="ts">
 import type { Tag, TagFilterMode } from '@totp/core'
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import MdChip from './md/MdChip.vue'
-import MdSegmentedButton from './md/MdSegmentedButton.vue'
+import MdIconButton from './md/MdIconButton.vue'
 
 const { t } = useI18n()
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   tags: Tag[]
   selectedIds: string[]
   mode: TagFilterMode
   /** 宿主可整体禁用（预留）；选中 <2 时模式切换恒不生效（any/all 语义相同） */
   disabled?: boolean
-}>()
+  /** 管理标签入口开关（快速取码面板传 false）；open-manage 由宿主接线 TagManagerDialog */
+  manageable?: boolean
+}>(), { manageable: true })
 const emit = defineEmits<{
   'update:selectedIds': [ids: string[]]
   'update:mode': [mode: TagFilterMode]
+  'open-manage': []
 }>()
 
 /** tag 展示恒按名称字母序（模型无 order 字段，spec §1） */
@@ -26,38 +29,68 @@ function toggle(id: string) {
   emit('update:selectedIds', props.selectedIds.includes(id) ? props.selectedIds.filter((x) => x !== id) : [...props.selectedIds, id])
 }
 
-// ---------- any/all 模式切换（MdSegmentedButton 两段替代原单一 .mode-toggle 翻转按钮）----------
-/** 任一/全部两段各具常显文本（可读性优于原「点前隐后」翻转钮）；compact 化样式见底部 */
-const MODE_OPTIONS = [
-  { value: 'any', label: t('tagFilterRow.any') },
-  { value: 'all', label: t('tagFilterRow.all') },
-]
+// ---------- any/all 模式单击切换：逻辑符号 ∧(all)/∨(any)，点击即翻转并弹出说明气泡，点击外部折叠 ----------
+const MODE_SYMBOL: Record<TagFilterMode, string> = { all: '∧', any: '∨' }
 const modeDisabled = computed(() => props.disabled || props.selectedIds.length < 2)
-/** 分段按钮 emit 泛化 string，收敛回 TagFilterMode；禁用态守卫同时覆盖点击与组件内方向键两条 emit 路径
- *  （MdSegmentedButton 无 disabled prop，视觉降级 opacity + aria-disabled 标注） */
-function onModeSelect(v: string | number) {
-  if (modeDisabled.value || v === props.mode) return
-  emit('update:mode', v as TagFilterMode)
+const modePopOpen = ref(false)
+const modeWrap = ref<HTMLElement | null>(null)
+function onDocPointerDown(e: Event) {
+  if (modeWrap.value && !modeWrap.value.contains(e.target as Node)) modePopOpen.value = false
+}
+watch(modePopOpen, (open) => {
+  if (open) document.addEventListener('pointerdown', onDocPointerDown, true)
+  else document.removeEventListener('pointerdown', onDocPointerDown, true)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDocPointerDown, true)
+})
+function toggleMode() {
+  if (modeDisabled.value) return
+  // 单击 = 翻转模式；气泡随之展示新状态说明（说明文字只在点击时显示）
+  emit('update:mode', props.mode === 'any' ? 'all' : 'any')
+  modePopOpen.value = true
 }
 </script>
 <template>
   <div class="tag-filter-row" role="group" :aria-label="t('tagFilterRow.groupAria')">
-    <MdSegmentedButton
-      class="mode-seg" :class="{ 'mode-seg--disabled': modeDisabled }"
-      :model-value="mode" :options="MODE_OPTIONS"
-      :title="mode === 'any' ? t('tagFilterRow.titleAny') : t('tagFilterRow.titleAll')"
-      :aria-disabled="modeDisabled || undefined" @update:model-value="onModeSelect"
-    />
+    <div ref="modeWrap" class="mode-wrap">
+      <MdIconButton
+        class="mode-toggle" :class="{ 'mode-toggle--disabled': modeDisabled }"
+        :disabled="modeDisabled"
+        :aria-label="mode === 'any' ? t('tagFilterRow.modeAriaAny') : t('tagFilterRow.modeAriaAll')"
+        :aria-disabled="modeDisabled || undefined"
+        @click="toggleMode"
+      >{{ MODE_SYMBOL[mode] }}</MdIconButton>
+      <div v-if="modePopOpen" class="mode-pop" role="tooltip">
+        {{ mode === 'any' ? t('tagFilterRow.popAny') : t('tagFilterRow.popAll') }}
+      </div>
+    </div>
     <MdChip :label="t('tagFilterRow.all')" :selected="selectedIds.length === 0" @click="emit('update:selectedIds', [])" />
     <MdChip
       v-for="t in sorted" :key="t.id" :label="t.name"
       :selected="selectedIds.includes(t.id)" @click="toggle(t.id)"
     />
+    <MdIconButton
+      v-if="manageable" class="manage-btn"
+      :title="t('codesPage.manageTags')" :aria-label="t('codesPage.manageTags')"
+      @click="emit('open-manage')"
+    >
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M21.41 11.58l-9-9C12.05 2.22 11.55 2 11 2H4c-1.1 0-2 .9-2 2v7c0 .55.22 1.05.59 1.42l9 9c.36.36.86.58 1.41.58.55 0 1.05-.22 1.41-.59l7-7c.37-.36.59-.86.59-1.41 0-.55-.23-1.06-.59-1.42zM5.5 7C4.67 7 4 6.33 4 5.5S4.67 4 5.5 4 7 4.67 7 5.5 6.33 7 5.5 7z"/></svg>
+    </MdIconButton>
   </div>
 </template>
 <style scoped>
 .tag-filter-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-/* any/all 分段按钮紧凑化：与行内 chips 同档（组件默认 40px 高、body 字号在筛选行偏大） */
-.mode-seg :deep(.md-seg__item) { height: 32px; padding: 0 12px; font-size: var(--md-sys-typescale-body-small); }
-.mode-seg--disabled { opacity: .4; }
+.mode-wrap { position: relative; display: inline-flex; }
+/* 模式钮紧凑化与 chips 同档（MdIconButton 默认 40px）；禁用语义靠 disabled prop，颜色降级补一层 */
+.mode-toggle { width: 32px; height: 32px; font-size: 18px; line-height: 1; }
+.mode-toggle--disabled { opacity: .4; }
+/* 说明气泡：锚定按钮下方；点击外部即折叠（pointerdown capture） */
+.mode-pop {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 10;
+  max-width: 240px; padding: 6px 10px; border-radius: 8px;
+  background: var(--md-sys-color-inverse-surface); color: var(--md-sys-color-inverse-on-surface);
+  font-size: var(--md-sys-typescale-body-small); white-space: normal;
+  box-shadow: 0 2px 8px rgb(0 0 0 / .25);
+}
 </style>
