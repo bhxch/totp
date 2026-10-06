@@ -2,7 +2,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { StorageAdapter } from '@totp/core'
-import { LockScreen, NavigationShell, PersistErrorBanner, type IconStore, type VueStore } from '@totp/ui'
+import { LockScreen, NavigationShell, PersistErrorBanner, ToastHost, type IconStore, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createDesktopAutoChannels } from './autoBackup'
 import { createBackupPlatform, createImportSchemesApi } from './backupPlatform'
@@ -117,6 +117,8 @@ const railActions = [{ get label() { return tr('desktop.hideToTray') }, onClick:
   <!-- 关闭（Esc/遮罩/工具 Deny）按通道分流 deny：首连回执进 60s 冷却，工具确认回 result:false（逐次即焚）——
        否则 "approval pending" 诱导 AI 每 10s 重试、对话框反复重开抢焦点 -->
   <McpConsentDialog :open="approval !== null" :request="approval" :t="tr" @resolve="onApprovalAction" @allow="onToolAllow" @close="onConsentClose" />
+  <!-- 全局 toast 渲染端（P3 item-layout toast 设计）：无 props 直读模块态，固定底部居中悬浮 -->
+  <ToastHost />
 </template>
 
 <style>

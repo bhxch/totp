@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { createAutoRunScheduler } from '@totp/core'
-import { createAppI18n, createIconStore, LockScreen, NavigationShell, PersistErrorBanner, useTheme } from '@totp/ui'
+import { createAppI18n, createIconStore, LockScreen, NavigationShell, PersistErrorBanner, ToastHost, useTheme } from '@totp/ui'
 import { getCurrentInstance, onMounted, onUnmounted, ref, watch } from 'vue'
 import { createExtensionCloudRunner } from '../../src/cloudRunnerFactory'
 import { hasLegacyCloudKeys, migrateLegacySources } from '../../src/cloudCredStore'
@@ -210,6 +210,8 @@ const cloudPlatform = createOptionsCloudPlatform({
       <NavigationShell :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :sync-platform="syncPlatform" :cloud-platform="cloudPlatform" :cloud-auth-failed="cloudAuthFailed" :icons="icons" :schemes-api="schemesApi" @copy="copyToClipboard" />
     </template>
   </template>
+  <!-- 全局 toast 渲染端（P3 item-layout toast 设计）：模板根级、独立于锁定态 v-if 链，无 props 直读模块态 -->
+  <ToastHost />
 </template>
 
 <style>

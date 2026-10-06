@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { buildOtpUri, defaultDigitsFor, getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
-import { BatchPastePanel, createIconStore, EntryForm, PersistErrorBanner, fullIconsReady, iconView, LockScreen, MdButton, MdCheckbox, MdIconButton, MdMenu, MdSegmentedButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, OtpQrDialog, parseUriToEntryData, resolvePopupVisible, SearchBar, sortEntries, TagFilterRow, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
+import { BatchPastePanel, createIconStore, EntryForm, PersistErrorBanner, fullIconsReady, iconView, LockScreen, MdButton, MdCheckbox, MdIconButton, MdMenu, MdSegmentedButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, OtpQrDialog, parseUriToEntryData, resolvePopupVisible, SearchBar, sortEntries, TagFilterRow, ToastHost, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
@@ -437,6 +437,8 @@ function cancelAutoClose(): void {
     <!-- 单条目 otpauth 二维码（Esc/遮罩/「关闭」按钮关闭） -->
     <OtpQrDialog :open="qrEntry !== null" :entry="qrEntry" @close="qrEntry = null" />
   </main>
+  <!-- 全局 toast 渲染端（P3 item-layout toast 设计）：模板根级、独立于锁定态 v-if 链，无 props 直读模块态 -->
+  <ToastHost />
 </template>
 
 <style>
