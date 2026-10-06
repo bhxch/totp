@@ -615,6 +615,24 @@ describe('createCloudSyncRunner', () => {
     errorSpy.mockRestore()
   })
 
+  it('自动目标失败错误消息含换行（CloudHttpError bodySnippet 前缀形态）→ summary 归一单行', async () => {
+    const bad = fakeBackend()
+    bad.put = async () => {
+      // 生产形态：bodySnippet 以 \n 前缀拼入 message（core backend.ts），截断前必须归一
+      throw new CloudHttpError('WebDAV', 500, { method: 'PUT', url: 'https://dav/f', bodySnippet: 'oops' })
+    }
+    const { deps, recordStatus } = makeDeps({
+      loadSources: vi.fn(async () => [{ source: source('s1'), cred: WEBDAV_CRED }]),
+      makeBackend: () => bad,
+    })
+    await createCloudSyncRunner(deps).run()
+    // 换行归一为单空格（全长 <60 不截断，完整精确断言单行形态）
+    expect(recordStatus).toHaveBeenLastCalledWith(
+      false,
+      's1: 失败（WebDAV 请求失败（HTTP 500）：PUT https://dav/f oops）',
+    )
+  })
+
   it('T4 非认证错误不触发 onAuthFailure；未提供 onAuthFailure 时 401 也静默（可选依赖）', async () => {
     const bad = fakeBackend()
     bad.get = async () => {

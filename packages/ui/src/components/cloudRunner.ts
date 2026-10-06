@@ -349,7 +349,9 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
     // 结构化状态码已在消息内（CloudHttpError 形态）；逐失败目标 console.error 全量现场
     const failLabel = (x: TargetResult): string => {
       if (x.outcome) return deps.t(actionStatusLabelKey(x.outcome))
-      const msg = (x.error ?? '').slice(0, 60)
+      // CloudHttpError message 内嵌 \n（bodySnippet 前缀，core backend.ts），截断前先归一空白——
+      // 摘要随 recordStatus 上设置页状态行，须单行
+      const msg = (x.error ?? '').replace(/\s+/g, ' ').slice(0, 60)
       return msg ? `${deps.t('cloudRunner.failed')}（${msg}）` : deps.t('cloudRunner.failed')
     }
     for (const x of r.results) {
