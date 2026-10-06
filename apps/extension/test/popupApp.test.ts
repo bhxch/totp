@@ -10,7 +10,7 @@
 // @vitest-environment jsdom
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Ref } from 'vue'
+import { nextTick, type Ref } from 'vue'
 
 vi.mock('../src/store', async () => {
   const { reactive, ref } = await import('vue')
@@ -892,5 +892,21 @@ describe('popup 锁定态与标签筛选恢复（B3-11/14）', () => {
 
     const wrapper = await mountTracked()
     expect(wrapper.findComponent({ name: 'TagFilterRowStub' }).props('selectedIds')).toEqual([])
+  })
+})
+
+describe('popup App entryIcons 全量 ready 依赖（2026-10-05 full-icons Task 9）', () => {
+  it('fullIconsReady 翻转后 EntryForm 的 icons prop 重算产出新对象（非精选 builtin 补渲染触发）', async () => {
+    const { fullIconsReady } = await import('@totp/ui')
+    const wrapper = await mountApp()
+    await findAddButton(wrapper).trigger('click')
+    const form = wrapper.findComponent({ name: 'EntryForm' })
+    expect(form.exists()).toBe(true)
+    const before = form.props('icons') as Record<string, unknown>
+    fullIconsReady.value = true
+    await nextTick()
+    // getBuiltinIcons 返回活引用，内容断言无法区分是否重算；同一性变化才能证明 ready 已被依赖追踪
+    expect(form.props('icons')).not.toBe(before)
+    fullIconsReady.value = false // 模块级单例复位，不污染其他用例
   })
 })

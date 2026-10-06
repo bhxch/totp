@@ -9,6 +9,8 @@ export { decodeQrToUri, type ImagePixels } from './qr/decodeQr'
 export { blobToPixels } from './qr/imageSource'
 export * from './iconStore'
 export * from './iconImport'
+// 全量图标懒加载器（spec 2026-10-05 §1）：popup 等包外宿主 entryIcons 纳入 fullIconsReady 依赖用
+export { ensureFullIcons, fullIconsReady, fullIconsError } from './fullIcons'
 export * from './clipboardClearer'
 export * from './otpauthFlow'
 export * from './popupFilter'

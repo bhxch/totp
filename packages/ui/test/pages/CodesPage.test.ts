@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createMemoryStorage, newEntryFromUri, type OtpEntry } from '@totp/core'
 import { createVueStore } from '../../src/store'
+import { fullIconsReady } from '../../src/fullIcons'
 import CodesPage from '../../src/pages/CodesPage.vue'
 import EntryFormDialog from '../../src/components/EntryFormDialog.vue'
 import { createTestI18n } from '../helpers/i18n'
@@ -371,5 +372,23 @@ describe('CodesPage 右键菜单 / pinned（自 旧单页 C16 迁移）', () => 
     expect(w.find('.md-menu').exists()).toBe(false)
     expect(document.activeElement).toBe(item.element) // 焦点回右键所在条目
     w.unmount()
+  })
+})
+
+describe('CodesPage entryIcons 全量 ready 依赖（2026-10-05 full-icons Task 9）', () => {
+  it('fullIconsReady 翻转后 entryIcons 重算产出新对象；builtin/stored 源不变', async () => {
+    const s = await readyStore()
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    const icons = () =>
+      w.findComponent(EntryFormDialog)!.props('icons') as { builtin: Record<string, unknown>; stored: Record<string, unknown> }
+    const before = icons()
+    fullIconsReady.value = true
+    await nextTick()
+    const after = icons()
+    // getBuiltinIcons 返回活引用，内容断言无法区分是否重算；同一性变化才能证明 ready 已被依赖追踪
+    expect(after).not.toBe(before)
+    expect(after.builtin).toBe(before.builtin)
+    expect(after.stored).toEqual(before.stored)
+    fullIconsReady.value = false // 模块级单例复位，不污染同文件其他用例
   })
 })

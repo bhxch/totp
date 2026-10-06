@@ -4,6 +4,7 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useOtpCodes } from '../composables/useOtpCodes'
 import { iconView, type IconStore } from '../iconStore'
+import { fullIconsReady } from '../fullIcons'
 import { searchEntries } from '../popupFilter'
 import { moveToIndex, moveWithinPartition, sortEntries } from '../entriesSort'
 import type { VueStore } from '../store'
@@ -97,8 +98,12 @@ onUnmounted(() => { if (batchToastTimer) clearTimeout(batchToastTimer); if (batc
 /** 展示排序走 entriesSort 单点（R14，与 desktop MiniApp 共用；pinned 优先 → order 升序） */
 const sorted = computed(() => sortEntries(props.store.vault.entries))
 const { codes } = useOtpCodes(sorted)
-/** EntryForm 图标数据源：builtin 全集 + store 内 stored/url dataUrl 映射 */
-const entryIcons = computed(() => ({ builtin: getBuiltinIcons(), stored: props.icons?.icons ?? {} }))
+/** EntryForm 图标数据源：builtin 全集 + store 内 stored/url dataUrl 映射。纳入 fullIconsReady
+ *  依赖（2026-10-05 full-icons）：全量注册进 core 单一注册表后触发重算，非精选 builtin 引用自动补渲染 */
+const entryIcons = computed(() => {
+  void fullIconsReady.value // 全量注册后重算：非精选 builtin path 就位
+  return { builtin: getBuiltinIcons(), stored: props.icons?.icons ?? {} }
+})
 /** 可见列表：搜索过滤（issuer/label/note，I49 可选 secret；谓词走 popupFilter.searchEntries 单一来源）
  *  → 标签筛选（filterByTags，any/all 模式） */
 const visible = computed(() => {

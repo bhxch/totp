@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { buildOtpUri, defaultDigitsFor, getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
-import { BatchPastePanel, createIconStore, EntryForm, PersistErrorBanner, iconView, LockScreen, MdButton, MdCheckbox, MdIconButton, MdMenu, MdSegmentedButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, OtpQrDialog, parseUriToEntryData, resolvePopupVisible, SearchBar, TagFilterRow, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
+import { BatchPastePanel, createIconStore, EntryForm, PersistErrorBanner, fullIconsReady, iconView, LockScreen, MdButton, MdCheckbox, MdIconButton, MdMenu, MdSegmentedButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, OtpQrDialog, parseUriToEntryData, resolvePopupVisible, SearchBar, TagFilterRow, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
@@ -96,8 +96,12 @@ const sorted = computed(() =>
   }),
 )
 const { codes } = useOtpCodes(sorted)
-/** EntryForm 图标数据源：builtin 全集 + store 内 stored/url dataUrl 映射 */
-const entryIcons = computed(() => ({ builtin: getBuiltinIcons(), stored: icons.icons }))
+/** EntryForm 图标数据源：builtin 全集 + store 内 stored/url dataUrl 映射。纳入 fullIconsReady
+ *  依赖（2026-10-05 full-icons）：全量注册进 core 单一注册表后触发重算，非精选 builtin 引用自动补渲染 */
+const entryIcons = computed(() => {
+  void fullIconsReady.value // 全量注册后重算：非精选 builtin path 就位
+  return { builtin: getBuiltinIcons(), stored: icons.icons }
+})
 
 const filterOn = computed(() => settings.urlFilterEnabled)
 /** 标签筛选选中态：rememberTagFilter 开启时自 settings 恢复并回写（spec §3） */
