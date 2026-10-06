@@ -34,30 +34,48 @@ function hrefNames(xml: string): string[] {
 export function createWebdavBackend(cred: WebdavCred): CloudBackend {
   const auth = `Basic ${btoa(`${cred.username}:${cred.password}`)}`
   const urlOf = (path: string) => joinDavUrl(cred.serverUrl, path)
+
+  /** push 前逐级确保父目录存在（spec §4.2 404 根修）：按段累积 MKCOL；2xx 成功、
+   *  405=集合已存在容忍（RFC 4918），其余状态经 ensureHttpOk 抛错（401/403 凭据问题
+   *  原地暴露不做目录重试）。每次 put 全量执行无缓存：push 低频开销可忽略换无状态幂等。
+   *  dir 为空（根目录对象）直接返回。 */
+  async function ensureDavDir(dir: string): Promise<void> {
+    if (dir === '') return
+    const proxy = proxyOf(cred)
+    let acc = ''
+    for (const seg of dir.split('/')) {
+      acc = acc ? `${acc}/${seg}` : seg
+      const res = await cloudFetch(LABEL, urlOf(acc), { method: 'MKCOL', headers: { Authorization: auth } }, proxy)
+      if (res.status === 405) continue
+      await ensureHttpOk(LABEL, res, 'MKCOL')
+    }
+  }
+
   return {
     id: 'webdav',
     async put(path, data) {
+      await ensureDavDir(resolveDirPath(cred))
       const res = await cloudFetch(LABEL, urlOf(path), {
         method: 'PUT',
         headers: { Authorization: auth },
         body: new Uint8Array(data),
       }, proxyOf(cred))
-      ensureHttpOk(LABEL, res)
+      await ensureHttpOk(LABEL, res, 'PUT')
     },
     async get(path) {
       const res = await cloudFetch(LABEL, urlOf(path), { method: 'GET', headers: { Authorization: auth } }, proxyOf(cred))
       if (res.status === 404) return null
-      ensureHttpOk(LABEL, res)
+      await ensureHttpOk(LABEL, res, 'GET')
       return new Uint8Array(await res.arrayBuffer())
     },
     async delete(path) {
       const res = await cloudFetch(LABEL, urlOf(path), { method: 'DELETE', headers: { Authorization: auth } }, proxyOf(cred))
-      ensureHttpOk(LABEL, res)
+      await ensureHttpOk(LABEL, res, 'DELETE')
     },
     async exists(path) {
       const res = await cloudFetch(LABEL, urlOf(path), { method: 'GET', headers: { Authorization: auth } }, proxyOf(cred))
       if (res.status === 404) return false
-      ensureHttpOk(LABEL, res)
+      await ensureHttpOk(LABEL, res, 'GET')
       return res.ok
     },
     async listBackups() {
@@ -68,7 +86,7 @@ export function createWebdavBackend(cred: WebdavCred): CloudBackend {
         method: 'PROPFIND',
         headers: { Authorization: auth, Depth: '1' },
       }, proxyOf(cred))
-      ensureHttpOk(LABEL, res)
+      await ensureHttpOk(LABEL, res, 'PROPFIND')
       return hrefNames(await res.text())
         .filter((n) => BACKUP_NAME_RE.test(n))
         .map((n) => (dir ? `${dir}/${n}` : n))

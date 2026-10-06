@@ -27,7 +27,7 @@ export function createGistBackend(cred: GistCred, opts: { onCredChange?: (cred: 
   const fetchGist = async (): Promise<{ public?: boolean } & GistApiResponse> => {
     const res = await cloudFetch(LABEL, url, { method: 'GET', headers: headers() }, proxyOf(cred))
     if (res.status === 404) return {}
-    ensureHttpOk(LABEL, res)
+    await ensureHttpOk(LABEL, res, 'GET')
     const json = (await res.json()) as ({ public?: boolean } & GistApiResponse)
     if (typeof json.public === 'boolean' && json.public !== cred.public) {
       opts.onCredChange?.({ ...cred, public: json.public })
@@ -41,7 +41,7 @@ export function createGistBackend(cred: GistCred, opts: { onCredChange?: (cred: 
       headers: headers({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ files: { [path]: { content } } }),
     }, proxyOf(cred))
-    ensureHttpOk(LABEL, res)
+    await ensureHttpOk(LABEL, res, 'PATCH')
   }
 
   return {

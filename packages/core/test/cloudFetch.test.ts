@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { __resetCloudFetchForTest, cloudFetch, proxyOf, setCloudFetch, type CloudProxy } from '../src/cloud/backend'
+import { CloudHttpError, __resetCloudFetchForTest, cloudFetch, ensureHttpOk, proxyOf, setCloudFetch, type CloudProxy } from '../src/cloud/backend'
 
 afterEach(() => __resetCloudFetchForTest())
 
@@ -22,5 +22,39 @@ describe('cloudFetch 可注入网络层（③ CORS 规避）', () => {
     expect(proxyOf({ backend: 'webdav', serverUrl: 's', username: 'u', password: 'p' })).toEqual({ mode: 'none' })
     const p: CloudProxy = { mode: 'system' }
     expect(proxyOf({ backend: 'webdav', serverUrl: 's', username: 'u', password: 'p', proxy: p })).toBe(p)
+  })
+})
+
+describe('ensureHttpOk（spec §4.3 完整错误现场）', () => {
+  it('非 2xx：抛 CloudHttpError 携带 method/url(剥 query)/bodySnippet，console.error 输出全量', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const fake = {
+        ok: false, status: 404,
+        url: 'https://dav.example.com/a/b/x.totpbackup?token=secret',
+        text: async () => 'Directory not found',
+      } as unknown as Response
+      const err: CloudHttpError = await ensureHttpOk('WebDAV', fake, 'PUT').then(() => { throw new Error('should throw') }, (e) => e)
+      expect(err.status).toBe(404)
+      expect(err.method).toBe('PUT')
+      expect(err.url).toBe('dav.example.com/a/b/x.totpbackup') // query 剥离（防 token 泄漏）
+      expect(err.bodySnippet).toBe('Directory not found')
+      expect(err.message).toContain('WebDAV 请求失败（HTTP 404）') // 前缀形态不变（既有匹配兜底）
+      expect(err.message).toContain('PUT dav.example.com/a/b/x.totpbackup')
+      expect(errSpy).toHaveBeenCalledWith('[cloud]', 'WebDAV', 'PUT', 'dav.example.com/a/b/x.totpbackup', 'HTTP 404', 'Directory not found')
+    } finally {
+      errSpy.mockRestore()
+    }
+  })
+  it('响应体不可读：bodySnippet 缺省仍抛错；2xx：静默通过', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const noBody = { ok: false, status: 500, url: 'https://x/y', text: async () => { throw new Error('body locked') } } as unknown as Response
+      const err = await ensureHttpOk('WebDAV', noBody, 'GET').then(() => null, (e) => e)
+      expect(err.status).toBe(500)
+      await expect(ensureHttpOk('WebDAV', { ok: true, status: 200 } as unknown as Response)).resolves.toBeUndefined()
+    } finally {
+      errSpy.mockRestore()
+    }
   })
 })

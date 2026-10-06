@@ -130,6 +130,38 @@ describe('WebDAV 后端', () => {
     const backend = createWebdavBackend({ backend: 'webdav', serverUrl: DAV, username: 'user', password: 'pass' })
     await expect(backend.listBackups!()).rejects.toThrow('WebDAV 请求失败（HTTP 401）')
   })
+
+  it('put 前逐级 MKCOL 建父目录（spec §4.2）：405 已存在容忍，随后 PUT', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'MKCOL') {
+        // 第一级成功 201，第二级已存在 405（容忍）
+        return new Response(null, String(url).endsWith('/a') ? { status: 201 } : { status: 405 })
+      }
+      return new Response(null, { status: 201 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createWebdavBackend({ backend: 'webdav', serverUrl: `${DAV}/dav/`, username: 'user', password: 'pass', objectPath: 'a/b/x.totpbackup' })
+    await backend.put('a/b/x.totpbackup', new TextEncoder().encode('hi'))
+    const mkcols = fetchMock.mock.calls.filter((c) => c[1]!.method === 'MKCOL').map((c) => String(c[0]))
+    expect(mkcols).toEqual([`${DAV}/dav/a`, `${DAV}/dav/a/b`])
+    const last = fetchMock.mock.calls.at(-1)!
+    expect(last[1]!.method).toBe('PUT')
+    expect(String(last[0])).toBe(`${DAV}/dav/a/b/x.totpbackup`)
+  })
+
+  it('put：MKCOL 失败（403）抛错且不发 PUT；根目录对象（无目录段）不 MKCOL', async () => {
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => new Response(null, { status: 403 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const backend = createWebdavBackend({ backend: 'webdav', serverUrl: DAV, username: 'user', password: 'pass', objectPath: 'a/b/x.totpbackup' })
+    await expect(backend.put('a/b/x.totpbackup', new Uint8Array([1]))).rejects.toThrow(/403/)
+    expect(fetchMock.mock.calls.every((c) => c[1]!.method === 'MKCOL')).toBe(true)
+
+    const rootMock = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => new Response(null, { status: 201 }))
+    vi.stubGlobal('fetch', rootMock)
+    const rootBackend = createWebdavBackend({ backend: 'webdav', serverUrl: DAV, username: 'user', password: 'pass' })
+    await rootBackend.put(PATH, new Uint8Array([1]))
+    expect(rootMock.mock.calls.every((c) => c[1]!.method === 'PUT')).toBe(true)
+  })
 })
 
 describe('Gist 后端', () => {

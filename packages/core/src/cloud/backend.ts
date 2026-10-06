@@ -159,20 +159,43 @@ function describeUrl(url: string): string {
 }
 
 /** 非 2xx 统一抛中文错误（含状态码）；404 分支由调用方按接口语义处理。
- *  审查 I2：错误对象携带数字 status（CloudHttpError）供结构化判定凭据失效，
- *  message 原文形态不变（「xx 请求失败（HTTP nnn）」），既有字符串匹配兜底兼容。 */
+ *  审查 I2：错误对象携带数字 status（CloudHttpError）供结构化判定凭据失效。
+ *  spec §4.3（2026-10-06）：补全错误现场——method/url(仅 host+pathname，剥 query 防 token 泄漏)
+ *  与响应体摘要(≤500 字符)进只读字段，message 在原前缀形态后追加 method url 与换行 body；
+ *  同步 console.error 一行结构化全量输出（控制台可排查，用户显式要求）。
+ *  改 async：error 分支消费一次响应体，成功路径零开销。既有字符串匹配仅依赖前缀形态，兼容。 */
 export class CloudHttpError extends Error {
   /** HTTP 状态码（数字，结构化判定用） */
   readonly status: number
-  constructor(label: string, status: number) {
-    super(`${label} 请求失败（HTTP ${status}）`)
+  /** 请求方法（ensureHttpOk 第三参透传） */
+  readonly method?: string
+  /** 失败请求 URL（describeUrl 口径：host+pathname，无 query/fragment） */
+  readonly url?: string
+  /** 响应体摘要（≤500 字符；响应体不可读时缺省） */
+  readonly bodySnippet?: string
+  constructor(label: string, status: number, detail?: { method?: string; url?: string; bodySnippet?: string }) {
+    const where = detail?.method && detail.url ? `：${detail.method} ${detail.url}` : ''
+    const body = detail?.bodySnippet ? `\n${detail.bodySnippet}` : ''
+    super(`${label} 请求失败（HTTP ${status}）${where}${body}`)
     this.name = 'CloudHttpError'
     this.status = status
+    this.method = detail?.method
+    this.url = detail?.url
+    this.bodySnippet = detail?.bodySnippet
   }
 }
 
-export function ensureHttpOk(label: string, res: Response): void {
-  if (!res.ok) throw new CloudHttpError(label, res.status)
+export async function ensureHttpOk(label: string, res: Response, method?: string): Promise<void> {
+  if (res.ok) return
+  let bodySnippet: string | undefined
+  try {
+    bodySnippet = (await res.text()).slice(0, 500)
+  } catch {
+    bodySnippet = undefined // 响应体不可读（流已消费等）不阻断抛错
+  }
+  const url = describeUrl(res.url)
+  console.error('[cloud]', label, method ?? '', url, `HTTP ${res.status}`, bodySnippet ?? '(响应体不可读)')
+  throw new CloudHttpError(label, res.status, { method, url, bodySnippet })
 }
 
 /** 凭据失效状态码判定（结构化分支）：401/403。 */

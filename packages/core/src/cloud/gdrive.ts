@@ -39,7 +39,7 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
       // 防止用户同名文档(如 txt/json)被误当作备份命中而覆盖上传内容
       body: JSON.stringify(parents ? { name, mimeType: 'application/json', parents } : { name, mimeType: 'application/json' }),
     })
-    ensureHttpOk(LABEL, res) // HTTP 层错误（如 401/403/5xx）由 ensureHttpOk 抛 "Google Drive xxx"，前缀与业务字段缺失错误区分
+    await ensureHttpOk(LABEL, res, 'POST') // HTTP 层错误（如 401/403/5xx）由 ensureHttpOk 抛 "Google Drive xxx"，前缀与业务字段缺失错误区分
     const json = (await res.json()) as { id?: string }
     if (!json.id) throw new Error('Google Drive 业务字段缺失：files.create 响应缺少文件 id')
     return json.id
@@ -60,7 +60,7 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
     if (!fileId) return 'root'
     const res = await authFetch(`${DRIVE_API}/files/${fileId}?fields=parents`, { method: 'GET', headers: auth })
     if (res.status === 404) return null
-    ensureHttpOk(LABEL, res)
+    await ensureHttpOk(LABEL, res, 'GET')
     const json = (await res.json()) as { parents?: string[] }
     return json.parents?.[0] ?? 'root'
   }
@@ -78,7 +78,7 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
       method: 'GET',
       headers: auth,
     })
-    ensureHttpOk(LABEL, res) // 同上：HTTP 错误 vs 业务字段缺失错误文案区分
+    await ensureHttpOk(LABEL, res, 'GET') // 同上：HTTP 错误 vs 业务字段缺失错误文案区分
     const json = (await res.json()) as { files?: Array<{ id?: string }> }
     const found = json.files?.[0]?.id ?? null
     if (writeBack && found && found !== fileId) {
@@ -94,7 +94,7 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
     if (!fileId) return queryIdByName(name)
     const res = await authFetch(`${DRIVE_API}/files/${fileId}?fields=id`, { method: 'GET', headers: auth })
     if (res.status === 404) return null
-    ensureHttpOk(LABEL, res)
+    await ensureHttpOk(LABEL, res, 'GET')
     return fileId
   }
 
@@ -104,7 +104,7 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
       headers: { ...auth, 'Content-Type': 'application/octet-stream' },
       body: new Uint8Array(data),
     })
-    ensureHttpOk(LABEL, res)
+    await ensureHttpOk(LABEL, res, 'PATCH')
   }
 
   return {
@@ -136,7 +136,7 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
       if (!id) return null
       const res = await authFetch(`${DRIVE_API}/files/${id}?alt=media`, { method: 'GET', headers: auth })
       if (res.status === 404) return null
-      ensureHttpOk(LABEL, res)
+      await ensureHttpOk(LABEL, res, 'GET')
       return new Uint8Array(await res.arrayBuffer())
     },
     async delete(path) {
@@ -155,7 +155,7 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
       }
       if (!id) return
       const res = await authFetch(`${DRIVE_API}/files/${id}`, { method: 'DELETE', headers: auth })
-      ensureHttpOk(LABEL, res)
+      await ensureHttpOk(LABEL, res, 'DELETE')
     },
     async exists(path) {
       return (await resolveId(path)) != null
@@ -181,7 +181,7 @@ export function createGDriveBackend(cred: GDriveCred, opts: GDriveBackendOptions
           method: 'GET',
           headers: auth,
         })
-        ensureHttpOk(LABEL, list)
+        await ensureHttpOk(LABEL, list, 'GET')
         const json = (await list.json()) as { files?: Array<{ name?: string }>; nextPageToken?: string }
         for (const f of json.files ?? []) {
           const n = f.name ?? ''

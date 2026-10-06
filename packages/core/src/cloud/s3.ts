@@ -158,22 +158,22 @@ export function createS3Backend(cred: S3Cred, opts: S3BackendOptions = {}): Clou
         headers: await signedHeadersOf('PUT', urlOf(path), new Uint8Array(data)),
         body: new Uint8Array(data),
       }, proxyOf(cred))
-      ensureHttpOk(LABEL, res)
+      await ensureHttpOk(LABEL, res, 'PUT')
     },
     async get(path) {
       const res = await cloudFetch(LABEL, urlOf(path), { method: 'GET', headers: await signedHeadersOf('GET', urlOf(path), undefined) }, proxyOf(cred))
       if (res.status === 404) return null
-      ensureHttpOk(LABEL, res)
+      await ensureHttpOk(LABEL, res, 'GET')
       return new Uint8Array(await res.arrayBuffer())
     },
     async delete(path) {
       const res = await cloudFetch(LABEL, urlOf(path), { method: 'DELETE', headers: await signedHeadersOf('DELETE', urlOf(path), undefined) }, proxyOf(cred))
-      ensureHttpOk(LABEL, res)
+      await ensureHttpOk(LABEL, res, 'DELETE')
     },
     async exists(path) {
       const res = await cloudFetch(LABEL, urlOf(path), { method: 'HEAD', headers: await signedHeadersOf('HEAD', urlOf(path), undefined) }, proxyOf(cred))
       if (res.status === 404) return false
-      ensureHttpOk(LABEL, res)
+      await ensureHttpOk(LABEL, res, 'HEAD')
       return res.ok
     },
     async listBackupsEx() {
@@ -194,7 +194,7 @@ export function createS3Backend(cred: S3Cred, opts: S3BackendOptions = {}): Clou
         if (token !== null) query['continuation-token'] = token
         const url = `${endpoint}${pathStyle ? `/${cred.bucket}` : ''}/?${buildCanonicalQueryString(query)}`
         const res = await cloudFetch(LABEL, url, { method: 'GET', headers: await signedHeadersOf('GET', url, undefined, query) }, proxyOf(cred))
-        ensureHttpOk(LABEL, res)
+        await ensureHttpOk(LABEL, res, 'GET')
         const xml = await res.text()
         for (const m of xml.matchAll(/<Key>([^<]+)<\/Key>/g)) {
           const name = m[1]!.split('/').pop() ?? ''

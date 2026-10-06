@@ -28,6 +28,10 @@ describe('resolveObjectPath', () => {
   it('纯分隔符输入（split 后空段）回退默认', () => {
     expect(resolveObjectPath({ backend: 'webdav', serverUrl: 's', username: 'u', password: 'p', objectPath: '///' })).toBe(DEFAULT_OBJECT_PATH)
   })
+  it('拒绝 # 与 ?（URL 截断型 404 根因，spec §4.4）', () => {
+    expect(() => resolveObjectPath({ backend: 'webdav', serverUrl: 's', username: 'u', password: 'p', objectPath: 'a#b.totpbackup' })).toThrow(/#/)
+    expect(() => resolveObjectPath({ backend: 'webdav', serverUrl: 's', username: 'u', password: 'p', objectPath: 'a?b.totpbackup' })).toThrow(/\?/)
+  })
 })
 
 describe('keep-n 云源时间戳路径（设计 §3）', () => {
@@ -118,6 +122,10 @@ describe('previewObjectPath（②路径实时预览：与上传链同语义、�
   it('invalid：\\0 与相对段折叠为 state:\'invalid\'（不抛出，UI 据此展示错误文案）', () => {
     expect(previewObjectPath({ ...base, objectPath: 'a/../b' }, { type: 'overwrite' })).toEqual({ state: 'invalid', path: '' })
     expect(previewObjectPath({ ...base, objectPath: 'a\u0000b' }, { type: 'keep', n: 3 })).toEqual({ state: 'invalid', path: '' })
+  })
+  it('invalid：# / ? 折叠为 state:\'invalid\'', () => {
+    expect(previewObjectPath({ ...base, objectPath: 'a#b' }, { type: 'overwrite' })).toEqual({ state: 'invalid', path: '' })
+    expect(previewObjectPath({ ...base, objectPath: 'a?b' }, { type: 'keep', n: 3 })).toEqual({ state: 'invalid', path: '' })
   })
   it('纯只读：预览不推进同秒防撞记忆（预览后 resolveTimestampPath 仍从整秒签发）', () => {
     __resetForTest()

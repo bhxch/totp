@@ -33,22 +33,22 @@ export function createOneDriveBackend(cred: OneDriveCred, opts: OneDriveBackendO
         headers: { ...auth, 'Content-Type': 'application/octet-stream' },
         body: new Uint8Array(data),
       })
-      ensureHttpOk(LABEL, res)
+      await ensureHttpOk(LABEL, res, 'PUT')
     },
     async get(path) {
       const res = await authFetch(contentUrl(path), { method: 'GET', headers: auth })
       if (res.status === 404) return null
-      ensureHttpOk(LABEL, res)
+      await ensureHttpOk(LABEL, res, 'GET')
       return new Uint8Array(await res.arrayBuffer())
     },
     async delete(path) {
       const res = await authFetch(itemUrl(path), { method: 'DELETE', headers: auth })
-      ensureHttpOk(LABEL, res)
+      await ensureHttpOk(LABEL, res, 'DELETE')
     },
     async exists(path) {
       const res = await authFetch(itemUrl(path), { method: 'GET', headers: auth })
       if (res.status === 404) return false
-      ensureHttpOk(LABEL, res)
+      await ensureHttpOk(LABEL, res, 'GET')
       return res.ok
     },
     async listBackupsEx() {
@@ -58,7 +58,7 @@ export function createOneDriveBackend(cred: OneDriveCred, opts: OneDriveBackendO
       const dir = resolveDirPath(cred)
       const res = await authFetch(`${itemUrl(resolveObjectPath(cred))}?select=parentReference`, { method: 'GET', headers: auth })
       if (res.status === 404) return { names: [], complete: true }
-      ensureHttpOk(LABEL, res)
+      await ensureHttpOk(LABEL, res, 'GET')
       const item = (await res.json()) as { parentReference?: { id?: string } }
       const parentId = item.parentReference?.id
       if (!parentId) return { names: [], complete: true }
@@ -69,7 +69,7 @@ export function createOneDriveBackend(cred: OneDriveCred, opts: OneDriveBackendO
       let url: string | null = `${GRAPH}/me/drive/items/${encodeURIComponent(parentId)}/children`
       for (let page = 0; url !== null && page < 10; page++) {
         const children = await authFetch(url, { method: 'GET', headers: auth })
-        ensureHttpOk(LABEL, children)
+        await ensureHttpOk(LABEL, children, 'GET')
         const json = (await children.json()) as { value?: Array<{ name?: string }>; '@odata.nextLink'?: string }
         for (const f of json.value ?? []) {
           const n = f.name ?? ''

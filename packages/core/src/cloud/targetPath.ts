@@ -8,6 +8,8 @@ export function resolveObjectPath(cred: CloudCred): string {
   const raw = cred.objectPath?.trim()
   if (raw === undefined || raw === '') return DEFAULT_OBJECT_PATH
   if (raw.includes('\0')) throw new Error('云端路径含非法字符')
+  // #/? 不编码会被 URL parser 截断成 fragment/query → 实际写到错误位置（spec §4.4 404 根因之一）
+  if (/[#?]/.test(raw)) throw new Error('云端路径不允许包含 # 或 ?')
   const segments = raw.split(/[\\/]/).filter((s) => s !== '')
   if (segments.length === 0) return DEFAULT_OBJECT_PATH
   if (segments.some((s) => s === '.' || s === '..')) throw new Error('云端路径不允许相对段（. / ..）')

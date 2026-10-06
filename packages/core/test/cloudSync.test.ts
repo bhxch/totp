@@ -487,14 +487,17 @@ describe('syncWithCloudRev', () => {
 describe('CloudHttpError / isAuthError（审查 I2 结构化凭据失效判定）', () => {
   const res = (status: number, ok = status >= 200 && status < 300) => ({ ok, status }) as Response
 
-  it('ensureHttpOk 抛 CloudHttpError：message 原形态（「label 请求失败（HTTP nnn）」）+ 数字 status', () => {
+  it('ensureHttpOk 抛 CloudHttpError：message 原形态（「label 请求失败（HTTP nnn）」）+ 数字 status', async () => {
+    // ensureHttpOk 改 async（spec §4.3 完整错误现场）：需 await 捕获 rejected promise；
+    // 无 method 实参且响应体不可读（fake res 无 text/url）→ message 仍为原前缀形态精确相等
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
-      ensureHttpOk('WebDAV', res(401))
-      expect.unreachable()
-    } catch (err) {
+      const err = await ensureHttpOk('WebDAV', res(401)).then(() => { throw new Error('should throw') }, (e) => e)
       expect(err).toBeInstanceOf(Error)
       expect((err as CloudHttpError).message).toBe('WebDAV 请求失败（HTTP 401）')
       expect((err as CloudHttpError).status).toBe(401)
+    } finally {
+      errSpy.mockRestore()
     }
   })
 
