@@ -64,11 +64,11 @@ describe('invoke 分发', () => {
     expect(tauriMock.invoke).toHaveBeenCalledWith('clipboard_clear_if_staged') // vi.fn 断言面同样可用
   })
 
-  it('命令清单覆盖盘点面（31 命令 + mini DEK 槽三命令，共 34 个）', () => {
-    expect(INVOKE_COMMANDS).toHaveLength(34)
+  it('命令清单覆盖盘点面（31 命令 + mini DEK 槽三命令 + mini pin 两命令，共 36 个）', async () => {
+    expect(INVOKE_COMMANDS).toHaveLength(36)
     for (const cmd of [
       'stage_clipboard_write', 'clipboard_clear_if_staged', 'take_stashed_dek', 'stash_dek', 'clear_stashed_dek',
-      'set_mini_dek', 'peek_mini_dek', 'clear_mini_dek',
+      'set_mini_dek', 'peek_mini_dek', 'clear_mini_dek', 'mini_pin_get', 'mini_pin_set',
       'os_auto_protect', 'os_auto_unprotect', 'os_auto_forget', 'decrypt_dpapi',
       'pick_dir_os', 'pick_save_file_os', 'pick_open_file_os', 'dir_token_os',
       'read_text_file_os', 'write_text_file_os', 'write_bytes_file_os',
@@ -80,6 +80,10 @@ describe('invoke 分发', () => {
     ]) {
       expect(INVOKE_COMMANDS).toContain(cmd)
     }
+    // mini pin 默认 handler（reset 后重装）：get 返回当前 pin 态，set 记录并更新（对应 Rust settings.json+缓存）
+    await expect(tauriMock.invoke('mini_pin_get')).resolves.toBe(false)
+    await tauriMock.invoke('mini_pin_set', { pinned: true })
+    await expect(tauriMock.invoke('mini_pin_get')).resolves.toBe(true)
   })
 })
 

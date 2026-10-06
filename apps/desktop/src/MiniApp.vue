@@ -95,6 +95,8 @@ onMounted(async () => {
     if (e.payload.locked) store.value?.lock()
     else if (store.value && locked.value) void load()
   }).catch(() => null)
+  // mini pin 初值（spec §1.5）：读 Rust 缓存（mini_pin_get），失败降级未 pin——自动隐藏保持缺省行为
+  pinned.value = await invoke<boolean>('mini_pin_get').catch(() => false)
   await load()
   // mini 常驻隐藏，重新显示时从盘重载（initStore 幂等不刷新内存，故重建 store）。
   // 修复真实 bug：@tauri-apps/api v2 Window 无 onVisibleChanged（仅 focus/resized/scale 等 7 个
@@ -122,8 +124,17 @@ const { copyFailed, copyToClipboard } = createDesktopCopy({
   clearIfStaged: () => invoke('clipboard_clear_if_staged').then(() => {}),
 })
 
-/** 复制后 500ms 自动隐藏控制器（审查 I-1 武装竞态守卫）：纯逻辑抽至 miniAutoHide.ts 便于单测覆盖取消时序 */
-const autoHide = createCopyAutoHide(500, () => { void getCurrentWindow().hide() })
+/** mini pin（spec §1.5）：状态真源在 Rust（settings.json+缓存），本地 ref 镜像供按钮与自动隐藏判定 */
+const pinned = ref(false)
+async function togglePin() {
+  pinned.value = !pinned.value
+  await invoke('mini_pin_set', { pinned: pinned.value }).catch((e) => console.error('[mini] pin set failed:', e))
+}
+function hideMini() { void getCurrentWindow().hide() }
+
+/** 复制后 500ms 自动隐藏控制器（审查 I-1 武装竞态守卫）：纯逻辑抽至 miniAutoHide.ts 便于单测覆盖取消时序；
+ *  pinned 时让位（hide 回调内动态检查，取消 pin 即恢复自动隐藏，无需重建控制器） */
+const autoHide = createCopyAutoHide(500, () => { if (!pinned.value) void getCurrentWindow().hide() })
 
 async function copy(entry: { uuid: string; type?: string; counter?: number }) {
   // I-1：copy 开始即快照揭示代次——若双击（递增代次）落在下方 await 期间，
@@ -148,6 +159,12 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
 
 <template>
   <main class="mini">
+    <!-- 无边框标题区（spec §1.4）：data-tauri-drag-region 拖拽 + pin/收起自绘 chrome -->
+    <header class="titlebar">
+      <span class="title-drag" data-tauri-drag-region>TOTP</span>
+      <button class="tb-btn" data-test="pin-btn" :class="{ active: pinned }" :aria-pressed="pinned" :title="tr('mini.pinTitle')" :aria-label="tr('mini.pinTitle')" @click="togglePin">📌</button>
+      <button class="tb-btn" data-test="hide-btn" :title="tr('mini.hideTitle')" :aria-label="tr('mini.hideTitle')" @click="hideMini">✕</button>
+    </header>
     <!-- R16⑤（评审 A2 方案 a）：落盘失败常驻告警，与主体并列不互斥 -->
     <PersistErrorBanner :show="persistFailed" :text="tr('app.persistError')" />
     <div v-if="store && locked" class="empty">{{ tr('mini.lockedNote') }}</div>
@@ -163,6 +180,11 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
 <style>
 body { font-family: system-ui, sans-serif; margin: 0; }
 .mini { display: flex; flex-direction: column; gap: 2px; padding: 6px; }
+.titlebar { display: flex; align-items: center; gap: 2px; height: 34px; padding: 0 4px 0 10px; user-select: none; }
+.title-drag { flex: 1; font-size: var(--md-sys-typescale-body-small); opacity: .6; }
+.tb-btn { border: none; background: transparent; cursor: pointer; width: 28px; height: 28px; border-radius: 6px; color: inherit; font-size: 12px; line-height: 1; }
+.tb-btn:hover { background: var(--md-sys-color-surface-container-highest, rgba(0, 0, 0, .08)); }
+.tb-btn.active { color: var(--md-sys-color-primary); }
 .empty { text-align: center; opacity: .6; padding: 32px 0; font-size: var(--md-sys-typescale-body-medium); }
 .copy-error { text-align: center; color: var(--md-sys-color-error); background: var(--md-sys-color-error-container); border-radius: 6px; padding: 8px 0; font-size: var(--md-sys-typescale-body-small); }
 </style>

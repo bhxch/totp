@@ -801,7 +801,9 @@
   "mini": {
     "lockedNote": "Available once the main window is unlocked",
     "empty": "No entries",
-    "copyFailed": "Copy failed: clipboard busy"
+    "copyFailed": "Copy failed: clipboard busy",
+    "pinTitle": "Pin window (always on top, no auto-hide)",
+    "hideTitle": "Hide"
   },
   "cloudRunner": {
     "lockedVault": "Vault is locked",

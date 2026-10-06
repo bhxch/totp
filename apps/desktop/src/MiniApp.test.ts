@@ -79,6 +79,18 @@ async function mountMini() {
   return wrapper
 }
 
+/** 确定性等待 useOtpCodes 取码：推进 fake timers 驱动 1s tick 直至谓词满足（复制驱动用例共用） */
+async function waitForCode(wrapper: Awaited<ReturnType<typeof mountMini>>, predicate: (c: string) => boolean): Promise<string> {
+  let code = wrapper.find('[data-test="item"]').attributes('data-code') ?? ''
+  for (let i = 0; i < 30 && !predicate(code); i++) {
+    await vi.advanceTimersByTimeAsync(200)
+    await flushPromises()
+    code = wrapper.find('[data-test="item"]').attributes('data-code') ?? ''
+  }
+  if (!predicate(code)) throw new Error(`code not ready: ${code}`)
+  return code
+}
+
 beforeEach(() => {
   tauriMock.reset()
   files.clear()
@@ -119,18 +131,6 @@ describe('加密库恒锁定（mini 无解锁 UI 也拿不到主窗会话 DEK）
 })
 
 describe('复制编排（B10.36）', () => {
-  /** 确定性等待 useOtpCodes 取码：推进 fake timers 驱动 1s tick 直至谓词满足 */
-  async function waitForCode(wrapper: Awaited<ReturnType<typeof mountMini>>, predicate: (c: string) => boolean): Promise<string> {
-    let code = wrapper.find('[data-test="item"]').attributes('data-code') ?? ''
-    for (let i = 0; i < 30 && !predicate(code); i++) {
-      await vi.advanceTimersByTimeAsync(200)
-      await flushPromises()
-      code = wrapper.find('[data-test="item"]').attributes('data-code') ?? ''
-    }
-    if (!predicate(code)) throw new Error(`code not ready: ${code}`)
-    return code
-  }
-
   it('HOTP 复制成功：stage 暂存旧 counter 码 → counter 递增 → 下次复制为新码 → 500ms 自动隐藏', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
@@ -320,5 +320,48 @@ describe('mini 跟随主窗解锁（①槽 peek 自动恢复 + mini-session 事�
       expect(wrapper.find('[data-test="item"]').exists()).toBe(true) // 新 DEK 解密成功仍解锁
       expect(wrapper.text()).not.toContain('主窗口解锁后此窗口可用')
     })
+  })
+})
+
+describe('mini 标题区 chrome（spec §1.4/§1.5）', () => {
+  it('pin 按钮切换：invoke mini_pin_set(pinned) 且 aria-pressed 同步', async () => {
+    const w = await mountMini()
+    const btn = w.find('[data-test="pin-btn"]')
+    expect(btn.attributes('aria-pressed')).toBe('false')
+    await btn.trigger('click')
+    await flushPromises()
+    expect(tauriMock.invoke).toHaveBeenCalledWith('mini_pin_set', { pinned: true })
+    expect(w.find('[data-test="pin-btn"]').attributes('aria-pressed')).toBe('true')
+  })
+
+  it('pinned 时复制后不自动隐藏；取消 pin 恢复', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      await seedVault([TOTP])
+      const w = await mountMini()
+      await waitForCode(w, (c) => /^\d{6}$/.test(c))
+      await w.find('[data-test="pin-btn"]').trigger('click') // pin
+      await flushPromises()
+      await w.find('[data-test="copy"]').trigger('click')
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(600)
+      await flushPromises()
+      expect(tauriMock.window.hide).not.toHaveBeenCalled() // pinned 抑制自动隐藏
+      await w.find('[data-test="pin-btn"]').trigger('click') // 取消 pin
+      await flushPromises()
+      await w.find('[data-test="copy"]').trigger('click')
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(600)
+      await flushPromises()
+      expect(tauriMock.window.hide).toHaveBeenCalledTimes(1) // 取消 pin 后恢复自动隐藏
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('收起按钮：调用 window.hide', async () => {
+    const w = await mountMini()
+    await w.find('[data-test="hide-btn"]').trigger('click')
+    expect(tauriMock.window.hide).toHaveBeenCalled()
   })
 })

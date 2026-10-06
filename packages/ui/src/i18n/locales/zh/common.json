@@ -801,7 +801,9 @@
   "mini": {
     "lockedNote": "主窗口解锁后此窗口可用",
     "empty": "暂无条目",
-    "copyFailed": "复制失败：剪贴板被占用"
+    "copyFailed": "复制失败：剪贴板被占用",
+    "pinTitle": "固定窗口（置顶且不自动隐藏）",
+    "hideTitle": "收起"
   },
   "cloudRunner": {
     "lockedVault": "库已锁定",

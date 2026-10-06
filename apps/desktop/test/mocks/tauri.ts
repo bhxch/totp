@@ -3,7 +3,7 @@
  * 取代逐文件手写 vi.hoisted + vi.mock（既有先例 backupService.test.ts 保留不动）。
  *
  * 覆盖面（与 src 实际 invoke/listen/fs/window 使用面一一对应，见盘点底稿 D 节）：
- * - invoke：全部 31 个 Rust 命令（INVOKE_COMMANDS），按命令名注册 handler/返回值；
+ * - invoke：全部 33 个 Rust 命令（INVOKE_COMMANDS），按命令名注册 handler/返回值；
  *   未注册的已知命令返回 null（与 Rust Option 返回一致）；清单外命令视为命令名笔误，抛错提示
  *   （on/onReturn/listen 注册侧同口径 fail-loud，emit 侧保持宽松）
  * - 事件：@tauri-apps/api/event listen 的 6 类事件（EVENTS）+ emitTo 定向派发记录
@@ -28,7 +28,7 @@ type Args = Record<string, unknown>
 type CommandHandler = (args: Args | undefined) => unknown
 type EventHandler = (e: { event: string; id: number; payload: unknown }) => void
 
-/** src 实际调用的全部 Rust 命令（盘点底稿 D 节 25 个 + App.vue 的 mcp_revoke_approvals 等，31 个） */
+/** src 实际调用的全部 Rust 命令（盘点底稿 D 节 25 个 + App.vue 的 mcp_revoke_approvals 等 31 个 + mini pin 2 个，33 个） */
 export const INVOKE_COMMANDS = [
   // 剪贴板暂存
   'stage_clipboard_write',
@@ -41,6 +41,9 @@ export const INVOKE_COMMANDS = [
   'set_mini_dek',
   'peek_mini_dek',
   'clear_mini_dek',
+  // mini pin 态（spec §1.5 无边框标题区）
+  'mini_pin_get',
+  'mini_pin_set',
   // DPAPI / OS 解锁
   'os_auto_protect',
   'os_auto_unprotect',
@@ -89,6 +92,16 @@ export const EVENTS = [
 // invoke：按命令名分发
 // ---------------------------------------------------------------------------
 const commandHandlers = new Map<string, CommandHandler>()
+
+// mini pin 态变量（spec §1.5）：mini_pin_get 返回、mini_pin_set 更新（对应 Rust settings.json+缓存）
+let miniPinned = false
+
+/** 默认 handler（模块初始化与 reset 后重装）：未显式注册时 pin get/set 即可用，行为与 Rust 命令一致 */
+function installDefaultCommandHandlers(): void {
+  commandHandlers.set('mini_pin_get', () => miniPinned)
+  commandHandlers.set('mini_pin_set', (args) => { miniPinned = args?.pinned === true })
+}
+installDefaultCommandHandlers()
 
 export const invoke = vi.fn(async (cmd: string, args?: Args): Promise<unknown> => {
   if (!(INVOKE_COMMANDS as readonly string[]).includes(cmd)) {
@@ -237,6 +250,8 @@ function resetFsDefaults(): void {
 /** 回到干净态：清 handler/调用记录/事件与焦点监听/fs 行为。测试 beforeEach 调用 */
 export function reset(): void {
   commandHandlers.clear()
+  installDefaultCommandHandlers()
+  miniPinned = false
   invoke.mockClear()
   listen.mockClear()
   emitTo.mockClear()
