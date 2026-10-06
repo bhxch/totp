@@ -28,26 +28,50 @@ function issuers(s: VueStore): string[] {
   return [...s.vault.entries].sort((a, b) => a.order - b.order).map((e) => e.issuer)
 }
 
-describe('CodesPage 拖拽排序（④C）', () => {
-  it('a 把手 dragstart → 悬停 c 下缘 → drop：新序 [B,C,A] 落库', async () => {
+/** pointer 拖拽驱动（jsdom）：把手 pointerdown → window pointermove（需先 stub document.elementFromPoint 指向目标行）→ pointerup */
+async function pointerDrag(
+  w: { findAll: (sel: string) => Array<{ find: (sel2: string) => { trigger: (ev: string, init?: Record<string, unknown>) => Promise<void>; element: HTMLElement } }> },
+  fromRow: number,
+  toRow: number,
+) {
+  const rows = w.findAll('.row')
+  document.elementFromPoint = () => rows[toRow]!.find('.otp-item').element as HTMLElement
+  await rows[fromRow]!.find('.handle').trigger('pointerdown', { pointerId: 1, clientX: 10, clientY: 10 })
+  window.dispatchEvent(new MouseEvent('pointermove', { clientX: 30, clientY: 40 }))
+  await flushPromises()
+  window.dispatchEvent(new MouseEvent('pointerup', { clientX: 30, clientY: 40 }))
+  await flushPromises()
+}
+
+describe('CodesPage 拖拽排序（④C，pointer 长按方案）', () => {
+  it('a 把手 pointerdown → 移动越阈值 → 悬停 c 下缘 → pointerup：新序 [B,C,A] 落库且指示清空', async () => {
     const { w, store } = await mountPage()
     const rows = w.findAll('.row')
-    await rows[0]!.find('.handle').trigger('dragstart', { dataTransfer: { setData() {}, effectAllowed: '' } })
-    await rows[2]!.trigger('dragover', { clientY: 5 }) // jsdom rect 全 0：clientY≥0 → 下缘
-    expect(rows[2]!.classes()).toContain('drag-below')
-    await rows[2]!.trigger('drop')
+    document.elementFromPoint = () => rows[2]!.find('.otp-item').element as HTMLElement
+    await rows[0]!.find('.handle').trigger('pointerdown', { pointerId: 1, clientX: 10, clientY: 10 })
+    window.dispatchEvent(new MouseEvent('pointermove', { clientX: 30, clientY: 40 }))
+    await flushPromises()
+    expect(rows[2]!.classes()).toContain('drag-below') // jsdom rect 全 0：位移向下 → 下缘
+    window.dispatchEvent(new MouseEvent('pointerup', { clientX: 30, clientY: 40 }))
     await flushPromises()
     expect(issuers(store)).toEqual(['B', 'C', 'A'])
+    expect(rows[2]!.classes()).not.toContain('drag-below')
   })
 
-  it('把手 click.stop 不触发条目复制；dragend 清指示状态', async () => {
-    const { w } = await mountPage()
+  it('把手 click.stop 不触发条目复制；pointercancel 清指示且不落库', async () => {
+    const { w, store } = await mountPage()
     await w.findAll('.row')[0]!.find('.handle').trigger('click')
     expect(w.emitted('copy')).toBeUndefined()
-    await w.findAll('.row')[0]!.find('.handle').trigger('dragstart', { dataTransfer: { setData() {}, effectAllowed: '' } })
-    await w.findAll('.row')[1]!.trigger('dragover', { clientY: 5 })
-    await w.findAll('.row')[1]!.trigger('dragend')
-    expect(w.findAll('.row')[1]!.classes()).not.toContain('drag-below')
+    const rows = w.findAll('.row')
+    document.elementFromPoint = () => rows[1]!.find('.otp-item').element as HTMLElement
+    await rows[0]!.find('.handle').trigger('pointerdown', { pointerId: 1, clientX: 10, clientY: 10 })
+    window.dispatchEvent(new MouseEvent('pointermove', { clientX: 30, clientY: 40 }))
+    await flushPromises()
+    expect(rows[1]!.classes()).toContain('drag-below')
+    window.dispatchEvent(new Event('pointercancel'))
+    await flushPromises()
+    expect(rows[1]!.classes()).not.toContain('drag-below')
+    expect(issuers(store)).toEqual(['A', 'B', 'C'])
   })
 
   it('搜索过滤态：把手不渲染（全序语义禁拖）', async () => {
@@ -97,15 +121,10 @@ describe('CodesPage 拖拽排序（④C）', () => {
 })
 
 describe('CodesPage 排序落库失败留痕（h3）', () => {
-  it('reorderOp 落库失败：console.error 留痕不抛断（h3，spec §3.3）', async () => {
-    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  it('reorderOp 落库失败：console.error 留痕不抛断（h3，spec §3.3）', async () => {    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const { w, store } = await mountPage()
     vi.spyOn(store, 'reorderOp').mockRejectedValueOnce(new Error('disk full'))
-    const rows = w.findAll('.row')
-    await rows[0]!.find('.handle').trigger('dragstart', { dataTransfer: { setData() {}, effectAllowed: '' } })
-    await rows[1]!.trigger('dragover', { clientY: 5 })
-    await rows[1]!.trigger('drop')
-    await flushPromises()
+    await pointerDrag(w, 0, 1)
     expect(errSpy).toHaveBeenCalledWith('[codes] reorder failed:', expect.any(Error))
     errSpy.mockRestore()
   })

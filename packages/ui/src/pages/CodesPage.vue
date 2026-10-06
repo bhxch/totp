@@ -238,25 +238,52 @@ const indexEditing = ref<string | null>(null)
 /** 序号编辑器聚焦宿主（真机缺陷修复）：卡片组件实例挂 ref，startIndexEdit 经 $el 查询 .index-input 聚焦 */
 const editorHost = ref<{ $el?: HTMLElement } | null>(null)
 
-function onDragStart(e: DragEvent, uuid: string) {
+// ---------- ④C pointer 长按拖拽（2026-10-06 报批方案） ----------
+// 背景：WebView2 自发起的 HTML5 DnD 于原生 dragstart 后立即 abort（Task 12/e2e 双实证，
+// disable_drag_drop_handler ± SetAllowExternalDrop 均无效），改用 pointer 事件零依赖实现；
+// pointer 事件在浏览器宿主（扩展 options 页）同样工作，故为唯一拖拽路径（HTML5 DnD 已移除）。
+const DRAG_THRESHOLD = 6
+let dragStartX = 0
+let dragStartY = 0
+let dragEngaged = false
+
+function onHandlePointerDown(e: PointerEvent, uuid: string) {
+  if (!dragEnabled.value) return
   dragUuid = uuid
-  if (e.dataTransfer) {
-    e.dataTransfer.setData('text/plain', uuid)
-    e.dataTransfer.effectAllowed = 'move'
-  }
+  dragStartX = e.clientX
+  dragStartY = e.clientY
+  dragEngaged = false
+  // capture 失败（jsdom/旧环境无实现）降级为 window 监听，二者都注册以保证 pointermove/up 必达
+  try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch { /* 降级 */ }
+  window.addEventListener('pointermove', onDragPointerMove)
+  window.addEventListener('pointerup', onDragPointerUp)
+  window.addEventListener('pointercancel', onDragPointerCancel)
 }
-function onDragOver(e: DragEvent, uuid: string) {
-  if (!dragUuid || uuid === dragUuid) return
-  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-  dragOver.value = { uuid, before: e.clientY < rect.top + rect.height / 2 }
+function onDragPointerMove(e: PointerEvent) {
+  if (dragUuid === null) return
+  if (!dragEngaged && Math.hypot(e.clientX - dragStartX, e.clientY - dragStartY) < DRAG_THRESHOLD) return
+  dragEngaged = true
+  const rowEl = document.elementFromPoint(e.clientX, e.clientY)?.closest('.row')
+  if (!rowEl) {
+    dragOver.value = null
+    return
+  }
+  const overUuid = rowEl.getAttribute('data-uuid') || undefined
+  if (!overUuid || overUuid === dragUuid) {
+    dragOver.value = null
+    return
+  }
+  const rect = rowEl.getBoundingClientRect()
+  dragOver.value = { uuid: overUuid, before: e.clientY < rect.top + rect.height / 2 }
   e.preventDefault()
 }
-/** drop 落库：moveWithinPartition 求新全序（跨区返回 null 回弹不提交），单 commit reorderOp */
-async function onDrop() {
+/** pointerup 落库：moveWithinPartition 求新全序（跨区返回 null 回弹不提交），单 commit reorderOp */
+async function onDragPointerUp() {
   const src = dragUuid
   const over = dragOver.value
-  endDrag()
-  if (!src || !over) return
+  const engaged = dragEngaged
+  clearDrag()
+  if (!src || !over || !engaged) return
   const entries = sorted.value
   const next = moveWithinPartition(
     entries.map((e2) => e2.uuid), src, over.uuid, over.before,
@@ -268,10 +295,18 @@ async function onDrop() {
     try { await props.store.reorderOp(next) } catch (e) { console.error('[codes] reorder failed:', e) }
   }
 }
-function endDrag() {
+function onDragPointerCancel() {
+  clearDrag()
+}
+function clearDrag() {
+  window.removeEventListener('pointermove', onDragPointerMove)
+  window.removeEventListener('pointerup', onDragPointerUp)
+  window.removeEventListener('pointercancel', onDragPointerCancel)
   dragUuid = null
+  dragEngaged = false
   dragOver.value = null
 }
+onUnmounted(clearDrag)
 function startIndexEdit(uuid: string) {
   if (!dragEnabled.value) return
   indexEditing.value = uuid
@@ -335,9 +370,9 @@ function openSheet() {
       <div v-if="sorted.length === 0" class="empty">{{ t('codesPage.empty') }}</div>
       <div v-else-if="visible.length === 0" class="empty">{{ t('codesPage.noMatch') }}</div>
       <div
-        v-for="(e, i) in visible" :key="e.uuid" class="row"
+        v-for="(e, i) in visible" :key="e.uuid" class="row" :data-uuid="e.uuid"
         :class="{ 'drag-enabled': dragEnabled, 'drag-above': dragOver?.uuid === e.uuid && dragOver.before, 'drag-below': dragOver?.uuid === e.uuid && !dragOver.before }"
-        @click="closeContextMenu" @dragover="onDragOver($event, e.uuid)" @drop.prevent="onDrop" @dragend="endDrag"
+        @click="closeContextMenu"
       >
         <!-- 选择模式：行首勾选框（OtpListItem 之外，点击不触发条目复制） -->
         <MdCheckbox
@@ -357,8 +392,9 @@ function openSheet() {
           <!-- ④C：行首序号列宿主形态——无过滤时拖拽把手与序号并列渲染（均可见），点击序号输入目标序号移动 -->
           <template #lead>
             <span
-              v-if="dragEnabled" class="handle" draggable="true" :title="t('codesPage.dragHandleTitle')"
-              :aria-label="t('codesPage.dragHandleTitle')" @click.stop @dragstart="onDragStart($event, e.uuid)"
+              v-if="dragEnabled" class="handle" :title="t('codesPage.dragHandleTitle')"
+              :aria-label="t('codesPage.dragHandleTitle')" @click.stop
+              @pointerdown.prevent="onHandlePointerDown($event, e.uuid)"
             >⠿</span>
             <input
               v-if="indexEditing === e.uuid" class="index-input" type="number" min="1" :value="i + 1"
