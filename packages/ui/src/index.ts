@@ -24,6 +24,8 @@ export { default as EntryForm } from './components/EntryForm.vue'
 export { default as EntryFormDialog } from './components/EntryFormDialog.vue'
 export { default as TagManagerDialog } from './components/TagManagerDialog.vue'
 export { default as TagFilterRow } from './components/TagFilterRow.vue'
+// P4 快速取码面板（popup/mini 共享装配，冻结+筛选行+纯取码列表；props/emits 即三端契约）
+export { default as QuickCodesPanel } from './components/QuickCodesPanel.vue'
 export { default as OtpQrDialog } from './components/OtpQrDialog.vue'
 export { default as LockScreen } from './components/LockScreen.vue'
 export { default as BackupCard } from './components/BackupCard.vue'
