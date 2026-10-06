@@ -39,13 +39,16 @@ export type McpApprovalQueue = ReturnType<typeof createMcpApprovalQueue>
  *  （onMounted await 之后 instance 上下文已失效），故 useDesktopI18n 须在 setup 同步段调用；
  *  i18n 插件只能装入一次（store 重建/窗口重载时 mountI18n 重复调用为 no-op），仅首次就绪的
  *  store 驱动 locale；未装入（初始化失败等）时 tr 兜底回原文 key。
+ *  s=null（mini load 失败兜底，spec §2.2）：仅建实例供 tr 取词（locale 固定 zh），不装 app
+ *  （useI18n 消费者被 i18nReady 门控不会渲染）且不置 installed——成功重载的 mountI18n(s)
+ *  仍全量装入设置驱动实例（含 locale 跟随 watch），兜底实例随即被替换。
  *  与原 App.vue 版的微差：app 为 undefined（非 setup 上下文调用）时仍创建 i18n 实例并赋
  *  i18nRef（installed 不置位）——生产恒在 setup 同步段调用、app 恒存在，无可观察影响 */
 export interface DesktopI18n {
   /** 壳层取词（script setup 内 useI18n 注入不可用，沿 options 页口径走捕获的 i18n 实例） */
   tr(key: string, params?: Record<string, unknown>): string
-  /** store 就绪后装入 i18n（设置已从盘载入含 locale；仅首次生效） */
-  mountI18n(s: VueStore): void
+  /** store 就绪后装入 i18n（设置已从盘载入含 locale；仅首次生效）；null=boot 失败兜底（仅 tr 可用） */
+  mountI18n(s: VueStore | null): void
 }
 
 export function useDesktopI18n(): DesktopI18n {
@@ -54,7 +57,13 @@ export function useDesktopI18n(): DesktopI18n {
   let installed = false
   return {
     tr: (key, params = {}) => (i18nRef.value ? i18nRef.value.global.t(key, params) : key),
-    mountI18n(s: VueStore): void {
+    mountI18n(s: VueStore | null): void {
+      // 兜底路径（s=null）：先于 installed 判定也安全——若已装入 store 驱动实例则无需兜底，直接返回
+      if (!s) {
+        if (installed) return
+        i18nRef.value = createAppI18n(null)
+        return
+      }
       if (installed) return
       const inst = createAppI18n(s)
       if (app) {

@@ -799,6 +799,7 @@
     "unlockKeyring": "Keyring auto-unlock"
   },
   "mini": {
+    "loadFailed": "Load failed — refocus this window to retry",
     "lockedNote": "Available once the main window is unlocked",
     "empty": "No entries",
     "copyFailed": "Copy failed: clipboard busy",

@@ -799,6 +799,7 @@
     "unlockKeyring": "密钥环自动解锁"
   },
   "mini": {
+    "loadFailed": "加载失败：聚焦本窗口将自动重试",
     "lockedNote": "主窗口解锁后此窗口可用",
     "empty": "暂无条目",
     "copyFailed": "复制失败：剪贴板被占用",

@@ -9,16 +9,18 @@ import en from './locales/en/common.json'
  *  brief 契约写作 I18n<false>（意图 legacy=false），v11 类型下按参数位展开为本别名 */
 type AppI18n = I18n<Record<string, unknown>, {}, {}, Locale, false>
 
-/** D1：i18n 机制。locale 源 = settings.locale（auto → navigator.language 判定，zh 兜底回退） */
-export function createAppI18n(store: VueStore): AppI18n {
+/** D1：i18n 机制。locale 源 = settings.locale（auto → navigator.language 判定，zh 兜底回退）；
+ *  store=null → boot 失败兜底实例（spec §2.2：无设置可读，locale 固定 zh=fallbackLocale 口径，
+ *  无 locale 跟随 watch——成功重载后由 store 版实例接管） */
+export function createAppI18n(store: VueStore | null): AppI18n {
   const resolve = (l: string): 'zh' | 'en' =>
     l === 'en' ? 'en' : l === 'zh' ? 'zh' : (typeof navigator !== 'undefined' && /^en/i.test(navigator.language) ? 'en' : 'zh')
   const i18n = createI18n({
     legacy: false,
-    locale: resolve(store.settings.locale),
+    locale: store ? resolve(store.settings.locale) : 'zh',
     fallbackLocale: 'zh',
     messages: { zh, en },
   }) as AppI18n // 具体资源形状（"zh"|"en" locale）断言到宽接口：WritableComputedRef 严格型变下不兼容，运行时同构
-  watch(() => store.settings.locale, (l) => { i18n.global.locale.value = resolve(l) })
+  if (store) watch(() => store.settings.locale, (l) => { i18n.global.locale.value = resolve(l) })
   return i18n
 }

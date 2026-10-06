@@ -21,6 +21,8 @@ const icons = ref<IconStore | null>(null)
 const i18nReady = ref(false)
 /** 搜索词（spec §1.2） */
 const query = ref('')
+/** load 失败横幅（spec §2.2）：boot 失败不再静默；聚焦重载成功（store 置位）后自然消失 */
+const loadFailed = ref(false)
 // i18n 胶水收敛至 desktopShell.useDesktopI18n（R13，与主窗同款实现）：app 引用在 setup 同步段
 // 捕获；mini 的 store 在每次聚焦重载时重建（既有模式，useTheme 同样重新接线）——i18n 插件只能
 // 装入一次，mountI18n 内部仅首次生效，重载为 no-op；tr 兜底回原文 key 仅极端时序可见
@@ -73,8 +75,14 @@ async function load() {
     const iconStore = createIconStore(adapter)
     await iconStore.init()
     icons.value = iconStore
-  } catch {
-    // 重载失败保留旧数据（mini 窗口只读，无写盘风险）
+  } catch (e) {
+    // spec §2.2：不再静默——全栈进 console + 横幅上屏；下次聚焦 onFocusChanged 自动重载恢复
+    console.error('[mini] load failed:', e)
+    // 兜底 i18n：boot 失败读不到设置、mountI18n(s) 未达——不装兜底实例则横幅 tr 回原文 key。
+    // null=仅建实例供 tr 取词（locale 固定 zh，fallbackLocale 同口径），不装 app 不置 installed，
+    // 成功重载的 mountI18n(s) 仍全量装入设置驱动实例
+    mountI18n(null)
+    loadFailed.value = true
   }
 }
 
@@ -179,6 +187,7 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
     <div v-if="i18nReady" class="search-row"><SearchBar v-model="query" /></div>
     <div v-if="store && locked" class="empty">{{ tr('mini.lockedNote') }}</div>
     <div v-else-if="copyFailed" class="copy-error" role="alert">{{ tr('mini.copyFailed') }}</div>
+    <div v-else-if="loadFailed && !store" class="copy-error" role="alert">{{ tr('mini.loadFailed') }}</div>
     <div v-else-if="!store || sorted.length === 0" class="empty">{{ tr('mini.empty') }}</div>
     <div v-else-if="visible.length === 0" class="empty">{{ tr('mini.searchEmpty') }}</div>
     <!-- 终审 Important-1：@dblclick 未在 OtpListItem emits 声明，经 attrs fallthrough 合并到组件根元素，
@@ -199,4 +208,6 @@ body { font-family: system-ui, sans-serif; margin: 0; }
 .empty { text-align: center; opacity: .6; padding: 32px 0; font-size: var(--md-sys-typescale-body-medium); }
 .copy-error { text-align: center; color: var(--md-sys-color-error); background: var(--md-sys-color-error-container); border-radius: 6px; padding: 8px 0; font-size: var(--md-sys-typescale-body-small); }
 .search-row { padding: 2px 0; }
+/* CSS 装载后接管精确主题色：mini.html 内联底色只保首帧（防加载期白屏），html data-mode 随 useTheme 切换 */
+html { background: var(--md-sys-color-background, #fff); }
 </style>

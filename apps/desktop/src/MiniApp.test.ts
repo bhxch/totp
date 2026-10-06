@@ -366,6 +366,18 @@ describe('mini 标题区 chrome（spec §1.4/§1.5）', () => {
   })
 })
 
+describe('mini load 失败暴露（spec §2.2）', () => {
+  it('boot 失败：横幅 role=alert 渲染且 console.error 收到错误对象', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    ;(tauriMock.fs.readTextFile as Mock).mockRejectedValueOnce(new Error('disk boom'))
+    const w = await mountMini()
+    expect(w.find('[role="alert"]').exists()).toBe(true)
+    expect(w.text()).toContain('加载失败')
+    expect(errSpy).toHaveBeenCalledWith('[mini] load failed:', expect.any(Error))
+    errSpy.mockRestore()
+  })
+})
+
 describe('mini 搜索框（spec §1.2）', () => {
   it('输入过滤列表：命中 issuer 子串；清空恢复；无命中显示 searchEmpty 文案', async () => {
     await seedVault([TOTP, HOTP]) // 种子两条（GitHub / Legacy），复用文件既有种子
