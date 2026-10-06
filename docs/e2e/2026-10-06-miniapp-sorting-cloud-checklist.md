@@ -126,3 +126,16 @@
 
 - 桥接 eval 偶发整批超时（两 webview 同时），等待或重启应用恢复；渲染（截图/倒计时）与真实输入（SendInput hover/选区）不受影响——怀疑 mcp-bridge/CDP 与应用主线程的相互作用，与本项目代码无关，记录备查。
 - 真 SendInput 拖拽验证前必须以 elementFromPoint 确认把手在光标下（handle 渲染有一拍滞后）。
+
+### B1 release 构建严格复测（2026-10-06 第三会话追加）
+
+环境：release 构建（vite build 3.48s + cargo release 2m45s，HEAD 含全部修复）+ WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS CDP 9333；销毁档用用户原策略 0/1（隐藏 ~60-90s 后销毁，本轮实测销毁时点偏晚且与 B24 的 is_visible 误判方向一致——见下）；计时口径=SendInput 热键发送时刻 → CDP 轮询 mini webview target 出现 / `.otp-item`=66。
+
+| 轮次 | target 出现 | 内容就绪（66 条） | 判定 |
+| --- | --- | --- | --- |
+| 第 1 轮 | 1085ms | **1321ms** | ✅ ≤2s |
+| 第 2 轮 | 1007ms | **1309ms** | ✅ ≤2s |
+
+结论：**B1 release 口径达标（≈1.3s，余量 0.7s）**；dev+vite 的 6.1s 系开发服务器冷编译所致，与产品无关。ready 门控（窗口随内容就位）在 release 下同样成立。
+
+附带观察：本轮 0/1 策略下销毁时点明显晚于预期（隐藏后 155s+ 仍未销毁，最终 ~4min 内完成）——与 backlog B24（release_tick is_visible 误判）的方向吻合：误判「可见」会重置轨迹使销毁延迟。B24 排查优先级建议提高。
