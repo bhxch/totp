@@ -77,6 +77,10 @@ function matchesChip(item: Item): boolean {
   if (active.value === 'uploaded') return item.kind === 'stored' && !packKeyOf(item.id)
   return item.kind === 'stored' && packKeyOf(item.id) === active.value
 }
+/** 非 package chip（全部/内置/上传）整体单 button；包 chip 拆 label/× 两个真 button（交互元素不可嵌套） */
+const isPackChip = (key: ChipKey) => key !== 'all' && key !== 'builtin' && key !== 'uploaded'
+const plainChips = computed(() => chips.value.filter((c) => !isPackChip(c.key)))
+const packChips = computed(() => chips.value.filter((c) => isPackChip(c.key)))
 
 /** 包删除两步确认：× → 确认按钮 → emit；切换/关闭重置 */
 const confirmingRemove = ref<string | null>(null)
@@ -153,20 +157,22 @@ function select(item: Item) {
       :placeholder="t('entryForm.searchIcons')" :aria-label="t('entryForm.searchIconsLabel')"
     />
     <div class="picker-chips">
+      <!-- 非 package chip：单 button 整体可点；包 chip：label 与 × 拆为真 button（键盘可达删包入口） -->
       <button
-        v-for="chip in chips" :key="chip.key" type="button" class="picker-chip"
+        v-for="chip in plainChips" :key="chip.key" type="button" class="picker-chip"
         :class="{ active: active === chip.key }" @click="active = chip.key; confirmingRemove = null"
-      >
-        {{ chip.label }}
-        <span
-          v-if="/^(?!(all|builtin|uploaded)$)/.test(String(chip.key))" class="chip-remove" role="button"
-          :aria-label="t('entryForm.iconPackRemoveConfirm')" @click.stop="confirmingRemove = String(chip.key)"
-        >×</span>
+      >{{ chip.label }}</button>
+      <span v-for="chip in packChips" :key="chip.key" class="picker-chip" :class="{ active: active === chip.key }">
+        <button type="button" class="chip-label" @click="active = chip.key; confirmingRemove = null">{{ chip.label }}</button>
+        <button
+          type="button" class="chip-remove" :aria-label="t('entryForm.iconPackRemoveConfirm')"
+          @click.stop="confirmingRemove = String(chip.key)"
+        >×</button>
         <template v-if="confirmingRemove === chip.key">
           <button type="button" class="chip-remove-confirm" @click.stop="onConfirmRemove">{{ t('entryForm.iconPackRemoveConfirm') }}</button>
           <button type="button" class="chip-remove-cancel" @click.stop="confirmingRemove = null">{{ t('entryForm.iconPackRemoveCancel') }}</button>
         </template>
-      </button>
+      </span>
     </div>
     <p v-if="open && !fullIconsReady && !fullIconsError" class="picker-loading">{{ t('entryForm.iconsLoading') }}</p>
     <button v-if="open && fullIconsError" type="button" class="picker-retry" @click="void ensureFullIcons()">
@@ -213,7 +219,8 @@ function select(item: Item) {
 .picker-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
 .picker-chip { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: 999px; background: transparent; color: var(--md-sys-color-on-surface-variant); padding: 2px 10px; font-size: var(--md-sys-typescale-body-small); cursor: pointer; }
 .picker-chip.active { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); border-color: transparent; }
-.chip-remove { cursor: pointer; opacity: 0.6; padding: 0 2px; }
+.chip-label { border: none; background: transparent; color: inherit; cursor: pointer; font: inherit; padding: 0; }
+.chip-remove { border: none; background: transparent; color: inherit; font: inherit; cursor: pointer; opacity: 0.6; padding: 0 2px; }
 .chip-remove:hover { opacity: 1; }
 .chip-remove-confirm, .chip-remove-cancel { border: none; background: transparent; color: inherit; font-size: var(--md-sys-typescale-label-small); cursor: pointer; padding: 0 2px; }
 .chip-remove-confirm { color: var(--md-sys-color-error); }

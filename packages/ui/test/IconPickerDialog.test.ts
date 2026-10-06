@@ -55,7 +55,7 @@ describe('IconPickerDialog', () => {
     const w = mountPicker({ stored: { gh: 'data:image/png;base64,AA' }, packs: { mypack: { name: 'My Pack', iconIds: ['gh'] } } })
     await chipOf(w, '内置')!.trigger('click')
     expect(w.findAll('.picker-grid--all img').length).toBe(0)
-    await chipOf(w, 'My Pack')!.trigger('click')
+    await chipOf(w, 'My Pack')!.find('.chip-label').trigger('click')
     const cells = w.findAll('.picker-grid--all button')
     expect(cells).toHaveLength(1)
     expect(cells[0]!.find('img').attributes('src')).toBe('data:image/png;base64,AA')
@@ -64,7 +64,7 @@ describe('IconPickerDialog', () => {
 
   it('选中 stored → select 载荷 {kind:"stored", id}；选中 builtin → {kind:"builtin"}', async () => {
     const w = mountPicker({ stored: { gh: 'data:image/png;base64,AA' }, packs: { mypack: { name: 'My Pack', iconIds: ['gh'] } } })
-    await chipOf(w, 'My Pack')!.trigger('click')
+    await chipOf(w, 'My Pack')!.find('.chip-label').trigger('click')
     await w.find('.picker-grid--all button').trigger('click')
     expect(w.emitted('select')![0]).toEqual([{ kind: 'stored', id: 'gh', title: 'gh' }])
     await chipOf(w, '内置')!.trigger('click') // 切回 builtin 源再点任一格
@@ -86,10 +86,13 @@ describe('IconPickerDialog', () => {
     expect(w.findAll('.picker-grid--all button')[0]!.attributes('title')).toBe('Google')
   })
 
-  it('包 chip × 两步确认 → emit removePack(normKey)', async () => {
+  it('包 chip × 两步确认 → emit removePack(normKey)；× 为可聚焦真 button（键盘可达删包入口）', async () => {
     const w = mountPicker({ stored: { gh: 'data:image/png;base64,AA' }, packs: { mypack: { name: 'My Pack', iconIds: ['gh'] } } })
     const packChip = chipOf(w, 'My Pack')
-    await packChip.find('.chip-remove').trigger('click')
+    const remove = packChip.find('.chip-remove')
+    expect(remove.element.tagName).toBe('BUTTON') // 交互元素不可嵌套：真 button 天然可聚焦，无 tabindex 补丁
+    expect((remove.element as HTMLButtonElement).disabled).toBe(false)
+    await remove.trigger('click')
     await packChip.find('.chip-remove-confirm').trigger('click')
     expect(w.emitted('removePack')![0]).toEqual(['mypack'])
   })
