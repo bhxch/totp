@@ -77,3 +77,36 @@
 | 过滤态视觉反馈缺失 | ad5b9be | 过滤态序号 `cursor: not-allowed`（评审 Important 补遗） |
 
 **4. 诊断造成 vault rev 82→86 的数据处置记录**：实验前整目录备份 `%APPDATA%/com.totp.desktop` → `.temp/diag-task12/appdata-backup/`（9 项）。写入账目共 4 次，全部加密落盘：rev83 实验①合成换位 Microsoft↔Google；rev84 实验①拖回还原（顺序回基线已断言）；rev85 实验②键盘链意外写入（Aliyun 7→27，输入被解析为 '27' 所致，应用按 `Number.parseInt` 正确执行钳位与移动，非应用缺陷）；rev86 `store.reorderOp` 精确还原 Aliyun 27→7。终态核验：前 10 顺序与基线逐项一致、条目数恒 66 无增删（单元素移动为 Exact involution，rev 账目闭合）。不可逆项：vault rev / `vault_rev_watermark.json` 水位前进 4（设计为单调，不可也不应回退），密文与 mtime 相应更新；内容语义与实验前一致。未触碰：settings.json、release_policy（0/1 原值）、security.json。
+
+---
+
+## 真机执行记录（2026-10-06 会话，controller 直跑）
+
+环境：HEAD 06370c5+796aed4 的 debug exe + vite dev（同起）+ WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS CDP 9333 + tauri-mcp driver 9223；真实输入 SendInput（input.ps1）；本地 WebDAV 替身（MKCOL 201/405 幂等 + 401 故障模式，.temp/e2e-2026-10-06/webdav-standin.mjs）。
+
+| 条目 | 结果 | 证据/注记 |
+| --- | --- | --- |
+| A1 搜索过滤 | ✅ | 66→3(git)→「无匹配条目」→66；过滤后序号=过滤后序位；复制/双击揭示不受影响 |
+| A2 托盘锚定 | ⏳ 人工 | 托盘图标点击不可自动化；快捷键路径弹出+LAST_MINI_POS 恢复已实证 |
+| A3 无边框 | 部分 ✅ | pin/收起按钮真机点击工作（hide→visible=false）；标题区拖拽移动与系统阴影=人工目检 |
+| A4 pin 三行为+重建保留 | ✅ | topmost=True；失焦（Alt+Tab/切主窗）不隐藏；复制后不自动隐藏；销毁档重建后 topmost=True + miniPinned=true 持久 |
+| A5 取消 pin 恢复 | ✅ | topmost=False；复制后 500ms 自动隐藏恢复（窗口消失实证） |
+| B1 重建重开 | ✅（带注记） | 销毁档（0/1）触发后重开：窗口随内容就位（ready 门控生效，无空白期），重建后置顶保留；dev+vite 冷启动全程 ≈6.1s，严格 ≤2s 口径需 release 构建复测 |
+| B2 错误横幅 | 部分 ✅ | 单测覆盖（boot 失败→横幅+console.error，796aed4 批次内）；真机横幅组件渲染已验证；首载失败注入受工具限制未完成（CDP addScriptToEvaluateOnNewDocument 时序 + 桥接 eval 主世界隔离），挂账 release 模式补测 |
+| B3 非重建零等待 | ✅ | hide→热键重开：OS 轮询 visible-after=10ms，内容即时（隐藏态保留） |
+| C1 序号定位移动 | ✅ | 真实鼠标点击序号→编辑器打开**并聚焦（本会话新缺陷修复 796aed4）**→真实键入 1+Enter→条目移动→rev 87→88 落库；分区钳位行为与单测一致 |
+| C1 拖拽换位 | ❌（根因升级） | disable_drag_drop_handler 与 +SetAllowExternalDrop(false) 两种状态下，自发起 HTML5 DnD 均于原生 dragstart 后立即 abort（SendInput 绝对/相对位移两变体独立复现；合成 DnD 全链正常=jsdom 盲区）。**spec §3.3-h2「不可修」分支达成：需报批 pointer 长按拖拽方案**（或升级 WebView2 runtime 复测） |
+| C2 过滤态禁用提示 | ✅ | 把手不渲染；序号 cursor:not-allowed + title 禁用提示；点击无死交互；清空恢复 |
+| C3 popup 同序 | ⏳ 人工 | popup 需浏览器加载扩展 |
+| D1 逐级建目录+幂等 | ✅ | keep 模式目标 /e2e/a/（不存在多级目录）：MKCOL /e2e→201、MKCOL /e2e/a→201、PUT→201，文件真实落位；目录意向语义端到端生效（用户坚果云问题的闭环）；二次同步 rev 收敛无错误 |
+| D2 完整错误日志 | ✅ | console 结构化行（label/method/状态码/响应体）：替身 401「Unauthorized: bad credentials」+ 坚果云真实 404 ObjectNotFound / 409 AncestorsNotFound 全 XML 响应体；UI 状态行含「（HTTP 401/409）」 |
+| D3 自动备份失败摘要 | ✅ | 失败摘要=「失败：WebDAV 请求失败（HTTP nnn）：GET …错误消息」而非仅「失败」；latestKeepPath 吞错 console.warn 带 status/method/bodySnippet |
+| D4 路径拒绝 #/? | ✅ | a#b → 「路径无效」警示 + 实际目标预览消失（单测+DOM 双证） |
+| D5 目录语义与完整显示 | ✅ | overwrite：/e2e/a/ → 完整 URL+默认文件名；keep：完整 URL+vault 占位+label「目标目录」；文件名输入→「不生效」警示行；keep push 实际落位 e2e/a/ |
+
+### 本会话新发现
+
+1. **真机缺陷（已修）**：序号编辑器打开后无聚焦——真实点击后键入与 Enter 全部落空，jsdom setValue 直写掩盖。修复 commit `796aed4`（startIndexEdit nextTick 聚焦+全选 + attachTo 断言用例）。
+2. **拖拽根因升级**：c801b6c 的 disable_drag_drop_handler 在 WebView2 154 (Edg/154.0.4258.53) + wry 0.55.1 下不足以恢复 HTML5 DnD；叠加 SetAllowExternalDrop(false) 亦无效。升级为「WebView2 层自发起 DnD abort」，处置按 spec h2 不可修分支报批 pointer 方案。
+3. **e2e 环境坑（后续会话注意）**：debug exe 需同起 vite dev（devUrl 编入）；`cargo test` 不重链 bin——验证 Rust 行为前必须 `cargo build`；CDP 9333 端点经多轮重启易僵死（桥接 9223 通道兜底，首次调用需 --timeout ≥10s 热身）；被 kill 的后台任务可能遗留卡住的修饰键（先 clear-modifiers 再发快捷键）；跨进程重启后 hwnd 全部失效需按 pid 重新枚举（EnumWindows 回调内 Write-Output 会丢失，须累积后输出）；桥接 eval 主世界隔离——页面内 monkey-patch 注入对应用代码无效。
+4. **数据处置**：条目顺序实验写入后顺序还原尝试因 issuer 重叠产生错乱，已执行**整目录备份还原**（vault.json 与会话前备份字节一致已断言）；e2e 测试云源与凭据随还原移除；同步触发过一次坚果云真实只读（PROPFIND/GET，404/409 因其目录不存在——即本批修复的应用场景）；用户驻留 release 进程曾被结束，已重启（pid 57524）；releasePolicy 用户原值即 0/1（隐藏后 1 分钟销毁——测试期间窗口消失多为该配置所致，非缺陷）。
