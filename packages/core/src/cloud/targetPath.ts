@@ -13,6 +13,10 @@ export function resolveObjectPath(cred: CloudCred): string {
   const segments = raw.split(/[\\/]/).filter((s) => s !== '')
   if (segments.length === 0) return DEFAULT_OBJECT_PATH
   if (segments.some((s) => s === '.' || s === '..')) throw new Error('云端路径不允许相对段（. / ..）')
+  // 尾分隔符 = 目录意向（spec §4.5，2026-10-06 用户真机实证 /totpbackup/ 被当文件名落根目录）：
+  // overwrite 补默认文件名成完整对象路径；keep 的目录由 resolveDirPath 对同输入取全段获得。
+  // 不以分隔符结尾维持原契约（末段=文件名），存量凭据行为零变化
+  if (/[\\/]$/.test(raw)) return `${segments.join('/')}/${DEFAULT_OBJECT_PATH}`
   return segments.join('/')
 }
 

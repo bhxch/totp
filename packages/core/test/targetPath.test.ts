@@ -136,3 +136,37 @@ describe('previewObjectPath（②路径实时预览：与上传链同语义、�
     expect(resolveTimestampPath(cred, NOW)).toBe('preview/vault-20260930-221251.totpbackup')
   })
 })
+
+describe('尾分隔符目录语义（spec §4.5：/xxx/ 按目录处理）', () => {
+  const base = { backend: 'webdav', serverUrl: 's', username: 'u', password: 'p' } as const
+  const NOW = new Date(2026, 9, 6, 10, 0, 0)
+
+  it('overwrite：目录意向追加默认文件名（/totpbackup/ → totpbackup/totp-backup.totpbackup）', () => {
+    expect(resolveObjectPath({ ...base, objectPath: '/totpbackup/' })).toBe(`totpbackup/${DEFAULT_OBJECT_PATH}`)
+    expect(resolveObjectPath({ ...base, objectPath: 'a\\b\\' })).toBe(`a/b/${DEFAULT_OBJECT_PATH}`)
+  })
+  it('keep：目录意向全段为目录（resolveTimestampPath 落该目录；resolveDirPath 同步）', () => {
+    const cred = { ...base, objectPath: '/totpbackup/' } as const
+    expect(resolveDirPath(cred)).toBe('totpbackup')
+    expect(resolveTimestampPath(cred, NOW)).toBe(`totpbackup/vault-20261006-100000.totpbackup`)
+  })
+  it('仅分隔符（/ 或 //）：overwrite 回落默认；keep 目录为根', () => {
+    expect(resolveObjectPath({ ...base, objectPath: '/' })).toBe(DEFAULT_OBJECT_PATH)
+    expect(resolveDirPath({ ...base, objectPath: '//' })).toBe('')
+  })
+  it('不以分隔符结尾的存量语义零变化（回归）', () => {
+    expect(resolveObjectPath({ ...base, objectPath: 'a/b.totpbackup' })).toBe('a/b.totpbackup')
+    expect(resolveDirPath({ ...base, objectPath: 'a/b.totpbackup' })).toBe('a')
+    expect(resolveObjectPath({ ...base, objectPath: 'a\\b' })).toBe('a/b')
+  })
+  it('目录意向同样拒绝穿越与 #/?（校验先于默认名追加）', () => {
+    expect(() => resolveObjectPath({ ...base, objectPath: 'a/../b/' })).toThrow()
+    expect(() => resolveObjectPath({ ...base, objectPath: 'a#/' })).toThrow()
+  })
+  it('预览同语义：overwrite 展示追加默认名后的完整目标；keep 展示目录', () => {
+    expect(previewObjectPath({ ...base, objectPath: '/totpbackup/' }, { type: 'overwrite' }))
+      .toEqual({ state: 'ok', path: `totpbackup/${DEFAULT_OBJECT_PATH}` })
+    expect(previewObjectPath({ ...base, objectPath: '/totpbackup/' }, { type: 'keep', n: 3 }))
+      .toEqual({ state: 'ok', path: 'totpbackup', keepNamePlaceholder: KEEP_NAME_PLACEHOLDER })
+  })
+})
