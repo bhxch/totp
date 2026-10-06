@@ -10,6 +10,8 @@ export type KekSource =
   | { kind: 'password' }
   | { kind: 'prf'; credentialId: string; salt: string; wrappedDekP: string }
   | { kind: 'dpapi'; wrappedDekD: string }
+  // ABE 应用绑定解锁（plan p6 §0.3）：无载荷字段——密文在提权服务 HKLM，security.json 只记录「有此来源」
+  | { kind: 'abe' }
 
 // 契约：wrapNonce/dataNonce 各自独立随机，禁止同 KEK/DEK 下复用 nonce（GCM 语义）
 export interface SecuritySettings {
@@ -241,10 +243,11 @@ export async function changeVaultPassphrase(
   }
 }
 
-/** kekSources 去重：password/dpapi 各保留首个；prf 按 credentialId 保留首个。语义：同 kind 多份等价（仅首条实际参与解锁），多余条目仅占空间且误导 UI */
+/** kekSources 去重：password/dpapi/abe 各保留首个；prf 按 credentialId 保留首个。语义：同 kind 多份等价（仅首条实际参与解锁），多余条目仅占空间且误导 UI */
 function removeDuplicateKekSources(sources: ReturnType<typeof kekSourcesOf>): ReturnType<typeof kekSourcesOf> {
   const seenPassword = new Set<'password'>()
   const seenDpapi = new Set<'dpapi'>()
+  const seenAbe = new Set<'abe'>()
   const seenPrf = new Set<string>() // credentialId
   const out: ReturnType<typeof kekSourcesOf> = []
   for (const s of sources) {
@@ -255,6 +258,10 @@ function removeDuplicateKekSources(sources: ReturnType<typeof kekSourcesOf>): Re
     } else if (s.kind === 'dpapi') {
       if (seenDpapi.has('dpapi')) continue
       seenDpapi.add('dpapi')
+      out.push(s)
+    } else if (s.kind === 'abe') {
+      if (seenAbe.has('abe')) continue
+      seenAbe.add('abe')
       out.push(s)
     } else {
       if (seenPrf.has(s.credentialId)) continue

@@ -12,6 +12,14 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 mod cli;
 // 云备份出网 command（2026-09-30 CORS/代理设计）：reqwest 无 CORS，每源 proxy 在 command 内生效
 mod cloud_http;
+// ABE 提权服务帧协议（plan p6 §0.1）：管道名/marker/消息类型/错误码与帧编解码单点定义。
+// 纯逻辑无 IO，但属提权链路（Global Constraints：服务/提权代码全部 cfg(windows) 门控，
+// Linux clippy CI 门禁），消费方（elevation_service/client）均为 Windows 专属。
+// 临时 allow(dead_code)：mod 为私有声明，pub 项不出 crate 面，Task 2/4 消费方接线前
+// 全模块触发 dead_code（同 lib.rs 非 Windows 桩先例）；接线后移除本 allow
+#[cfg(windows)]
+#[allow(dead_code)]
+mod elevation_proto;
 // 对话框授权登记（F4）与备份/导入文件命令（dirToken 遏制 + 扩展名白名单）
 mod dialog_grants;
 mod lock_events;

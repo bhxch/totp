@@ -3,7 +3,7 @@ import { aesGcmEncrypt, bytesToBase64, randomBytes } from '../src/crypto/aesgcm'
 import { addPrfSource, setupVaultEncryption, unlockVaultEncryption } from '../src/security/securityStore'
 import type { SecuritySettings } from '../src/security/securityStore'
 import {
-  kekSourcesOf, withPrfSource, withDpapiSource, removeKekSource, unlockWithPrf,
+  kekSourcesOf, withPrfSource, withDpapiSource, withAbeSource, removeKekSource, isKekSource, unlockWithPrf,
 } from '../src/security/multiKek'
 
 // 手工构造最小 SecuritySettings（kekSources 归一/增删不涉及口令解锁，无需跑 argon2）
@@ -186,6 +186,53 @@ describe('addPrfSource（securityStore 帮助函数）', () => {
     const { security, dek } = await setupVaultEncryption('{"v":1}', 'p')
     await expect(addPrfSource(security, dek, 'c', randomBytes(16), 'c2FsdA==')).rejects.toThrow('invalid prf output')
     await expect(addPrfSource(security, new Uint8Array(16), 'c', randomBytes(64), 'c2FsdA==')).rejects.toThrow('invalid dek')
+  })
+})
+
+// ABE 应用绑定解锁源（plan p6 §0.3）：security.json 仅记录「有此来源」，无载荷字段——
+// 密文在提权服务 HKLM。恒单份（withAbeSource 替换语义同 withDpapiSource），removeKekSource 可删。
+describe('abe 源（plan p6 §0.3）', () => {
+  it('isKekSource 认 {kind:"abe"}（无载荷字段）', () => {
+    expect(isKekSource({ kind: 'abe' })).toBe(true)
+  })
+  it('isKekSource 不认近似 kind（防拼写漂移静默放行）', () => {
+    expect(isKekSource({ kind: 'abex' })).toBe(false)
+    expect(isKekSource({ kind: 'abe ', wrappedDekD: 'x' })).toBe(false)
+  })
+  it('kekSourcesOf：abe 条目合法保留（不回退 password）', () => {
+    const s = { ...bareSettings(), kekSources: [{ kind: 'password' as const }, { kind: 'abe' as const }] }
+    expect(kekSourcesOf(s)).toEqual([{ kind: 'password' }, { kind: 'abe' }])
+  })
+  it('withAbeSource：无 abe 源时追加（password+abe 并存，原对象不变）', () => {
+    const s = bareSettings()
+    const s2 = withAbeSource(s)
+    expect(s.kekSources).toBeUndefined()
+    expect(s2.kekSources).toEqual([{ kind: 'password' }, { kind: 'abe' }])
+  })
+  it('withAbeSource：已有 dpapi+abe 源时恒单份替换，其余来源原样保留', () => {
+    const s1 = withAbeSource(withDpapiSource(bareSettings(), 'ZHBhcGk='))
+    const s2 = withAbeSource(s1)
+    const abe = s2.kekSources!.filter((x) => x.kind === 'abe')
+    expect(abe).toHaveLength(1)
+    expect(s2.kekSources).toEqual([
+      { kind: 'password' },
+      { kind: 'dpapi', wrappedDekD: 'ZHBhcGk=' },
+      { kind: 'abe' },
+    ])
+  })
+  it('withAbeSource：手工 kekSources（无 password）上替换 abe——abe 恒单份且不混入 password', () => {
+    const s = { ...bareSettings(), kekSources: [{ kind: 'dpapi' as const, wrappedDekD: 'ZA==' }, { kind: 'abe' as const }] }
+    const s2 = withAbeSource(s)
+    expect(s2.kekSources).toEqual([{ kind: 'dpapi', wrappedDekD: 'ZA==' }, { kind: 'abe' }])
+    expect(s2.kekSources!.filter((x) => x.kind === 'abe')).toHaveLength(1)
+  })
+  it('removeKekSource：移除 abe → 仅剩 password', () => {
+    const s = { ...bareSettings(), kekSources: [{ kind: 'password' as const }, { kind: 'abe' as const }] }
+    expect(removeKekSource(s, 'abe').kekSources).toEqual([{ kind: 'password' }])
+  })
+  it('仅 abe 源移除 abe → 抛「至少保留一种解锁方式」', () => {
+    const s = { ...bareSettings(), kekSources: [{ kind: 'abe' as const }] }
+    expect(() => removeKekSource(s, 'abe')).toThrow('至少保留一种解锁方式')
   })
 })
 

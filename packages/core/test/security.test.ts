@@ -152,6 +152,25 @@ describe('securityStore', () => {
     const prfIds = (s2.kekSources ?? []).filter((k) => k.kind === 'prf').map((k) => (k as { credentialId: string }).credentialId)
     expect(new Set(prfIds).size).toBe(prfIds.length)
   })
+  it('ABE（plan p6 §0.3）：changeVaultPassphrase 去重 kekSources — 双 abe 源收敛为 1，abe 显式分支不吞 prf', async () => {
+    const { security, dek } = await setupVaultEncryption(vaultJson, 'p')
+    // 手工构造：1 password + 2 abe（重复）+ 1 prf + 2 dpapi（重复）
+    const duplicated = {
+      ...security,
+      kekSources: [
+        { kind: 'password' as const },
+        { kind: 'abe' as const },
+        { kind: 'abe' as const },
+        { kind: 'prf' as const, credentialId: 'cred-1', salt: 's', wrappedDekP: 'w' },
+        { kind: 'dpapi' as const, wrappedDekD: 'd' },
+        { kind: 'dpapi' as const, wrappedDekD: 'd2' },
+      ],
+    } as typeof security
+    const s2 = (await changeVaultPassphrase(duplicated, dek, 'new')).security
+    // 期望：password×1, abe×1, prf×1, dpapi×1（abe 走显式分支，不得挤占 prf 的 credentialId 去重）
+    const kinds = (s2.kekSources ?? []).map((k) => k.kind)
+    expect(kinds).toEqual(['password', 'abe', 'prf', 'dpapi'])
+  })
 })
 
 describe('securityStore 拒绝方向补全（解锁/改密异常入参）', () => {

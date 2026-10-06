@@ -5,7 +5,9 @@ export type { KekSource }
 
 type PrfSource = Extract<KekSource, { kind: 'prf' }>
 
-function isKekSource(x: unknown): x is KekSource {
+// 契约校验（plan p6 §0.3 导出）：宿主/LockScreen 判定来源合法性时与 kekSourcesOf 过滤共用同一判定，
+// 防两处手写漂移。abe 无载荷字段——密文在提权服务 HKLM，security.json 只记录「有此来源」
+export function isKekSource(x: unknown): x is KekSource {
   if (typeof x !== 'object' || x === null) return false
   const o = x as Record<string, unknown>
   if (o['kind'] === 'password') return true
@@ -17,6 +19,7 @@ function isKekSource(x: unknown): x is KekSource {
     )
   }
   if (o['kind'] === 'dpapi') return typeof o['wrappedDekD'] === 'string'
+  if (o['kind'] === 'abe') return true
   return false
 }
 
@@ -56,11 +59,18 @@ export function withDpapiSource(s: SecuritySettings, wrappedDekD: string): Secur
   return { ...s, kekSources: [...others, { kind: 'dpapi', wrappedDekD }] }
 }
 
+export function withAbeSource(s: SecuritySettings): SecuritySettings {
+  // abe 来源恒单份（plan p6 §0.3，同 withDpapiSource 语义）：重绑/重复绑定时替换而非追加，
+  // 防 kekSources 残留多份 abe 条目误导 UI；无载荷字段——密文在服务 HKLM，此处仅记录来源存在
+  const others = kekSourcesOf(s).filter((src) => src.kind !== 'abe')
+  return { ...s, kekSources: [...others, { kind: 'abe' }] }
+}
+
 // 移除指定来源；移除后一个来源不剩 → 抛 Error('至少保留一种解锁方式')
-// prf 可按 credentialId 精确移除；password 移除后必须仍有其余来源
+// prf 可按 credentialId 精确移除；password/abe 移除后必须仍有其余来源
 export function removeKekSource(
   s: SecuritySettings,
-  kind: 'prf' | 'dpapi' | 'password',
+  kind: 'prf' | 'dpapi' | 'password' | 'abe',
   match?: { credentialId?: string },
 ): SecuritySettings {
   const remaining = kekSourcesOf(s).filter((src) => {
