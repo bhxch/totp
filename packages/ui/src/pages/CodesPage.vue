@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { buildOtpUri, defaultDigitsFor, filterByTags, getBuiltinIcons, type OtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useOtpCodes } from '../composables/useOtpCodes'
 import { iconView, type IconStore } from '../iconStore'
@@ -235,6 +235,8 @@ const dragEnabled = computed(() => !selecting.value && query.value.trim() === ''
 const dragOver = ref<{ uuid: string; before: boolean } | null>(null)
 let dragUuid: string | null = null
 const indexEditing = ref<string | null>(null)
+/** 序号编辑器聚焦宿主（真机缺陷修复）：卡片组件实例挂 ref，startIndexEdit 经 $el 查询 .index-input 聚焦 */
+const editorHost = ref<{ $el?: HTMLElement } | null>(null)
 
 function onDragStart(e: DragEvent, uuid: string) {
   dragUuid = uuid
@@ -271,7 +273,16 @@ function endDrag() {
   dragOver.value = null
 }
 function startIndexEdit(uuid: string) {
-  if (dragEnabled.value) indexEditing.value = uuid
+  if (!dragEnabled.value) return
+  indexEditing.value = uuid
+  // 真机缺陷修复（2026-10-06 e2e 实测）：编辑器无聚焦逻辑——真实鼠标点击打开后焦点仍在
+  // body，键入数字与 Enter 全部落空（jsdom setValue 直写掩盖）；聚焦并全选便于直接覆盖输入
+  void nextTick(() => {
+    const host = editorHost.value?.$el as HTMLElement | undefined
+    const el = host?.querySelector<HTMLInputElement>('.index-input')
+    el?.focus()
+    el?.select()
+  })
 }
 /** 序号定位移动：Enter/失焦确认（Esc 取消后的 blur 经 guard 跳过），moveToIndex 钳位后 reorderOp */
 async function confirmIndexMove(uuid: string, ev: Event) {
@@ -304,7 +315,7 @@ function openSheet() {
     <!-- 批量入库成功提示条（顶部居中悬浮，与底部选择条同设计语言）：自动消失，polite 播报 -->
     <div v-if="batchToast" class="batch-toast" data-test="batch-toast" role="status" aria-live="polite">{{ batchToast }}</div>
     <!-- 条目卡走 MdCard outlined(审查 F3:独立 .card 的 outline-variant/10px 与 M3 标尺双标) -->
-    <MdCard class="codes-card">
+    <MdCard ref="editorHost" class="codes-card">
       <div class="card-head">
         <h2>{{ t('codesPage.entryCount', { count: store.vault.entries.length }) }}</h2>
         <MdButton v-if="sorted.length > 0" data-test="select-mode" variant="text" @click="toggleSelectMode">

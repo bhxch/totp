@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { createMemoryStorage, newEntryFromUri } from '@totp/core'
 import { createVueStore, type VueStore } from '../src/store'
 import CodesPage from '../src/pages/CodesPage.vue'
@@ -133,6 +134,23 @@ describe('CodesPage 序号定位移动（④C）', () => {
     await input.trigger('keydown.enter')
     await flushPromises()
     expect(issuers(store)).toEqual(['B', 'C', 'A'])
+  })
+
+  it('真机缺陷修复（2026-10-06 e2e）：编辑器打开即聚焦并全选（真实键入直接生效）', async () => {
+    const adapter = createMemoryStorage()
+    const store = createVueStore(adapter)
+    await store.initStore()
+    for (const uri of URIS) await store.addEntryOp(newEntryFromUri(uri, 1700000000000))
+    // focus() 仅对已入档元素生效：attachTo document 挂载（enableAutoUnmount 兜底清理）
+    const w = mount(CodesPage, { attachTo: document.body, global: { plugins: [createTestI18n()] }, props: { store } })
+    await flushPromises()
+    await w.findAll('.index-num')[0]!.trigger('click')
+    await flushPromises()
+    await nextTick()
+    const input = w.find('.index-input')
+    expect(input.exists()).toBe(true)
+    expect(document.activeElement).toBe(input.element)
+    w.unmount()
   })
 
   it('Esc 取消不落库', async () => {
