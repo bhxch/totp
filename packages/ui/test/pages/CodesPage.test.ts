@@ -114,8 +114,8 @@ describe('CodesPage 标签筛选（spec §3 管理页）', () => {
     expect(w.text()).toContain('GitHub') // 条目带「工作」，any 命中 → 显示
     await chips.find((c) => c.text() === '个人')!.trigger('click')
     expect(w.text()).toContain('GitHub') // any 语义：命中任一选中标签即仍显示
-    // 选中 ≥2 后模式切换自动可用：点分段「全部」（all）→ 条目仅带「工作」→ 隐藏
-    await w.findAll('button.md-seg__item')[1]!.trigger('click')
+    // 选中 ≥2 后模式切换自动可用：点行首逻辑符号钮单击翻转（any→all）→ 条目仅带「工作」→ 隐藏
+    await w.find('button.mode-toggle').trigger('click')
     expect(w.text()).not.toContain('GitHub')
   })
 
@@ -149,11 +149,15 @@ describe('CodesPage 标签筛选（spec §3 管理页）', () => {
     expect(chip(w, '留存').classes()).not.toContain('md-chip--selected')
   })
 
-  it('点「管理标签」emit open-tags 并打开 TagManagerDialog，遮罩关闭', async () => {
+  it('点「管理标签」icon 钮（TagFilterRow manage-btn）emit open-tags 并打开 TagManagerDialog，遮罩关闭', async () => {
     const s = createVueStore(createMemoryStorage())
     await s.initStore()
+    await s.addTagOp('工作') // TagFilterRow v-if tags.length>0：管理入口随筛选行渲染
     const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
-    await chip(w, '管理标签').trigger('click')
+    const manage = w.find('button.manage-btn')
+    expect(manage.exists()).toBe(true)
+    expect(manage.attributes('title')).toBe('管理标签') // 悬浮提示
+    await manage.trigger('click')
     expect(w.emitted('open-tags')).toHaveLength(1)
     expect(w.find('.md-dialog').exists()).toBe(true)
     expect(w.find('.md-dialog__headline').text()).toBe('标签管理')

@@ -13,7 +13,6 @@ import TagFilterRow from '../components/TagFilterRow.vue'
 import TagManagerDialog from '../components/TagManagerDialog.vue'
 import MdButton from '../components/md/MdButton.vue'
 import MdCard from '../components/md/MdCard.vue'
-import MdChip from '../components/md/MdChip.vue'
 import MdCheckbox from '../components/md/MdCheckbox.vue'
 import MdFab from '../components/md/MdFab.vue'
 import MdIconButton from '../components/md/MdIconButton.vue'
@@ -358,14 +357,14 @@ function openSheet() {
         </MdButton>
       </div>
       <SearchBar v-model="query" v-model:search-secret="searchSecret" />
-      <!-- 标签筛选：多选 chips + 行首 AND/OR 切换（TagFilterRow）；「管理标签」打开 TagManagerDialog -->
+      <!-- 标签筛选：多选 chips + 行首逻辑符号模式切换 + 管理标签 icon 钮（均由 TagFilterRow 提供）；管理钮打开 TagManagerDialog -->
       <div class="chips-row">
         <TagFilterRow
           v-if="store.vault.tags.length > 0"
           :tags="store.vault.tags" v-model:selected-ids="selectedTagIds"
           :mode="tagMode" @update:mode="setTagMode"
+          @open-manage="tagsOpen = true; emit('open-tags')"
         />
-        <MdChip :label="t('codesPage.manageTags')" @click="tagsOpen = true; emit('open-tags')" />
       </div>
       <div v-if="sorted.length === 0" class="empty">{{ t('codesPage.empty') }}</div>
       <div v-else-if="visible.length === 0" class="empty">{{ t('codesPage.noMatch') }}</div>
