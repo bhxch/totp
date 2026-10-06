@@ -1,4 +1,4 @@
-import { parsePastedText } from '@totp/core'
+import { importSteamGuard, parsePastedText, sniffFormat } from '@totp/core'
 import { describe, expect, it } from 'vitest'
 
 describe('parsePastedText', () => {
@@ -62,5 +62,69 @@ describe('parsePastedText', () => {
   })
   it('乱文本无法识别', () => {
     expect(parsePastedText('hello world')).toHaveProperty('unsupported')
+  })
+})
+
+describe('steamGuard：SteamGuard/SDA 明文 JSON 粘贴', () => {
+  // shared_secret = 20 字节全零的标准 base64（'A'×27 + '='）→ 160 bit = 32×5bit，
+  // STEAM_ALPHABET base32 恰为 32 个 '2'（无填充）。brief 原文案 22 个 'A'+'==' 实为 16 字节，
+  // 与其自身断言「32 个 '2'」矛盾，按断言意图修正夹具字节数。
+  const SHARED_SECRET_B64 = `${'A'.repeat(27)}=`
+  const SG_JSON = JSON.stringify({
+    shared_secret: SHARED_SECRET_B64,
+    serial_number: '12345678901',
+    revocation_code: 'R12345',
+    steamid: '76561190000000000',
+  })
+  const SDA_JSON = JSON.stringify({
+    account_name: 'steamuser',
+    device_id: 'android:1234abcd-5678',
+    shared_secret: SHARED_SECRET_B64,
+    serial_number: '12345678901',
+    uri: `otpauth://totp/Steam:steamuser?secret=${encodeURIComponent(SHARED_SECRET_B64)}`,
+  })
+
+  it('sniffFormat 判 steamGuard（shared_secret + serial_number/device_id）', () => {
+    expect(sniffFormat(SG_JSON)).toBe('steamGuard')
+    expect(sniffFormat(SDA_JSON)).toBe('steamGuard')
+  })
+
+  it('SteamGuard JSON → steam 条目：secret=STEAM_ALPHABET base32，note 收 serial/revocation', () => {
+    const r = parsePastedText(SG_JSON)
+    if (!('entries' in r)) throw new Error('expected entries')
+    expect(r.entries).toHaveLength(1)
+    const e = r.entries[0]!
+    expect(e.type).toBe('steam')
+    expect(e.issuer).toBe('Steam')
+    expect(e.label).toBe('76561190000000000') // 无 account_name 回退 steamid
+    expect(e.secret).toBe('2'.repeat(32))
+    expect(e.digits).toBe(5)
+    expect(e.period).toBe(30)
+    expect(e.algorithm).toBe('SHA1')
+    expect(e.note).toBe('12345678901 / R12345')
+  })
+
+  it('SDA maFile 明文 JSON：label 取 account_name，device_id 入 note', () => {
+    const r = parsePastedText(SDA_JSON)
+    if (!('entries' in r)) throw new Error('expected entries')
+    expect(r.entries[0]!.label).toBe('steamuser')
+    expect(r.entries[0]!.note).toContain('android:1234abcd-5678')
+  })
+
+  it('缺 shared_secret / 非 JSON → 引导而非抛异常（嗅探不命中走 unsupported，直解走 failures）', () => {
+    // 嗅探不命中（无 shared_secret → generic 兜底；非 JSON → null）→ parsePastedText 引导文案，不抛异常
+    expect(parsePastedText(JSON.stringify({ serial_number: '123' }))).toEqual({ unsupported: expect.stringContaining('导入页') })
+    expect(parsePastedText('not json {')).toHaveProperty('unsupported')
+    // steamGuard 直解入口对同输入给 failures 引导（不抛异常）
+    const noSecret = importSteamGuard(JSON.stringify({ serial_number: '123' }))
+    expect(noSecret.entries).toHaveLength(0)
+    expect(noSecret.failures).toHaveLength(1)
+    const bad = importSteamGuard('not json {')
+    expect(bad.entries).toHaveLength(0)
+    expect(bad.failures).toHaveLength(1)
+  })
+
+  it('嗅探不误伤：2FAS/aegis/bitwarden 等既有对象格式不受新键影响（既有用例回归保底）', () => {
+    expect(sniffFormat('{"services":[{"secret":"JBSWY3DPEHPK3PXP"}]}')).toBe('twoFas')
   })
 })

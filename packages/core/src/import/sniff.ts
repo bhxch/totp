@@ -5,4 +5,5 @@
 export * from './registry'
 export * from './types'
 export * from './generic'
+export * from './steamGuard'
 export * from './uriBatch'

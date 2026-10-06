@@ -47,6 +47,14 @@ exports[`sniffFormat 判定顺序（R5 注册表迁移守卫） > 全序快照�
     "name": "foxauth（isEncrypted 布尔 + accountInfos）",
   },
   {
+    "format": "steamGuard",
+    "name": "steamGuard（shared_secret + serial_number）",
+  },
+  {
+    "format": "steamGuard",
+    "name": "steamGuard（SDA：shared_secret + device_id）",
+  },
+  {
     "format": "aegis",
     "name": "对象族顺序：aegis > twoFas",
   },
@@ -69,6 +77,14 @@ exports[`sniffFormat 判定顺序（R5 注册表迁移守卫） > 全序快照�
   {
     "format": "freeOtp",
     "name": "对象族顺序：freeOtp > foxauth",
+  },
+  {
+    "format": "foxauth",
+    "name": "对象族顺序：foxauth > steamGuard",
+  },
+  {
+    "format": "generic",
+    "name": "对象族兜底：仅 serial_number 无 shared_secret 不判 steamGuard → generic",
   },
   {
     "format": "generic",

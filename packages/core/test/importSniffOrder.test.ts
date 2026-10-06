@@ -16,7 +16,7 @@ const SECRET = 'JBSWY3DPEHPK3PXP'
 
 // [说明, 文本, 期望判定]。分组顺序即判定优先顺序（对象族 → 数组族 → JSONL → 文本族 → null）。
 const PROBES: Array<[string, string, ImportFormat | null]> = [
-  // —— JSON 对象族：aegis → twoFas → bitwarden → proton → stratum → freeOtp → foxauth → generic 兜底 ——
+  // —— JSON 对象族：aegis → twoFas → bitwarden → proton → stratum → freeOtp → foxauth → steamGuard → generic 兜底 ——
   ['aegis 明文（db 对象）', '{"db":{"entries":[]}}', 'aegis'],
   ['aegis 明文（header 键，明文 slots 空数组）', '{"version":1,"header":{"slots":[],"params":{}}}', 'aegis'],
   ['aegis 加密（db 密文串，嗅探同判 aegis，加密区分走 sniffAegis）', '{"header":{},"db":"aGVsbG8="}', 'aegis'],
@@ -28,6 +28,8 @@ const PROBES: Array<[string, string, ImportFormat | null]> = [
   ['stratum（Authenticators 数组）', '{"Authenticators":[]}', 'stratum'],
   ['freeOtp（tokens + issuerExt + secret 字节数组）', '{"tokens":[{"issuerExt":"A","secret":[1]}]}', 'freeOtp'],
   ['foxauth（isEncrypted 布尔 + accountInfos）', '{"accountInfos":[],"isEncrypted":false}', 'foxauth'],
+  ['steamGuard（shared_secret + serial_number）', '{"shared_secret":"AAAA","serial_number":"123"}', 'steamGuard'],
+  ['steamGuard（SDA：shared_secret + device_id）', '{"shared_secret":"AAAA","device_id":"android-1"}', 'steamGuard'],
   // —— 对象族相邻优先级对：前格式特征命中即返回，后格式特征同现不夺判 ——
   ['对象族顺序：aegis > twoFas', '{"db":{},"services":[{"secret":"X"}]}', 'aegis'],
   ['对象族顺序：twoFas > bitwarden', `{"services":[{"secret":"${SECRET}"}],"items":[{"login":{"totp":"${SECRET}"}}]}`, 'twoFas'],
@@ -35,6 +37,8 @@ const PROBES: Array<[string, string, ImportFormat | null]> = [
   ['对象族顺序：proton > stratum', '{"entries":[{"content":{}}],"Authenticators":[]}', 'proton'],
   ['对象族顺序：stratum > freeOtp', '{"Authenticators":[],"tokens":[{"issuerExt":"A","secret":[1]}]}', 'stratum'],
   ['对象族顺序：freeOtp > foxauth', '{"tokens":[{"issuerExt":"A","secret":[1]}],"accountInfos":[],"isEncrypted":false}', 'freeOtp'],
+  ['对象族顺序：foxauth > steamGuard', '{"accountInfos":[],"isEncrypted":false,"shared_secret":"AAAA","serial_number":"123"}', 'foxauth'],
+  ['对象族兜底：仅 serial_number 无 shared_secret 不判 steamGuard → generic', '{"serial_number":"123"}', 'generic'],
   ['对象族兜底：无特征键单对象 → generic', '{"a":1}', 'generic'],
   // —— JSON 数组族：andOtp → totpAuthenticator → generic 兜底 ——
   ['andOtp（type/algorithm/label/secret 全字符串）', `[{"type":"TOTP","algorithm":"SHA1","label":"a","secret":"${SECRET}"}]`, 'andOtp'],

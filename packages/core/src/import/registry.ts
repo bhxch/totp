@@ -1,6 +1,7 @@
 import { importAegisPlaintext } from './aegis'
 import { importAndOtp, importFreeOtp, importFreeOtpLegacy, importTotpAuthenticator, importTotpAuthenticatorPlaintext } from './miscApps'
 import { importBitwarden, importFoxauth, importFoxauthPlaintext, importProton, importStratum, importTwoFas } from './jsonApps'
+import { importSteamGuard } from './steamGuard'
 import { importUriBatch } from './uriBatch'
 import type { ImportResult } from './types'
 
@@ -132,6 +133,12 @@ function sniffFoxauth(obj: Record<string, unknown>): boolean {
   return Array.isArray(obj.accountInfos) || typeof obj.accountInfos === 'string'
 }
 
+// ---------- steamGuard：SteamGuard/SDA 明文 JSON（shared_secret 必含；serial_number/device_id 至少其一） ----------
+function sniffSteamGuard(obj: Record<string, unknown>): boolean {
+  if (typeof obj.shared_secret !== 'string' || !obj.shared_secret) return false
+  return typeof obj.serial_number === 'string' || typeof obj.device_id === 'string'
+}
+
 // JSON 数组（andOTP 明文导出）且存在条目 type/algorithm/label/secret 均字符串（AndOtpImporter.java）
 function sniffAndOtp(rows: unknown[]): boolean {
   return rows.some((r) => {
@@ -199,7 +206,7 @@ export function sniffAegis(text: string): AegisSniff | null {
 // 嗅探优先序显式为元组（ImportFormat 由其派生）：对象族 → 数组族 → 文本族 → generic 收尾。
 // 嗅探通道与键序的对应：
 // - JSON 对象族（'{ '开头）：aegis → twoFas → bitwarden → proton → stratum → freeOtp → foxauth
-//   → generic（无特征键兜底，无 sniff 谓词，兜底逻辑在 sniffFormat 骨架内）
+//   → steamGuard → generic（无特征键兜底，无 sniff 谓词，兜底逻辑在 sniffFormat 骨架内）
 // - JSON 数组族（'[' 开头）：andOtp → totpAuthenticator → generic（数组兜底）
 // - JSONL（多行全可解析）：generic
 // - 文本族：winauth（'<'+winauth 正则）→ freeOtpLegacy（'<'+tokenOrder|issuerExt）→ uriBatch（含 otpauth://）
@@ -207,7 +214,7 @@ export function sniffAegis(text: string): AegisSniff | null {
 // 漏一侧即编译错。Ente/TOTP Authenticator 外部分享/Authenticator Plus 不设嗅探判定的原因见
 // sniffFormat 注释。
 export const IMPORT_FORMAT_ORDER = [
-  'aegis', 'twoFas', 'bitwarden', 'proton', 'stratum', 'freeOtp', 'foxauth',
+  'aegis', 'twoFas', 'bitwarden', 'proton', 'stratum', 'freeOtp', 'foxauth', 'steamGuard',
   'andOtp', 'totpAuthenticator', 'winauth', 'freeOtpLegacy', 'uriBatch', 'generic',
 ] as const
 
@@ -244,6 +251,11 @@ export const IMPORT_REGISTRY: Record<ImportFormat, ImportFormatDescriptor> = {
     paste: importFoxauthPlaintext,
     parse: importFoxauth,
     // 明文/加密均免口令直接解析(D1):解密口令取自文件内 encryptPassword，口令页不再拦截
+  },
+  steamGuard: {
+    sniffObject: sniffSteamGuard,
+    paste: importSteamGuard,
+    parse: importSteamGuard,
   },
   andOtp: { sniffArray: sniffAndOtp, paste: importAndOtp, parse: importAndOtp },
   totpAuthenticator: {
