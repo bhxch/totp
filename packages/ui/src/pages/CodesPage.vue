@@ -176,11 +176,13 @@ function contextEdit(entry: OtpEntry) {
   closeContextMenu()
 }
 /** 右键「复制验证码」（P3）：取当前码走与行内复制同一 emit('copy') 通道（宿主写剪贴板+30s 清除），
- *  成功提示入队全局 toast；码未就绪时不动作（菜单保持打开） */
-function contextCopyCode(entry: OtpEntry) {
+ *  成功提示入队全局 toast；码未就绪时不动作（菜单保持打开）。HOTP 与行内 onCopy 同口径：
+ *  复制的是旧 counter 的码（RFC 语义），emit 在前、递增在后（审查修复：右键入口此前漏递增） */
+async function contextCopyCode(entry: OtpEntry) {
   const code = codes.value.get(entry.uuid)?.code
   if (!code) return
   emit('copy', code)
+  if (entry.type === 'hotp') await props.store.updateEntryOp(entry.uuid, { counter: (entry.counter ?? 0) + 1 })
   toast.show(t('codesPage.copied'))
   closeContextMenu()
 }

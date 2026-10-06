@@ -424,6 +424,22 @@ describe('CodesPage P3：右键复制验证码/删除项 + 复制 toast + 筛选
     expect(w.find('.md-menu').exists()).toBe(false)
   })
 
+  it('右键「复制验证码」HOTP：emit copy 后 counter 递增（与行内复制同口径）', async () => {
+    const s = createVueStore(createMemoryStorage())
+    await s.initStore()
+    await s.addEntryOp(newEntryFromUri('otpauth://hotp/H:h?secret=JBSWY3DPEHPK3PXP&counter=7', 1))
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    // 双击揭示作 codes 就绪探针（同 readyRevealed，此处条目为 HOTP 需独立底座）
+    await w.find('.otp-item').trigger('dblclick')
+    await vi.waitFor(() => expect(w.find('.otp-item .code').text()).toMatch(/^\d{3} \d{3}$/))
+    await w.find('.otp-item').trigger('contextmenu', { clientX: 10, clientY: 10 })
+    const btn = w.findAll('.md-menu button').find((b) => b.text() === '复制验证码')!
+    await btn.trigger('click')
+    // 与行内复制同口径：emit('copy') 在前（宿主复制旧 counter 的码），递增在后
+    expect(w.emitted('copy')).toHaveLength(1)
+    await vi.waitFor(() => expect(s.vault.entries[0]!.counter).toBe(8))
+  })
+
   it('右键「删除」：关菜单并进入行内两击确认态（条目未删；确认后删除）', async () => {
     const { s, w } = await readyRevealed()
     await w.find('.otp-item').trigger('contextmenu', { clientX: 10, clientY: 10 })
