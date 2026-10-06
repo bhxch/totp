@@ -177,6 +177,7 @@ SW 休眠（chrome://serviceworker-internals 手动 Stop 或等空闲）→ 唤�
 
 | 日期 | 范围 | 结果 | 记录文件 |
 |---|---|---|---|
+| 2026-10-06 | 四问题批真机清单建立：A miniapp 搜索/托盘/无边框/pin、B 销毁档重开白屏（触发参数勘误 0/1）、C 管理页排序、D 云备份 404（spec §1.6/§2.6/§3.5/§4.6 逐条，标注人工/可自动化）；附录归档 Task 9（白屏不可复现 + is_visible 待排查）与 Task 12（drag-drop handler 根因 + 序号遮挡根因 + vault rev 82→86 数据处置） | 清单建立，真机执行待安排（D-4 单测断言已随本批 commit 全绿） | `docs/e2e/2026-10-06-miniapp-sorting-cloud-checklist.md` |
 | 2026-09-27 | 遗留清理批次 E 可自动化部分（基线 055c44e9，批次 A-D 清理后；plan22 场景 1/2/6 + 场景 5 平台受限评估） | D2 重跑通过（上次受阻的剪贴板环境已恢复）；R1 keep readPath+滚动删除经本地 WebDAV 替身日志级验证通过；场景 6 主题/外来键/销毁档/D6 全过；E1-E6 与确认流回归等列人工配合清单 | `docs/e2e/2026-09-27-refactor-leftover-e2e-record.md` |
 | 2026-09-27 | D1–D7 重构后回归（基线 a385f1b→21fd241，R1–R16 十六项重构；重构后 debug 构建 + driver-session 9223） | 6/7 自动化通过；D2 受阻=宿主剪贴板被提权进程锁死（六项核查归因非重构引入，refactorCaused=false）；D3 沿用人工登记；未发现产品缺陷 | `docs/e2e/2026-09-26-refactor-e2e-record.md` |
 | 2026-09-26 | D1–D7、E1–E6、B22/B23 复验（覆盖率批次） | 桌面 6/7 自动化通过（D3 登记人工）；E1–E6 保持手测；发现 B22/B23 当日修复并复验 | `docs/e2e/2026-09-26-coverage-e2e-checklist.md` |
