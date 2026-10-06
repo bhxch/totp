@@ -19,7 +19,7 @@ export interface IconStore {
   icons: Readonly<Record<string, string>>
   /** 包注册表（normKey → { 显示名, 图标 id 清单 }），reactive；来源筛选/替换/删除的单一事实源 */
   packs: Readonly<Record<string, IconPackInfo>>
-  /** 读 'icons' 键填充内存映射；幂等 */
+  /** 读 per-icon 数据键（icon:<id>，经 iconindex 索引）填充内存映射；旧单键 icons 首次 init 幂等迁移；幂等 */
   init(): Promise<void>
   put(id: string, dataUrl: string): Promise<void>
   /** 批量合并写入：内存一次 Object.assign 后单次落盘（避免逐条 put 的 O(n²) 全量序列化） */
@@ -44,7 +44,10 @@ export interface IconPackInfo {
   iconIds: string[]
 }
 
-const ICONS_KEY = 'icons'
+/** P2 per-icon 布局：数据键 icon:<id>（id 含 urlcache: 前缀同理），索引键 iconindex 存全部内存键名。
+ *  一致性顺序＝先数据键后索引：崩溃窗口的孤儿数据键对 init 无害（init 只按索引枚举）。 */
+const ICON_DATA_PREFIX = 'icon:'
+const INDEX_KEY = 'iconindex'
 const PACKS_KEY = 'iconpacks'
 /** I58：URL 拉取缓存的独立命名空间前缀——与图标 id 物理隔离（避免图标 id 与 url 缓存键互相覆盖） */
 const URL_CACHE_PREFIX = 'urlcache:'
@@ -65,23 +68,50 @@ export function createIconStore(adapter: StorageAdapter): IconStore {
   const packs = reactive<Record<string, IconPackInfo>>({})
   let inited = false
 
-  async function persist(): Promise<void> {
-    await adapter.set(ICONS_KEY, JSON.stringify(icons))
-  }
-
   async function persistPacks(): Promise<void> {
     await adapter.set(PACKS_KEY, JSON.stringify(packs))
+  }
+
+  async function persistKeys(changed: Array<{ id: string; value: string | null }>): Promise<void> {
+    const known = new Set(Object.keys(icons))
+    let indexDirty = false
+    for (const { id, value } of changed) {
+      const key = `${ICON_DATA_PREFIX}${id}`
+      if (value === null) await adapter.delete(key)
+      else await adapter.set(key, value)
+      if (!known.has(id)) indexDirty = true // 集合变化（新增或删除）才重写索引
+    }
+    if (indexDirty) await adapter.set(INDEX_KEY, JSON.stringify(Object.keys(icons)))
   }
 
   async function init(): Promise<void> {
     if (inited) return
     inited = true
-    const raw = await adapter.get(ICONS_KEY)
-    if (raw !== null) {
+    // 旧单键迁移（幂等）：拆写数据键 → 写索引 → 删旧键
+    const legacy = await adapter.get('icons')
+    if (legacy !== null) {
+      let legacyMap: Record<string, string> = {}
       try {
-        Object.assign(icons, JSON.parse(raw) as Record<string, string>)
+        legacyMap = JSON.parse(legacy) as Record<string, string>
       } catch {
-        // 盘上数据损坏时按空存储处理，不阻断启动
+        legacyMap = {} // 损坏按空处理，不阻断启动
+      }
+      const ids = Object.keys(legacyMap)
+      for (const id of ids) await adapter.set(`${ICON_DATA_PREFIX}${id}`, legacyMap[id]!)
+      await adapter.set(INDEX_KEY, JSON.stringify(ids))
+      await adapter.delete('icons')
+    }
+    const rawIndex = await adapter.get(INDEX_KEY)
+    if (rawIndex !== null) {
+      let ids: string[] = []
+      try {
+        ids = JSON.parse(rawIndex) as string[]
+      } catch {
+        ids = []
+      }
+      for (const id of ids) {
+        const v = await adapter.get(`${ICON_DATA_PREFIX}${id}`)
+        if (v !== null) icons[id] = v
       }
     }
     const rawPacks = await adapter.get(PACKS_KEY)
@@ -95,24 +125,35 @@ export function createIconStore(adapter: StorageAdapter): IconStore {
   }
 
   async function put(id: string, dataUrl: string): Promise<void> {
+    const isNew = !(id in icons)
     icons[id] = dataUrl
-    await persist()
+    await persistKeys([{ id, value: dataUrl }])
+    if (isNew) await adapter.set(INDEX_KEY, JSON.stringify(Object.keys(icons)))
   }
 
   async function putMany(entries: Record<string, string>): Promise<void> {
+    const known = new Set(Object.keys(icons))
     Object.assign(icons, entries)
-    await persist()
+    await persistKeys(Object.keys(entries).map((id) => ({ id, value: entries[id]! })))
+    if (Object.keys(entries).some((id) => !known.has(id))) await adapter.set(INDEX_KEY, JSON.stringify(Object.keys(icons)))
   }
 
   async function remove(id: string): Promise<void> {
     // I58：URL 缓存键以 urlcache: 前缀，remove(id) 只删图标 id 本身，不触碰 url 缓存命名空间
+    const existed = id in icons
     delete icons[id]
-    await persist()
+    await adapter.delete(`${ICON_DATA_PREFIX}${id}`)
+    if (existed) await adapter.set(INDEX_KEY, JSON.stringify(Object.keys(icons)))
   }
 
   async function removeMany(ids: string[]): Promise<void> {
-    for (const id of ids) delete icons[id]
-    await persist()
+    let removed = false
+    for (const id of ids) {
+      if (id in icons) removed = true
+      delete icons[id]
+      await adapter.delete(`${ICON_DATA_PREFIX}${id}`)
+    }
+    if (removed) await adapter.set(INDEX_KEY, JSON.stringify(Object.keys(icons)))
   }
 
   async function upsertPack(normKey: string, info: IconPackInfo): Promise<void> {
@@ -123,9 +164,14 @@ export function createIconStore(adapter: StorageAdapter): IconStore {
   async function removePack(normKey: string): Promise<void> {
     const info = packs[normKey]
     if (!info) return
-    for (const id of info.iconIds) delete icons[id]
+    let removed = false
+    for (const id of info.iconIds) {
+      if (id in icons) removed = true
+      delete icons[id]
+      await adapter.delete(`${ICON_DATA_PREFIX}${id}`)
+    }
     delete packs[normKey]
-    await persist()
+    if (removed) await adapter.set(INDEX_KEY, JSON.stringify(Object.keys(icons)))
     await persistPacks()
   }
 

@@ -23,7 +23,7 @@ describe('createIconStore', () => {
     const s = createIconStore(adapter)
     await s.init()
     await s.init()
-    expect(get).toHaveBeenCalledTimes(2) // icons + iconpacks 各读一次；重复 init 不再加载
+    expect(get).toHaveBeenCalledTimes(3) // 旧键探测 + iconindex + iconpacks 各读一次；重复 init 不再加载
   })
 
   it('put/remove 落盘；新 store init 往返恢复', async () => {
@@ -32,11 +32,11 @@ describe('createIconStore', () => {
     await a.init()
     await a.put('github', DATA_URL)
     expect(a.icons['github']).toBe(DATA_URL)
-    expect(JSON.parse((await adapter.get('icons'))!).github).toBe(DATA_URL)
+    expect(await adapter.get('icon:github')).toBe(DATA_URL)
 
     await a.remove('github')
     expect(a.icons['github']).toBeUndefined()
-    expect(JSON.parse((await adapter.get('icons'))!).github).toBeUndefined()
+    expect(await adapter.get('icon:github')).toBeNull()
 
     await a.put('gitlab', DATA_URL)
     const b = createIconStore(adapter)
@@ -52,10 +52,11 @@ describe('createIconStore', () => {
     await s.init()
     set.mockClear()
     await s.putMany({ a: DATA_URL, b: DATA_URL })
-    expect(set).toHaveBeenCalledTimes(1)
+    expect(set).toHaveBeenCalledTimes(3) // per-icon 布局：2 个数据键 + 1 次索引（批量仍无 O(n) 全量重写）
     expect(s.icons['a']).toBe(DATA_URL)
     expect(s.icons['b']).toBe(DATA_URL)
-    expect(JSON.parse((await adapter.get('icons'))!)).toEqual({ a: DATA_URL, b: DATA_URL })
+    expect(await adapter.get('icon:a')).toBe(DATA_URL)
+    expect(await adapter.get('icon:b')).toBe(DATA_URL)
     const b = createIconStore(adapter)
     await b.init()
     expect(b.icons).toEqual({ a: DATA_URL, b: DATA_URL })

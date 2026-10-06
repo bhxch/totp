@@ -55,7 +55,7 @@ describe('iconStore fetchAndCache 落盘失败分支', () => {
       get: (k: string) => base.get(k),
       delete: (k: string) => base.delete(k),
       set: vi.fn(async (k: string, v: string) => {
-        if (k === 'icons') throw new Error('disk full') // persist 落盘拒绝
+        if (k.startsWith('icon:')) throw new Error('disk full') // 数据键落盘拒绝
         await base.set(k, v)
       }),
     }
