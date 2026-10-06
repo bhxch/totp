@@ -29,6 +29,11 @@ export function importSteamGuard(text: string): ImportResult {
   } catch {
     return { entries: [], failures: [{ index: 0, message: 'shared_secret 不是合法 base64' }] }
   }
+  // Steam shared_secret 固定 20 字节（160bit，对齐 WinAuth AddSteamAuthenticator.cs 的 SteamAuth 数据口径）；
+  // 非 20 字节说明数据损坏/被截断，按失败引导而非生成损坏条目
+  if (bytes.length !== 20) {
+    return { entries: [], failures: [{ index: 0, message: 'shared_secret 解码后须为 20 字节（Steam 固定长度）' }] }
+  }
   const label =
     typeof obj.account_name === 'string' && obj.account_name
       ? obj.account_name

@@ -134,6 +134,15 @@ describe('steamGuard：SteamGuard/SDA 明文 JSON 粘贴', () => {
     expect(bad.failures).toHaveLength(1)
   })
 
+  it('shared_secret 解码后非 20 字节 → failures 引导（Steam 固定长度，不生成损坏条目）', () => {
+    const short = importSteamGuard(JSON.stringify({ shared_secret: btoa('12345') }))
+    expect(short.entries).toHaveLength(0)
+    expect(short.failures).toEqual([{ index: 0, message: 'shared_secret 解码后须为 20 字节（Steam 固定长度）' }])
+    const long = importSteamGuard(JSON.stringify({ shared_secret: btoa(String.fromCharCode(...new Uint8Array(32).fill(0xff))) }))
+    expect(long.entries).toHaveLength(0)
+    expect(long.failures).toHaveLength(1)
+  })
+
   it('嗅探不误伤：2FAS/aegis/bitwarden 等既有对象格式不受新键影响（既有用例回归保底）', () => {
     expect(sniffFormat('{"services":[{"secret":"JBSWY3DPEHPK3PXP"}]}')).toBe('twoFas')
   })

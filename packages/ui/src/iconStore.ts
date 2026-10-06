@@ -72,16 +72,13 @@ export function createIconStore(adapter: StorageAdapter): IconStore {
     await adapter.set(PACKS_KEY, JSON.stringify(packs))
   }
 
+  /** 只负责数据键写入/删除；索引由调用方在集合变化时显式重写（先数据后索引顺序不变，崩溃窗口孤儿键对 init 无害） */
   async function persistKeys(changed: Array<{ id: string; value: string | null }>): Promise<void> {
-    const known = new Set(Object.keys(icons))
-    let indexDirty = false
     for (const { id, value } of changed) {
       const key = `${ICON_DATA_PREFIX}${id}`
       if (value === null) await adapter.delete(key)
       else await adapter.set(key, value)
-      if (!known.has(id)) indexDirty = true // 集合变化（新增或删除）才重写索引
     }
-    if (indexDirty) await adapter.set(INDEX_KEY, JSON.stringify(Object.keys(icons)))
   }
 
   async function init(): Promise<void> {
@@ -92,7 +89,11 @@ export function createIconStore(adapter: StorageAdapter): IconStore {
     if (legacy !== null) {
       let legacyMap: Record<string, string> = {}
       try {
-        legacyMap = JSON.parse(legacy) as Record<string, string>
+        const parsed = JSON.parse(legacy) as unknown
+        // 形状校验：'null'/数组/原始值等不合法 legacy 一律按空处理，不阻断启动（与下方容错口径一致）
+        legacyMap = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+          ? (parsed as Record<string, string>)
+          : {}
       } catch {
         legacyMap = {} // 损坏按空处理，不阻断启动
       }
@@ -109,10 +110,14 @@ export function createIconStore(adapter: StorageAdapter): IconStore {
       } catch {
         ids = []
       }
-      for (const id of ids) {
-        const v = await adapter.get(`${ICON_DATA_PREFIX}${id}`)
-        if (v !== null) icons[id] = v
-      }
+      // 读路径按索引批量并行回读：扩展端每次 get 是一次 IPC 往返，串行 await 会放大为 O(n) 次往返
+      // （2000 图标全量包场景 popup 启动可感知变慢），Promise.all 单轮并行消解；非 null 才填 icons 语义不变
+      await Promise.all(
+        ids.map(async (id) => {
+          const v = await adapter.get(`${ICON_DATA_PREFIX}${id}`)
+          if (v !== null) icons[id] = v
+        }),
+      )
     }
     const rawPacks = await adapter.get(PACKS_KEY)
     if (rawPacks !== null) {
