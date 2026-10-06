@@ -12,7 +12,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import {
   addEntry, base64ToBytes, bytesToBase64, changeVaultPassphrase, createVault, encryptVaultWithDek,
-  setupVaultEncryption, SECURITY_KEY, VAULT_KEY, type OtpEntry, type SecuritySettings, type Vault,
+  setupVaultEncryption, SECURITY_KEY, VAULT_KEY, type OtpEntry, type SecuritySettings, type Tag, type Vault,
 } from '@totp/core'
 import { tauriMock } from '../test/mocks/tauri'
 import MiniApp from './MiniApp.vue'
@@ -66,9 +66,10 @@ function seedZh() {
   files.set('settings.json', JSON.stringify({ locale: 'zh' }))
 }
 
-async function seedVault(entries: OtpEntry[]): Promise<Vault> {
+async function seedVault(entries: OtpEntry[], tags: Tag[] = []): Promise<Vault> {
   let vault: Vault = createVault()
   for (const e of entries) vault = addEntry(vault, e)
+  vault.tags = tags
   files.set(`${VAULT_KEY}.json`, JSON.stringify(vault))
   return vault
 }
@@ -160,7 +161,9 @@ describe('复制编排（B10.36）', () => {
       await wrapper.find('[data-test="copy"]').trigger('click')
       await flushPromises()
       expect(wrapper.text()).toContain('复制失败：剪贴板被占用')
-      await vi.advanceTimersByTimeAsync(1500) // 越过 500ms 自动隐藏窗口
+      // 面板装配后沿旧 v-else 链语义：失败横幅 3s 复位期间列表区被横幅顶替——推进越过复位点
+      // （fake 时间确定性，不依赖 shouldAdvanceTime 的真实时间泄漏），再验未隐藏与 HOTP 不推进
+      await vi.advanceTimersByTimeAsync(3100)
       await flushPromises()
       expect(tauriMock.window.hide).not.toHaveBeenCalled() // 失败保持窗口可见
       expect(wrapper.find('[data-test="item"]').attributes('data-code')).toBe(before) // 码未复制成功 → counter 不推进
@@ -378,11 +381,11 @@ describe('mini load 失败暴露（spec §2.2）', () => {
   })
 })
 
-describe('mini 搜索框（spec §1.2）', () => {
+describe('mini 搜索框（spec §1.2，经 QuickCodesPanel 冻结行）', () => {
   it('输入过滤列表：命中 issuer 子串；清空恢复；无命中显示 searchEmpty 文案', async () => {
     await seedVault([TOTP, HOTP]) // 种子两条（GitHub / Legacy），复用文件既有种子
     const w = await mountMini()
-    const input = w.find('input[type="search"]')
+    const input = w.find('.quick-codes-panel .frozen input[type="search"]')
     await input.setValue('git')
     expect(w.findAll('[data-test="item"]')).toHaveLength(1)
     await input.setValue('zzz-no-match')
@@ -390,6 +393,70 @@ describe('mini 搜索框（spec §1.2）', () => {
     expect(w.text()).toContain('无匹配条目')
     await input.setValue('')
     expect(w.findAll('[data-test="item"]')).toHaveLength(2)
+  })
+})
+
+describe('QuickCodesPanel 装配与标签筛选（P4 Task 2）', () => {
+  const A: OtpEntry = { ...TOTP, uuid: 'ta', issuer: 'Alpha', tagIds: ['t1'] }
+  const B: OtpEntry = { ...TOTP, uuid: 'tb', issuer: 'Beta', tagIds: ['t2'] }
+  const TAGS: Tag[] = [{ id: 't1', name: '工作' }, { id: 't2', name: '个人' }]
+
+  it('装配结构：搜索行入面板 .frozen 冻结容器；有标签时筛选行出现且无管理钮；条目经面板渲染', async () => {
+    await seedVault([A, B], TAGS)
+    const w = await mountMini()
+    expect(w.find('.quick-codes-panel').exists()).toBe(true)
+    expect(w.find('.quick-codes-panel .frozen input[type="search"]').exists()).toBe(true)
+    expect(w.find('.quick-codes-panel .tag-filter-row').exists()).toBe(true)
+    expect(w.find('button.manage-btn').exists()).toBe(false) // 快速窗语义：无管理入口
+    expect(w.findAll('[data-test="item"]')).toHaveLength(2)
+  })
+
+  it('tag 过滤编排（any）：chip 选中只留命中条目；选择不持久化（快速窗会话语义，不写 settings）；清空恢复', async () => {
+    await seedVault([A, B], TAGS)
+    const w = await mountMini()
+    // chips 序：全部 / 个人(t2) / 工作(t1)（名称 zh 字母序，同面板测试口径）
+    await w.findAll('button.md-chip')[2]!.trigger('click') // 选中 t1
+    await flushPromises()
+    const items = w.findAll('[data-test="item"]')
+    expect(items).toHaveLength(1)
+    expect(items[0]!.text()).toContain('Alpha')
+    // 选择不触发 commitSettings：settings 原子写落 settings.json.tmp（mock rename no-op），
+    // 无 .tmp 即无写盘——快速窗会话语义
+    expect(files.get('settings.json.tmp')).toBeUndefined()
+    await w.findAll('button.md-chip')[2]!.trigger('click') // 取消 → 直通
+    await flushPromises()
+    expect(w.findAll('[data-test="item"]')).toHaveLength(2)
+  })
+
+  it('tagMode 走全局 settings：选中≥2 后模式钮翻转 any→all（无条目同带两标签 → searchEmpty 空态）；commitSettings 落盘且选中集合仍不持久化', async () => {
+    await seedVault([A, B], TAGS)
+    const w = await mountMini()
+    await w.findAll('button.md-chip')[1]!.trigger('click') // 个人 t2
+    await w.findAll('button.md-chip')[2]!.trigger('click') // 工作 t1
+    await flushPromises()
+    expect(w.findAll('[data-test="item"]')).toHaveLength(2) // any：各带其一都命中
+    await w.find('button.mode-toggle').trigger('click')
+    await flushPromises()
+    expect(w.findAll('[data-test="item"]')).toHaveLength(0) // all：无条目同带两标签
+    expect(w.text()).toContain('无匹配条目') // 标签过滤后空列表落 noMatchText（语义近似可接受）
+    const saved = JSON.parse(files.get('settings.json.tmp')!) as { tagFilterMode?: string; lastTagFilterIds?: string[] } // settings 原子写落 .tmp（mock rename no-op）
+    expect(saved.tagFilterMode).toBe('all') // 模式全局共享（CodesPage 同款 commitSettings）
+    expect(saved.lastTagFilterIds).toEqual([]) // 快速窗选择不持久化
+  })
+
+  it('悬空 tag 清理：主窗删除标签后聚焦重载 → 选中集合剔除悬空 id（CodesPage 同款 watch），列表恢复全量', async () => {
+    await seedVault([A, B], TAGS)
+    const w = await mountMini()
+    await w.findAll('button.md-chip')[2]!.trigger('click') // 选中 t1 → 只剩 Alpha
+    await flushPromises()
+    expect(w.findAll('[data-test="item"]')).toHaveLength(1)
+    // 主窗删除标签 t1 落盘，mini 聚焦触发整链重载（store 重建）
+    const vault = JSON.parse(files.get(`${VAULT_KEY}.json`)!) as Vault
+    vault.tags = vault.tags.filter((t) => t.id !== 't1')
+    files.set(`${VAULT_KEY}.json`, JSON.stringify(vault))
+    tauriMock.emitFocusChanged(true)
+    // 清理后选中集合为空 → 过滤直通；若未清理则 t1 悬空仍命中 Alpha（Beta 隐藏）可区分
+    await vi.waitFor(() => expect(w.findAll('[data-test="item"]')).toHaveLength(2))
   })
 })
 

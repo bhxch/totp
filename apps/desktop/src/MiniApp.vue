@@ -2,8 +2,9 @@
 import { invoke } from '@tauri-apps/api/core'
 import { emit, listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { OtpListItem, PersistErrorBanner, SearchBar, createIconStore, iconView, searchEntries, useOtpCodes, useTheme, type IconStore, type VueStore } from '@totp/ui'
-import { computed, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
+import { filterByTags, type TagFilterMode } from '@totp/core'
+import { PersistErrorBanner, QuickCodesPanel, createIconStore, searchEntries, useOtpCodes, useTheme, type IconStore, type VueStore } from '@totp/ui'
+import { computed, onMounted, onScopeDispose, ref, shallowRef, watch } from 'vue'
 import { createTauriFs } from './tauriFs'
 import { bootDesktopStore, persistFailed, useDesktopI18n } from './desktopShell'
 import { createCopyAutoHide } from './miniAutoHide'
@@ -131,8 +132,39 @@ onScopeDispose(() => {
 /** 列表排序：pinned 优先 → order 升序（sortMiniEntries 纯函数，与 CodesPage.vue 同口径，跨宿主顺序一致） */
 const sorted = computed(() => (store.value ? sortMiniEntries(store.value.vault.entries) : []))
 const { codes } = useOtpCodes(sorted)
-/** 搜索过滤（spec §1.2）：谓词与 popup 同源（searchEntries），mini 无 tag/URL 语境不用 resolvePopupVisible */
-const visible = computed(() => searchEntries(sorted.value, query.value.trim()))
+/** 标签筛选选中集合（P4 Task 2）：快速窗**会话语义，不持久化**——mini 常驻后台随开随选，与
+ *  CodesPage/popup 的 settings 持久化（rememberTagFilter→lastTagFilterIds）刻意不同；mini store
+ *  每次聚焦重载即重建实例，持久化恢复反而引入悬空恢复负担。tagMode 则与 CodesPage 同款走全局
+ *  settings（跨窗共享 any/all） */
+const selectedTagIds = ref<string[]>([])
+const tagMode = computed<TagFilterMode>({
+  get: () => store.value?.settings.tagFilterMode ?? 'any',
+  set: (m) => {
+    const s = store.value
+    if (!s) return
+    s.settings.tagFilterMode = m
+    void s.commitSettings()
+  },
+})
+/** 可见列表（P4 Task 2，与 CodesPage 同款组合口径）：搜索过滤（谓词与 popup 同源 searchEntries）
+ *  → 标签筛选（filterByTags，any/all）；仅在有选中标签时走 filterByTags（空集合直通） */
+const visible = computed(() => {
+  const list = searchEntries(sorted.value, query.value.trim())
+  if (selectedTagIds.value.length === 0) return list
+  return filterByTags(list, new Set(selectedTagIds.value), tagMode.value)
+})
+/** 兜底：tag 被删除（主窗管理/远端同步）后从选中集合剔除悬空 id（CodesPage 同款）。mini store 是
+ *  shallowRef 包装且每次聚焦重载重建实例，watch 源对 store.value 动态解引用——实例替换时 getter
+ *  重估（新数组）同样触发清理 */
+watch(
+  () => store.value?.vault.tags.map((t) => t.id),
+  (ids) => {
+    if (!ids) return
+    const next = selectedTagIds.value.filter((id) => ids.includes(id))
+    if (next.length !== selectedTagIds.value.length) selectedTagIds.value = next
+  },
+  { immediate: true },
+)
 
 /** 复制编排统一走 createDesktopCopy（R13，与主窗同一事实源）：stage 成功武装 30s 清空、失败横幅
  *  3s 自动复位（修复：mini 原横幅不复位，行为已与 desktopCopy 漂移，以 desktopCopy 为准） */
@@ -185,17 +217,27 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
     </header>
     <!-- R16⑤（评审 A2 方案 a）：落盘失败常驻告警，与主体并列不互斥 -->
     <PersistErrorBanner :show="persistFailed" :text="tr('app.persistError')" />
-    <!-- 搜索行（spec §1.2）：SearchBar 内部 useI18n，i18n 插件装入后才渲染 -->
-    <div v-if="i18nReady" class="search-row"><SearchBar v-model="query" /></div>
     <div v-if="store && locked" class="empty">{{ tr('mini.lockedNote') }}</div>
     <div v-else-if="copyFailed" class="copy-error" role="alert">{{ tr('mini.copyFailed') }}</div>
     <div v-else-if="loadFailed && !store" class="copy-error" role="alert">{{ tr('mini.loadFailed') }}</div>
-    <div v-else-if="!store || sorted.length === 0" class="empty">{{ tr('mini.empty') }}</div>
-    <div v-else-if="visible.length === 0" class="empty">{{ tr('mini.searchEmpty') }}</div>
-    <!-- 终审 Important-1：@dblclick 未在 OtpListItem emits 声明，经 attrs fallthrough 合并到组件根元素，
-         与组件内部揭示 onDblclick 合并共存（Vue 3 mergeProps 依次调用）——双击即揭示并取消 500ms 自动隐藏
-         （审查 I-1：控制器内部递增揭示代次，使 await 期间在途的 copy 不再武装自动隐藏） -->
-    <OtpListItem v-for="(e, i) in visible" :key="e.uuid" :entry="e" :icon="iconView(e.icon, icons ?? undefined)" :index="i + 1" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 1 }" :context-menu="false" :show-qr="false" @copy="copy(e)" @dblclick="autoHide.onDblclick" />
+    <!-- P4 Task 2：搜索行 + 列表区整体换装 QuickCodesPanel（冻结筛选行 + 纯取码列表 + 两态空文案，
+         行内 QR 入口面板内恒关）。过滤编排（搜索→标签）与复制/自动隐藏通道留宿主。面板内
+         SearchBar/TagFilterRow 依赖 i18n 插件，i18nReady 门控保留；锁定/复制失败/load 失败分支
+         仍沿旧 v-else-if 链优先于面板 -->
+    <QuickCodesPanel
+      v-else-if="i18nReady"
+      :entries="visible" :codes="codes" :icons="icons"
+      :empty-text="tr('mini.empty')" :no-match-text="tr('mini.searchEmpty')"
+      v-model:query="query"
+      tag-row :tags="store?.vault.tags ?? []"
+      v-model:selected-tag-ids="selectedTagIds" v-model:tag-mode="tagMode"
+      @copy="(e) => copy(e)" @dblclick="autoHide.onDblclick"
+    />
+    <!-- 兜底（沿旧空态语义）：boot 未完成（store 未置位）先显示全空文案，mini-ready 前窗口不可见 -->
+    <div v-else class="empty">{{ tr('mini.empty') }}</div>
+    <!-- 双击揭示：面板把 OtpListItem 根元素 dblclick 显式上抛（declared emit，携带 MouseEvent），
+         宿主接 autoHide.onDblclick 取消 500ms 自动隐藏（控制器内部递增揭示代次，使 await 期间
+         在途的 copy 不再武装自动隐藏，审查 I-1） -->
   </main>
 </template>
 
@@ -209,7 +251,6 @@ body { font-family: system-ui, sans-serif; margin: 0; }
 .tb-btn.active { color: var(--md-sys-color-primary); }
 .empty { text-align: center; opacity: .6; padding: 32px 0; font-size: var(--md-sys-typescale-body-medium); }
 .copy-error { text-align: center; color: var(--md-sys-color-error); background: var(--md-sys-color-error-container); border-radius: 6px; padding: 8px 0; font-size: var(--md-sys-typescale-body-small); }
-.search-row { padding: 2px 0; }
 /* CSS 装载后接管精确主题色：mini.html 内联底色只保首帧（防加载期白屏），html data-mode 随 useTheme 切换 */
 html { background: var(--md-sys-color-background, #fff); }
 </style>
