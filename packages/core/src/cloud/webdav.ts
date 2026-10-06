@@ -74,7 +74,10 @@ export function createWebdavBackend(cred: WebdavCred): CloudBackend {
     },
     async exists(path) {
       const res = await cloudFetch(LABEL, urlOf(path), { method: 'GET', headers: { Authorization: auth } }, proxyOf(cred))
-      if (res.status === 404) return false
+      // 404=对象不存在；409=父目录缺失（坚果云对不存在目录下的 GET 回 AncestorsNotFound，
+      // 真机 e2e 2026-10-06 实证）——两者均判定「云端无对象」，交由 push 的 ensureDavDir
+      // 逐级建目录自愈；其余非 2xx（401/403/5xx）照常抛错
+      if (res.status === 404 || res.status === 409) return false
       await ensureHttpOk(LABEL, res, 'GET')
       return res.ok
     },

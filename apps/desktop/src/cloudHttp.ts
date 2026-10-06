@@ -19,7 +19,12 @@ export const tauriCloudFetch: CloudFetchImpl = async (_label, url, init, proxy) 
   // TS 5.7 下 Uint8Array<ArrayBufferLike> 不满足 BodyInit；base64ToBytes 恒新建全量视图
   // （byteOffset=0 覆盖整个 buffer），传底层 ArrayBuffer 语义等价
   const bytes = r.bodyB64 ? base64ToBytes(r.bodyB64) : null
-  return new Response(bytes ? (bytes.buffer as ArrayBuffer) : null, { status: r.status, headers: r.headers })
+  const res = new Response(bytes ? (bytes.buffer as ArrayBuffer) : null, { status: r.status, headers: r.headers })
+  // 桌面 reqwest 通道的 Response 无 url（浏览器通道自动回显）——补写请求 url，
+  // 供 CloudHttpError/ensureHttpOk 的错误行携带 host+pathname（否则显示「<url 解析失败>」，
+  // 2026-10-06 真机 e2e 实证）。url 是原型 getter，实例属性遮蔽
+  Object.defineProperty(res, 'url', { value: url })
+  return res
 }
 
 export function installTauriCloudFetch(): void {

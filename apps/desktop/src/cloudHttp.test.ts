@@ -16,6 +16,11 @@ describe('桌面 cloudFetch 注入（③）', () => {
     expect(res.status).toBe(200)
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([7]))
   })
+  it('Response 回显请求 url（错误行 describeUrl 依赖，真机 e2e 2026-10-06：否则恒「<url 解析失败>」）', async () => {
+    invoke.mockResolvedValue({ status: 404, headers: {}, bodyB64: null })
+    const res = await tauriCloudFetch('WebDAV', 'https://dav.example.com/dir/obj', { method: 'GET' }, { mode: 'none' })
+    expect(res.url).toBe('https://dav.example.com/dir/obj')
+  })
   it('install 后 cloudFetch 走注入实现（setCloudFetch 生效）', async () => {
     const { __resetCloudFetchForTest, cloudFetch } = await import('@totp/core')
     installTauriCloudFetch()

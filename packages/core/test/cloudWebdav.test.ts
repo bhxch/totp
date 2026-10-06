@@ -86,6 +86,12 @@ describe('WebDAV 后端', () => {
     await expect(backend.exists(PATH)).rejects.toThrow('WebDAV 请求失败（HTTP 500）')
   })
 
+  it('exists：409（父目录缺失，坚果云 AncestorsNotFound）→ false 交由 push 逐级建目录自愈（2026-10-06 真机 e2e）', async () => {
+    const backend = createWebdavBackend({ backend: 'webdav', serverUrl: DAV, username: 'user', password: 'pass' })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<d:error><s:exception>AncestorsNotFound</s:exception></d:error>', { status: 409 })))
+    expect(await backend.exists(PATH)).toBe(false)
+  })
+
   it('listBackups：PROPFIND 父目录 Depth:1，multistatus href 末段过滤 BACKUP_NAME_RE', async () => {
     const xml = `<?xml version="1.0" encoding="utf-8"?>
 <D:multistatus xmlns:D="DAV:">
