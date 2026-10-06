@@ -1,5 +1,5 @@
-import { parseOtpUri } from '@totp/core'
-import { PENDING_OTPAUTH_KEY } from '../src/pendingOtpauth'
+import { parsePastedText } from '@totp/core'
+import { PENDING_OTPAUTH_KEY, encodePending } from '../src/pendingOtpauth'
 import { decodeImageBytesToUri } from '../src/qrDecode'
 import { pullSyncIfNewer, pushSync } from '../src/syncEngine'
 import { handleCloudFetchMessage } from '../src/cloudFetchHandler'
@@ -19,6 +19,8 @@ const OTPAUTH_MENU_ID = 'otpauth-add'
 const QR_IMAGE_MENU_ID = 'qr-decode-image'
 /** 右键菜单 id：打开主界面态（popup 精简后管理面全在 options#/codes，快捷入口直达） */
 const OPEN_MAIN_MENU_ID = 'otp-open-main'
+/** Firefox 回退通知 id：notifications.onClicked 只认它（点击 → popup.html 标签页完成添加） */
+const PENDING_NOTIFY_ID = 'totp-pending-add'
 
 /** 桌面通知单点（R16⑪ 三连收敛）：basic 通知样式恒同（图标/标题），仅 message 差异 */
 function notify(message: string): void {
@@ -109,7 +111,8 @@ export default defineBackground(() => {
         notify('图中未识别到有效的 otpauth 二维码')
         return
       }
-      await ext!.storage.local.set({ [PENDING_OTPAUTH_KEY]: uri })
+      // P5：写盘升级为 pending 信封（kind=uri），popup 消费端按 kind 分派
+      await ext!.storage.local.set({ [PENDING_OTPAUTH_KEY]: encodePending({ v: 1, kind: 'uri', text: uri }) })
       notify('已识别验证码二维码，点扩展图标查看并保存')
       return
     }
@@ -119,31 +122,56 @@ export default defineBackground(() => {
       return
     }
     if (info.menuItemId !== OTPAUTH_MENU_ID) return
+    // P5：选中文本交 parsePastedText 全格式嗅探（P2 粘贴白名单：otpauth URI 行/SteamGuard JSON/
+    // base32 等），不再本地只认 otpauth URI。单条 → 写 pending 信封（原始文本整体，popup 消费端
+    // 复解得到同一结果）+ openPopup 尝试；多条 → 批量在导入页做，仅通知条数引导；0 条（含
+    // 格式不识别）→ 透传嗅探引导文案或通用提示，不写 pending、不 openPopup。
     const text = (info.selectionText ?? '').trim()
-    let valid = false
-    if (text.startsWith('otpauth://')) {
-      try {
-        parseOtpUri(text)
-        valid = true
-      } catch { /* 落入下方提示 */ }
+    const parsed = parsePastedText(text)
+    if ('unsupported' in parsed) {
+      notify(parsed.unsupported)
+      return
     }
-    if (!valid) {
-      notify('选中文本不是有效的 otpauth 链接')
+    if (parsed.entries.length === 0) {
+      notify('未识别出可导入的条目')
+      return
+    }
+    if (parsed.entries.length > 1) {
+      notify(`识别到 ${parsed.entries.length} 条，请打开主界面导入页完成批量添加`)
       return
     }
     void ext!.storage.local
-      .set({ [PENDING_OTPAUTH_KEY]: text })
+      .set({ [PENDING_OTPAUTH_KEY]: encodePending({ v: 1, kind: 'pasted', text }) })
       .then(() => {
-        // openPopup 仅部分 Chromium 版本开放（需用户手势）；不可用时静默——用户点扩展图标即见预填。
-        // M22：canOpenPopup 探测后直调 action.openPopup（现代 chrome-types 已收录），删除原 `as unknown as {...}.openPopup?.()` 类型断言。
+        // openPopup 仅部分 Chromium 版本开放（需用户手势）；Firefox 等无此能力 → 发带 id 通知，
+        // 点击经 notifications.onClicked 监听打开 popup.html 标签页完成添加。
+        // M22：canOpenPopup 探测后直调 action.openPopup（现代 chrome-types 已收录）。
         try {
           if (canOpenPopup()) {
             const result = (ext!.action as { openPopup: () => unknown }).openPopup()
             if (result instanceof Promise) void result.catch(() => {})
+          } else {
+            void ext!.notifications
+              .create(PENDING_NOTIFY_ID, {
+                type: 'basic',
+                iconUrl: '/icon/128.png',
+                title: 'TOTP 验证码工具',
+                message: '已识别待添加内容，点击完成添加',
+              })
+              .catch(() => {})
           }
         } catch { /* API 不存在/调用失败：静默降级 */ }
       })
       .catch(() => {}) // 写入失败极罕见，不打扰
+  })
+
+  // P5 Firefox 回退：无 openPopup 能力时选择分支写入 pending 后发 PENDING_NOTIFY_ID 通知；
+  // 点击通知 → popup.html 作标签页打开，自动走 consumePendingOtpauth（ext+otpauth 协议回调
+  // 先例同路径）。notify() 的默认通知无此 id，点击不动作。listener 挂在事件 target 上，
+  // SW 生命周期内天然单例（defineBackground 冷启动重复执行不重复派发）。
+  ext!.notifications.onClicked.addListener((notificationId) => {
+    if (notificationId !== PENDING_NOTIFY_ID) return
+    void ext!.tabs.create({ url: ext!.runtime.getURL('popup.html') }).catch(() => {})
   })
 
   // 页面端写路径成功后立即发 {type:'sync-push'}（popup 发完即可能销毁，页面端不做 debounce）：

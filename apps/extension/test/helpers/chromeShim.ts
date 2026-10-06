@@ -119,8 +119,13 @@ export interface ContextMenusShim {
 
 export interface NotificationsShim {
   created: Array<Record<string, unknown>>
-  /** MV3 无 callback 重载返回 Promise（background.notify 通道 .catch 消费；断言仍走 created 记录） */
-  create(opts: Record<string, unknown>): Promise<string>
+  /** MV3 无 callback 重载返回 Promise（background.notify 通道 .catch 消费；断言仍走 created 记录）。
+   *  P5 Firefox 回退：notificationId 第一参形态时 id 并入记录（真实 API 该 id 即 create 返回值） */
+  create(notificationIdOrOpts: string | Record<string, unknown>, opts?: Record<string, unknown>): Promise<string>
+  onClicked: {
+    addListener(cb: (notificationId: string) => void): void
+    removeListener(cb: (notificationId: string) => void): void
+  }
 }
 
 export interface OffscreenShim {
@@ -154,6 +159,8 @@ export interface ChromeShim {
   emitAlarm(alarm: { name: string; scheduledTime?: number }): void
   /** 模拟右键菜单点击 */
   emitContextMenuClick(info: Record<string, unknown>): void
+  /** 模拟通知点击（notifications.onClicked 派发，P5 Firefox 回退） */
+  emitNotificationClick(notificationId: string): void
   contextMenus: ContextMenusShim
   notifications: NotificationsShim
   offscreen?: OffscreenShim
@@ -276,11 +283,24 @@ export function installChromeShim(opts: ChromeShimOptions = {}): ChromeShim {
     },
   }
 
+  const notificationClickListeners: Array<(notificationId: string) => void> = []
+
   const notifications: NotificationsShim = {
     created: [],
-    create(opts) {
-      this.created.push(opts)
-      return Promise.resolve(`notification-${this.created.length}`)
+    create(notificationIdOrOpts, opts) {
+      const id = typeof notificationIdOrOpts === 'string' ? notificationIdOrOpts : undefined
+      const options = (typeof notificationIdOrOpts === 'string' ? opts : notificationIdOrOpts) ?? {}
+      this.created.push(id === undefined ? { ...options } : { id, ...options })
+      return Promise.resolve(id ?? `notification-${this.created.length}`)
+    },
+    onClicked: {
+      addListener(cb) {
+        notificationClickListeners.push(cb)
+      },
+      removeListener(cb) {
+        const i = notificationClickListeners.indexOf(cb)
+        if (i >= 0) notificationClickListeners.splice(i, 1)
+      },
     },
   }
 
@@ -391,6 +411,9 @@ export function installChromeShim(opts: ChromeShimOptions = {}): ChromeShim {
     },
     emitContextMenuClick(info) {
       for (const l of [...contextMenuListeners]) l(info)
+    },
+    emitNotificationClick(notificationId) {
+      for (const l of [...notificationClickListeners]) l(notificationId)
     },
     onMessageListeners: () => [...messageListeners],
     runtime: {

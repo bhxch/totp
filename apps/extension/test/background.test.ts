@@ -3,10 +3,13 @@
  * 立即执行（test/helpers/defineBackground.ts），SW 的全部注册逻辑因此可断言：
  * - 冷启动注册三个 contextMenus（C11：不放 onInstalled；同 id 重复 create 吞 lastError 幂等）；
  * - 冷启动即 pullSyncIfNewer 首拉兜底（engine 内复核 syncEnabled——false 不拉的分支属 syncEngine 测试）；
- * - 右键点击 otpauth-add：非法选中文本→错误通知；合法→pendingOtpauth + canOpenPopup 探测
- *   openPopup（Promise resolve/reject 吞、非 Promise 忽略、API 缺失/同步抛错静默四形态）；
- * - 右键点击 qr-decode-image：fetch→arrayBuffer→解码成功→pendingOtpauth+成功通知；
- *   fetch 拒绝/解码失败→「图中未识别」通知；
+ * - 右键点击 otpauth-add（P5 全格式）：parsePastedText 嗅探——单条（otpauth URI/SteamGuard JSON
+ *   等）写 pending 信封 kind=pasted + canOpenPopup 探测 openPopup（Promise resolve/reject 吞、
+ *   非 Promise 忽略、API 缺失/同步抛错静默四形态）；无 openPopup 能力（Firefox）→ 带 id 通知
+ *   回退，notifications.onClicked 只认 totp-pending-add → tabs.create 打开 popup.html；
+ *   多条 → 通知条数引导导入页（不写 pending）；0 条/格式不识别 → 透传或通用引导通知；
+ * - 右键点击 qr-decode-image：fetch（含 data: URL 同链路）→arrayBuffer→解码成功→pending 信封
+ *   kind=uri + 成功通知；fetch 拒绝/解码失败→「图中未识别」通知；
  * - 消息协议：schedule-clipboard-clear（delayMs 缺省/非 number→30s 兜底）、sync-push（1s 合并
  *   窗口防抖）、sync-pull（立即）、未知 type 忽略；
  * - alarm clipboard-clear 到点→ensureOffscreenDocument+sendMessage+ack 结算（1s 超时重试，
@@ -20,6 +23,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { installChromeShim, type ChromeShim } from './helpers/chromeShim'
 import { stubDefineBackground } from './helpers/defineBackground'
+import { decodePending } from '../src/pendingOtpauth'
 
 const { pullSyncIfNewer, pushSync, decodeImageBytesToUri } = vi.hoisted(() => ({
   pullSyncIfNewer: vi.fn(async () => {}),
@@ -38,8 +42,15 @@ vi.mock('../src/syncEngine', () => ({
 }))
 vi.mock('../src/qrDecode', () => ({ decodeImageBytesToUri }))
 
-/** 合法 otpauth URI（parseOtpUri 走 @totp/core 真实实现） */
+/** 合法 otpauth URI（parsePastedText 走 @totp/core 真实实现） */
 const VALID_URI = 'otpauth://totp/GitHub:me?secret=JBSWY3DPEHPK3PXP'
+/** 第二条合法 otpauth URI（多条场景；uriBatch 逐行解析不去重） */
+const SECOND_URI = 'otpauth://totp/GitLab:me?secret=JBSWY3DPEHPK3PXP'
+/** SteamGuard 明文 JSON 夹具（shared_secret 20 字节全 0xFF 的 base64，对齐 core importPaste 夹具） */
+const SG_JSON = JSON.stringify({
+  shared_secret: btoa(String.fromCharCode(...new Uint8Array(20).fill(0xff))),
+  serial_number: '12345678901',
+})
 
 let shim: ChromeShim
 let stub: ReturnType<typeof stubDefineBackground>
@@ -99,7 +110,7 @@ describe('SW 冷启动注册（B1-1/2）', () => {
 })
 
 describe('右键菜单 otpauth-add（B1-4）', () => {
-  it('选中文本非 otpauth：错误通知，不写 pendingOtpauth、不探测 openPopup', async () => {
+  it('无效文本（格式不识别）：透传嗅探引导文案，不写 pending、不 openPopup', async () => {
     const openPopup = vi.fn(() => Promise.resolve())
     await loadBackground({ openPopup })
 
@@ -107,29 +118,54 @@ describe('右键菜单 otpauth-add（B1-4）', () => {
     await flush()
 
     expect(shim.notifications.created).toHaveLength(1)
-    expect(shim.notifications.created[0]).toMatchObject({ type: 'basic', message: '选中文本不是有效的 otpauth 链接' })
+    expect(shim.notifications.created[0]).toMatchObject({ type: 'basic', message: '无法识别粘贴内容格式' })
     expect(shim.local.data['pendingOtpauth']).toBeUndefined()
     expect(openPopup).not.toHaveBeenCalled()
   })
 
-  it('otpauth:// 前缀但解析失败（secret 缺失）：同样错误通知', async () => {
+  it('otpauth 行但解析失败（secret 缺失）：entries 0 → 通用未识别通知，不写 pending', async () => {
     await loadBackground()
     clickMenu({ menuItemId: 'otpauth-add', selectionText: 'otpauth://totp/bad' })
     await flush()
-    expect(shim.notifications.created[0]).toMatchObject({ message: '选中文本不是有效的 otpauth 链接' })
+    expect(shim.notifications.created[0]).toMatchObject({ message: '未识别出可导入的条目' })
     expect(shim.local.data['pendingOtpauth']).toBeUndefined()
   })
 
-  it('合法 URI：写 pendingOtpauth，canOpenPopup 探测后调 openPopup（Promise 形态）', async () => {
+  it('单条合法 URI：写 pending 信封 kind=pasted（trim 后原样），canOpenPopup 探测后调 openPopup', async () => {
     const openPopup = vi.fn(() => Promise.resolve())
     await loadBackground({ openPopup })
 
     clickMenu({ menuItemId: 'otpauth-add', selectionText: `  ${VALID_URI}  ` })
     await flush()
 
-    expect(shim.local.data['pendingOtpauth']).toBe(VALID_URI) // trim 后原样写入
+    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'pasted', text: VALID_URI })
     expect(openPopup).toHaveBeenCalledTimes(1)
-    expect(shim.notifications.created).toHaveLength(0) // 成功路径静默（用户点图标即见预填）
+    expect(shim.notifications.created).toHaveLength(0) // 成功路径静默（popup 自动开即见预填）
+  })
+
+  it('SteamGuard JSON 单条（P2 全格式）：写 pending 信封 kind=pasted + openPopup，成功路径静默', async () => {
+    const openPopup = vi.fn(() => Promise.resolve())
+    await loadBackground({ openPopup })
+
+    clickMenu({ menuItemId: 'otpauth-add', selectionText: SG_JSON })
+    await flush()
+
+    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'pasted', text: SG_JSON })
+    expect(openPopup).toHaveBeenCalledTimes(1)
+    expect(shim.notifications.created).toHaveLength(0)
+  })
+
+  it('多条（两行 otpauth URI）：不写 pending、不 openPopup，通知条数引导导入页批量添加', async () => {
+    const openPopup = vi.fn(() => Promise.resolve())
+    await loadBackground({ openPopup })
+
+    clickMenu({ menuItemId: 'otpauth-add', selectionText: `${VALID_URI}\n${SECOND_URI}` })
+    await flush()
+
+    expect(shim.notifications.created).toHaveLength(1)
+    expect(shim.notifications.created[0]).toMatchObject({ message: '识别到 2 条，请打开主界面导入页完成批量添加' })
+    expect(shim.local.data['pendingOtpauth']).toBeUndefined()
+    expect(openPopup).not.toHaveBeenCalled()
   })
 
   it('openPopup 返回 rejected Promise：catch 吞掉不产生 unhandled rejection', async () => {
@@ -140,14 +176,32 @@ describe('右键菜单 otpauth-add（B1-4）', () => {
     expect(openPopup).toHaveBeenCalledTimes(1) // 无 unhandled rejection 即通过（vitest 会将未处理拒绝计为错误）
   })
 
-  it('action 无 openPopup 成员（canOpenPopup false）：写入照常，不调用 openPopup', async () => {
-    await loadBackground() // 未注入 openPopup
+  it('Firefox 回退（canOpenPopup false）：写入照常不调 openPopup，发带 id 通知引导', async () => {
+    await loadBackground() // 未注入 openPopup → canOpenPopup false
     clickMenu({ menuItemId: 'otpauth-add', selectionText: VALID_URI })
     await flush()
-    expect(shim.local.data['pendingOtpauth']).toBe(VALID_URI)
+    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'pasted', text: VALID_URI })
+    expect(shim.notifications.created).toHaveLength(1)
+    expect(shim.notifications.created[0]).toMatchObject({
+      id: 'totp-pending-add',
+      type: 'basic',
+      message: '已识别待添加内容，点击完成添加',
+    })
   })
 
-  it('openPopup 同步抛错（API 存在但调用失败）：try-catch 静默，不影响已写入的 pendingOtpauth', async () => {
+  it('notifications.onClicked 只认 totp-pending-add：点击 → tabs.create 打开 popup.html；其他通知 id 不动作', async () => {
+    await loadBackground()
+    shim.emitNotificationClick('totp-pending-add')
+    expect(shim.tabs.create).toHaveBeenCalledTimes(1)
+    expect(shim.tabs.create).toHaveBeenCalledWith({ url: 'chrome-extension://test-id/popup.html' })
+
+    // notify() 的默认通知（无自定义 id）与任意其他 id：点击不动作
+    shim.emitNotificationClick('notification-1')
+    shim.emitNotificationClick('some-other')
+    expect(shim.tabs.create).toHaveBeenCalledTimes(1)
+  })
+
+  it('openPopup 同步抛错（API 存在但调用失败）：try-catch 静默，不影响已写入的 pending 信封', async () => {
     const openPopup = vi.fn(() => {
       throw new Error('openPopup is not allowed')
     })
@@ -155,7 +209,7 @@ describe('右键菜单 otpauth-add（B1-4）', () => {
     clickMenu({ menuItemId: 'otpauth-add', selectionText: VALID_URI })
     await flush()
     expect(openPopup).toHaveBeenCalledTimes(1)
-    expect(shim.local.data['pendingOtpauth']).toBe(VALID_URI)
+    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'pasted', text: VALID_URI })
   })
 
   it('非 otpauth 菜单 id：忽略（菜单点击派发给不相关监听器的防御）', async () => {
@@ -179,8 +233,23 @@ describe('右键菜单 qr-decode-image（B1-5）', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('https://example.com/qr.png')
     expect(decodeImageBytesToUri).toHaveBeenCalledWith(expect.any(Uint8Array))
-    expect(shim.local.data['pendingOtpauth']).toBe(VALID_URI)
+    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'uri', text: VALID_URI })
     expect(shim.notifications.created[0]).toMatchObject({ message: '已识别验证码二维码，点扩展图标查看并保存' })
+  })
+
+  it('data: URL 图片（内嵌 base64）：fetch 走同一链路（MV3 SW fetch 支持 data: scheme），解码成功写 kind=uri 信封', async () => {
+    const dataUrl = 'data:image/png;base64,iVBORw0KGgo='
+    decodeImageBytesToUri.mockResolvedValue(VALID_URI)
+    const fetchMock = vi.fn(async () => ({ arrayBuffer: async () => new ArrayBuffer(4) }))
+    vi.stubGlobal('fetch', fetchMock)
+    await loadBackground()
+
+    clickMenu({ menuItemId: 'qr-decode-image', srcUrl: dataUrl })
+    await flush()
+
+    expect(fetchMock).toHaveBeenCalledWith(dataUrl)
+    expect(decodeImageBytesToUri).toHaveBeenCalledWith(expect.any(Uint8Array))
+    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'uri', text: VALID_URI })
   })
 
   it('解码失败（返回 null）：「图中未识别」通知，不写 pendingOtpauth', async () => {
