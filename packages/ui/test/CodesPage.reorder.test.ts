@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { createMemoryStorage, newEntryFromUri } from '@totp/core'
 import { createVueStore, type VueStore } from '../src/store'
@@ -56,7 +56,7 @@ describe('CodesPage 拖拽排序（④C）', () => {
     expect(w.find('.handle').exists()).toBe(false)
   })
 
-  it('杂-I2：行 drag-enabled class 随 dragEnabled 挂卸（hover 隐藏序号的 CSS 挂载点）', async () => {
+  it('杂-I2：行 drag-enabled class 随 dragEnabled 挂卸（把手渲染的挂载点）', async () => {
     const { w } = await mountPage()
     expect(w.findAll('.row').map((r) => r.classes())).toEqual([
       expect.arrayContaining(['drag-enabled']),
@@ -65,9 +65,48 @@ describe('CodesPage 拖拽排序（④C）', () => {
     ])
     await w.find('input[type="search"], .search input').setValue('A')
     await flushPromises()
-    // 过滤态：把手不渲染且 drag-enabled 卸下，hover 规则不再隐藏序号
+    // 过滤态：把手不渲染且 drag-enabled 卸下
     expect(w.findAll('.row').every((r) => !r.classes().includes('drag-enabled'))).toBe(true)
     expect(w.find('.handle').exists()).toBe(false)
+  })
+
+  it('④C 修复：把手与序号并列渲染（hover 不隐藏序号，鼠标点击序号仍可打开输入）', async () => {
+    // jsdom 不应用 SFC scoped CSS，display 样式断言不稳：以结构并存 + clickable/title 断言
+    // 「把手并列出现、序号保持可见可点」（display:none 隐藏已被撤销，结构上二者共存即新行为）
+    const { w } = await mountPage()
+    const row = w.findAll('.row')[0]!
+    expect(row.find('.handle').exists()).toBe(true)
+    const num = row.find('.index-num')
+    expect(num.exists()).toBe(true)
+    expect(num.classes()).toContain('clickable')
+    expect(num.attributes('title')).toBe('点击输入序号移动')
+    // 序号点击路径在并列布局下依然可用（物理遮挡已由 CSS 撤销，行为回归保障）
+    await num.trigger('click')
+    expect(row.find('.index-input').exists()).toBe(true)
+  })
+
+  it('过滤态：序号 title 展示禁用提示（h1，spec §3.3）', async () => {
+    const { w } = await mountPage()
+    await w.find('input[type="search"], .search input').setValue('A')
+    await flushPromises()
+    const idx = w.find('.index-num')
+    expect(idx.attributes('title')).toContain('禁用')
+    expect(idx.classes()).not.toContain('clickable')
+  })
+})
+
+describe('CodesPage 排序落库失败留痕（h3）', () => {
+  it('reorderOp 落库失败：console.error 留痕不抛断（h3，spec §3.3）', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { w, store } = await mountPage()
+    vi.spyOn(store, 'reorderOp').mockRejectedValueOnce(new Error('disk full'))
+    const rows = w.findAll('.row')
+    await rows[0]!.find('.handle').trigger('dragstart', { dataTransfer: { setData() {}, effectAllowed: '' } })
+    await rows[1]!.trigger('dragover', { clientY: 5 })
+    await rows[1]!.trigger('drop')
+    await flushPromises()
+    expect(errSpy).toHaveBeenCalledWith('[codes] reorder failed:', expect.any(Error))
+    errSpy.mockRestore()
   })
 })
 

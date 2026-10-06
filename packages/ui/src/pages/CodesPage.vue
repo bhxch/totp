@@ -260,7 +260,11 @@ async function onDrop() {
     entries.map((e2) => e2.uuid), src, over.uuid, over.before,
     new Set(entries.filter((e2) => e2.pinned).map((e2) => e2.uuid)),
   )
-  if (next) await props.store.reorderOp(next)
+  if (next) {
+    // h3 防御：落库失败（盘满/权限等）不抛断拖拽事件链，console.error 留痕（内存态已前进，宿主
+    // R16⑤ 横幅接管「未保存」提示）；confirmIndexMove 同型
+    try { await props.store.reorderOp(next) } catch (e) { console.error('[codes] reorder failed:', e) }
+  }
 }
 function endDrag() {
   dragUuid = null
@@ -280,7 +284,10 @@ async function confirmIndexMove(uuid: string, ev: Event) {
     entries.map((e2) => e2.uuid), uuid, parsed,
     new Set(entries.filter((e2) => e2.pinned).map((e2) => e2.uuid)),
   )
-  if (next) await props.store.reorderOp(next)
+  if (next) {
+    // h3 防御：同 onDrop——落库失败留痕不抛断（Enter/blur 事件链内拒绝会变成 unhandled rejection）
+    try { await props.store.reorderOp(next) } catch (e) { console.error('[codes] reorder failed:', e) }
+  }
 }
 /** 拼版 Dialog：条目取选中集合按展示顺序（pinned/order），不受当前搜索/标签过滤影响
  *  （勾选时行可见即入集合；过滤变化不隐式丢条目） */
@@ -336,7 +343,7 @@ function openSheet() {
           @qr="qrEntry = e"
           @context="(ev) => onContextMenu(e, ev)"
         >
-          <!-- ④C：行首序号列宿主形态——无过滤时 hover 切换拖拽把手、点击序号输入目标序号移动 -->
+          <!-- ④C：行首序号列宿主形态——无过滤时拖拽把手与序号并列渲染（均可见），点击序号输入目标序号移动 -->
           <template #lead>
             <span
               v-if="dragEnabled" class="handle" draggable="true" :title="t('codesPage.dragHandleTitle')"
@@ -353,7 +360,7 @@ function openSheet() {
                  keydown.enter 会触发条目复制）。过滤态无此入口（拖拽/序号移动全序语义均禁） -->
             <span
               v-else class="index-num" :class="{ clickable: dragEnabled }"
-              :title="dragEnabled ? t('codesPage.indexEditTitle') : undefined"
+              :title="dragEnabled ? t('codesPage.indexEditTitle') : t('codesPage.sortDisabledHint')"
               :tabindex="dragEnabled ? 0 : undefined" :role="dragEnabled ? 'button' : undefined"
               :aria-label="dragEnabled ? t('codesPage.indexNumAria', { label: e.label }) : undefined"
               @click.stop="startIndexEdit(e.uuid)"
@@ -431,14 +438,14 @@ h2 { margin: 0; font-size: var(--md-sys-typescale-title-medium); }
 .chips-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .row { position: relative; display: flex; align-items: center; }
 .row :deep(.otp-item) { flex: 1; }
-/* ④C：序号/把手 hover 切换（slot 内容属本组件作用域）；把手仅无过滤时渲染 */
-.handle { cursor: grab; opacity: .6; }
+/* ④C：行首把手/序号并列布局（slot 内容属本组件作用域）；把手仅无过滤时渲染 */
+.handle { cursor: grab; opacity: .6; margin-right: 2px; }
 .row .handle { display: none; }
 .row:hover .handle, .handle:active { display: inline; }
-/* 杂-I2：hover 隐藏序号仅限有把手时（行 drag-enabled class 随 dragEnabled 挂卸）——
-   搜索/标签过滤态把手不渲染，序号是行首唯一标识，hover 不再隐藏产生闪烁 */
-.row.drag-enabled:hover .index-num { display: none; }
-/* 杂-I3：键盘聚焦序号按钮时保持可见（鼠标恰悬停时 display:none 会让焦点元素不可见） */
+/* 杂-I2（Task 13 修订）：hover 把手与序号并列出现、序号保持可见可点——原「hover 隐藏序号」
+   规则使把手物理顶替序号，鼠标点击序号位置实际命中把手，序号输入的鼠标路径不可达（Task 12
+   诊断），已撤销。行 drag-enabled class 仍随 dragEnabled 挂卸，作把手渲染的挂载点 */
+/* 杂-I3：键盘聚焦序号按钮时保持可见（兜底保留：未来若再引入任何序号隐藏规则，焦点元素不被隐没） */
 .row.drag-enabled .index-num:focus-visible { display: inline; }
 .index-num.clickable { cursor: pointer; }
 .index-input { width: 48px; text-align: center; font-size: var(--md-sys-typescale-body-small); border: 1px solid var(--md-sys-color-outline); border-radius: 4px; background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); }

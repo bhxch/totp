@@ -683,6 +683,7 @@
     "indexEditTitle": "Click to move by index",
     "indexEditAria": "Target index for {label}",
     "indexNumAria": "Move {label} by index (Enter to confirm)",
+    "sortDisabledHint": "Sorting is disabled while filtering or in multi-select; clear filters to drag",
     "manageTags": "Manage tags",
     "empty": "No entries yet. Tap \"Add\" at the bottom right to create one.",
     "noMatch": "No matching entries",
