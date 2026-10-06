@@ -501,6 +501,13 @@ fn ensure_window(app: &AppHandle, label: &str) -> bool {
         .inner_size(760.0, 560.0)
         .visible(false)
         .enable_clipboard_access()
+        // Task 12 诊断：wry/tauri 默认 drag-drop handler 在 Windows 吞掉 WebView2 的 HTML5 DnD
+        // 事件（dragstart 后 dragover/drop 零触发，SendInput 变体独立复现），管理页拖拽排序真机
+        // 无效。禁用该 handler 是前端 HTML5 拖放 API 在 Windows 可用的必要条件（tauri 2.11.5
+        // webview_window.rs 官方注释明示 "required to use HTML5 drag and drop APIs on the
+        // frontend on Windows"）。应用无 Tauri 原生 drag-drop 事件依赖已核实（onDragDropEvent/
+        // drag-drop 全仓源码零匹配，文件拖入导入走对话框），禁用无副作用。mini 无排序交互面不加。
+        .disable_drag_drop_handler()
         .build(),
         "mini" => tauri::WebviewWindowBuilder::new(
             app,
