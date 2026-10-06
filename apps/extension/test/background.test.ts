@@ -1,7 +1,7 @@
 /**
  * background.ts 全测（P3a，盘点 B1-1~8）：WXT defineBackground stub 后回调体在模块求值期
  * 立即执行（test/helpers/defineBackground.ts），SW 的全部注册逻辑因此可断言：
- * - 冷启动注册两个 contextMenus（C11：不放 onInstalled；同 id 重复 create 吞 lastError 幂等）；
+ * - 冷启动注册三个 contextMenus（C11：不放 onInstalled；同 id 重复 create 吞 lastError 幂等）；
  * - 冷启动即 pullSyncIfNewer 首拉兜底（engine 内复核 syncEnabled——false 不拉的分支属 syncEngine 测试）；
  * - 右键点击 otpauth-add：非法选中文本→错误通知；合法→pendingOtpauth + canOpenPopup 探测
  *   openPopup（Promise resolve/reject 吞、非 Promise 忽略、API 缺失/同步抛错静默四形态）；
@@ -74,12 +74,12 @@ function clickMenu(info: Record<string, unknown>): void {
 }
 
 describe('SW 冷启动注册（B1-1/2）', () => {
-  it('注册两个 contextMenus：id 与 contexts 正确，create 回调执行且 lastError 干净', async () => {
+  it('注册三个 contextMenus：id 与 contexts 正确，create 回调执行且 lastError 干净', async () => {
     await loadBackground()
     expect(stub.callbacks).toHaveLength(1)
-    expect(shim.contextMenus.created.map((c) => c.props.id)).toEqual(['otpauth-add', 'qr-decode-image'])
-    expect(shim.contextMenus.created.map((c) => c.props.contexts)).toEqual([['selection'], ['image']])
-    // 两个 create 的回调都已执行（幂等确认）且未报 lastError
+    expect(shim.contextMenus.created.map((c) => c.props.id)).toEqual(['otpauth-add', 'qr-decode-image', 'otp-open-main'])
+    expect(shim.contextMenus.created.map((c) => c.props.contexts)).toEqual([['selection'], ['image'], ['action', 'page']])
+    // 三个 create 的回调都已执行（幂等确认）且未报 lastError
     expect(shim.contextMenus.created.every((c) => c.callback !== undefined)).toBe(true)
   })
 
@@ -88,8 +88,8 @@ describe('SW 冷启动注册（B1-1/2）', () => {
     // shim 对同 id create 在 callback 期间置 lastError；background 的回调 `() => void ext.runtime.lastError`
     // 只读取不判断——重复注册不得抛出（C11 幂等语义）
     expect(() => stub.callbacks[0]!()).not.toThrow()
-    expect(shim.contextMenus.created).toHaveLength(4)
-    expect(shim.contextMenus.created[2]!.props.id).toBe('otpauth-add')
+    expect(shim.contextMenus.created).toHaveLength(6)
+    expect(shim.contextMenus.created[3]!.props.id).toBe('otpauth-add')
   })
 
   it('SW 冷启动即 pullSyncIfNewer 首拉兜底（浏览器关闭期间他端推送不再触发 onChanged）', async () => {
@@ -205,6 +205,21 @@ describe('右键菜单 qr-decode-image（B1-5）', () => {
     await flush()
 
     expect(shim.notifications.created[0]).toMatchObject({ message: '图中未识别到有效的 otpauth 二维码' })
+    expect(shim.local.data['pendingOtpauth']).toBeUndefined()
+  })
+})
+
+describe('右键菜单 otp-open-main（打开主界面）', () => {
+  it('点击：tabs.create 打开 options.html#/codes（与 popup「打开主界面」按钮同 URL）', async () => {
+    await loadBackground()
+
+    clickMenu({ menuItemId: 'otp-open-main' })
+    await flush()
+
+    expect(shim.tabs.create).toHaveBeenCalledTimes(1)
+    expect(shim.tabs.create).toHaveBeenCalledWith({ url: 'chrome-extension://test-id/options.html#/codes' })
+    // 纯导航动作：不产生通知、不写 pendingOtpauth
+    expect(shim.notifications.created).toHaveLength(0)
     expect(shim.local.data['pendingOtpauth']).toBeUndefined()
   })
 })

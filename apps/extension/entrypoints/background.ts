@@ -17,6 +17,8 @@ const SYNC_PUSH_MERGE_MS = 1_000
 const OTPAUTH_MENU_ID = 'otpauth-add'
 /** 右键菜单 id：识别图片中的 otpauth 二维码（C4，activeTab 随右键授予，零新增权限） */
 const QR_IMAGE_MENU_ID = 'qr-decode-image'
+/** 右键菜单 id：打开主界面态（popup 精简后管理面全在 options#/codes，快捷入口直达） */
+const OPEN_MAIN_MENU_ID = 'otp-open-main'
 
 /** 桌面通知单点（R16⑪ 三连收敛）：basic 通知样式恒同（图标/标题），仅 message 差异 */
 function notify(message: string): void {
@@ -86,6 +88,11 @@ export default defineBackground(() => {
     { id: QR_IMAGE_MENU_ID, title: '识别图中的验证码二维码', contexts: ['image'] },
     () => void ext!.runtime.lastError,
   )
+  // P4：action 图标右键 / 页面右键均可直达主界面态（URL 与 popup「打开主界面」按钮同源）
+  ext!.contextMenus.create(
+    { id: OPEN_MAIN_MENU_ID, title: '打开主界面', contexts: ['action', 'page'] },
+    () => void ext!.runtime.lastError,
+  )
   // 点击：listener 改 async（MV3 只要求 addListener 本身同步注册；事件回调返回的 promise 被
   // Chrome 忽略，无副作用），async 化使 QR 分支可直接 await fetch/storage，分支复用三件套
   ext!.contextMenus.onClicked.addListener(async (info) => {
@@ -104,6 +111,11 @@ export default defineBackground(() => {
       }
       await ext!.storage.local.set({ [PENDING_OTPAUTH_KEY]: uri })
       notify('已识别验证码二维码，点扩展图标查看并保存')
+      return
+    }
+    // P4 打开主界面：tabs.create 建新标签页直达 options#/codes；create 失败（浏览器侧极少）吞掉
+    if (info.menuItemId === OPEN_MAIN_MENU_ID) {
+      void ext!.tabs.create({ url: ext!.runtime.getURL('options.html#/codes') }).catch(() => {})
       return
     }
     if (info.menuItemId !== OTPAUTH_MENU_ID) return
