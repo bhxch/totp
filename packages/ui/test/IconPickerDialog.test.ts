@@ -30,6 +30,18 @@ describe('IconPickerDialog', () => {
     expect(w.findAll('.picker-grid--all button').length).toBeLessThan(Number(grid(w).attributes('data-total')))
   })
 
+  it('滚动换页：spacer 撑起 ceil(total/colCount)*96 总高，滚动后窗口前移（data-first）', async () => {
+    const w = mountPicker()
+    const total = Number(grid(w).attributes('data-total'))
+    // colCount 初始 5：jsdom 无布局，clientWidth/Height 为 0，measure 不改写
+    const spacerH = parseFloat((w.find('.picker-spacer').element as HTMLElement).style.height)
+    expect(spacerH).toBe(Math.ceil(total / 5) * 96)
+    const scrollerEl = w.find('.picker-scroll').element as HTMLElement
+    scrollerEl.scrollTop = 96 * 10
+    await w.find('.picker-scroll').trigger('scroll')
+    expect(Number(grid(w).attributes('data-first'))).toBeGreaterThanOrEqual(5 * 5)
+  })
+
   it('chips：默认 全部/内置；有上传图标出现「上传」；各包按显示名出现', () => {
     const w = mountPicker({ stored: { gh: 'data:image/png;base64,AA', orphan: 'data:image/png;base64,AA' }, packs: { mypack: { name: 'My Pack', iconIds: ['gh'] } } })
     const labels = w.findAll('.picker-chip').map((c) => c.text())

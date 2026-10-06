@@ -120,6 +120,7 @@ function measure() {
   const el = scroller.value
   if (!el) return
   colCount.value = Math.max(3, Math.floor((el.clientWidth + 4) / (COL_MIN + 4)))
+  el.style.setProperty('--picker-cols', String(colCount.value))
   if (el.clientHeight > 0) visibleCount.value = (Math.ceil(el.clientHeight / CELL_H) + 4) * colCount.value
 }
 function onScroll() {
@@ -130,9 +131,15 @@ function onScroll() {
 }
 watch([results, () => props.open], () => {
   first.value = 0
+  // 归零滚动位置（等价 scrollTo(0,0)，scrollTop 赋值为 jsdom 支持的写法）
+  if (scroller.value) scroller.value.scrollTop = 0
   void nextTick(measure)
 })
 const windowed = computed(() => results.value.slice(first.value, first.value + visibleCount.value))
+/** spacer 总高占位：行数 × CELL_H，撑起真实滚动空间使 scrollTop 可达翻页阈值 */
+const totalHeight = computed(() => Math.ceil(results.value.length / colCount.value) * CELL_H)
+/** 网格锚点：窗口首行距 spacer 顶部的偏移 */
+const firstRow = computed(() => Math.floor(first.value / colCount.value))
 
 function select(item: Item) {
   emit('select', { kind: item.kind, id: item.id, title: item.title })
@@ -181,15 +188,20 @@ function select(item: Item) {
     </div>
     <p class="picker-section-label">{{ searching ? t('entryForm.searchResultsSection') : t('entryForm.allIconsSection') }}</p>
     <div ref="scroller" class="picker-scroll" @scroll.passive="onScroll">
-      <div class="picker-grid picker-grid--all" :data-total="results.length">
-        <button
-          v-for="item in windowed" :key="`${item.kind}-${item.id}`" type="button" class="picker-cell picker-cell--labeled"
-          :title="item.title" :aria-label="item.title" @click="select(item)"
+      <div class="picker-spacer" :style="{ height: totalHeight + 'px', position: 'relative' }">
+        <div
+          class="picker-grid picker-grid--all" :data-total="results.length" :data-first="first"
+          :style="{ top: firstRow * CELL_H + 'px' }"
         >
-          <svg v-if="item.kind === 'builtin'" viewBox="0 0 24 24" aria-hidden="true"><path :d="builtin[item.id]!.path" /></svg>
-          <img v-else :src="item.src" alt="" />
-          <span class="picker-cell-label">{{ item.title }}</span>
-        </button>
+          <button
+            v-for="item in windowed" :key="`${item.kind}-${item.id}`" type="button" class="picker-cell picker-cell--labeled"
+            :title="item.title" :aria-label="item.title" @click="select(item)"
+          >
+            <svg v-if="item.kind === 'builtin'" viewBox="0 0 24 24" aria-hidden="true"><path :d="builtin[item.id]!.path" /></svg>
+            <img v-else :src="item.src" alt="" />
+            <span class="picker-cell-label">{{ item.title }}</span>
+          </button>
+        </div>
       </div>
     </div>
     <p v-if="searching && results.length === 0" class="picker-empty">{{ t('entryForm.iconPickerNoResults') }}</p>
@@ -210,10 +222,12 @@ function select(item: Item) {
 .picker-section-label { font-size: var(--md-sys-typescale-label-medium); opacity: 0.65; margin: 8px 0 4px; }
 .picker-scroll { max-height: 300px; overflow-y: auto; }
 .picker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 4px; }
+/* 全量网格：列数由 measure 写入 CSS 变量（回退 5 与初始 colCount 一致），行高写实对齐 JS CELL_H 常量（92+4 gap=96） */
+.picker-grid--all { position: absolute; left: 0; right: 0; grid-template-columns: repeat(var(--picker-cols, 5), minmax(0, 1fr)); }
 .picker-cell { display: grid; place-items: center; gap: 2px; width: 100%; padding: 6px 2px; border: none; border-radius: 8px; background: transparent; color: var(--md-sys-color-on-surface-variant); cursor: pointer; }
 .picker-cell:hover { background: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent); color: var(--md-sys-color-on-surface); }
 .picker-cell svg { width: 24px; height: 24px; fill: currentColor; }
 .picker-cell img { width: 24px; height: 24px; object-fit: contain; }
-.picker-cell--labeled { grid-template-rows: 24px 1fr; }
+.picker-cell--labeled { grid-template-rows: 24px 1fr; height: 92px; }
 .picker-cell-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; line-height: 1.2; }
 </style>
