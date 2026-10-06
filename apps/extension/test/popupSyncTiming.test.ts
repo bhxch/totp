@@ -102,7 +102,7 @@ describe('popup 首拉真实时序（终审 Critical-1/Important-2）', () => {
     const wrapper = mount(App, {
       global: {
         plugins: [createTestI18n()],
-        stubs: { LockScreen: true, EntryForm: true, BatchPastePanel: true, OtpListItem: true },
+        stubs: { LockScreen: true, EntryForm: true, OtpListItem: true },
       },
     })
     try {

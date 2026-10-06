@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { buildOtpUri, defaultDigitsFor, getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
-import { BatchPastePanel, createIconStore, EntryForm, PersistErrorBanner, fullIconsReady, iconView, LockScreen, MdButton, MdCheckbox, MdIconButton, MdMenu, MdSegmentedButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, OtpQrDialog, parseUriToEntryData, resolvePopupVisible, SearchBar, sortEntries, TagFilterRow, ToastHost, useOtpCodes, useTheme, useToast, type EntryFormData } from '@totp/ui'
+import { getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
+import { createIconStore, EntryForm, fullIconsReady, LockScreen, MdCheckbox, MdIconButton, NAV_ICONS, normalizeExtOtpauth, parseUriToEntryData, PersistErrorBanner, QuickCodesPanel, resolvePopupVisible, sortEntries, ToastHost, useOtpCodes, useTheme, useToast, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
@@ -9,7 +9,7 @@ import { createExtensionCloudRunner } from '../../src/cloudRunnerFactory'
 import { createFollowScheduler, scheduleClipboardClear } from '../../src/optionsPlatforms'
 import { persistFailed, storageAdapter } from '../../src/store'
 import {
-  addEntryOp, addTagOp, commitSettings, initStore, locked, registerStorageSync, removeEntryOp, settings, store, updateEntryOp, vault,
+  addEntryOp, addTagOp, commitSettings, initStore, locked, registerStorageSync, settings, store, updateEntryOp, vault,
 } from '../../src/store'
 
 const icons = createIconStore(storageAdapter)
@@ -43,8 +43,13 @@ onMounted(() => {
 })
 onScopeDispose(() => syncFollow.stop())
 
-/** 设置深链:直达 options 的 /settings 页(hash 路由);openOptionsPage 不支持 hash 故用 tabs.create */
+/** 深链跳转:popup 精简后管理面全在主界面态,「打开主界面」直达 options 的 /codes 页(hash 路由);
+ *  设置齿轮直达 /settings。openOptionsPage 不支持 hash 故统一用 tabs.create */
 const SETTINGS_ICON_PATH = NAV_ICONS.settings
+const MAIN_ICON_PATH = NAV_ICONS.codes
+function openMain(): void {
+  void ext!.tabs.create({ url: ext!.runtime.getURL('options.html#/codes') })
+}
 function openSettings(): void {
   void ext!.tabs.create({ url: ext!.runtime.getURL('options.html#/settings') })
 }
@@ -139,85 +144,23 @@ const toggleFilter = async () => {
   await commitSettings()
 }
 
-const editing = ref<OtpEntry | null>(null)
 const creating = ref(false)
-const confirmingDelete = ref<string | null>(null)
-let confirmTimer: ReturnType<typeof setTimeout> | null = null
-
-// ---------- 右键菜单（spec §10：编辑 / 复制 URI / 置顶） ----------
-/** qr：单条目 otpauth 二维码（行内按钮 / 右键菜单「显示二维码」共用） */
-const qrEntry = ref<OtpEntry | null>(null)
-/** 右键菜单：菜单位置、目标条目与右键所在元素（trigger 传 MdMenu 供 Esc 关闭回焦；OtpListItem 根
- *  tabindex=0 可聚焦，回焦有效——同 CodesPage.vue 右键菜单口径） */
-const contextMenu = ref<{ x: number; y: number; entry: OtpEntry; trigger: HTMLElement | null } | null>(null)
-
-function onContextMenu(entry: OtpEntry, e: MouseEvent) {
-  // currentTarget = 事件载体（OtpListItem 根），仅事件派发期可读，此处同步存元素引用
-  contextMenu.value = { x: e.clientX, y: e.clientY, entry, trigger: (e.currentTarget as HTMLElement) ?? null }
-}
-function closeContextMenu() {
-  contextMenu.value = null
-}
-function contextEdit(entry: OtpEntry) {
-  editing.value = entry
-  creating.value = false
-  closeContextMenu()
-}
-async function contextCopyUri(entry: OtpEntry) {
-  // I1d：经 core buildOtpUri 产出（yandex → yaotp host + pin；此前手拼 otpauth://yandex/ 且丢 pin，
-  // parseOtpUri 白名单只认 yaotp——自产 URI 自己都拒收）
-  try {
-    await navigator.clipboard.writeText(buildOtpUri({
-      type: entry.type, issuer: entry.issuer, label: entry.label,
-      secret: entry.secret.replace(/\s+/g, ''), algorithm: entry.algorithm,
-      digits: entry.digits, period: entry.period, counter: entry.counter, pin: entry.pin,
-    }))
-    scheduleClipboardClear(settings)
-    // 成功反馈入队全局 toast（P3 横幅迁移），沿用既有 popup.copiedBanner 文案键
-    toast.show(t('popup.copiedBanner'))
-  } catch {
-    /* 剪贴板不可用时静默 */
-  }
-  closeContextMenu()
-}
-async function contextTogglePin(entry: OtpEntry) {
-  await updateEntryOp(entry.uuid, { pinned: !entry.pinned })
-  closeContextMenu()
-}
-
-// ---------- otpauth URI 导入预填（粘贴框 / 协议回调 / 右键菜单共用） ----------
-const otpauthUri = ref('')
+// ---------- otpauth URI 导入预填（协议回调 ?uri= / pendingOtpauth 共用；P4 后 popup 唯一新建入口） ----------
 const importError = ref('')
-/** 粘贴框开合经 open ref 绑定：@toggle 同步手动开合；导入成功自动收起 */
-const importOpen = ref(false)
-function onImportToggle(e: Event) {
-  importOpen.value = (e.target as HTMLDetailsElement).open
-}
-/** 导入预填对象（OtpEntry 形状，uuid/order/createdAt 为哑值）；与 editing 并存时导入预填优先 */
+/** 导入预填对象（OtpEntry 形状，uuid/order/createdAt 为哑值） */
 const prefill = ref<OtpEntry | null>(null)
 /** 每次导入自增，驱动 EntryForm 重挂载以刷新预填 */
 const formKey = ref(0)
 
-/** URI → 表单预填；成功返回 null（并清除既有错误提示、收起粘贴框），失败返回中文错误消息（供粘贴框与后台入口共用） */
+/** URI → 表单预填；成功返回 null（并清除既有错误提示），失败返回中文错误消息（后台入口共用） */
 function applyOtpauthPrefill(uri: string): string | null {
   const r = parseUriToEntryData(uri.trim())
   if ('error' in r) return r.error
   importError.value = ''
-  importOpen.value = false
-  editing.value = null
   prefill.value = r.data
   creating.value = true
-  // creating 已 true 时下方 creating watch 不触发（粘贴 Tab 激活态点「导入」正是此场景）：
-  // 显式切回手动，保证预填必然落在可见的 EntryForm 上而非被 BatchPastePanel 挡住
-  formTab.value = 'manual'
   formKey.value++
   return null
-}
-
-function importOtpauth() {
-  const err = applyOtpauthPrefill(otpauthUri.value)
-  if (err) importError.value = err
-  else otpauthUri.value = ''
 }
 
 /**
@@ -241,75 +184,31 @@ async function consumePendingOtpauth(): Promise<void> {
   if (err) importError.value = err
 }
 
-function startCreate() {
-  editing.value = null
-  prefill.value = null
-  creating.value = true
-}
-
 function closeForm() {
-  editing.value = null
   creating.value = false
   prefill.value = null
   importError.value = ''
 }
 
-/** 14c 新建表单双 Tab：manual=原内联 EntryForm（行为不动）/ paste=BatchPastePanel；仅 creating 显 Tab（编辑保持纯手动） */
-const formTab = ref<'manual' | 'paste'>('manual')
-// computed：locale 切换后 Tab 文案联动
-const FORM_TAB_OPTIONS = computed(() => [
-  { value: 'manual', label: t('popup.tabManual') },
-  { value: 'paste', label: t('popup.tabPaste') },
-])
-// 进入新建（startCreate，creating false→true）回默认「手动填写」；applyOtpauthPrefill 路径
-// （creating 已 true，watch 不触发）在其函数体内显式复位
-watch(creating, (v) => { if (v) formTab.value = 'manual' })
-
-/** 智能粘贴落库完成 → 关表单回列表（新增条目立即可见），语义同 options 弹窗 batch-added */
-function onBatchAdded(): void {
-  closeForm()
-}
-
 async function onSave(data: EntryFormData) {
-  if (editing.value) {
-    // type 变更时重算 digits（steam→其他保持 5 会显示错位数）；type 未变沿用表单值。
-    // R3：重算默认值改查 core typeProfiles.defaultDigitsFor，表单层不自写类型分支。
-    // digits 经 toOtpDigits 收口 number→OtpDigits：表单提交校验（steam=5、其余 6/7/8）已保证
-    // 合法值，此处恒等回传不改运行时行为；?? 默认仅兜 EntryFormData.digits 可选的类型口径
-    // （运行时表单恒携带），替代此前 `{ ...data } as EntryFormData & { digits?: number }` 断言
-    await updateEntryOp(editing.value.uuid, {
-      ...data,
-      digits: toOtpDigits(
-        data.type !== editing.value.type ? defaultDigitsFor(data.type) : (data.digits ?? 6),
-        data.type,
-      ),
-    })
-  } else {
-    // URI 导入预填：表单内未改 type 时携带 URI 中的 algorithm/digits/period/counter
-    const carried = prefill.value?.type === data.type ? prefill.value : null
-    await addEntryOp({
-      ...data,
-      uuid: crypto.randomUUID(),
-      algorithm: carried?.algorithm ?? 'SHA1',
-      // digits 经 toOtpDigits 收口（与编辑路径同口径）：carried 来自 parseUriToEntryData（其内部
-      // 经 toOtpDigits 收口，含 totp/hotp URI digits=5→6 的非恒等修正，见 core typeProfiles 守卫）
-      // 可直传，纯手写路径以表单提交值收口——steam 恒 5、yandex 恒 8、其余 6/7/8。不得回退字面量 5/6：
-      // 此前 `steam ? 5 : 6` 把表单提交的 yandex digits=8 覆写为 6，addEntry 写路径不校验直接落盘，
-      // 下次 loadVault 经 validateVaultObject 整记录拒绝（'vault corrupted'）致整个 vault 不可用
-      digits: carried?.digits ?? toOtpDigits(data.digits ?? 6, data.type),
-      period: carried?.period ?? data.period ?? 30,
-      ...(carried?.type === 'hotp' ? { counter: carried.counter ?? 0 } : {}),
-      order: 0,
-      createdAt: Date.now(),
-    })
-  }
+  // URI 导入预填：表单内未改 type 时携带 URI 中的 algorithm/digits/period/counter
+  const carried = prefill.value?.type === data.type ? prefill.value : null
+  await addEntryOp({
+    ...data,
+    uuid: crypto.randomUUID(),
+    algorithm: carried?.algorithm ?? 'SHA1',
+    // digits 经 toOtpDigits 收口：carried 来自 parseUriToEntryData（其内部经 toOtpDigits 收口，
+    // 含 totp/hotp URI digits=5→6 的非恒等修正，见 core typeProfiles 守卫）可直传，纯手写路径
+    // 以表单提交值收口——steam 恒 5、yandex 恒 8、其余 6/7/8。不得回退字面量 5/6：
+    // 此前 `steam ? 5 : 6` 把表单提交的 yandex digits=8 覆写为 6，addEntry 写路径不校验直接落盘，
+    // 下次 loadVault 经 validateVaultObject 整记录拒绝（'vault corrupted'）致整个 vault 不可用
+    digits: carried?.digits ?? toOtpDigits(data.digits ?? 6, data.type),
+    period: carried?.period ?? data.period ?? 30,
+    ...(carried?.type === 'hotp' ? { counter: carried.counter ?? 0 } : {}),
+    order: 0,
+    createdAt: Date.now(),
+  })
   closeForm()
-}
-function askRemove(uuid: string) {
-  if (confirmingDelete.value === uuid) { void removeEntryOp(uuid); confirmingDelete.value = null; return }
-  confirmingDelete.value = uuid
-  if (confirmTimer) clearTimeout(confirmTimer)
-  confirmTimer = setTimeout(() => (confirmingDelete.value = null), 3000)
 }
 
 let closeTimer: ReturnType<typeof setTimeout> | null = null
@@ -353,13 +252,16 @@ function cancelAutoClose(): void {
 
 <template>
   <LockScreen v-if="locked" :store="store" :allow-passkey="false" />
-  <main v-else @click="closeContextMenu">
+  <main v-else>
     <!-- R16⑤（评审 A2 方案 a）：落盘失败常驻告警（锁屏态 store 写路径不可达，仅解锁主体需要） -->
     <PersistErrorBanner :show="persistFailed" :text="t('app.persistError')" />
     <header>
       <h1>{{ t('popup.title') }}</h1>
       <div class="header-ops">
-        <MdButton v-if="!creating && !editing" variant="text" @click="startCreate">{{ t('popup.add') }}</MdButton>
+        <!-- P4 精简：管理面移交主界面态，「打开主界面」直达 options#/codes；快捷新增仅剩 pending 确认态 -->
+        <MdIconButton :title="t('popup.openMain')" :aria-label="t('popup.openMain')" @click="openMain">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path :d="MAIN_ICON_PATH" fill="currentColor" /></svg>
+        </MdIconButton>
         <MdIconButton :title="t('popup.settings')" :aria-label="t('popup.openSettings')" @click="openSettings">
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path :d="SETTINGS_ICON_PATH" fill="currentColor" /></svg>
         </MdIconButton>
@@ -368,15 +270,7 @@ function cancelAutoClose(): void {
 
     <div v-if="error" class="error">{{ error }}</div>
 
-    <SearchBar v-model="query" />
-
-    <TagFilterRow
-      v-if="vault.tags.length > 0" class="tag-row"
-      :tags="vault.tags" v-model:selected-ids="selectedTagIds"
-      :mode="tagMode" @update:mode="setTagMode"
-      :manageable="false"
-    />
-
+    <!-- URL 过滤行与 hint 留在面板上方（宿主管辖，不进面板）：四级回退链的过滤执行在宿主 -->
     <div class="filter-row" v-if="tabUrl">
       <!-- M3 MdCheckbox(审查 X10):原 UA 原生 checkbox 深色 scheme 下未选中即深灰填充,即「复选框底色偏深」根因 -->
       <MdCheckbox :model-value="filterOn" :label="t('popup.filterBySite')" @update:model-value="toggleFilter" />
@@ -385,54 +279,24 @@ function cancelAutoClose(): void {
     <!-- hint 不受 tabUrl 门控：无标签页 URL（新标签页等）时放宽提示仍可达（spec §3 回退提示） -->
     <span v-if="filterResult.hint" class="hint hint-row">{{ t(filterResult.hint) }}</span>
 
-    <!-- 错误提示置于 details 外常显：?uri= 回调报错时 details 默认折叠，放内部会静默不可见 -->
+    <!-- 非法 pending URI 报错常显（无粘贴框后的唯一 importError 渲染位） -->
     <div v-if="importError" class="error">{{ importError }}</div>
-    <details class="otpauth-import" :open="importOpen" @toggle="onImportToggle">
-      <summary>{{ t('popup.importSummary') }}</summary>
-      <textarea v-model="otpauthUri" rows="2" placeholder="otpauth://totp/GitHub:me?secret=..." />
-      <div class="import-row">
-        <MdButton @click="importOtpauth">{{ t('popup.importBtn') }}</MdButton>
-      </div>
-    </details>
 
-    <!-- 14c 新建表单双 Tab：仅 creating 显 Tab（editing 保持原纯手动表单）。manual 渲染原内联 EntryForm
-         （:key 预填重挂载机制、onSave、cancel=closeForm 一字不动）；paste 渲染 BatchPastePanel，粘贴落库
-         added → onBatchAdded 关表单回列表。v-if/v-else 切换即卸载，切回手动时 EntryForm 状态重置 -->
-    <template v-if="creating || editing">
-      <MdSegmentedButton v-if="creating" v-model="formTab" :options="FORM_TAB_OPTIONS" :aria-label="t('popup.inputMethod')" class="form-tabs" />
-      <EntryForm v-if="formTab === 'manual' || editing" :key="editing?.uuid ?? (prefill ? `prefill-${formKey}` : 'new')" :initial="editing ?? prefill" :tags="vault.tags" :create-tag="addTagOp" :icons="entryIcons" :icon-store="icons" @save="onSave" @cancel="closeForm" />
-      <BatchPastePanel v-else :store="store" @added="onBatchAdded" />
-    </template>
+    <!-- 快捷新增确认态：仅 pending 预填入口（?uri= 协议回调 / 后台 pendingOtpauth），无 Tab 纯手动。
+         :key 预填重挂载机制、onSave 新建分支、cancel=closeForm 语义不变 -->
+    <EntryForm v-if="creating" :key="prefill ? `prefill-${formKey}` : 'new'" :initial="prefill" :tags="vault.tags" :create-tag="addTagOp" :icons="entryIcons" :icon-store="icons" @save="onSave" @cancel="closeForm" />
 
-    <div v-if="loaded && sorted.length === 0" class="empty">{{ t('popup.empty') }}</div>
-    <div v-else-if="loaded && visible.length === 0" class="empty">{{ t('popup.noMatch') }}</div>
-    <div v-for="(e, i) in visible" :key="e.uuid" class="item-wrap" @click="closeContextMenu">
-      <!-- 终审 Important-1：@dblclick 经 attrs fallthrough 与组件内部揭示 onDblclick 合并共存——双击即揭示并取消自动关闭 -->
-      <OtpListItem :entry="e" :icon="iconView(e.icon, icons)" :index="i + 1" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 1 }" @copy="copy(e)" @qr="qrEntry = e" @context="(ev) => onContextMenu(e, ev)" @dblclick="cancelAutoClose" />
-      <div class="ops">
-        <template v-if="confirmingDelete === e.uuid">
-          <MdButton danger @click.stop="askRemove(e.uuid)">{{ t('popup.confirmDelete') }}</MdButton>
-        </template>
-        <template v-else>
-          <MdIconButton :title="t('codesPage.editEntry', { label: e.label })" :aria-label="t('codesPage.editEntry', { label: e.label })" @click.stop="editing = e">✎</MdIconButton>
-          <MdIconButton :title="t('codesPage.deleteEntry', { label: e.label })" :aria-label="t('codesPage.deleteEntry', { label: e.label })" @click.stop="askRemove(e.uuid)">🗑</MdIconButton>
-        </template>
-      </div>
-    </div>
-
-    <!-- F1：右键菜单（编辑 / 复制 URI / 置顶，spec §10）。MdMenu 负责定位/越界钳制/Esc 关闭/键盘导航/
-         点外关闭（用法同 CodesPage.vue 右键菜单）；trigger=右键所在条目，Esc 关闭后焦点回该条目 -->
-    <MdMenu :x="contextMenu?.x ?? 0" :y="contextMenu?.y ?? 0" :open="contextMenu !== null" :trigger-el="contextMenu?.trigger ?? null" @close="closeContextMenu">
-      <template v-if="contextMenu">
-        <MdButton variant="text" class="ctx-item" @click="contextEdit(contextMenu.entry)">{{ t('popup.edit') }}</MdButton>
-        <MdButton variant="text" class="ctx-item" @click="qrEntry = contextMenu.entry; closeContextMenu()">{{ t('popup.showQr') }}</MdButton>
-        <MdButton variant="text" class="ctx-item" @click="contextCopyUri(contextMenu.entry)">{{ t('popup.copyUri') }}</MdButton>
-        <MdButton variant="text" class="ctx-item" @click="contextTogglePin(contextMenu.entry)">{{ contextMenu.entry.pinned ? t('popup.unpin') : t('popup.pin') }}</MdButton>
-      </template>
-    </MdMenu>
-
-    <!-- 单条目 otpauth 二维码（Esc/遮罩/「关闭」按钮关闭） -->
-    <OtpQrDialog :open="qrEntry !== null" :entry="qrEntry" @close="qrEntry = null" />
+    <!-- P4 Task 3：搜索行 + 标签行 + 列表区整体换装 QuickCodesPanel（冻结筛选行 + 纯取码列表 +
+         两态空文案，行内 QR/管理入口恒关）。过滤编排（四级回退/URL 站点）与复制/自动关窗通道留宿主 -->
+    <QuickCodesPanel
+      v-model:query="query"
+      :codes="codes" :icons="icons" :loading="!loaded" :entries="visible"
+      :empty-text="t('popup.empty')" :no-match-text="t('popup.noMatch')"
+      tag-row :tags="vault.tags"
+      v-model:selected-tag-ids="selectedTagIds"
+      :tag-mode="tagMode" @update:tag-mode="setTagMode"
+      @copy="(e) => copy(e)" @dblclick="cancelAutoClose"
+    />
   </main>
   <!-- 全局 toast 渲染端（P3 item-layout toast 设计）：模板根级、独立于锁定态 v-if 链，无 props 直读模块态 -->
   <ToastHost />
@@ -446,19 +310,6 @@ header { display: flex; align-items: center; justify-content: space-between; pad
 h1 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .error { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); }
 .filter-row { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-small); padding: 0 4px; }
-.tag-row { padding: 0 4px; }
-.otpauth-import { font-size: var(--md-sys-typescale-body-medium); padding: 0 4px; }
-/* 14c 新建表单双 Tab：与相邻行对齐 4px 边距（popup 宽 ~360px，两段按钮可容） */
-.form-tabs { margin: 0 4px; align-self: flex-start; }
-.otpauth-import summary { cursor: pointer; opacity: .8; }
-.otpauth-import textarea { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 6px 8px; font-family: inherit; resize: vertical; }
-.otpauth-import .import-row { display: flex; justify-content: flex-end; margin-top: 4px; }
 .hint { opacity: .6; }
 .hint-row { padding: 0 4px; }
-.empty { text-align: center; opacity: .6; padding: 32px 0; }
-.item-wrap { position: relative; }
-.ops { position: absolute; top: 4px; right: 4px; display: flex; gap: 4px; opacity: 0; transition: opacity .15s; }
-.item-wrap:hover .ops, .ops:focus-within { opacity: 1; }
-/* 右键菜单项（MdMenu 容器自带定位与外观；MdButton text 形收紧为菜单项排版，槽内容归本组件作用域，同 CodesPage） */
-.ctx-item { display: block; width: 100%; height: 36px; justify-content: flex-start; border-radius: 0; font-size: var(--md-sys-typescale-body-medium); text-align: left; padding: 0 14px; }
 </style>

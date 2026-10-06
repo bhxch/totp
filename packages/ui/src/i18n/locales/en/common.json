@@ -760,7 +760,7 @@
   },
   "popup": {
     "title": "TOTP Codes",
-    "add": "+ Add",
+    "openMain": "Open main window",
     "settings": "Settings",
     "openSettings": "Open settings",
     "copiedBanner": "Copied to clipboard",
@@ -768,19 +768,8 @@
     "readError": "Failed to read local data: {message}",
     "filterBySite": "Filter by current site",
     "matchCount": "{count} matches",
-    "importSummary": "Paste an otpauth link to import",
-    "importBtn": "Import",
-    "tabManual": "Manual entry",
-    "tabPaste": "Smart paste",
-    "inputMethod": "Input method",
-    "empty": "No entries yet. Tap \"+ Add\" at the top right to create one.",
-    "noMatch": "No matching results",
-    "confirmDelete": "Confirm delete?",
-    "edit": "Edit",
-    "showQr": "Show QR code",
-    "copyUri": "Copy URI",
-    "pin": "Pin",
-    "unpin": "Unpin"
+    "empty": "No entries yet. Open the main window to create one.",
+    "noMatch": "No matching results"
   },
   "options": {
     "migrated": "Migrated {count} cloud targets to the new model",

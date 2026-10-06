@@ -760,7 +760,7 @@
   },
   "popup": {
     "title": "TOTP 验证码",
-    "add": "＋ 添加",
+    "openMain": "打开主界面",
     "settings": "设置",
     "openSettings": "打开设置",
     "copiedBanner": "已复制到剪贴板",
@@ -768,19 +768,8 @@
     "readError": "本地数据读取失败：{message}",
     "filterBySite": "按当前站点过滤",
     "matchCount": "匹配 {count} 条",
-    "importSummary": "粘贴 otpauth 链接导入",
-    "importBtn": "导入",
-    "tabManual": "手动填写",
-    "tabPaste": "智能粘贴",
-    "inputMethod": "录入方式",
-    "empty": "暂无条目，点击右上角「＋ 添加」录入。",
-    "noMatch": "无匹配结果",
-    "confirmDelete": "确认删除？",
-    "edit": "编辑",
-    "showQr": "显示二维码",
-    "copyUri": "复制 URI",
-    "pin": "置顶",
-    "unpin": "取消置顶"
+    "empty": "暂无条目，点击右上角「打开主界面」录入。",
+    "noMatch": "无匹配结果"
   },
   "options": {
     "migrated": "已迁移 {count} 个云目标到新模型",

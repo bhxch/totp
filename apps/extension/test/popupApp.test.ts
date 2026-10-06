@@ -1,8 +1,8 @@
 /**
- * popup App.vue 新建表单双 Tab（Task 14c）组件级单测：
- * - 仅 creating 显「手动填写/智能粘贴」Tab；默认手动；切智能粘贴渲染 BatchPastePanel
- * - 粘贴落库（added）→ 关表单回列表；再次新建回到默认手动 Tab
- * - 编辑态不显 Tab（保持原纯手动表单）
+ * popup App 组件级单测（P4 Task 3 精简后形态）：
+ * - header：无「添加」按钮/无粘贴 details/无行内管理钮；「打开主界面」→ tabs.create(options.html#/codes)；设置齿轮 → #/settings
+ * - 列表区整体装配 QuickCodesPanel（tagRow/tags/tagMode/query/entries/loading 透传 + copy/dblclick 转发）
+ * - 快捷新增仅剩确认态：?uri= / pendingOtpauth → EntryForm 预填 → save 落库（carried 字段透传）
  * - 评审 R1 回归：新建 yandex 条目 digits=8 经 toOtpDigits 收口直传 addEntryOp，不被覆写为 6
  * store 模块整体 mock：真实模块 import 期即建 chrome 侧 store 单例（src/store.ts 顶层
  * createExtensionStore），node/jsdom 测试环境不可用；组件树其余走真实实现。
@@ -79,40 +79,19 @@ vi.mock('../src/extApi', async () => (await import('./helpers/extApiMock')).extA
 import App from '../entrypoints/popup/App.vue'
 import { createTestI18n } from './helpers/i18n'
 import { installChromeShim, type ChromeShim } from './helpers/chromeShim'
-import { addEntryOp, initStore, locked, removeEntryOp, settings, storageAdapter, store, updateEntryOp, vault } from '../src/store'
+import { addEntryOp, commitSettings, initStore, locked, settings, storageAdapter, store, updateEntryOp, vault } from '../src/store'
 import { SOURCES_KEY } from '@totp/core'
 
 /** P3a 补齐用例的 shim 槽：按需注入（chromeShim 注入 globalThis.chrome，extApiMock 惰性桥实时可见） */
 let shim: ChromeShim | undefined
 
-/** BatchPastePanel 桩：保留 added 事件发射能力（点内嵌按钮触发），data-test 判定渲染 */
-const BatchPastePanelStub = {
-  name: 'BatchPastePanelStub',
-  props: { store: { type: null, required: false } },
-  emits: ['added'],
-  template: `<div data-test="batch-paste-stub"><button data-test="batch-added-btn" @click="$emit('added', 1)">x</button></div>`,
-}
-
-/** OtpListItem 桩：渲染 code prop 供 waitFor 判定 codes 已就绪；未声明 emits，$emit 落父级 attrs 监听器（与真实组件 attrs fallthrough 同径） */
+/** OtpListItem 桩：渲染 code prop 供 waitFor 判定 codes 已就绪；未声明 emits，$emit 落父级 attrs 监听器（与真实组件 attrs fallthrough 同径；面板内同径转发 copy/dblclick） */
 const OtpListItemStub = {
   name: 'OtpListItemStub',
   props: { code: { type: String, default: '' } },
   template: `<div class="otp-item-stub">{{ code }}</div>`,
 }
-
-/** MdMenu 桩（P3a 右键菜单用例）：open 时渲染 slot 内菜单项，省去真实组件的定位/Teleport 复杂度 */
-const MdMenuStub = {
-  name: 'MdMenuStub',
-  props: ['open', 'x', 'y', 'triggerEl'],
-  template: `<div v-if="open" data-test="ctx-menu"><slot /></div>`,
-}
-/** OtpQrDialog 桩：open 时渲染 entry 标识 */
-const OtpQrDialogStub = {
-  name: 'OtpQrDialogStub',
-  props: ['open', 'entry'],
-  template: `<div v-if="open" data-test="qr-dialog">{{ entry?.issuer }}</div>`,
-}
-/** TagFilterRow 桩：透出 selectedIds 供恢复/悬空剔除断言 */
+/** TagFilterRow 桩：透出 selectedIds 供恢复/悬空剔除断言（P4 后渲染在 QuickCodesPanel 内部） */
 const TagFilterRowStub = {
   name: 'TagFilterRowStub',
   props: ['tags', 'selectedIds', 'mode'],
@@ -130,11 +109,8 @@ async function mountApp(opts?: { otpListItem?: typeof OtpListItemStub; autoFollo
       stubs: {
         LockScreen: true,
         EntryForm: true,
-        BatchPastePanel: BatchPastePanelStub,
-        // 编辑态用例需要 item-wrap 渲染出 ✎ 按钮；行内容与本测试无关，桩掉
+        // 面板内 OtpListItem 桩掉：行内容与本测试无关，桩掉后按需换 OtpListItemStub 透出 code
         OtpListItem: opts?.otpListItem ?? true,
-        MdMenu: MdMenuStub,
-        OtpQrDialog: OtpQrDialogStub,
         TagFilterRow: TagFilterRowStub,
       },
     },
@@ -162,80 +138,128 @@ function unmountActive(): void {
   settings.syncPrefs.autoFollow = true // 恢复 mountTracked 关掉的 gate（mock settings 默认值）
 }
 
-const findAddButton = (w: Awaited<ReturnType<typeof mountApp>>) =>
-  w.findAll('button').find((b) => b.text().includes('添加'))!
+// ==================== P4 Task 3：popup 精简改造 ====================
 
-describe('popup App 新建表单双 Tab（14c）', () => {
-  it('新建状态切「智能粘贴」后渲染 BatchPastePanel，added 关表单回列表；再次新建回默认手动', async () => {
-    const wrapper = await mountApp()
+const VALID_URI = 'otpauth://totp/GitHub:me?secret=JBSWY3DPEHPK3PXP'
 
-    // 列表态：无 Tab、无表单
-    expect(wrapper.find('.md-seg').exists()).toBe(false)
+// 文件级兜底卸载：泄漏实例的 watch(locked) 会在后续用例锁定翻转时集体触发跟随拉取
+// （[cloudAutoSync] 连发噪音）。describe 级 afterEach 先执行，此处对剩余实例兜底。
+afterEach(() => {
+  if (active) {
+    active.unmount()
+    active = null
+  }
+  // toast 模块级单例（P3）：清残留防跨用例串扰（fake timers 下 3s 自动过期不触发）
+  const { toasts, dismiss } = useToast()
+  for (const t of [...toasts.value]) dismiss(t.key)
+})
 
-    // 进入新建：默认「手动填写」→ EntryForm 渲染，粘贴面板不渲染
-    await findAddButton(wrapper).trigger('click')
-    expect(wrapper.find('.md-seg').exists()).toBe(true)
-    expect(wrapper.find('entry-form-stub').exists()).toBe(true)
-    expect(wrapper.find('[data-test="batch-paste-stub"]').exists()).toBe(false)
+/** 挂载前注入 ?uri= 查询参数（Firefox ext+otpauth 协议回调入口），尾部恢复干净路径 */
+function withUriQuery(uri: string | null): void {
+  window.history.replaceState({}, '', uri === null ? '/' : `/?uri=${encodeURIComponent(uri)}`)
+}
 
-    // 切「智能粘贴」：EntryForm 卸载，BatchPastePanel 渲染（本任务核心断言）
-    const pasteTab = wrapper.findAll('button').find((b) => b.text() === '智能粘贴')!
-    expect(pasteTab).toBeTruthy()
-    await pasteTab.trigger('click')
-    expect(wrapper.find('entry-form-stub').exists()).toBe(false)
-    expect(wrapper.find('[data-test="batch-paste-stub"]').exists()).toBe(true)
+/** 恢复 clipboard 相关全局（clipboard mock/offscreen 注入/settings 开关） */
+function resetClipboardEnv(): void {
+  settings.clipboardClearEnabled = false
+  try {
+    delete (navigator as unknown as { clipboard?: unknown }).clipboard
+  } catch { /* 不可删则留给下个 defineProperty 覆盖 */ }
+}
 
-    // 粘贴落库（added）→ 关表单回列表：Tab 与面板全部消失
-    await wrapper.find('[data-test="batch-added-btn"]').trigger('click')
-    expect(wrapper.find('.md-seg').exists()).toBe(false)
-    expect(wrapper.find('[data-test="batch-paste-stub"]').exists()).toBe(false)
-
-    // 再次新建：回到默认「手动填写」（Tab 状态复位）
-    await findAddButton(wrapper).trigger('click')
-    expect(wrapper.find('entry-form-stub').exists()).toBe(true)
-    expect(wrapper.find('[data-test="batch-paste-stub"]').exists()).toBe(false)
+describe('popup header 精简与主界面入口（P4 Task 3）', () => {
+  afterEach(() => {
+    unmountActive()
+    vault.entries.length = 0
+    shim?.restore()
   })
 
-  it('智能粘贴 Tab 激活时经粘贴框导入 URI 预填：Tab 切回「手动填写」', async () => {
-    const wrapper = await mountApp()
-    await findAddButton(wrapper).trigger('click')
-    const pasteTab = wrapper.findAll('button').find((b) => b.text() === '智能粘贴')!
-    await pasteTab.trigger('click')
-    expect(wrapper.find('[data-test="batch-paste-stub"]').exists()).toBe(true)
-
-    // creating 已 true：creating watch 不触发——预填必须显式切回手动 Tab，否则被粘贴面板挡住
-    await wrapper.find('.otpauth-import textarea').setValue(
-      'otpauth://totp/GitHub:me?secret=JBSWY3DPEHPK3PXP&issuer=GitHub',
-    )
-    await wrapper.findAll('button').find((b) => b.text() === '导入')!.trigger('click')
-    expect(wrapper.find('entry-form-stub').exists()).toBe(true)
-    expect(wrapper.find('[data-test="batch-paste-stub"]').exists()).toBe(false)
-  })
-
-  it('编辑态不显 Tab：直接渲染 EntryForm（原语义不变）', async () => {
+  it('移除项不在：无「添加」按钮、无粘贴 details、无行内 ✎/🗑 管理钮', async () => {
     vault.entries.push({
       uuid: 'e1', type: 'totp', issuer: 'GitHub', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
       algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 0,
     } as never)
-    try {
-      const wrapper = await mountApp()
-      const editBtn = wrapper.findAll('button').find((b) => b.text() === '✎')!
-      expect(editBtn).toBeTruthy()
-      await editBtn.trigger('click')
-      expect(wrapper.find('.md-seg').exists()).toBe(false)
-      expect(wrapper.find('entry-form-stub').exists()).toBe(true)
-      expect(wrapper.find('[data-test="batch-paste-stub"]').exists()).toBe(false)
-    } finally {
-      vault.entries.length = 0
-    }
+    const wrapper = await mountTracked()
+
+    expect(wrapper.findAll('button').some((b) => b.text().includes('添加'))).toBe(false)
+    expect(wrapper.find('details.otpauth-import').exists()).toBe(false)
+    expect(wrapper.findAll('button').some((b) => b.text() === '✎')).toBe(false)
+    expect(wrapper.findAll('button').some((b) => b.text() === '🗑')).toBe(false)
+  })
+
+  it('「打开主界面」：tabs.create 打开 options.html#/codes；设置齿轮 → #/settings', async () => {
+    shim = installChromeShim()
+    const wrapper = await mountTracked()
+
+    const mainBtn = wrapper.findAll('button').find((b) => b.attributes('aria-label') === '打开主界面')
+    expect(mainBtn).toBeTruthy()
+    await mainBtn!.trigger('click')
+    expect(shim!.tabs.create).toHaveBeenCalledWith({ url: 'chrome-extension://test-id/options.html#/codes' })
+
+    const settingsBtn = wrapper.findAll('button').find((b) => b.attributes('aria-label') === '打开设置')
+    expect(settingsBtn).toBeTruthy()
+    await settingsBtn!.trigger('click')
+    expect(shim!.tabs.create).toHaveBeenLastCalledWith({ url: 'chrome-extension://test-id/options.html#/settings' })
+  })
+})
+
+describe('popup QuickCodesPanel 装配（P4 Task 3）', () => {
+  afterEach(() => {
+    unmountActive()
+    vault.entries.length = 0
+    vault.tags.length = 0
+    settings.tagFilterMode = 'all'
+  })
+
+  it('面板承载搜索/标签行/列表：tagRow/tags/tagMode/loading/entries 透传，query 双向，tag 行贯通', async () => {
+    vault.entries.push({
+      uuid: 'e1', type: 'totp', issuer: 'GitHub', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
+      algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 0,
+    } as never)
+    vault.tags.push({ id: 't1', name: '工作' } as never)
+    const wrapper = await mountTracked({ otpListItem: OtpListItemStub })
+
+    const panel = wrapper.findComponent({ name: 'QuickCodesPanel' })
+    expect(panel.exists()).toBe(true)
+    expect(panel.props('tagRow')).toBe(true)
+    expect(panel.props('tags')).toEqual(vault.tags)
+    expect(panel.props('tagMode')).toBe('all')
+    expect(panel.props('loading')).toBe(false) // loaded 已就绪
+    expect(panel.props('entries')).toHaveLength(1)
+    // 列表经面板渲染（OtpListItem 桩在面板内部）
+    expect(wrapper.find('.otp-item-stub').exists()).toBe(true)
+    // tag 行贯通：面板内 TagFilterRow 桩收到宿主选中集合
+    expect(wrapper.findComponent({ name: 'TagFilterRowStub' }).props('selectedIds')).toEqual([])
+
+    // query 双向：面板 update:query → 宿主 ref → prop 回流
+    await panel.vm.$emit('update:query', 'Git')
+    expect(wrapper.findComponent({ name: 'QuickCodesPanel' }).props('query')).toBe('Git')
+  })
+
+  it('update:tagMode → setTagMode 落 settings 并 commitSettings（筛选模式持久化）', async () => {
+    vault.tags.push({ id: 't1', name: '工作' } as never)
+    const wrapper = await mountTracked()
+    vi.mocked(commitSettings).mockClear()
+
+    wrapper.findComponent({ name: 'QuickCodesPanel' }).vm.$emit('update:tagMode', 'any')
+    await flushPromises()
+
+    expect(settings.tagFilterMode).toBe('any')
+    expect(commitSettings).toHaveBeenCalled()
   })
 })
 
 describe('popup 新建条目 digits 经 toOtpDigits 收口（评审 R1 回归）', () => {
+  afterEach(() => {
+    unmountActive()
+    withUriQuery(null)
+  })
+
   it('新建 yandex 条目：表单提交 digits=8 直传 addEntryOp，不被覆写为 6；pin 原样透传', async () => {
+    // P4 后唯一新建入口 = pending 预填确认态：totp URI 预填（carried 与 yandex 表单不同 type → 失效）
+    withUriQuery(VALID_URI)
     vi.mocked(addEntryOp).mockClear()
-    const wrapper = await mountApp()
-    await findAddButton(wrapper).trigger('click')
+    const wrapper = await mountTracked()
     expect(wrapper.find('entry-form-stub').exists()).toBe(true)
 
     // 模拟共享 EntryForm submit 的 payload（表单校验已保证 yandex digits=8；pin 仅 yandex 携带）
@@ -263,10 +287,12 @@ describe('popup 新建条目 digits 经 toOtpDigits 收口（评审 R1 回归）
     expect(entry.pin).toBe('1234')
   })
 
-  it('新建 totp 条目：表单提交 digits=7 经 toOtpDigits 白名单放行，不回落 6', async () => {
+  it('新建 totp 条目：URI digits=7 经 toOtpDigits 白名单放行直传，不回落 6', async () => {
+    // 同 type 预填 → carried 生效（carried.digits 已在 parseUriToEntryData 内经 toOtpDigits 收口）：
+    // 落库取 carried.digits=7 而非字面量 6——白名单放行语义与旧「表单提交 digits=7」用例等价
+    withUriQuery('otpauth://totp/Acme:dev?secret=JBSWY3DPEHPK3PXP&digits=7')
     vi.mocked(addEntryOp).mockClear()
-    const wrapper = await mountApp()
-    await findAddButton(wrapper).trigger('click')
+    const wrapper = await mountTracked()
     wrapper.findComponent({ name: 'EntryForm' }).vm.$emit('save', {
       type: 'totp',
       issuer: 'GitHub',
@@ -505,43 +531,17 @@ describe('popup 跟随拉取行为（跨端同步 T2/T3，审查修复）', () =
   })
 })
 
-// ==================== P3a 补齐（盘点 B3-11~17）====================
+// ==================== P3a 补齐（盘点 B3-11~17，P4 Task 3 按精简形态保留）====================
 
-const VALID_URI = 'otpauth://totp/GitHub:me?secret=JBSWY3DPEHPK3PXP'
-
-// 文件级兜底卸载：泄漏实例的 watch(locked) 会在后续用例锁定翻转时集体触发跟随拉取
-// （[cloudAutoSync] 连发噪音）。describe 级 afterEach 先执行，此处对剩余实例兜底。
-afterEach(() => {
-  if (active) {
-    active.unmount()
-    active = null
-  }
-  // toast 模块级单例（P3）：清残留防跨用例串扰（fake timers 下 3s 自动过期不触发）
-  const { toasts, dismiss } = useToast()
-  for (const t of [...toasts.value]) dismiss(t.key)
-})
-
-/** 挂载前注入 ?uri= 查询参数（Firefox ext+otpauth 协议回调入口），尾部恢复干净路径 */
-function withUriQuery(uri: string | null): void {
-  window.history.replaceState({}, '', uri === null ? '/' : `/?uri=${encodeURIComponent(uri)}`)
-}
-
-/** 恢复 clipboard 相关全局（clipboard mock/offscreen 注入/settings 开关） */
-function resetClipboardEnv(): void {
-  settings.clipboardClearEnabled = false
-  try {
-    delete (navigator as unknown as { clipboard?: unknown }).clipboard
-  } catch { /* 不可删则留给下个 defineProperty 覆盖 */ }
-}
-
-describe('popup otpauth 导入入口（B3-13：?uri= 优先、pendingOtpauth 读取即清）', () => {
+describe('popup otpauth 导入入口（B3-13：?uri= 优先、pendingOtpauth 读取即清；P4 后为唯一新建入口）', () => {
   afterEach(() => {
     unmountActive()
     withUriQuery(null)
     shim?.restore()
+    vi.mocked(addEntryOp).mockClear()
   })
 
-  it('?uri= 协议回调优先消费：合法 URI → EntryForm 预填，不读 pendingOtpauth', async () => {
+  it('?uri= 协议回调优先消费：合法 URI → EntryForm 预填确认态，不读 pendingOtpauth', async () => {
     withUriQuery('otpauth://totp/Acme:dev?secret=JBSWY3DPEHPK3PXP')
     const wrapper = await mountTracked()
 
@@ -551,19 +551,17 @@ describe('popup otpauth 导入入口（B3-13：?uri= 优先、pendingOtpauth 读
     expect(wrapper.find('.error').exists()).toBe(false)
   })
 
-  it('?uri= 非法 URI：importError 常显（details 折叠时也在），不渲染预填表单', async () => {
+  it('?uri= 非法 URI：importError 常显，不渲染预填表单', async () => {
     withUriQuery('notauri')
     const wrapper = await mountTracked()
 
     const err = wrapper.find('.error')
     expect(err.exists()).toBe(true)
     expect(err.text()).not.toBe('')
-    // 错误置于 details 外：details 保持折叠仍可见（本次直接断言 details 无 open 属性）
-    expect(wrapper.find('details.otpauth-import').attributes('open')).toBeUndefined()
     expect(wrapper.find('entry-form-stub').exists()).toBe(false)
   })
 
-  it('无 ?uri= 时读 pendingOtpauth（Chrome 右键菜单写入）：合法→预填，读取即 remove', async () => {
+  it('无 ?uri= 时读 pendingOtpauth（Chrome 右键菜单写入）：合法→预填确认态，读取即 remove，save 落库', async () => {
     shim = installChromeShim({ local: { pendingOtpauth: VALID_URI } })
     const wrapper = await mountTracked()
 
@@ -572,6 +570,15 @@ describe('popup otpauth 导入入口（B3-13：?uri= 优先、pendingOtpauth 读
     expect(initial).toMatchObject({ issuer: 'GitHub' })
     expect(shim.local.data['pendingOtpauth']).toBeUndefined() // 读取即清除
     expect(shim.local.calls.remove).toBe(1)
+
+    // 确认态落库（P4 Task 3 加强）：确认表单 save → 新建分支落库 → 关表单回列表
+    wrapper.findComponent({ name: 'EntryForm' }).vm.$emit('save', {
+      type: 'totp', issuer: 'GitHub', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
+      algorithm: 'SHA1', digits: 6, period: 30, note: '', tagIds: [], matchRules: [],
+    })
+    await flushPromises()
+    expect(addEntryOp).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('entry-form-stub').exists()).toBe(false)
   })
 
   it('pendingOtpauth 非法字符串：importError 报错，但同样消费即清（不残留重弹）', async () => {
@@ -581,96 +588,6 @@ describe('popup otpauth 导入入口（B3-13：?uri= 优先、pendingOtpauth 读
     expect(wrapper.find('.error').exists()).toBe(true)
     expect(wrapper.find('entry-form-stub').exists()).toBe(false)
     expect(shim.local.data['pendingOtpauth']).toBeUndefined()
-  })
-})
-
-describe('popup 右键菜单四项（B3-17：编辑/显示二维码/复制 URI/置顶）', () => {
-  const yandexEntry = {
-    uuid: 'e-y', type: 'yandex', issuer: 'Yandex', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
-    algorithm: 'SHA1', digits: 8, period: 30, pin: '1234', tagIds: [], order: 0, createdAt: 0,
-  }
-
-  async function mountWithEntryAndOpenMenu(entry: Record<string, unknown>) {
-    vault.entries.push(entry as never)
-    const wrapper = await mountTracked({ otpListItem: OtpListItemStub })
-    wrapper
-      .findComponent({ name: 'OtpListItemStub' })
-      .vm.$emit('context', { clientX: 10, clientY: 20, currentTarget: null })
-    await flushPromises()
-    return wrapper
-  }
-
-  afterEach(() => {
-    unmountActive()
-    vault.entries.length = 0
-    shim?.restore()
-    resetClipboardEnv()
-  })
-
-  it('菜单打开渲染四项；「编辑」→ 编辑态 EntryForm 并收起菜单', async () => {
-    const wrapper = await mountWithEntryAndOpenMenu({
-      uuid: 'e1', type: 'totp', issuer: 'GitHub', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
-      algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 0,
-    })
-    const items = wrapper.findAll('[data-test="ctx-menu"] .ctx-item')
-    expect(items).toHaveLength(4)
-    expect(items[0]!.text()).toBe('编辑')
-    expect(items[3]!.text()).toBe('置顶')
-
-    await items[0]!.trigger('click')
-    await flushPromises()
-    expect(wrapper.find('entry-form-stub').exists()).toBe(true)
-    expect(wrapper.find('[data-test="ctx-menu"]').exists()).toBe(false)
-  })
-
-  it('「显示二维码」：OtpQrDialog 打开并携带该条目', async () => {
-    const wrapper = await mountWithEntryAndOpenMenu(yandexEntry)
-    await wrapper.findAll('[data-test="ctx-menu"] .ctx-item')[1]!.trigger('click')
-    await flushPromises()
-
-    const dialog = wrapper.find('[data-test="qr-dialog"]')
-    expect(dialog.exists()).toBe(true)
-    expect(dialog.text()).toContain('Yandex')
-  })
-
-  it('「复制 URI」：yandex 条目经 buildOtpUri 产出 yaotp host + pin（I1d），成功入队已复制 toast', async () => {
-    const writeText = vi.fn(async () => {})
-    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
-    const wrapper = await mountWithEntryAndOpenMenu(yandexEntry)
-
-    await wrapper.findAll('[data-test="ctx-menu"] .ctx-item')[2]!.trigger('click')
-    await flushPromises()
-
-    expect(writeText).toHaveBeenCalledTimes(1)
-    const uri = (writeText.mock.calls[0] as unknown as [string])[0]
-    expect(uri).toContain('otpauth://yaotp/')
-    expect(uri).toContain('pin=1234')
-    // 成功反馈迁全局 toast（P3）：ToastHost 真渲染，断言 success toast DOM
-    const toast = wrapper.find('.toast:not(.toast--error)')
-    expect(toast.exists()).toBe(true)
-    expect(toast.text()).toBe('已复制到剪贴板')
-  })
-
-  it('「置顶」切换：未置顶 → updateEntryOp(uuid,{pinned:true})；已置顶文案为「取消置顶」', async () => {
-    vi.mocked(updateEntryOp).mockClear()
-    const wrapper = await mountWithEntryAndOpenMenu(yandexEntry)
-    const items = wrapper.findAll('[data-test="ctx-menu"] .ctx-item')
-    await items[3]!.trigger('click')
-    await flushPromises()
-    expect(updateEntryOp).toHaveBeenCalledWith('e-y', { pinned: true })
-    expect(wrapper.find('[data-test="ctx-menu"]').exists()).toBe(false)
-
-    // 已置顶条目：mock 不回写 vault，手动置位（contextMenu.entry 与 vault 同引用）——
-    // 菜单文案切换为「取消置顶」，点击撤销
-    ;(yandexEntry as { pinned?: boolean }).pinned = true
-    vi.mocked(updateEntryOp).mockClear()
-    wrapper.findComponent({ name: 'OtpListItemStub' }).vm.$emit('context', { clientX: 1, clientY: 1, currentTarget: null })
-    await flushPromises()
-    const items2 = wrapper.findAll('[data-test="ctx-menu"] .ctx-item')
-    expect(items2[3]!.text()).toBe('取消置顶')
-    await items2[3]!.trigger('click')
-    await flushPromises()
-    expect(updateEntryOp).toHaveBeenCalledWith('e-y', { pinned: false })
   })
 })
 
@@ -748,85 +665,12 @@ describe('popup 复制行为补齐（B3-15/16：HOTP 递增、清剪贴板三重
   })
 })
 
-describe('popup 删除两击确认与 3s 超时复位（B3-17）', () => {
-  afterEach(() => {
-    unmountActive()
-    vault.entries.length = 0
-    vi.useRealTimers()
-  })
-
-  async function mountWithEntry() {
-    vault.entries.push({
-      uuid: 'e1', type: 'totp', issuer: 'GitHub', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
-      algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 0,
-    } as never)
-    return await mountTracked()
-  }
-
-  it('首击出确认按钮，3s 超时复位回删除钮；两击内确认才真正删除', async () => {
-    vi.mocked(removeEntryOp).mockClear()
-    const wrapper = await mountWithEntry()
-    await vi.waitFor(() => {
-      expect(wrapper.findAll('button').some((b) => b.text() === '🗑')).toBe(true)
-    })
-    vi.useFakeTimers()
-
-    const delBtn = () => wrapper.findAll('button').find((b) => b.text() === '🗑')
-    const confirmBtn = () => wrapper.findAll('button').find((b) => b.text().includes('删除'))
-
-    // 首击：进入确认态（删除钮被确认钮替换）
-    expect(delBtn()).toBeTruthy()
-    await delBtn()!.trigger('click')
-    expect(delBtn()).toBeUndefined()
-    expect(confirmBtn()).toBeTruthy()
-
-    // 3s 无操作：超时复位回删除钮
-    await vi.advanceTimersByTimeAsync(3000)
-    expect(confirmBtn()).toBeUndefined()
-    expect(delBtn()).toBeTruthy()
-    expect(removeEntryOp).not.toHaveBeenCalled()
-
-    // 两击内确认：删除落地
-    await delBtn()!.trigger('click')
-    await confirmBtn()!.trigger('click')
-    await flushPromises()
-    expect(removeEntryOp).toHaveBeenCalledWith('e1')
-  })
-})
-
-describe('popup 编辑 digits 重算与 URI 导入 carried 透传（B3-16）', () => {
+describe('popup URI 导入 carried 透传（B3-16）', () => {
   afterEach(() => {
     unmountActive()
     vault.entries.length = 0
     shim?.restore()
     withUriQuery(null)
-  })
-
-  it('编辑路径 type 变更：steam→totp 时 digits 重算（5→6），type 未变沿用表单值', async () => {
-    vault.entries.push({
-      uuid: 'e-s', type: 'steam', issuer: 'Steam', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
-      algorithm: 'SHA1', digits: 5, period: 30, tagIds: [], order: 0, createdAt: 0,
-    } as never)
-    const wrapper = await mountTracked()
-    await wrapper.findAll('button').find((b) => b.text() === '✎')!.trigger('click')
-    const form = wrapper.findComponent({ name: 'EntryForm' })
-
-    form.vm.$emit('save', {
-      type: 'totp', issuer: 'Steam', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
-      algorithm: 'SHA1', digits: 6, period: 30, note: '', tagIds: [], matchRules: [],
-    })
-    await flushPromises()
-    expect(updateEntryOp).toHaveBeenCalledWith('e-s', expect.objectContaining({ type: 'totp', digits: 6 }))
-
-    // type 未变（steam）：沿用表单提交值 5
-    vi.mocked(updateEntryOp).mockClear()
-    await wrapper.findAll('button').find((b) => b.text() === '✎')!.trigger('click')
-    wrapper.findComponent({ name: 'EntryForm' }).vm.$emit('save', {
-      type: 'steam', issuer: 'Steam', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
-      algorithm: 'SHA1', digits: 5, period: 30, note: '', tagIds: [], matchRules: [],
-    })
-    await flushPromises()
-    expect(updateEntryOp).toHaveBeenCalledWith('e-s', expect.objectContaining({ type: 'steam', digits: 5 }))
   })
 
   it('URI 导入预填同 type：carried 透传 algorithm/digits/period/counter（hotp counter 保留）', async () => {
@@ -886,7 +730,7 @@ describe('popup 锁定态与标签筛选恢复（B3-11/14）', () => {
     expect(wrapper.find('main').exists()).toBe(false)
   })
 
-  it('rememberTagFilter 恢复：悬空 id 剔除、有效选中恢复并透传 TagFilterRow', async () => {
+  it('rememberTagFilter 恢复：悬空 id 剔除、有效选中恢复并透传面板内 TagFilterRow', async () => {
     settings.rememberTagFilter = true
     settings.lastTagFilterIds = ['t1', 'gone']
     vault.tags.push({ id: 't1', name: '工作' }, { id: 't2', name: '个人' } as never)
@@ -909,8 +753,8 @@ describe('popup 锁定态与标签筛选恢复（B3-11/14）', () => {
 describe('popup App entryIcons 全量 ready 依赖（2026-10-05 full-icons Task 9）', () => {
   it('fullIconsReady 翻转后 EntryForm 的 icons prop 重算产出新对象（非精选 builtin 补渲染触发）', async () => {
     const { fullIconsReady } = await import('@totp/ui')
-    const wrapper = await mountApp()
-    await findAddButton(wrapper).trigger('click')
+    withUriQuery(VALID_URI) // P4 后唯一新建入口：预填确认态挂出 EntryForm
+    const wrapper = await mountTracked()
     const form = wrapper.findComponent({ name: 'EntryForm' })
     expect(form.exists()).toBe(true)
     const before = form.props('icons') as Record<string, unknown>
