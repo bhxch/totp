@@ -448,6 +448,8 @@ h2 { margin: 0; font-size: var(--md-sys-typescale-title-medium); }
 /* 杂-I3：键盘聚焦序号按钮时保持可见（兜底保留：未来若再引入任何序号隐藏规则，焦点元素不被隐没） */
 .row.drag-enabled .index-num:focus-visible { display: inline; }
 .index-num.clickable { cursor: pointer; }
+/* h1（Task 13 评审补）：过滤态序号 title 已有禁用提示，光标同步 not-allowed 作视觉禁用反馈 */
+.index-num:not(.clickable) { cursor: not-allowed; }
 .index-input { width: 48px; text-align: center; font-size: var(--md-sys-typescale-body-small); border: 1px solid var(--md-sys-color-outline); border-radius: 4px; background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); }
 /* ④C：拖拽悬停插入指示线 */
 .row.drag-above { box-shadow: inset 0 2px 0 var(--md-sys-color-primary); }
