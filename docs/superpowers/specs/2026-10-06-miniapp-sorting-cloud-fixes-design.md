@@ -3,7 +3,7 @@
 - 日期：2026-10-06
 - 状态：待评审
 - 类型：批量设计（1 项 bounded 特性集 + 3 项诊断型修复）
-- 决策记录：所有"已定"选项均经用户确认（2026-10-06 对话）——① pin 语义 = 置顶 + 不自动隐藏（含复制后自动隐藏一并禁用）；② 排序症状 = 管理页拖拽把手与序号输入**双双无效**（真机修复）；③ 云后端 = 多种混用，以 WebDAV 自动建目录为主修复、全后端补全错误日志；④ 白屏表现 = **永久白屏**（非加载期闪烁），说明前端初始化失败被静默吞掉。
+- 决策记录：所有"已定"选项均经用户确认（2026-10-06 对话）——① pin 语义 = 置顶 + 不自动隐藏（含复制后自动隐藏一并禁用）；② 排序症状 = 管理页拖拽把手与序号输入**双双无效**（真机修复）；③ 云后端 = 多种混用，以 WebDAV 自动建目录为主修复、全后端补全错误日志；④ 白屏表现 = **永久白屏**（非加载期闪烁），说明前端初始化失败被静默吞掉；⑤ 目标路径显示与目录语义三件套（尾分隔符 = 目录意向 / 实际目标显示完整地址 / 被忽略部分显式回显）经用户确认并入本批（同日对话）。
 
 ## 0. 背景与范围
 
@@ -25,6 +25,7 @@
 - **搜索框**：popup 用共享组件 `packages/ui/src/components/SearchBar.vue`（v-model + 可选 `search-secret` checkbox）+ 谓词 `searchEntries`（`packages/ui/src/popupFilter.ts:38`，issuer/label/note 大小写不敏感包含）。mini（`MiniApp.vue`）未接入。
 - **排序**：实现仅存在于管理页 `packages/ui/src/pages/CodesPage.vue`（④C，2026-09-30 commit `8f678dc`；**docs 无 spec 文档，行为口径只在 commit message**）。手写 HTML5 DnD：把手 `draggable` + `onDragStart` 已 `setData('text/plain')`（:239-245）、`onDragOver` 上下缘判定（:246-251）、`onDrop` → `moveWithinPartition` → `reorderOp`（:253-264）；序号点击变 `<input type=number>` → `moveToIndex` 钳位 → `reorderOp`（:269-284）。纯函数与单测齐（`listOrder.test.ts` 12 例、`CodesPage.reorder.test.ts` 8 例）。**门控** `dragEnabled = !selecting && query 为空 && 无标签筛选`（:233）：搜索/标签过滤态与多选模式下把手不渲染、序号不可点，**且无任何视觉提示**。popup 与 mini 只展示序号无操作入口。popup 列表排序仍是内联 comparator（popup `App.vue:91-96`），未收敛到 `entriesSort.sortEntries`（R14 遗留）。
 - **云备份 404**：五后端（webdav/s3/gist/gdrive/onedrive）纯 fetch；**WebDAV 全链路无任何建目录（MKCOL）逻辑**（全仓库 grep 零命中），目标路径父目录在服务器不存在时 PUT 直接被拒（404/409，RFC 4918 应答 409 但部分实现答 404）。此前修复（`521da81` 路径解析、`7ac15a9` 实时预览）全为客户端语法层。错误链：`ensureHttpOk`（`packages/core/src/cloud/backend.ts:174`）**只保留状态码，丢弃响应体与方法/URL**；`CloudHttpError` 消息仅"xx 请求失败（HTTP nnn）"；自动备份通道失败目标只记"源名： 失败"（`packages/ui/src/cloudRunner.ts:348`），错误消息与状态码不上屏不落日志——这是排查困难的直接原因。另一 404 源：`resolveObjectPath`（`targetPath.ts:7-15`）不拒绝 `#`/`?`，二者把 URL 截断成 fragment/query → 实际 PUT 到错误位置。斜杠拼接与中文/空格编码已排除（`joinDavUrl` 归一正确，URL parser 自动百分号编码）。
+- **目标路径目录语义缺口（2026-10-06 真机实证）**：用户坚果云源（keep n=3）实填 `objectPath = /totpbackup/`（首尾斜杠 = 目录意向）。解析层把斜杠切分归一后单段 `totpbackup` 按契约当**文件名**：`resolveDirPath` 返回空 → keep 上传实际落在**网盘根目录**、用户填的目录整体被吞，预览显示"实际目标：（根目录）/vault-…"与输入完全对不上。尾分隔符的目录意向被静默丢弃是显示困惑与数据落位的共同根因（用户凭据经 DPAPI 本机解封 `secretBag` 只读 `objectPath`/`serverUrl` 实证，口令字段未读取）。
 
 ## 1. A：miniapp 搜索框 + 托盘定位 + 无边框 + pin
 
@@ -150,9 +151,9 @@
 
 ### 4.1 目标与非目标
 
-目标：① WebDAV push 自动逐级创建缺失父目录（404 根修）；② 云端请求失败时完整错误（方法、URL、状态码、响应体摘要）进 console；③ 自动备份失败摘要携带错误信息；④ 路径校验拒绝 `#`/`?`（URL 截断型 404 根修）。
+目标：① WebDAV push 自动逐级创建缺失父目录（404 根修）；② 云端请求失败时完整错误（方法、URL、状态码、响应体摘要）进 console；③ 自动备份失败摘要携带错误信息；④ 路径校验拒绝 `#`/`?`（URL 截断型 404 根修）；⑤ 尾分隔符目录语义（`/xxx/` 按目录处理，见 §4.5）；⑥ 实际目标显示完整地址 + 被忽略部分显式回显（见 §4.5）。
 
-非目标：不加保存凭据时的服务器连通性探测；不做失败重试队列；S3/Gist/GDrive/OneDrive 不加建目录逻辑（语义不适用）；不改变 `objectPath` 存储位置（仍属凭据秘密区）。
+非目标：不加保存凭据时的服务器连通性探测；不做失败重试队列；S3/Gist/GDrive/OneDrive 不加建目录逻辑（语义不适用）；不改变 `objectPath` 存储位置与字段契约（仍为凭据秘密区的单字符串）；gist/gdrive（平铺无目录语义）不增加目录显示。
 
 ### 4.2 WebDAV 逐级建目录（`packages/core/src/cloud/webdav.ts`）
 
@@ -172,20 +173,38 @@
 - `resolveObjectPath` 新增拒绝 `#` 与 `?`（抛「云端路径不允许包含 # 或 ?」）；`previewObjectPath` 的 invalid 态自动覆盖，`CloudCredFields.vue` 预览警示文案不变（复用既有 `cloudCard.pathPreviewInvalid`）。
 - 中文/空格维持现状（URL parser 自动编码，实测可达）；`%` 不拦截（非法序列由 URL parse 报错，经 4.3 日志可见）。
 
-### 4.5 验收
+### 4.5 尾分隔符目录语义与实际目标显示（§0.1 实证缺口）
+
+**语义层（`packages/core/src/cloud/targetPath.ts`，函数级单点、零调用方改动）**：
+
+- 判据 = trim 后的原始输入**以 `/` 或 `\` 结尾**（目录意向），仅此一种判据；不以分隔符结尾维持现契约（末段 = 文件名），存量凭据行为零变化。
+- `resolveDirPath(cred)`：目录意向输入 → 返回全部段 join（`/totpbackup/` → `totpbackup`；`a/b/` → `a/b`；仅分隔符 → `''` 即根目录）；其余路径维持现行为（剥末段）。`resolveTimestampPath` 经 `resolveDirPath` 自动获得该语义（同秒防撞记忆按目录键不受影响）。
+- `resolveObjectPath(cred)`（overwrite 全路径）：目录意向输入 → 目录存在则追加默认文件名（`/totpbackup/` → `totpbackup/totp-backup.totpbackup`），目录为空回落 `DEFAULT_OBJECT_PATH`；其余维持现行为。`#`/`?` 拒绝（§4.4）在切分前对原始输入生效，两种意向一致。
+- `previewObjectPath` 复用上述两函数，预览与上传链自动同语义（既有约束"预览纯只读不签发时间戳名"不变）。
+
+**显示层（`packages/ui/src/components/CloudCredFields.vue` + i18n）**：
+
+- **实际目标显示完整地址**：WebDAV 拼最终 URL（`serverUrl` 去尾斜杠 + `/` + 目标路径，如 `https://dav.jianguoyun.com/dav/totpbackup/vault-YYYYMMDD-HHMMSS.totpbackup`；显示原文不预编码，URL 编码属传输细节）；S3 显示 `s3://{bucket}/{目标路径}`（bucket 未填回落裸路径）；gist/gdrive 维持平铺提示（`pathPreviewFlatHint`）。`serverUrl` 缺失/非法时回落现路径显示。
+- **keep 模式文件名段被忽略时显式回显警示行**（warn 样式，不改预览主行）：输入不以分隔符结尾且含文件名段——有目录段时「文件名 `{name}` 在保留最近模式下不生效，仅目录 `{dir}` 参与；如需自定义文件名请改用覆盖模式」；仅单段（无目录）时「你填写的 `{raw}` 在保留最近模式下整体不参与，请填写以 / 结尾的目录或改用覆盖模式」。输入以分隔符结尾（目录意向）不警示。
+- **输入框 label/placeholder 按保留模式切换**：keep →「目标目录（文件名自动生成）」；overwrite 维持「目标文件路径」。
+- 新增 i18n 键（zh/en，`packages/ui/src/i18n/locales/{zh,en}/common.json`）：`cloudCard.objectPathLabelKeep`、`cloudCard.pathPreviewKeepFileIgnored`、`cloudCard.pathPreviewKeepNoDir`；既有 `pathPreviewOverwrite/pathPreviewKeep/pathPreviewRoot/pathPreviewInvalid` 复用。
+
+### 4.6 验收
 
 1. 真机 WebDAV（Nextcloud/Alist 或坚果云）：目标路径填**服务器上不存在的多级目录**，overwrite 与 keep 两模式 push 均成功，目录被逐级创建；对已存在目录二次 push 幂等成功（MKCOL 405 静默容忍）。
 2. 人为制造失败（错密码 401、错服务器 404/超时）：console 出现含方法/URL/状态码/响应体摘要的完整错误行；UI 错误消息含状态码。
 3. 自动备份失败后，设置页状态摘要可见错误信息而非仅"失败"。
 4. `resolveObjectPath` 对 `a#b`、`a?b` 抛错且预览显示非法；既有 `targetPath.test.ts` 全绿并新增拒绝用例。
+5. 目录语义与显示：`/totpbackup/` keep 模式预览显示 `https://dav.jianguoyun.com/dav/totpbackup/vault-…` 且 push 落在该目录（配合验收 1 的建目录）；`/totpbackup/` overwrite 模式预览为 `totpbackup/totp-backup.totpbackup`；keep 模式填 `a/b.totpbackup` 显示文件名不生效警示行；输入框 label 随保留模式切换；不以分隔符结尾的存量凭据（如 `a/b.totpbackup` overwrite）预览与上传行为与现状逐字节一致。
 
 ## 5. 测试与提交拆分
 
-- **单测**：core——`ensureDavDir` 路径序列与 405 容忍（mock `fetchImpl`）、`CloudHttpError` 新字段与消息形态、`resolveObjectPath` 拒绝 `#`/`?`；ui——`CodesPage` 排序既有用例回归 + h1/h2/h3 修复对应增量；desktop——`miniAutoHide` pinned 跳过用例。Rust——`position_mini_at_tray` 几何计算（给定 rect/work_area/窗口尺寸的纯函数部分）单测。
+- **单测**：core——`ensureDavDir` 路径序列与 405 容忍（mock `fetchImpl`）、`CloudHttpError` 新字段与消息形态、`resolveObjectPath` 拒绝 `#`/`?`、尾分隔符目录语义（`resolveObjectPath`/`resolveDirPath`/`resolveTimestampPath`/`previewObjectPath` 的 keep/overwrite 双模式 + 不以分隔符结尾回归不变用例）；ui——`CodesPage` 排序既有用例回归 + h1/h2/h3 修复对应增量、`CloudCredFields` 预览完整地址/警示行/label 切换用例；desktop——`miniAutoHide` pinned 跳过用例。Rust——`position_mini_at_tray` 几何计算（给定 rect/work_area/窗口尺寸的纯函数部分）单测。
 - **真机清单**：docs/e2e 追加 A/B/C 三项验收条目（按仓库真机清单惯例）。
 - **提交拆分**（Angular 规范，原子化）：
-  1. `fix(core): 云备份 WebDAV 逐级建目录与完整错误日志`（§4，core+ui 同一语义）
-  2. `feat(desktop): miniapp 搜索框、托盘定位、无边框与 pin`（§1）
-  3. `fix(desktop): 销毁档重开白屏——错误暴露/主题底色/ready 门控`（§2）
-  4. `fix(ui): 管理页排序真机修复与口径补录`（§3，commit 数随诊断结果定）
+  1. `fix(core): 云备份 WebDAV 逐级建目录与完整错误日志`（§4.2-4.4，core+ui 同一语义）
+  2. `feat(cloud): 目标路径尾分隔符目录语义与实际目标完整显示`（§4.5，core targetPath + ui 预览 + i18n）
+  3. `feat(desktop): miniapp 搜索框、托盘定位、无边框与 pin`（§1）
+  4. `fix(desktop): 销毁档重开白屏——错误暴露/主题底色/ready 门控`（§2）
+  5. `fix(ui): 管理页排序真机修复与口径补录`（§3，commit 数随诊断结果定）
 - **质量门**：`pnpm test`（根 vitest）全绿；`cargo test`（src-tauri）全绿；`pnpm exec wxt prepare` 后双端构建通过；CI 覆盖率 gate（71/54）不回退。
