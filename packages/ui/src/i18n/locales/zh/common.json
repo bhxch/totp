@@ -803,7 +803,8 @@
     "empty": "暂无条目",
     "copyFailed": "复制失败：剪贴板被占用",
     "pinTitle": "固定窗口（置顶且不自动隐藏）",
-    "hideTitle": "收起"
+    "hideTitle": "收起",
+    "searchEmpty": "无匹配条目"
   },
   "cloudRunner": {
     "lockedVault": "库已锁定",

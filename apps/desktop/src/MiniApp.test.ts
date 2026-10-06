@@ -365,3 +365,18 @@ describe('mini 标题区 chrome（spec §1.4/§1.5）', () => {
     expect(tauriMock.window.hide).toHaveBeenCalled()
   })
 })
+
+describe('mini 搜索框（spec §1.2）', () => {
+  it('输入过滤列表：命中 issuer 子串；清空恢复；无命中显示 searchEmpty 文案', async () => {
+    await seedVault([TOTP, HOTP]) // 种子两条（GitHub / Legacy），复用文件既有种子
+    const w = await mountMini()
+    const input = w.find('input[type="search"]')
+    await input.setValue('git')
+    expect(w.findAll('[data-test="item"]')).toHaveLength(1)
+    await input.setValue('zzz-no-match')
+    expect(w.findAll('[data-test="item"]')).toHaveLength(0)
+    expect(w.text()).toContain('无匹配条目')
+    await input.setValue('')
+    expect(w.findAll('[data-test="item"]')).toHaveLength(2)
+  })
+})

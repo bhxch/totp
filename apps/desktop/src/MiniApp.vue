@@ -2,7 +2,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { OtpListItem, PersistErrorBanner, createIconStore, iconView, useOtpCodes, useTheme, type IconStore, type VueStore } from '@totp/ui'
+import { OtpListItem, PersistErrorBanner, SearchBar, createIconStore, iconView, searchEntries, useOtpCodes, useTheme, type IconStore, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createTauriFs } from './tauriFs'
 import { bootDesktopStore, persistFailed, useDesktopI18n } from './desktopShell'
@@ -17,6 +17,10 @@ const store = shallowRef<VueStore | null>(null)
 /** 模板锁定态（mini 未就绪/未加密库显示条目，锁定显示不可用） */
 const locked = computed(() => store.value?.locked.value ?? false)
 const icons = ref<IconStore | null>(null)
+/** 搜索行渲染门控（spec §1.2）：SearchBar 内部 useI18n()，须等 i18n 插件装入后才可渲染 */
+const i18nReady = ref(false)
+/** 搜索词（spec §1.2） */
+const query = ref('')
 // i18n 胶水收敛至 desktopShell.useDesktopI18n（R13，与主窗同款实现）：app 引用在 setup 同步段
 // 捕获；mini 的 store 在每次聚焦重载时重建（既有模式，useTheme 同样重新接线）——i18n 插件只能
 // 装入一次，mountI18n 内部仅首次生效，重载为 no-op；tr 兜底回原文 key 仅极端时序可见
@@ -55,13 +59,15 @@ async function load() {
         clear: async () => {},
       },
     })
+    // i18n 先于 store 置位挂载（D1：设置已从盘载入含 locale；仅首次生效，重载不再装入）：
+    // SearchBar（useI18n）在 store 触发的重渲染时已可用（spec §1.2）
+    mountI18n(s)
+    i18nReady.value = true
     store.value = s
     if (restoredFromSlot && !s.locked.value) {
       const dekStillThere = await invoke<string | null>('peek_mini_dek').catch(() => 'gone')
       if (dekStillThere === null) s.lock()
     }
-    // D1 i18n 挂载：设置已从盘载入（含 locale）；仅首次生效，重载不再装入
-    mountI18n(s)
     // 主题接线:initStore 成功后挂 useTheme(设置已加载为真实值;首帧属性由 html 内联脚本负责)
     useTheme(s)
     const iconStore = createIconStore(adapter)
@@ -115,6 +121,8 @@ onScopeDispose(() => {
 /** 列表排序：pinned 优先 → order 升序（sortMiniEntries 纯函数，与 CodesPage.vue 同口径，跨宿主顺序一致） */
 const sorted = computed(() => (store.value ? sortMiniEntries(store.value.vault.entries) : []))
 const { codes } = useOtpCodes(sorted)
+/** 搜索过滤（spec §1.2）：谓词与 popup 同源（searchEntries），mini 无 tag/URL 语境不用 resolvePopupVisible */
+const visible = computed(() => searchEntries(sorted.value, query.value.trim()))
 
 /** 复制编排统一走 createDesktopCopy（R13，与主窗同一事实源）：stage 成功武装 30s 清空、失败横幅
  *  3s 自动复位（修复：mini 原横幅不复位，行为已与 desktopCopy 漂移，以 desktopCopy 为准） */
@@ -167,13 +175,16 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
     </header>
     <!-- R16⑤（评审 A2 方案 a）：落盘失败常驻告警，与主体并列不互斥 -->
     <PersistErrorBanner :show="persistFailed" :text="tr('app.persistError')" />
+    <!-- 搜索行（spec §1.2）：SearchBar 内部 useI18n，i18n 插件装入后才渲染 -->
+    <div v-if="i18nReady" class="search-row"><SearchBar v-model="query" /></div>
     <div v-if="store && locked" class="empty">{{ tr('mini.lockedNote') }}</div>
     <div v-else-if="copyFailed" class="copy-error" role="alert">{{ tr('mini.copyFailed') }}</div>
     <div v-else-if="!store || sorted.length === 0" class="empty">{{ tr('mini.empty') }}</div>
+    <div v-else-if="visible.length === 0" class="empty">{{ tr('mini.searchEmpty') }}</div>
     <!-- 终审 Important-1：@dblclick 未在 OtpListItem emits 声明，经 attrs fallthrough 合并到组件根元素，
          与组件内部揭示 onDblclick 合并共存（Vue 3 mergeProps 依次调用）——双击即揭示并取消 500ms 自动隐藏
          （审查 I-1：控制器内部递增揭示代次，使 await 期间在途的 copy 不再武装自动隐藏） -->
-    <OtpListItem v-for="(e, i) in sorted" :key="e.uuid" :entry="e" :icon="iconView(e.icon, icons ?? undefined)" :index="i + 1" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 1 }" :context-menu="false" :show-qr="false" @copy="copy(e)" @dblclick="autoHide.onDblclick" />
+    <OtpListItem v-for="(e, i) in visible" :key="e.uuid" :entry="e" :icon="iconView(e.icon, icons ?? undefined)" :index="i + 1" v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 1 }" :context-menu="false" :show-qr="false" @copy="copy(e)" @dblclick="autoHide.onDblclick" />
   </main>
 </template>
 
@@ -187,4 +198,5 @@ body { font-family: system-ui, sans-serif; margin: 0; }
 .tb-btn.active { color: var(--md-sys-color-primary); }
 .empty { text-align: center; opacity: .6; padding: 32px 0; font-size: var(--md-sys-typescale-body-medium); }
 .copy-error { text-align: center; color: var(--md-sys-color-error); background: var(--md-sys-color-error-container); border-radius: 6px; padding: 8px 0; font-size: var(--md-sys-typescale-body-small); }
+.search-row { padding: 2px 0; }
 </style>
