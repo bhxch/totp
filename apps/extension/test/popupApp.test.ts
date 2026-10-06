@@ -11,6 +11,7 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick, type Ref } from 'vue'
+import { useToast } from '@totp/ui'
 
 vi.mock('../src/store', async () => {
   const { reactive, ref } = await import('vue')
@@ -380,7 +381,7 @@ describe('popup 双击揭示 vs copy 武装竞态（审查 I-1）', () => {
 })
 
 describe('popup 复制失败反馈（真机发现：剪贴板被第三方独占时静默无提示）', () => {
-  it('writeText 拒绝：显示错误横幅（role=alert）不显示「已复制」，且不武装自动关窗', async () => {
+  it('writeText 拒绝：入队 error toast（复制失败文案）不显示「已复制」，且不武装自动关窗', async () => {
     const closeSpy = vi.spyOn(window, 'close').mockImplementation(() => {})
     const writeText = vi.fn(() => Promise.reject(new DOMException('Denied', 'NotAllowedError')))
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
@@ -399,9 +400,12 @@ describe('popup 复制失败反馈（真机发现：剪贴板被第三方独占�
       item.vm.$emit('copy')
       await flushPromises()
       expect(writeText).toHaveBeenCalledTimes(1)
-      expect(wrapper.find('.copied-banner--error').exists()).toBe(true)
-      expect(wrapper.find('.copied-banner--error').attributes('role')).toBe('alert')
-      expect(wrapper.find('.copied-banner:not(.copied-banner--error)').exists()).toBe(false)
+      // 失败反馈迁全局 toast（P3）：error toast 替代旧错误横幅；横幅区已整体移除
+      const errToast = wrapper.find('.toast--error')
+      expect(errToast.exists()).toBe(true)
+      expect(errToast.text()).toBe('复制失败：剪贴板不可用')
+      expect(wrapper.find('.toast:not(.toast--error)').exists()).toBe(false)
+      expect(wrapper.find('.copied-banner').exists()).toBe(false)
 
       // 失败路径不武装自动关窗：横幅停留可供阅读，窗口不自行关闭
       await vi.advanceTimersByTimeAsync(3000)
@@ -512,6 +516,9 @@ afterEach(() => {
     active.unmount()
     active = null
   }
+  // toast 模块级单例（P3）：清残留防跨用例串扰（fake timers 下 3s 自动过期不触发）
+  const { toasts, dismiss } = useToast()
+  for (const t of [...toasts.value]) dismiss(t.key)
 })
 
 /** 挂载前注入 ?uri= 查询参数（Firefox ext+otpauth 协议回调入口），尾部恢复干净路径 */
@@ -626,7 +633,7 @@ describe('popup 右键菜单四项（B3-17：编辑/显示二维码/复制 URI/�
     expect(dialog.text()).toContain('Yandex')
   })
 
-  it('「复制 URI」：yandex 条目经 buildOtpUri 产出 yaotp host + pin（I1d），成功出已复制横幅', async () => {
+  it('「复制 URI」：yandex 条目经 buildOtpUri 产出 yaotp host + pin（I1d），成功入队已复制 toast', async () => {
     const writeText = vi.fn(async () => {})
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
     const wrapper = await mountWithEntryAndOpenMenu(yandexEntry)
@@ -638,7 +645,10 @@ describe('popup 右键菜单四项（B3-17：编辑/显示二维码/复制 URI/�
     const uri = (writeText.mock.calls[0] as unknown as [string])[0]
     expect(uri).toContain('otpauth://yaotp/')
     expect(uri).toContain('pin=1234')
-    expect(wrapper.find('.copied-banner:not(.copied-banner--error)').exists()).toBe(true)
+    // 成功反馈迁全局 toast（P3）：ToastHost 真渲染，断言 success toast DOM
+    const toast = wrapper.find('.toast:not(.toast--error)')
+    expect(toast.exists()).toBe(true)
+    expect(toast.text()).toBe('已复制到剪贴板')
   })
 
   it('「置顶」切换：未置顶 → updateEntryOp(uuid,{pinned:true})；已置顶文案为「取消置顶」', async () => {
@@ -705,7 +715,8 @@ describe('popup 复制行为补齐（B3-15/16：HOTP 递增、清剪贴板三重
     await flushPromises()
 
     expect(updateEntryOp).toHaveBeenCalledWith('e-h', { counter: 3 })
-    expect(wrapper.find('.copied-banner:not(.copied-banner--error)').exists()).toBe(true)
+    // 成功反馈迁全局 toast（P3）：ToastHost 真渲染，断言 success toast DOM
+    expect(wrapper.find('.toast:not(.toast--error)').exists()).toBe(true)
   })
 
   it('清剪贴板三重门控：开关关不发；canOffscreen false 不发；两者齐备才发 delayMs 消息', async () => {

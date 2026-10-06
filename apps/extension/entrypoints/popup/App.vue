@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { buildOtpUri, defaultDigitsFor, getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
-import { BatchPastePanel, createIconStore, EntryForm, PersistErrorBanner, fullIconsReady, iconView, LockScreen, MdButton, MdCheckbox, MdIconButton, MdMenu, MdSegmentedButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, OtpQrDialog, parseUriToEntryData, resolvePopupVisible, SearchBar, sortEntries, TagFilterRow, ToastHost, useOtpCodes, useTheme, type EntryFormData } from '@totp/ui'
+import { BatchPastePanel, createIconStore, EntryForm, PersistErrorBanner, fullIconsReady, iconView, LockScreen, MdButton, MdCheckbox, MdIconButton, MdMenu, MdSegmentedButton, NAV_ICONS, normalizeExtOtpauth, OtpListItem, OtpQrDialog, parseUriToEntryData, resolvePopupVisible, SearchBar, sortEntries, TagFilterRow, ToastHost, useOtpCodes, useTheme, useToast, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
@@ -16,6 +16,8 @@ const icons = createIconStore(storageAdapter)
 
 // D2 抽串：popup 壳层文案走 i18n（popup.*）。i18n 插件由 main.ts 在 mount 前同步装入，useI18n 可用
 const { t } = useI18n()
+// 全局 toast（P3 item-layout toast 设计）：模块级单例，ToastHost（模板根级已挂）直读同一状态渲染
+const toast = useToast()
 
 // ---------- 跟随拉取（跨端同步 T2）：popup 打开时/解锁时单次拉取云端更新，不轮询 ----------
 // runner 工厂与 options 共用（cloudRunnerFactory），差异仅 i18n 注入（useI18n t 的包装同签名）。
@@ -171,7 +173,8 @@ async function contextCopyUri(entry: OtpEntry) {
       digits: entry.digits, period: entry.period, counter: entry.counter, pin: entry.pin,
     }))
     scheduleClipboardClear(settings)
-    copied.value = true
+    // 成功反馈入队全局 toast（P3 横幅迁移），沿用既有 popup.copiedBanner 文案键
+    toast.show(t('popup.copiedBanner'))
   } catch {
     /* 剪贴板不可用时静默 */
   }
@@ -309,8 +312,6 @@ function askRemove(uuid: string) {
   confirmTimer = setTimeout(() => (confirmingDelete.value = null), 3000)
 }
 
-const copied = ref(false) // 「已复制」横幅显隐
-const copyFailed = ref(false) // 复制失败横幅（真机发现：剪贴板被第三方进程独占时 writeText 拒绝，原实现静默无提示）
 let closeTimer: ReturnType<typeof setTimeout> | null = null
 /** 双击揭示代次（审查 I-1 武装竞态守卫）：copy 开始快照、武装前比对 */
 let revealGeneration = 0
@@ -324,17 +325,15 @@ async function copy(entry: OtpEntry) {
   try {
     await navigator.clipboard.writeText(c)
   } catch {
-    // 复制失败：错误横幅替代「已复制」，不武装自动关窗（用户需要时间看到失败原因）
-    copied.value = false
-    copyFailed.value = true
+    // 复制失败：error toast 替代「已复制」（P3 横幅迁移），不武装自动关窗（用户需要时间看到失败原因）
+    toast.show(t('popup.copyFailed'), 'error')
     return
   }
-  copyFailed.value = false
   scheduleClipboardClear(settings)
   // HOTP：复制的是旧 counter 的码（RFC 语义），复制完成后再递增
   if (entry.type === 'hotp') await updateEntryOp(entry.uuid, { counter: (entry.counter ?? 0) + 1 })
-  // 「已复制」反馈：横幅提示后按 popupCloseDelayMs 延迟关闭（简单实现：不重置，到点关闭）
-  copied.value = true
+  // 「已复制」反馈：toast 提示后按 popupCloseDelayMs 延迟关闭（简单实现：不重置，到点关闭）
+  toast.show(t('popup.copiedBanner'))
   if (closeTimer) clearTimeout(closeTimer)
   // I-1 竞态守卫：await 期间发生过双击揭示 → 不武装，否则刚取消过的揭示又被本 timer 截断
   if (generation !== revealGeneration) return
@@ -367,8 +366,6 @@ function cancelAutoClose(): void {
       </div>
     </header>
 
-    <div v-if="copied" class="copied-banner">{{ t('popup.copiedBanner') }}</div>
-    <div v-if="copyFailed" class="copied-banner copied-banner--error" role="alert">{{ t('popup.copyFailed') }}</div>
     <div v-if="error" class="error">{{ error }}</div>
 
     <SearchBar v-model="query" />
@@ -448,8 +445,6 @@ header { display: flex; align-items: center; justify-content: space-between; pad
 .header-ops { display: flex; align-items: center; gap: 6px; }
 h1 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .error { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); }
-.copied-banner { font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-primary); background: var(--md-sys-color-primary-container); border-radius: 6px; padding: 4px 8px; margin: 0 4px; }
-.copied-banner--error { color: var(--md-sys-color-error); background: var(--md-sys-color-error-container); }
 .filter-row { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-small); padding: 0 4px; }
 .tag-row { padding: 0 4px; }
 .otpauth-import { font-size: var(--md-sys-typescale-body-medium); padding: 0 4px; }
