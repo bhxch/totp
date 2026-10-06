@@ -70,8 +70,9 @@ describe('审查 I9：冲突副本写盘失败传播（desktop 接线）', () =>
     expect(ArrayBuffer.isView(bytes)).toBe(true)
     // 该目标失败的连锁表现：本地不被远端覆盖（persistAdopted 未调）、rev 基线原样回写
     // （saveSyncState('s1', 原样 state)，失败源=入参原样幂等——下轮按原基线重做）、
-    // 状态行记「失败」（F10/B9：ok 语义如实——目标级失败（outcome=null）经 allTargetsSettled 记 false）
+    // 状态行记「失败（错误消息）」（F10/B9：ok 语义如实；spec §4.3：runner apply 轮失败目标
+    // 摘要并入错误消息截 60 字符——「磁盘写入失败」未及截断，锁全信息）
     expect(b.store.get('totp-backup.totpbackup')).toEqual(bytesOf(remoteEnv)) // 云端旧版本原样保留
-    expect(recordStatus).toHaveBeenCalledWith(false, 's1: 失败')
+    expect(recordStatus).toHaveBeenCalledWith(false, 's1: 失败（磁盘写入失败）')
   })
 })
