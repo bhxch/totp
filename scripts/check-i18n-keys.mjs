@@ -23,6 +23,9 @@ const ROOTS = [
 const ALLOW = new Set([
   // app.title:生产零消费,仅 packages/ui/test/i18n.test.ts:17 作「资源就绪」哨兵断言(删键会破坏该测试)
   'app.title',
+  // background.ts Firefox 通知回退 tabs.create(runtime.getURL('popup.html')):文件路径巧合点分串,
+  // 首段 popup 命中 NS 被误抓(P5 引入),非 i18n 键
+  'popup.html',
   // 以下 27 键均为模板串动态键(脚本正则只抓静态字面量,属已知盲区而非死键):
   // nav.*: NavigationShell.vue:67 t(`nav.${r.name}`)(路由名由 routes.ts R16③ 单点派生)
   'nav.codes', 'nav.import', 'nav.sync', 'nav.security', 'nav.settings',
