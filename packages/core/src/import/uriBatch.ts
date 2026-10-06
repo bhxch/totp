@@ -3,7 +3,7 @@ import { asObject } from './normalize'
 import type { ImportResult, ParsedEntry } from './types'
 
 /**
- * otpauth URI 批量导入：按行 split、空行跳过；
+ * otpauth URI 批量导入：按行 split、空行与 # 注释行（WinAuth 无口令导出）跳过；
  * 每行先 normalizeExtOtpauth（接受 Firefox 协议处理器 ext+otpauth:// 前缀）→ parseOtpUri → ParsedEntry；
  * 失败行进 failures（index 为原始行号，空行占位）。
  * Ente Auth 明文导出即 otpauth URI 行（Aegis EnteAuthImporter.java 委托 GoogleAuthUriImporter），
@@ -30,8 +30,13 @@ export function importUriBatch(text: string): ImportResult {
   const entries: ParsedEntry[] = []
   const failures: ImportResult['failures'] = []
   lines.forEach((rawLine, index) => {
-    const line = rawLine.trim()
-    if (!line) return
+    let line = rawLine.trim()
+    // WinAuth 无口令导出 txt：# 注释行跳过（WinAuthHelper.cs:577-582）
+    if (!line || line.startsWith('#')) return
+    // WinAuth 导出在 label 含 # 时不做 URL 编码，? 前的 # 会被 new URL() 当 fragment 截断
+    // ——还原为 %23（对齐 WinAuth 导入侧 WinAuthHelper.cs:584-590 的互逆处理）
+    const q = line.indexOf('?')
+    if (q > 0) line = line.slice(0, q).replaceAll('#', '%23') + line.slice(q)
     try {
       entries.push(parseOtpUri(normalizeExtOtpauth(line)))
     } catch (e) {

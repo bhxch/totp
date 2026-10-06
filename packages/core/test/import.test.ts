@@ -56,6 +56,21 @@ describe('importUriBatch', () => {
     const r = importUriBatch(`otpauth://steam/Steam:u?secret=JBSWY3DPEHPK3PXP&digits=6`)
     expect(r.entries[0]).toMatchObject({ type: 'steam', digits: 5 })
   })
+
+  it('WinAuth 导出 txt：# 注释行跳过；? 前未编码 # 还原 %23 不截断 label', () => {
+    const r = importUriBatch(
+      [
+        '# WinAuth export 2026-10-07',
+        '',
+        'otpauth://totp/GitHub:user#x?secret=JBSWY3DPEHPK3PXP',
+      ].join('\n'),
+    )
+    expect(r.entries).toHaveLength(1)
+    expect(r.failures).toHaveLength(0)
+    // label 断言实测确认：? 前的 # 还原 %23 后 new URL pathname 为 /GitHub:user%23x，
+    // parseOtpUri decodeURIComponent 后 label=user#x（'#' 不再被当 fragment 截断）
+    expect(r.entries[0]!.label).toBe('user#x')
+  })
 })
 
 describe('extractGenericRows', () => {
