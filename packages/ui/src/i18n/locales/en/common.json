@@ -180,8 +180,6 @@
     "groupAria": "Tag filter",
     "any": "Any",
     "all": "All",
-    "titleAny": "Currently: match any selected tag; click to require matching all",
-    "titleAll": "Currently: require matching all selected tags; click to match any",
     "modeAriaAny": "Currently match any; click to switch to match all",
     "modeAriaAll": "Currently match all; click to switch to match any",
     "popAny": "Match any: entry hits at least one selected tag",
