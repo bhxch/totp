@@ -196,7 +196,7 @@ describe('reset 周期与 vi.mock 工厂入口', () => {
 
   it('四个模块入口形状对齐真实模块的使用面', () => {
     expect(invokeModule()).toEqual({ invoke: tauriMock.invoke })
-    expect(eventModule()).toEqual({ listen: tauriMock.listen, emitTo: tauriMock.emitTo })
+    expect(eventModule()).toEqual({ listen: tauriMock.listen, emitTo: tauriMock.emitTo, emit: tauriMock.event.emit })
     expect(windowModule().getCurrentWindow()).toBe(tauriMock.window)
     expect(fsModule().BaseDirectory).toEqual(BaseDirectory)
     expect(fsModule()).toHaveProperty('writeTextFile')

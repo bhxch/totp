@@ -392,3 +392,16 @@ describe('mini 搜索框（spec §1.2）', () => {
     expect(w.findAll('[data-test="item"]')).toHaveLength(2)
   })
 })
+
+describe('mini-ready 首屏就绪信号（spec §2.4）', () => {
+  it('首次 load 完成后 emit mini-ready（spec §2.4）', async () => {
+    await mountMini()
+    expect(tauriMock.event.emit).toHaveBeenCalledWith('mini-ready')
+  })
+
+  it('load 失败也发（成败都发，Rust 重建路径不被前端失败堵死 show）', async () => {
+    ;(tauriMock.fs.readTextFile as Mock).mockRejectedValue(new Error('disk boom'))
+    await mountMini()
+    expect(tauriMock.event.emit).toHaveBeenCalledWith('mini-ready')
+  })
+})

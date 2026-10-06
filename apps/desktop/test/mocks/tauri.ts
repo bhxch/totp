@@ -172,6 +172,14 @@ export function listenerCount(event: string): number {
 /** emitTo（主窗→指定窗口定向派发，miniSession 'mini-session' 用）：宽松记录不校验清单 */
 export const emitTo = vi.fn(async (_target: string, _event: string, _payload?: unknown): Promise<void> => undefined)
 
+/** 前端侧 emit（@tauri-apps/api/event 的 emit，mini-ready 首屏就绪上报用）：宽松记录不派发 */
+export const frontendEmit = vi.fn(async (_event: string, _payload?: unknown): Promise<void> => undefined)
+
+/** 前端 emit 调用记录：[event, payload] 元组列表（内容断言用） */
+export function frontendEmitCalls(): Array<[string, unknown]> {
+  return frontendEmit.mock.calls.map(([e, p]) => [e as string, p as unknown])
+}
+
 /** emitTo 调用记录：[target, event, payload] 元组列表（对齐 calls() 风格，内容断言用） */
 export function emitToCalls(): Array<[string, string, unknown]> {
   return emitTo.mock.calls.map(([t, e, p]) => [t as string, e as string, p as unknown])
@@ -228,7 +236,7 @@ export function invokeModule() {
   return { invoke }
 }
 export function eventModule() {
-  return { listen, emitTo }
+  return { listen, emitTo, emit: frontendEmit }
 }
 export function windowModule() {
   return { getCurrentWindow: () => window }
@@ -255,6 +263,7 @@ export function reset(): void {
   invoke.mockClear()
   listen.mockClear()
   emitTo.mockClear()
+  frontendEmit.mockClear()
   eventListeners.clear()
   eventIdSeq = 0
   focusListeners.clear()
@@ -274,6 +283,9 @@ export const tauriMock = {
   emit,
   emitTo,
   emitToCalls,
+  /** 前端侧 emit（@tauri-apps/api/event），与后端派发用的 emit（本对象顶层）区分 */
+  event: { emit: frontendEmit },
+  frontendEmitCalls,
   listenerCount,
   window,
   emitFocusChanged,

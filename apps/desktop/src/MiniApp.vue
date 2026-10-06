@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
+import { emit, listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { OtpListItem, PersistErrorBanner, SearchBar, createIconStore, iconView, searchEntries, useOtpCodes, useTheme, type IconStore, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
@@ -112,6 +112,8 @@ onMounted(async () => {
   // mini pin 初值（spec §1.5）：读 Rust 缓存（mini_pin_get），失败降级未 pin——自动隐藏保持缺省行为
   pinned.value = await invoke<boolean>('mini_pin_get').catch(() => false)
   await load()
+  // spec §2.4：首屏就绪信号（成败都发）——Rust 重建路径收到后再 show，消除冷启动空白窗口
+  await emit('mini-ready').catch(() => {})
   // mini 常驻隐藏，重新显示时从盘重载（initStore 幂等不刷新内存，故重建 store）。
   // 修复真实 bug：@tauri-apps/api v2 Window 无 onVisibleChanged（仅 focus/resized/scale 等 7 个
   // 事件），原调用运行时 TypeError，「重显重载」从未生效——改用 onFocusChanged 近似（payload=是否

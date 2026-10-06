@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, Runtime, WindowEvent,
+    AppHandle, Emitter, Listener, Manager, Runtime, WindowEvent,
 };
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
@@ -51,6 +51,9 @@ static LAST_MINI_POS: Mutex<Option<(i32, i32)>> = Mutex::new(None);
 
 // ---------- mini pin（spec §1.5）：settings.json miniPinned 键 + 内存缓存；失焦/复制后自动隐藏均让位 ----------
 static MINI_PINNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+// ---------- mini ready 门控（spec §2.4）：重建后等前端首屏就绪再 show（2s 超时兜底） ----------
+static MINI_READY_TX: Mutex<Option<std::sync::mpsc::Sender<()>>> = Mutex::new(None);
 
 /// 释放策略状态轨迹（spec 批⑧ §7.2；tick 线程独占读写；任一窗口可见由 advance 内 reset，
 /// 窗口重建成功由 ensure_window reset）
@@ -307,6 +310,17 @@ fn position_mini_at_tray(mini: &tauri::WebviewWindow, anchor: (f64, f64, f64, f6
 
 fn toggle_mini(app: &AppHandle, anchor: Option<(f64, f64, f64, f64)>) {
     // 释放策略销毁档可能已销毁 webview（仅留托盘进程）：入口先按需重建（brief Task 13）
+    // 重建路径（spec §2.4）：入口判定缺窗即挂 ready 通道——通道挂载先于建窗，
+    // 前端首屏 emit 不会落在建窗与等待之间丢失；非重建路径 ready_rx 为 None 零等待
+    let mut ready_rx: Option<std::sync::mpsc::Receiver<()>> = None;
+    if app.get_webview_window("mini").is_none() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        // 先挂通道再建窗：前端首屏 emit 不会落在建窗与等待之间丢失
+        if let Ok(mut g) = MINI_READY_TX.lock() {
+            *g = Some(tx);
+        }
+        ready_rx = Some(rx);
+    }
     ensure_window(app, "mini");
     if let Some(mini) = app.get_webview_window("mini") {
         if mini.is_visible().unwrap_or(false) {
@@ -320,6 +334,10 @@ fn toggle_mini(app: &AppHandle, anchor: Option<(f64, f64, f64, f64)>) {
                         return;
                     }
                 }
+            }
+            // 重建路径：等前端 mini-ready（2s 超时兜底，前端卡死不堵弹出）
+            if let Some(rx) = ready_rx {
+                let _ = rx.recv_timeout(Duration::from_secs(2));
             }
             // 定位先于 show（不可见期移动无闪烁）：托盘点击=每次锚定托盘；
             // 快捷键=恢复上次位置（销毁重建后亦然），无记忆则 OS 默认
@@ -738,6 +756,14 @@ pub fn run() {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             MINI_PINNED.store(mini_pinned, std::sync::atomic::Ordering::Relaxed);
+            // mini-ready 全局事件：前端首屏 load 完成即发；重建路径经 MINI_READY_TX 消费
+            let _ = app.listen("mini-ready", |_| {
+                if let Ok(g) = MINI_READY_TX.lock() {
+                    if let Some(tx) = g.as_ref() {
+                        let _ = tx.send(());
+                    }
+                }
+            });
             // plan17：MCP 服务器装配（manage McpState）+ 按配置自动拉起；返回含 CLI 覆盖的
             // 生效 cfg 与真实启动结果，供无头连接信息输出（stdout/托盘复制与实际监听同源）
             let (mcp_cfg, mcp_start) = mcp_server::init_state_and_autostart(app, &mcp_override)?;
