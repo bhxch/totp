@@ -185,6 +185,10 @@ export async function importIconPackZip(
       if (!keep.has(id)) delete pending[id]
     }
   }
+  // 空 png zip 守卫：无 png（或全部超单文件上限）时 seen 为空，若继续走「整包替换」，
+  // stale 将覆盖旧包全部 iconId → removeMany 全删 + upsertPack 空集，既有包被静默清空；
+  // 分支前同输入是无害 no-op，保持该基线语义改为整体拒绝
+  if (seen.size === 0) throw new Error('包中无可导入图标')
   // 同名重导 = 整包替换：旧包 iconIds 中不在新集合者 removeMany（孤儿清理），注册表收敛为新集合全集
   const old = icons.packs[normKey]?.iconIds ?? []
   const stale = old.filter((id) => !seen.has(id))

@@ -256,6 +256,19 @@ describe('包名与替换语义', () => {
     expect(store.packs['mypack']).toEqual({ name: 'My Pack', iconIds: r.names })
   })
 
+  it('空 png zip：整体拒绝且不清空既有包（分支前同输入为无害 no-op，回归基线语义）', async () => {
+    const store = makeStore()
+    store.packs['mypack'] = { name: 'My Pack', iconIds: ['ghost'] }
+    store.icons['ghost'] = 'data:image/png;base64,AA'
+    const noPngZip = zipSync({ 'readme.txt': strToU8('no icons here') })
+    await expect(importIconPackZip(noPngZip, store, { name: 'My Pack' })).rejects.toThrow('包中无可导入图标')
+    expect(store.icons['ghost']).toBe('data:image/png;base64,AA')
+    expect(store.packs['mypack'].iconIds).toEqual(['ghost'])
+    expect(store.removeMany).not.toHaveBeenCalled()
+    expect(store.upsertPack).not.toHaveBeenCalled()
+    expect(store.putMany).not.toHaveBeenCalled()
+  })
+
   it('同名重导整包替换：旧集合中不在新包的 id 被 removeMany', async () => {
     const store = makeStore()
     store.packs['mypack'] = { name: 'My Pack', iconIds: ['ghosticon', 'github'] }
