@@ -702,8 +702,11 @@
     "cancel": "Cancel",
     "showQr": "Show QR code",
     "copyUri": "Copy URI",
+    "ctxCopyCode": "Copy code",
+    "ctxDelete": "Delete",
     "pin": "Pin",
     "unpin": "Unpin",
+    "copied": "Copied",
     "batchImported": "{n} entries imported"
   },
   "settingsPage": {

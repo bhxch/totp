@@ -4,9 +4,16 @@ import { nextTick } from 'vue'
 import { createMemoryStorage, newEntryFromUri, type OtpEntry } from '@totp/core'
 import { createVueStore } from '../../src/store'
 import { fullIconsReady } from '../../src/fullIcons'
+import { useToast } from '../../src/composables/useToast'
 import CodesPage from '../../src/pages/CodesPage.vue'
 import EntryFormDialog from '../../src/components/EntryFormDialog.vue'
 import { createTestI18n } from '../helpers/i18n'
+
+// 全局 toast 为模块级单例（P3）：每例后清空，防用例间泄漏串扰
+afterEach(() => {
+  const { toasts, dismiss } = useToast()
+  for (const t of [...toasts.value]) dismiss(t.key)
+})
 
 async function readyStore() {
   const s = createVueStore(createMemoryStorage())
@@ -235,10 +242,10 @@ describe('CodesPage 标签筛选（spec §3 管理页）', () => {
   })
 })
 
-describe('CodesPage 批量入库成功提示条（EntryFormDialog batch-added 上抛落库条数）', () => {
+describe('CodesPage 批量入库提示（batchToast 页面级实现迁移全局 toast，P3）', () => {
   afterEach(() => { vi.useRealTimers() })
 
-  it('batch-added 后出现「已入库 {n} 条」提示，约 4 秒后自动消失（fake timers）', async () => {
+  it('batch-added 后不再渲染页面级 batch-toast div，改为入队全局 toast「已入库 {n} 条」', async () => {
     vi.useFakeTimers()
     const s = await readyStore()
     const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
@@ -246,36 +253,30 @@ describe('CodesPage 批量入库成功提示条（EntryFormDialog batch-added �
     // 直接触发 EntryFormDialog 的 batch-added（剪贴板批量与粘贴 Tab 共用通道，条数经 EntryForm/Panel 冒泡）
     w.findComponent(EntryFormDialog)!.vm.$emit('batch-added', 3)
     await nextTick()
-    const toast = w.find('[data-test="batch-toast"]')
-    expect(toast.exists()).toBe(true)
-    expect(toast.text()).toBe('已入库 3 条')
-    expect(toast.attributes('aria-live')).toBe('polite')
-    vi.advanceTimersByTime(3999)
-    await nextTick()
-    expect(w.find('[data-test="batch-toast"]').exists()).toBe(true)
-    vi.advanceTimersByTime(1)
-    await nextTick()
     expect(w.find('[data-test="batch-toast"]').exists()).toBe(false)
+    const { toasts } = useToast()
+    expect(toasts.value.map((t) => t.message)).toContain('已入库 3 条')
+    // 3s 自动过期（useToast 全局计时）
+    vi.advanceTimersByTime(3000)
+    expect(toasts.value.map((t) => t.message)).not.toContain('已入库 3 条')
   })
 
-  it('连续批量入库：提示文案刷新且消失计时重置', async () => {
+  it('连续批量入库：两次 batch-added 各自入队 toast，到时逐条过期', async () => {
     vi.useFakeTimers()
     const s = await readyStore()
     const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
     const dialog = w.findComponent(EntryFormDialog)!
+    const { toasts } = useToast()
     dialog.vm.$emit('batch-added', 2)
     await nextTick()
-    vi.advanceTimersByTime(3000)
+    vi.advanceTimersByTime(2000)
     dialog.vm.$emit('batch-added', 5)
     await nextTick()
-    expect(w.find('[data-test="batch-toast"]').text()).toBe('已入库 5 条')
-    // 距第一次展示已超 4s，但第二次计时刚重置 → 仍在展示
-    vi.advanceTimersByTime(1500)
-    await nextTick()
-    expect(w.find('[data-test="batch-toast"]').exists()).toBe(true)
-    vi.advanceTimersByTime(2500)
-    await nextTick()
-    expect(w.find('[data-test="batch-toast"]').exists()).toBe(false)
+    expect(toasts.value.map((t) => t.message)).toEqual(['已入库 2 条', '已入库 5 条'])
+    vi.advanceTimersByTime(1000) // 距第一次已 3s：第一条过期
+    expect(toasts.value.map((t) => t.message)).toEqual(['已入库 5 条'])
+    vi.advanceTimersByTime(2000) // 第二条满 3s
+    expect(toasts.value).toHaveLength(0)
   })
 })
 
@@ -320,13 +321,13 @@ describe('CodesPage 右键菜单 / pinned（自 旧单页 C16 迁移）', () => 
 
   // 旧 reveal 按钮测试已随 OtpListItem 移除 reveal 入口而删除；RevealDialog 容器已一并清理（验收条目3）
 
-  it('右键条目：MdMenu 渲染四项菜单，点「置顶」调用 updateEntryOp 并排序前置', async () => {
+  it('右键条目：MdMenu 渲染六项菜单，点「置顶」调用 updateEntryOp 并排序前置', async () => {
     const s = await storeWithTwo()
     const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
     await w.find('.otp-item').trigger('contextmenu', { clientX: 100, clientY: 200 })
     expect(w.find('.md-menu').exists()).toBe(true)
-    // 菜单有「编辑」「显示二维码」「复制 URI」「置顶」四项（Task 9 增「显示二维码」）
-    expect(w.findAll('.md-menu button')).toHaveLength(4)
+    // 菜单有「复制验证码」「编辑」「显示二维码」「复制 URI」「删除」「置顶」六项（P3 增复制验证码/删除）
+    expect(w.findAll('.md-menu button')).toHaveLength(6)
     // 模拟右键第二条；再次触发覆盖菜单位置与目标
     const items = w.findAll('.otp-item')
     await items[1]!.trigger('contextmenu', { clientX: 50, clientY: 50 })
@@ -388,6 +389,69 @@ describe('CodesPage 右键菜单 / pinned（自 旧单页 C16 迁移）', () => 
     expect(w.find('.md-menu').exists()).toBe(false)
     expect(document.activeElement).toBe(item.element) // 焦点回右键所在条目
     w.unmount()
+  })
+})
+
+describe('CodesPage P3：右键复制验证码/删除项 + 复制 toast + 筛选区冻结', () => {
+  async function readyRevealed() {
+    const s = await readyStore()
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    // 双击揭示作 codes 就绪探针（打码为展示层行为，不影响菜单取码，但需等 codes 计算完成）
+    await w.find('.otp-item').trigger('dblclick')
+    await vi.waitFor(() => expect(w.find('.otp-item .code').text()).toMatch(/^\d{3} \d{3}$/))
+    return { s, w }
+  }
+
+  it('右键菜单按序六项：复制验证码/编辑/显示二维码/复制 URI/删除/置顶', async () => {
+    const { w } = await readyRevealed()
+    await w.find('.otp-item').trigger('contextmenu', { clientX: 10, clientY: 10 })
+    const items = w.findAll('.md-menu button').map((b) => b.text())
+    expect(items).toEqual(['复制验证码', '编辑', '显示二维码', '复制 URI', '删除', '置顶'])
+  })
+
+  it('右键「复制验证码」：emit copy 携带验证码 + 入队「已复制」toast + 关菜单（不直写剪贴板）', async () => {
+    const { w } = await readyRevealed()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+    await w.find('.otp-item').trigger('contextmenu', { clientX: 10, clientY: 10 })
+    const btn = w.findAll('.md-menu button').find((b) => b.text() === '复制验证码')!
+    await btn.trigger('click')
+    // 与行内复制同通道：emit copy 由宿主写剪贴板并纳入 30s 清除链，不直写 navigator.clipboard
+    expect(writeText).not.toHaveBeenCalled()
+    expect(w.emitted('copy')).toHaveLength(1)
+    expect(String(w.emitted('copy')![0]![0])).toMatch(/^\d{6}$/)
+    expect(useToast().toasts.value.map((t) => t.message)).toContain('已复制')
+    expect(w.find('.md-menu').exists()).toBe(false)
+  })
+
+  it('右键「删除」：关菜单并进入行内两击确认态（条目未删；确认后删除）', async () => {
+    const { s, w } = await readyRevealed()
+    await w.find('.otp-item').trigger('contextmenu', { clientX: 10, clientY: 10 })
+    const del = w.findAll('.md-menu button').find((b) => b.text() === '删除')!
+    await del.trigger('click')
+    expect(w.find('.md-menu').exists()).toBe(false)
+    // 复用 askRemove 首击语义：进入确认态、条目仍在
+    const confirmBtn = w.find('.md-btn--danger')
+    expect(confirmBtn.exists()).toBe(true)
+    expect(confirmBtn.text()).toBe('确认删除？')
+    expect(s.vault.entries).toHaveLength(1)
+    await confirmBtn.trigger('click')
+    await vi.waitFor(() => expect(s.vault.entries).toHaveLength(0))
+  })
+
+  it('行内复制（onCopy）成功后入队「已复制」toast', async () => {
+    const { w } = await readyRevealed()
+    await w.find('.otp-item').trigger('click')
+    expect(w.emitted('copy')).toHaveLength(1)
+    expect(useToast().toasts.value.map((t) => t.message)).toContain('已复制')
+  })
+
+  it('SearchBar 与 chips-row 包进 .frozen 冻结容器（sticky 顶部）', async () => {
+    const { w } = await readyRevealed()
+    const frozen = w.find('.frozen')
+    expect(frozen.exists()).toBe(true)
+    expect(frozen.find('input[type="search"]').exists()).toBe(true)
+    expect(frozen.find('.chips-row').exists()).toBe(true)
   })
 })
 

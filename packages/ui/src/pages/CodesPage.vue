@@ -3,6 +3,7 @@ import { buildOtpUri, defaultDigitsFor, filterByTags, getBuiltinIcons, type OtpD
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useOtpCodes } from '../composables/useOtpCodes'
+import { useToast } from '../composables/useToast'
 import { iconView, type IconStore } from '../iconStore'
 import { fullIconsReady } from '../fullIcons'
 import { searchEntries } from '../popupFilter'
@@ -37,6 +38,8 @@ const emit = defineEmits<{ copy: [code: string]; 'open-tags': [] }>()
 
 // D2 抽串：页面文案走 i18n（codesPage.*）
 const { t } = useI18n()
+// 全局 toast（P3）：模块级单例，ToastHost（宿主根组件挂载）直读同一状态渲染
+const toast = useToast()
 
 const query = ref('')
 /** I49：搜 secret 开关（默认关闭，开启后过滤会包含 secret 串匹配；用户主动启用避免密钥常驻列表） */
@@ -81,18 +84,13 @@ const tagsOpen = ref(false)
 const contextMenu = ref<{ x: number; y: number; entry: OtpEntry; trigger: HTMLElement | null } | null>(null)
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
 
-/** 批量入库成功提示（全仓无 toast 体系下的页面级轻提示）：EntryFormDialog batch-added 上抛实际落库
- *  条数（剪贴板批量与粘贴 Tab 共用同一通道），此处展示自动消失提示条（约 4s，aria-live polite 播报，
- *  不抢焦点） */
-const batchToast = ref('')
-let batchToastTimer: ReturnType<typeof setTimeout> | null = null
+/** 批量入库成功提示（P3 迁移全局 toast）：EntryFormDialog batch-added 上抛实际落库条数
+ *  （剪贴板批量与粘贴 Tab 共用同一通道），入队 useToast 由宿主 ToastHost 渲染（3s 自动过期） */
 function onBatchAdded(count: number) {
   creating.value = false; editing.value = null
-  batchToast.value = t('codesPage.batchImported', { n: count })
-  if (batchToastTimer) clearTimeout(batchToastTimer)
-  batchToastTimer = setTimeout(() => (batchToast.value = ''), 4000)
+  toast.show(t('codesPage.batchImported', { n: count }))
 }
-onUnmounted(() => { if (batchToastTimer) clearTimeout(batchToastTimer); if (batchConfirmTimer) clearTimeout(batchConfirmTimer) })
+onUnmounted(() => { if (batchConfirmTimer) clearTimeout(batchConfirmTimer) })
 
 /** 展示排序走 entriesSort 单点（R14，与 desktop MiniApp 共用；pinned 优先 → order 升序） */
 const sorted = computed(() => sortEntries(props.store.vault.entries))
@@ -160,9 +158,11 @@ async function onCopy(entry: OtpEntry) {
   emit('copy', c)
   // HOTP：复制的是旧 counter 的码（RFC 语义），复制完成后再递增
   if (entry.type === 'hotp') await props.store.updateEntryOp(entry.uuid, { counter: (entry.counter ?? 0) + 1 })
+  // P3：复制成功提示走全局 toast（失败仍由宿主横幅负责，本条只做成功提示）
+  toast.show(t('codesPage.copied'))
 }
 
-/** 右键菜单：编辑 / 复制 URI / 置顶切换 */
+/** 右键菜单：复制验证码 / 编辑 / 复制 URI / 删除 / 置顶切换 */
 function onContextMenu(entry: OtpEntry, e: MouseEvent) {
   // currentTarget = .otp-item 根（contextmenu 监听载体），仅事件派发期可读，此处同步存元素引用
   contextMenu.value = { x: e.clientX, y: e.clientY, entry, trigger: (e.currentTarget as HTMLElement) ?? null }
@@ -174,6 +174,23 @@ function contextEdit(entry: OtpEntry) {
   editing.value = entry
   creating.value = false
   closeContextMenu()
+}
+/** 右键「复制验证码」（P3）：取当前码走与行内复制同一 emit('copy') 通道（宿主写剪贴板+30s 清除），
+ *  成功提示入队全局 toast；码未就绪时不动作（菜单保持打开） */
+function contextCopyCode(entry: OtpEntry) {
+  const code = codes.value.get(entry.uuid)?.code
+  if (!code) return
+  emit('copy', code)
+  toast.show(t('codesPage.copied'))
+  closeContextMenu()
+}
+/** 右键「删除」（P3）：关菜单并进入行内两击确认态——显式置 confirmingDelete 并武装 3s 超时
+ *  （复用 askRemove 首击语义；不经 askRemove 委托，避免确认态已挂时二次入口直接误删） */
+function contextDelete(entry: OtpEntry) {
+  closeContextMenu()
+  confirmingDelete.value = entry.uuid
+  if (confirmTimer) clearTimeout(confirmTimer)
+  confirmTimer = setTimeout(() => (confirmingDelete.value = null), 3000)
 }
 /** 复制 otpauth URI（与应用导入路径兼容：base32 + 算法/位数/周期/counter 全保留）。
  *  审查 I14：URI 含完整 secret 明文，剪贴板写入必须上抛 emit('copy', uri) 由宿主执行
@@ -346,8 +363,6 @@ function openSheet() {
 
 <template>
   <section class="page">
-    <!-- 批量入库成功提示条（顶部居中悬浮，与底部选择条同设计语言）：自动消失，polite 播报 -->
-    <div v-if="batchToast" class="batch-toast" data-test="batch-toast" role="status" aria-live="polite">{{ batchToast }}</div>
     <!-- 条目卡走 MdCard outlined(审查 F3:独立 .card 的 outline-variant/10px 与 M3 标尺双标) -->
     <MdCard ref="editorHost" class="codes-card">
       <div class="card-head">
@@ -356,14 +371,18 @@ function openSheet() {
           {{ selecting ? t('codesPage.cancelSelect') : t('codesPage.select') }}
         </MdButton>
       </div>
-      <SearchBar v-model="query" v-model:search-secret="searchSecret" />
-      <!-- 标签筛选：多选 chips + 行首逻辑符号模式切换 + 管理标签 icon 钮（均由 TagFilterRow 提供）；零标签态行仍渲染（管理钮是创建首个标签的途径） -->
-      <div class="chips-row">
-        <TagFilterRow
-          :tags="store.vault.tags" v-model:selected-ids="selectedTagIds"
-          :mode="tagMode" @update:mode="setTagMode"
-          @open-manage="tagsOpen = true; emit('open-tags')"
-        />
+      <!-- 冻结容器（P3）：搜索行+标签筛选行 sticky 挂滚动祖先（NavigationShell 内容区），
+           列表滚动时保持可见。背景取页面同色 surface；padding-bottom 隔开与列表的贴边 -->
+      <div class="frozen">
+        <SearchBar v-model="query" v-model:search-secret="searchSecret" />
+        <!-- 标签筛选：多选 chips + 行首逻辑符号模式切换 + 管理标签 icon 钮（均由 TagFilterRow 提供）；零标签态行仍渲染（管理钮是创建首个标签的途径） -->
+        <div class="chips-row">
+          <TagFilterRow
+            :tags="store.vault.tags" v-model:selected-ids="selectedTagIds"
+            :mode="tagMode" @update:mode="setTagMode"
+            @open-manage="tagsOpen = true; emit('open-tags')"
+          />
+        </div>
       </div>
       <div v-if="sorted.length === 0" class="empty">{{ t('codesPage.empty') }}</div>
       <div v-else-if="visible.length === 0" class="empty">{{ t('codesPage.noMatch') }}</div>
@@ -465,9 +484,11 @@ function openSheet() {
          triggerEl=右键所在条目（tabindex=0 可聚焦），Esc 关闭后焦点回该条目 -->
     <MdMenu :x="contextMenu?.x ?? 0" :y="contextMenu?.y ?? 0" :open="contextMenu !== null" :trigger-el="contextMenu?.trigger ?? null" @close="closeContextMenu">
       <template v-if="contextMenu">
+        <MdButton variant="text" class="ctx-item" @click="contextCopyCode(contextMenu.entry)">{{ t('codesPage.ctxCopyCode') }}</MdButton>
         <MdButton variant="text" class="ctx-item" @click="contextEdit(contextMenu.entry)">{{ t('codesPage.edit') }}</MdButton>
         <MdButton variant="text" class="ctx-item" @click="qrEntry = contextMenu.entry; closeContextMenu()">{{ t('codesPage.showQr') }}</MdButton>
         <MdButton variant="text" class="ctx-item" @click="contextCopyUri(contextMenu.entry)">{{ t('codesPage.copyUri') }}</MdButton>
+        <MdButton variant="text" class="ctx-item" @click="contextDelete(contextMenu.entry)">{{ t('codesPage.ctxDelete') }}</MdButton>
         <MdButton variant="text" class="ctx-item" @click="contextTogglePin(contextMenu.entry)">{{ contextMenu.entry.pinned ? t('codesPage.unpin') : t('codesPage.pin') }}</MdButton>
       </template>
     </MdMenu>
@@ -504,11 +525,10 @@ h2 { margin: 0; font-size: var(--md-sys-typescale-title-medium); }
 .empty { text-align: center; opacity: .6; padding: 16px 0; }
 /* 新建 FAB：悬浮于页面右下 */
 .page-fab { position: fixed; right: 24px; bottom: 24px; }
-/* 批量入库成功提示条：顶部居中悬浮（z 高于右键菜单遮罩层，4s 自动消失） */
-.batch-toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 30;
-  padding: 10px 20px; border-radius: 100px; background: var(--md-sys-color-surface-container-high);
-  color: var(--md-sys-color-on-surface); box-shadow: 0 4px 12px var(--md-sys-color-shadow);
-  font-size: var(--md-sys-typescale-body-medium); }
+/* 冻结容器（P3）：搜索行+标签筛选行 sticky 挂滚动祖先（NavigationShell 内容区），列表滚动时保持可见。
+   背景与页面同色（卡片内不突兀）；TagFilterRow 说明气泡（.mode-pop absolute z-index 10）高于本层
+   z-index 5，且本层无 overflow 裁剪，气泡正常浮出 */
+.frozen { position: sticky; top: 0; z-index: 5; background: var(--md-sys-color-surface); padding-bottom: 4px; }
 /* 选择模式底部浮动操作条（悬浮于列表上方，FAB 左侧留位） */
 .select-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: 24px; z-index: 20;
   display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 100px;

@@ -702,8 +702,11 @@
     "cancel": "取消",
     "showQr": "显示二维码",
     "copyUri": "复制 URI",
+    "ctxCopyCode": "复制验证码",
+    "ctxDelete": "删除",
     "pin": "置顶",
     "unpin": "取消置顶",
+    "copied": "已复制",
     "batchImported": "已入库 {n} 条"
   },
   "settingsPage": {
