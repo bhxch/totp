@@ -28,13 +28,47 @@ const pathPreview = computed(() => {
   if (!d) return null
   return previewObjectPath(d, { type: props.retention?.type ?? 'overwrite' })
 })
+const isKeep = computed(() => (props.retention?.type ?? 'overwrite') === 'keep')
+/** spec §4.5：实际目标显示完整地址的 base——webdav=serverUrl 归一（http/https 才认），
+ *  s3=s3://bucket；缺失/非法返回 null 回落裸路径。显示原文不预编码（URL 编码属传输细节） */
+function urlBaseOf(d: CloudCred | undefined): string | null {
+  if (d?.backend === 'webdav') {
+    const raw = d.serverUrl.trim()
+    try {
+      const u = new URL(raw)
+      if (u.protocol === 'http:' || u.protocol === 'https:') return raw.replace(/\/+$/, '')
+    } catch { /* 回落裸路径 */ }
+  }
+  if (d?.backend === 's3' && 'bucket' in d && d.bucket.trim() !== '') return `s3://${d.bucket.trim()}`
+  return null
+}
 const pathPreviewText = computed(() => {
   const p = pathPreview.value
   if (!p || p.state !== 'ok') return ''
-  if (p.keepNamePlaceholder === undefined) return t('cloudCard.pathPreviewOverwrite', { path: p.path })
-  const dir = p.path === '' ? t('cloudCard.pathPreviewRoot') : p.path
-  return t('cloudCard.pathPreviewKeep', { dir, name: p.keepNamePlaceholder })
+  const base = urlBaseOf(props.draft)
+  if (p.keepNamePlaceholder === undefined) {
+    return t('cloudCard.pathPreviewOverwrite', { path: base ? `${base}/${p.path}` : p.path })
+  }
+  // keep：目录段显示 base[/dir]（URL 场景）或裸目录；空目录回落「（根目录）」占位
+  const dirFull = base ? `${base}${p.path ? `/${p.path}` : ''}` : p.path
+  return t('cloudCard.pathPreviewKeep', {
+    dir: dirFull === '' ? t('cloudCard.pathPreviewRoot') : dirFull,
+    name: p.keepNamePlaceholder,
+  })
 })
+
+/** keep 文件名段忽略回显（spec §4.5）：目录意向（尾分隔符）不警示；
+ *  有目录段警示文件名忽略；仅单段警示整体不参与 */
+const keepIgnoreWarn = computed(() => {
+  if (!isKeep.value) return null
+  const raw = (props.draft?.objectPath ?? '').trim()
+  if (raw === '' || /[\\/]$/.test(raw)) return null
+  const segs = raw.split(/[\\/]/).filter((s) => s !== '')
+  if (segs.length === 0) return null
+  if (segs.length === 1) return { key: 'cloudCard.pathPreviewKeepNoDir', params: { raw } } as const
+  return { key: 'cloudCard.pathPreviewKeepFileIgnored', params: { name: segs.at(-1), dir: segs.slice(0, -1).join('/') } } as const
+})
+const objectPathLabel = computed(() => (isKeep.value ? t('cloudCard.objectPathLabelKeep') : t('cloudCard.objectPathLabel')))
 
 // ---------- OAuth 模式切换（spec §5⑦，仅 gdrive/onedrive）：oauth 三元组存在即 OAuth 模式 ----------
 /** 凭据模式二选（MdSegmentedButton）：与后端约定一致——cred.oauth 存在=OAuth 自动刷新，缺省=手工 token */
@@ -142,11 +176,12 @@ const proxyUrlError = computed(() => customProxyUrlError(props.draft?.proxy))
       />
     </div>
     <!-- v-if="d" 兼作类型窄化：v-for 单元素 d 在守卫链外无 undefined 窄化，vue-tsc 会报 TS18048 -->
-    <MdTextField v-if="d" :model-value="d.objectPath ?? ''" :label="t('cloudCard.objectPathLabel')" :placeholder="DEFAULT_OBJECT_PATH" :aria-label="t('cloudCard.objectPathLabel')" :disabled="busy" @update:model-value="d.objectPath = $event.trim()" />
+    <MdTextField v-if="d" :model-value="d.objectPath ?? ''" :label="objectPathLabel" :placeholder="DEFAULT_OBJECT_PATH" :aria-label="objectPathLabel" :disabled="busy" @update:model-value="d.objectPath = $event.trim()" />
     <!-- 目标路径实时预览（bounded ②）：与上传链同语义（keep 仅目录生效、文件名自动生成） -->
     <template v-if="d && pathPreview">
       <p v-if="pathPreview.state === 'ok'" class="hint path-preview">{{ pathPreviewText }}</p>
       <p v-else class="warn path-preview" role="alert">{{ t('cloudCard.pathPreviewInvalid') }}</p>
+      <p v-if="keepIgnoreWarn" class="warn" role="alert">{{ t(keepIgnoreWarn.key, keepIgnoreWarn.params) }}</p>
       <p v-if="pathPreview.state === 'ok' && (d.backend === 'gdrive' || d.backend === 'gist')" class="hint">{{ t('cloudCard.pathPreviewFlatHint') }}</p>
     </template>
     <!-- ③ 每源网络代理：桌面 reqwest 生效；扩展端不渲染控件（浏览器无法 per-request 代理），提示走浏览器/系统代理 -->

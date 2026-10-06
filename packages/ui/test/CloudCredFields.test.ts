@@ -15,19 +15,19 @@ function mountFields(draft: CloudCred | undefined, retention: Retention = OVERWR
 describe('CloudCredFields 目标路径实时预览（bounded ②）', () => {
   it('overwrite 源：预览行展示实际完整目标（自定义值归一展示）', () => {
     const w = mountFields({ ...WEBDAV, objectPath: 'dav/sub/my.totpbackup' })
-    expect(w.text()).toContain('实际目标：dav/sub/my.totpbackup')
+    expect(w.text()).toContain('实际目标：https://dav.example.com/dav/sub/my.totpbackup')
   })
   it('overwrite + 空 objectPath：展示将使用的缺省路径', () => {
     const w = mountFields(WEBDAV)
-    expect(w.text()).toContain('实际目标：totp-backup.totpbackup')
+    expect(w.text()).toContain('实际目标：https://dav.example.com/totp-backup.totpbackup')
   })
   it('keep 源：展示目录 + 自动文件名占位与仅目录生效说明；仅文件名时目录显示（根目录）', () => {
     const w = mountFields({ ...WEBDAV, objectPath: 'docs/sub/my.totpbackup' }, KEEP3)
-    expect(w.text()).toContain('实际目标：docs/sub/vault-YYYYMMDD-HHMMSS.totpbackup')
+    expect(w.text()).toContain('实际目标：https://dav.example.com/docs/sub/vault-YYYYMMDD-HHMMSS.totpbackup')
     expect(w.text()).toContain('保留最近模式下仅目录生效')
 
     const root = mountFields({ ...WEBDAV, objectPath: 'onlyname.totpbackup' }, KEEP3)
-    expect(root.text()).toContain('实际目标：（根目录）/vault-YYYYMMDD-HHMMSS.totpbackup')
+    expect(root.text()).toContain('实际目标：https://dav.example.com/vault-YYYYMMDD-HHMMSS.totpbackup')
   })
   it('非法路径：警示行 role=alert，不再展示目标预览', () => {
     const w = mountFields({ ...WEBDAV, objectPath: 'a/../b' })
@@ -43,6 +43,40 @@ describe('CloudCredFields 目标路径实时预览（bounded ②）', () => {
   it('draft 为 undefined（未配置源）时不渲染预览', () => {
     const w = mountFields(undefined)
     expect(w.find('.path-preview').exists()).toBe(false)
+  })
+})
+
+describe('CloudCredFields 实际目标完整显示与目录语义（spec §4.5）', () => {
+  it('webdav overwrite：预览拼 serverUrl 完整 URL', () => {
+    const w = mountFields({ ...WEBDAV, objectPath: 'dav/sub/my.totpbackup' })
+    expect(w.text()).toContain('实际目标：https://dav.example.com/dav/sub/my.totpbackup')
+  })
+  it('webdav keep + 目录意向：完整 URL + 自动命名占位，无忽略警示', () => {
+    const w = mountFields({ ...WEBDAV, objectPath: '/totpbackup/' }, KEEP3)
+    expect(w.text()).toContain('实际目标：https://dav.example.com/totpbackup/vault-YYYYMMDD-HHMMSS.totpbackup')
+    expect(w.text()).not.toContain('不生效')
+  })
+  it('webdav keep + 文件名输入：警示行回显被忽略的文件名；仅文件名时提示整体不参与', () => {
+    const w = mountFields({ ...WEBDAV, objectPath: 'docs/sub/my.totpbackup' }, KEEP3)
+    expect(w.text()).toContain('不生效')
+    const noDir = mountFields({ ...WEBDAV, objectPath: 'onlyname.totpbackup' }, KEEP3)
+    expect(noDir.text()).toContain('整体不参与')
+  })
+  it('s3：bucket 已填显示 s3:// URI；bucket 空回落裸路径', () => {
+    const s3 = mountFields({ backend: 's3', region: 'r', bucket: 'bk', accessKeyId: 'a', secretAccessKey: 's', objectPath: 'p/x.totpbackup' })
+    expect(s3.text()).toContain('s3://bk/p/x.totpbackup')
+    const noBucket = mountFields({ backend: 's3', region: 'r', bucket: '', accessKeyId: 'a', secretAccessKey: 's', objectPath: 'p/x.totpbackup' })
+    expect(noBucket.text()).toContain('实际目标：p/x.totpbackup')
+  })
+  it('keep 模式 label 切换为目标目录；overwrite 维持目标文件路径', () => {
+    const keep = mountFields({ ...WEBDAV, objectPath: 'dir/' }, KEEP3)
+    expect(keep.text()).toContain('目标目录')
+    const ow = mountFields({ ...WEBDAV })
+    expect(ow.text()).toContain('目标文件路径')
+  })
+  it('serverUrl 为空/非法时回落裸路径显示（不出错）', () => {
+    const w = mountFields({ backend: 'webdav', serverUrl: '', username: 'u', password: 'p', objectPath: 'a/b.totpbackup' })
+    expect(w.text()).toContain('实际目标：a/b.totpbackup')
   })
 })
 
