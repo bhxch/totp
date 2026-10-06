@@ -150,3 +150,13 @@ B18/B19 为测试基建与稳健性。
 |---|---|---|---|---|
 | B22 | ~~双实例启动 panic 而非优雅提示~~ | **已修复（2026-09-26，commit 90d9ab2）**：接入 tauri-plugin-single-instance v2（与 tauri 2 配套），注册为第一个 plugin 尽早拦截；回调聚焦既有主窗（show+unminimize+set_focus），headless 主实例不弹窗保无人值守语义。真机验证：headless/GUI 第二实例均 exit 0 干净退出、主实例存活、单实例路径无回归。注：「GUI 主实例 + 独立 headless MCP 探针」并行在修复前即不可用（同快捷键 panic），非回退 | 原建议：单实例检测（tauri-plugin-single-instance）或快捷键注册失败降级为无快捷键运行+告警 | apps/desktop/src-tauri/src/lib.rs（run 装配全局快捷键段）；实证 docs/e2e/2026-09-26-coverage-e2e-checklist.md 四-1 |
 | B23 | ~~MCP 工具确认连续请求队列异常~~ | **已修复（2026-09-26，commit 91abb0c）**：根因在前端——mcpApprovalQueue 的 10s 同 ident 去重窗按 `tool:ident` 合并同一客户端两个不同 oneshot id 的确认项：第二份把第一份顶掉自动拒绝（decide(old,false)→mcp_respond），或首份已裁定离队后第二份被仍热的窗口挡下也自动拒绝，均未等用户裁定；Rust 侧 BridgeShared pending 表（alloc 唯一 id/超时回收/迟到 respond 静默忽略）逐项排查无责。修法：queueToolConfirmation 改登记后直接入队（id 唯一对应一次 tools/call，非重试），10s 去重仅保留于首连审批；先写失败回归测试（两 id 2s 内先后入队被合并）再修至绿，once/deny 冷却/trust/逐次两键语义不变 | 原建议：代码级 triage（确诊为前者，后者排除） | apps/desktop/src/mcpApprovalQueue.ts + apps/desktop/src-tauri/src/mcp_server.rs（排查无责未动）；实证 docs/e2e/2026-09-26-coverage-e2e-checklist.md 四-2 |
+
+# miniapp/排序/云备份批 whole-branch 终审 triage（2026-10-06，范围 0f7d731..0925ab4）
+
+来源：2026-10-06 miniapp/排序/云备份批 whole-branch 终审（2 Important + 4 Minor），当批修复波次处置（commit 7962fb7/e4c6e5c），以下为留档待排查项。
+
+## 行为缺陷类（待排查）
+
+| # | 项 | 说明 | 建议 | 出处 |
+|---|---|---|---|---|
+| B24 | release_tick is_visible 疑似误判不可见 | release_tick 的 `is_visible().unwrap_or(false)` 疑似把可见窗口误判为不可见，致释放策略销毁档提前触发——2026-10-06 Task 9 诊断第 1 轮意外复现；详见 docs/e2e/2026-10-06-miniapp-sorting-cloud-checklist.md 附录一 | 排查：release_tick 临时留痕对比 is_visible 与真实可见性 | apps/desktop/src-tauri/src/lib.rs release_tick |
