@@ -178,7 +178,6 @@
   },
   "tagFilterRow": {
     "groupAria": "Tag filter",
-    "any": "Any",
     "all": "All",
     "modeAriaAny": "Currently match any; click to switch to match all",
     "modeAriaAll": "Currently match all; click to switch to match any",
@@ -667,7 +666,6 @@
     "pinnedTitle": "Pinned",
     "invalid": "Invalid secret",
     "invalidTitle": "Invalid secret: {message}",
-    "copyTitle": "Copy code",
     "qrTitle": "Show QR code"
   },
   "searchBar": {

@@ -178,7 +178,6 @@
   },
   "tagFilterRow": {
     "groupAria": "标签筛选",
-    "any": "任一",
     "all": "全部",
     "modeAriaAny": "当前任一匹配，点击切换为全部匹配",
     "modeAriaAll": "当前全部匹配，点击切换为任一匹配",
@@ -667,7 +666,6 @@
     "pinnedTitle": "已置顶",
     "invalid": "密钥非法",
     "invalidTitle": "密钥非法：{message}",
-    "copyTitle": "复制验证码",
     "qrTitle": "显示二维码"
   },
   "searchBar": {
