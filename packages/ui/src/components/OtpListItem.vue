@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { OtpEntry } from '@totp/core'
-import { computed, onScopeDispose, ref } from 'vue'
+import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import MdIconButton from './md/MdIconButton.vue'
 import { avatarStyleOf } from './avatarColor'
@@ -11,6 +11,8 @@ const { t } = useI18n()
 const props = withDefaults(defineProps<{
   entry: OtpEntry
   code: string
+  /** [兼容签名] 环形倒计时已移除（Aegis 式两行布局：行顶进度条替环形），本 prop 不再渲染。
+   *  保留声明是三宿主 v-bind 透传（codes.get() 携带 remaining）的兼容需要，勿删 */
   remaining: number
   progress: number
   /** [可选] secret 非法时的错误信息（鼠标悬停查看具体原因） */
@@ -56,17 +58,40 @@ const displayed = computed(() => {
   return grouped(props.code)
 })
 
-/** I52：圆周按 SVG 半径精确计算，避免硬编码 100.53 在改 viewBox/半径时产生视觉偏差 */
-const RING_R = 16
-const CIRCUMFERENCE = 2 * Math.PI * RING_R
+/** Aegis 式两行布局上行标题：issuer/label 以「/」合并单行；二者缺一只显其一（P3 item-layout） */
+const titleLine = computed(() => {
+  if (props.entry.issuer) return props.entry.label ? `${props.entry.issuer}/${props.entry.label}` : props.entry.issuer
+  return props.entry.label
+})
 
-/** I61：环形按剩余比例绘制。每秒一次离散跳变（Aegis 等主流 TOTP 应用同款）——刻意不用 CSS
- * transition 补间：stroke-dashoffset 是 paint 属性无合成器加速，1s linear 补间会把每秒一次
- * 的跳变放大为每条目常驻 ~60fps SVG 重绘（2026-09-28 GPU profile 实锤 9 条目即 4% GPU） */
-const dashOffset = computed(() => CIRCUMFERENCE * (1 - props.progress))
+/** 跑马灯仅在标题溢出可视宽时启用（未溢出无动画，不建合成层）。checkOverflow 三触发路径：
+ *  onMounted（首帧）+ watch(issuer/label, flush:'post'，改名/换宿主数据后重测) + ResizeObserver
+ *  （宿主面板/窗口宽度变化）。jsdom 无布局（scrollWidth/clientWidth 恒 0）也无 ResizeObserver，
+ *  后者 try/catch 跳过；组件测试经 mock 元素尺寸 + setProps 走 watch 路径验证 */
+const titleEl = ref<HTMLElement | null>(null)
+const overflowing = ref(false)
+function checkOverflow(): void {
+  const el = titleEl.value
+  overflowing.value = el !== null && el.scrollWidth > el.clientWidth
+}
+let resizeObserver: ResizeObserver | null = null
+onMounted(() => {
+  checkOverflow()
+  try {
+    resizeObserver = new ResizeObserver(checkOverflow)
+    resizeObserver.observe(titleEl.value!)
+  } catch { /* jsdom 无 ResizeObserver：溢出检测退化为 onMounted + watch 两路径 */ }
+})
+watch([() => props.entry.issuer, () => props.entry.label], checkOverflow, { flush: 'post' })
+onScopeDispose(() => resizeObserver?.disconnect())
 
-/** ④A：周期最后三分之一（remaining ≤ period/3）倒计时环与数字转醒目错误色。
- *  杂-I1：仅限会过期的码——hotp 按计数取码永不过期（环末三分之一转红无语义）；
+/** 行顶进度条宽度（百分比字符串）。进度条刻意无 CSS transition：width 是 paint 属性无合成器加速，
+ *  1s linear 补间会把每秒一次的离散跳变放大为每条目常驻 ~60fps 重绘（2026-09-28 GPU profile
+ *  实锤 9 条目即 4% GPU，环形时代同款结论，P3 布局沿用该红线） */
+const progressPct = computed(() => `${Math.round(props.progress * 100)}%`)
+
+/** ④A：周期最后三分之一（remaining ≤ period/3）进度条转醒目错误色。
+ *  杂-I1：仅限会过期的码——hotp 按计数取码永不过期（进度条末三分之一转红无语义）；
  *  占位码 '------'（首帧 codes 未就绪）无到期概念，且 fallback progress 落 1/3 区间
  *  会闪一帧红，两者均排除。totp/steam/yandex 均时间基（yandex counter 亦由 nowMs 推导） */
 const urgent = computed(() => props.progress <= 1 / 3 && props.entry.type !== 'hotp' && props.code !== CODE_PLACEHOLDER)
@@ -91,7 +116,8 @@ function onContextMenu(e: MouseEvent): void {
 
 <template>
   <!-- F7(B3)：键盘揭示与双击同链——根元素 Shift+Enter 复用 onDblclick 的揭示+8s 自动打回，
-       无障碍：AT/纯键盘用户此前只能复制不可见码；.prevent 阻止默认（如表单内换行） -->
+       无障碍：AT/纯键盘用户此前只能复制不可见码；.prevent 阻止默认（如表单内换行）。
+       行内复制按钮已删（P3）：单击行（@click）即复制，copy emit 契约不变 -->
   <div
     class="otp-item"
     role="button"
@@ -103,6 +129,8 @@ function onContextMenu(e: MouseEvent): void {
     @keydown.shift.enter.prevent="onDblclick"
     @contextmenu="onContextMenu"
   >
+    <!-- P3：行顶进度条替环形倒计时（Aegis 同款 2px 线性条，宽度随 progress 每秒离散跳变，无 transition） -->
+    <div class="progress-line" aria-hidden="true"><div class="progress-fill" :class="{ urgent }" :style="{ width: progressPct }" /></div>
     <!-- ④A：行首序号列（index 传入即渲染）；#lead slot 供 CodesPage 覆盖为把手/序号 hover 切换 -->
     <span v-if="$slots.lead || index !== undefined" class="index"><slot name="lead">{{ index }}</slot></span>
     <span class="avatar" :style="avatarStyle ?? undefined">
@@ -111,61 +139,57 @@ function onContextMenu(e: MouseEvent): void {
       <template v-else>{{ entry.issuer.slice(0, 1).toUpperCase() || '?' }}</template>
     </span>
     <div class="meta">
-      <div class="issuer">
-        <span v-if="entry.pinned" class="pin" :title="t('otpListItem.pinnedTitle')">★</span>
-        {{ entry.issuer }}
+      <!-- P3：上行=服务商/名称合并单行（超长跑马灯）；下行=大号验证码 + QR 钮 -->
+      <div class="title-line">
+        <span ref="titleEl" class="title-text" :class="{ marquee: overflowing }">
+          <span v-if="entry.pinned" class="pin" :title="t('otpListItem.pinnedTitle')">★</span>{{ titleLine }}
+        </span>
       </div>
-      <div class="label">{{ entry.label }}</div>
-    </div>
-    <div class="right">
-      <!-- aria-live(F7 无障碍闭环):揭示/打回时 .code 文本动态变化且从不获得焦点,读屏用户
-           仅靠聚焦无法感知——polite 声明让揭示的真码与 8s 后的打回被自动播报;倒计时在
-           aria-hidden 的 SVG 内,不会造成播报噪音 -->
-      <span
-        :class="['code', { invalid: code === 'INVALID', revealed: revealed && code !== 'INVALID' }]"
-        :title="code === 'INVALID' ? t('otpListItem.invalidTitle', { message: error ?? '' }) : undefined"
-        aria-live="polite"
-      >{{ displayed }}</span>
-      <!-- M-3：内嵌按钮只 stop click 不够——快速双击按钮的 dblclick 会冒泡到根元素触发揭示
-           （QR 弹窗打开瞬间底层码明文），按钮层须一并 stop dblclick -->
-      <MdIconButton class="copy" :title="t('otpListItem.copyTitle')" :aria-label="t('otpListItem.copyTitle')" @click.stop="emit('copy')" @dblclick.stop>⧉</MdIconButton>
-      <MdIconButton v-if="showQrButton" class="show-qr" :title="t('otpListItem.qrTitle')" :aria-label="t('otpListItem.qrTitle')" @click.stop="emit('qr')" @dblclick.stop>▣</MdIconButton>
-      <svg viewBox="0 0 36 36" class="ring" :class="{ urgent }" aria-hidden="true">
-        <circle cx="18" cy="18" r="16" class="ring-bg" />
-        <circle
-          cx="18" cy="18" r="16" class="ring-fg"
-          :stroke-dasharray="CIRCUMFERENCE"
-          :stroke-dashoffset="dashOffset"
-        />
-        <text x="18" y="21.5" text-anchor="middle" class="ring-text">{{ remaining }}</text>
-      </svg>
+      <div class="code-line">
+        <!-- aria-live(F7 无障碍闭环):揭示/打回时 .code 文本动态变化且从不获得焦点,读屏用户
+             仅靠聚焦无法感知——polite 声明让揭示的真码与 8s 后的打回被自动播报;进度条在
+             aria-hidden 的 .progress-line 内,不会造成播报噪音 -->
+        <span
+          :class="['code', { invalid: code === 'INVALID', revealed: revealed && code !== 'INVALID' }]"
+          :title="code === 'INVALID' ? t('otpListItem.invalidTitle', { message: error ?? '' }) : undefined"
+          aria-live="polite"
+        >{{ displayed }}</span>
+        <!-- M-3：内嵌按钮只 stop click 不够——快速双击按钮的 dblclick 会冒泡到根元素触发揭示
+             （QR 弹窗打开瞬间底层码明文），按钮层须一并 stop dblclick -->
+        <MdIconButton v-if="showQrButton" class="show-qr" :title="t('otpListItem.qrTitle')" :aria-label="t('otpListItem.qrTitle')" @click.stop="emit('qr')" @dblclick.stop>▣</MdIconButton>
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.otp-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; cursor: pointer; border-radius: 8px; }
+/* P3：position relative 供行顶进度条绝对定位；其余根样式（flex 行、hover、圆角）不变 */
+.otp-item { position: relative; display: flex; align-items: center; gap: 12px; padding: 10px 12px; cursor: pointer; border-radius: 8px; }
 .otp-item:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
+/* P3：行顶进度条（替环形倒计时）。刻意无 transition（GPU 红线，见 progressPct 注释） */
+.progress-line { position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--md-sys-color-outline-variant); border-radius: 8px 8px 0 0; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--md-sys-color-primary); }
+/* ④A：周期最后三分之一转 error 醒目色 */
+.progress-fill.urgent { background: var(--md-sys-color-error); }
 /* ④A：行首序号列（窄列定宽防跳字；tabular-nums 数字等宽） */
 .index { flex: none; min-width: 20px; text-align: center; font-variant-numeric: tabular-nums; font-size: var(--md-sys-typescale-body-small); opacity: .55; }
 .avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); display: grid; place-items: center; font-weight: 600; flex: none; overflow: hidden; }
 .icon-svg { width: 22px; height: 22px; fill: currentColor; }
 .icon-img { width: 100%; height: 100%; object-fit: cover; }
-.meta { flex: 1; min-width: 0; }
-.issuer { font-weight: 600; display: flex; align-items: center; gap: 4px; }
-.pin { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-medium); }
-.label { font-size: var(--md-sys-typescale-body-small); opacity: 0.7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.right { display: flex; align-items: center; gap: 8px; }
+.meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+/* P3：上行标题裁切容器；title-text inline-block 使 transform 跑马灯生效且 shrink-to-fit
+   宽度跟随容器（溢出时 clientWidth=可视宽、scrollWidth=全文宽，checkOverflow 据此判定） */
+.title-line { overflow: hidden; white-space: nowrap; }
+.title-text { display: inline-block; font-weight: 600; }
+/* P3：超长跑马灯（约 8s/循环，160px≈可视宽）；仅 overflowing 时启用，未溢出无动画 */
+.title-text.marquee { animation: marquee 8s infinite; }
+@keyframes marquee { 0%,15% { transform: translateX(0) } 50%,65% { transform: translateX(calc(-100% + 160px)) } 100% { transform: translateX(0) } }
+.pin { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-medium); margin-right: 4px; }
+/* P3：下行=大号验证码 + QR 钮 */
+.code-line { display: flex; align-items: center; gap: 8px; }
 .code { font-family: system-ui, sans-serif; font-weight: 700; font-variant-numeric: tabular-nums; font-size: var(--md-sys-typescale-code-large); letter-spacing: 1px; }
 .code.invalid { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-medium); cursor: help; }
-/* ④A：揭示态验证码转主题主色醒目（与倒计时紧急的错误红区分：主色=就绪可用，红=紧急） */
+/* ④A：揭示态验证码转主题主色醒目（与进度条紧急的错误红区分：主色=就绪可用，红=紧急） */
 .code.revealed { color: var(--md-sys-color-primary); }
 .show-qr { font-size: var(--md-sys-typescale-body-medium); }
-.ring { width: 32px; height: 32px; transform: rotate(-90deg); }
-.ring-bg { fill: none; stroke: var(--md-sys-color-outline-variant); stroke-width: 3; }
-.ring-fg { fill: none; stroke: var(--md-sys-color-primary); stroke-width: 3; stroke-linecap: round; }
-.ring-text { transform: rotate(90deg); transform-origin: 18px 18px; font-size: 11px; /* 豁免:SVG text 字号,按 SVG 视口定位,不接字阶 token */ fill: currentColor; }
-/* ④A：周期最后三分之一——环与数字转 error 醒目色（currentColor 由 svg color 下发，text 恒继承） */
-.ring.urgent { color: var(--md-sys-color-error); }
-.ring.urgent .ring-fg { stroke: currentColor; }
 </style>

@@ -30,9 +30,10 @@ describe('OtpListItem 打码与复制', () => {
     expect(w.emitted('copy')).toHaveLength(1)
   })
 
-  it('复制按钮 emit copy 且不冒泡重复触发', async () => {
+  it('行内复制按钮已删除（Aegis 两行布局）：单击行复制由宿主承接，copy emit 保留', async () => {
     const w = mountItem()
-    await w.find('button.copy').trigger('click')
+    expect(w.find('button.copy').exists()).toBe(false)
+    await w.find('.otp-item').trigger('click')
     expect(w.emitted('copy')).toHaveLength(1)
   })
 
@@ -77,10 +78,9 @@ describe('OtpListItem 打码与复制', () => {
     expect(w.find('.code.invalid').exists()).toBe(true)
   })
 
-  it('快速双击内嵌复制/QR 按钮不穿透触发根级揭示（M-3：QR 弹窗打开瞬间码保持打码）', async () => {
+  it('快速双击内嵌 QR 按钮不穿透触发根级揭示（M-3：QR 弹窗打开瞬间码保持打码；复制按钮已删，仅剩 QR 钮）', async () => {
     const w = mountItem()
     // dblclick 沿 DOM 冒泡到根 .otp-item 会触发揭示；按钮须在自身层 stop
-    await w.find('button.copy').trigger('dblclick')
     await w.find('button.show-qr').trigger('dblclick')
     expect(w.text()).toContain('••• •••')
     expect(w.text()).not.toContain('123 456')

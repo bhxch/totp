@@ -105,31 +105,72 @@ describe('OtpListItem 宿主适配 prop（contextMenu/showQr，mini 等未接宿
     expect(w.emitted('context')).toBeUndefined()
   })
 
-  it('showQr=false（mini）：不渲染 QR 按钮（copy 按钮不受影响）', () => {
+  it('showQr=false（mini）：不渲染 QR 按钮；行内复制按钮已随两行布局删除（单击行复制由宿主承接）', () => {
     const w = mount(OtpListItem, { global: { plugins: [createTestI18n()] }, props: { entry, ...base, showQr: false } })
     expect(w.find('.show-qr').exists()).toBe(false)
-    expect(w.find('button.copy').exists()).toBe(true)
+    expect(w.find('button.copy').exists()).toBe(false)
+  })
+
+  it('默认（showQr 缺省 true）仍渲染 QR 按钮', () => {
+    const w = mount(OtpListItem, { global: { plugins: [createTestI18n()] }, props: { entry, ...base } })
+    expect(w.find('.show-qr').exists()).toBe(true)
   })
 })
 
-describe('OtpListItem ring 几何（I52 + I61）', () => {
-  it('stroke-dasharray = 2πr（r=16），stroke-dashoffset = circumference * (1 - progress) 平滑过渡', () => {
-    const w = mount(OtpListItem, { global: { plugins: [createTestI18n()] }, props: { entry, code: '123456', remaining: 12, progress: 0.4 } })
-    const expectedCircumference = 2 * Math.PI * 16
-    const fg = w.find('circle.ring-fg')
-    expect(fg.exists()).toBe(true)
-    expect(fg.attributes('r')).toBe('16')
-    expect(Number(fg.attributes('stroke-dasharray'))).toBeCloseTo(expectedCircumference, 6)
-    // progress=0.4 → offset = circumference * 0.6
-    expect(Number(fg.attributes('stroke-dashoffset'))).toBeCloseTo(expectedCircumference * 0.6, 6)
+describe('OtpListItem 行顶进度条（Aegis 式两行布局，替环形倒计时）', () => {
+  const mountItem = (progress: number, remaining = 12) =>
+    mount(OtpListItem, { global: { plugins: [createTestI18n()] }, props: { entry, code: '123456', remaining, progress } })
+
+  it('progress 映射为 progress-fill 宽度百分比（Math.round）', () => {
+    const w = mountItem(0.4)
+    expect(w.find('.progress-line').exists()).toBe(true)
+    expect(w.find('.progress-line').attributes('aria-hidden')).toBe('true')
+    expect(w.find('.progress-fill').attributes('style')).toContain('width: 40%')
   })
 
-  it('progress 边界：0 → 全空圆（offset=full），1 → 全满圆（offset=0）', () => {
-    const empty = mount(OtpListItem, { global: { plugins: [createTestI18n()] }, props: { entry, code: '123456', remaining: 0, progress: 0 } })
-    const full = mount(OtpListItem, { global: { plugins: [createTestI18n()] }, props: { entry, code: '123456', remaining: 30, progress: 1 } })
-    const expected = 2 * Math.PI * 16
-    expect(Number(empty.find('circle.ring-fg').attributes('stroke-dashoffset'))).toBeCloseTo(expected, 6)
-    expect(Number(full.find('circle.ring-fg').attributes('stroke-dashoffset'))).toBeCloseTo(0, 6)
+  it('progress 边界：0 → 0%，1 → 100%', () => {
+    expect(mountItem(0).find('.progress-fill').attributes('style')).toContain('width: 0%')
+    expect(mountItem(1).find('.progress-fill').attributes('style')).toContain('width: 100%')
+  })
+
+  it('环形倒计时已移除：不再渲染 svg.ring 与剩余秒数（remaining prop 保留签名但不渲染）', () => {
+    const w = mountItem(0.4, 12)
+    expect(w.find('svg.ring').exists()).toBe(false)
+    expect(w.find('.ring-text').exists()).toBe(false)
+  })
+})
+
+describe('OtpListItem 标题行（Aegis 两行布局上行：issuer/label 合并 + 溢出跑马灯）', () => {
+  const mountItem = (over: Partial<OtpEntry> = {}) =>
+    mount(OtpListItem, { global: { plugins: [createTestI18n()] }, props: { entry: { ...entry, ...over }, ...base } })
+
+  it('issuer + label → 「issuer/label」单行', () => {
+    expect(mountItem().find('.title-text').text()).toBe('GitHub/me@ex.com')
+  })
+
+  it('label 为空只显 issuer', () => {
+    expect(mountItem({ label: '' }).find('.title-text').text()).toBe('GitHub')
+  })
+
+  it('issuer 为空只显 label', () => {
+    expect(mountItem({ issuer: '' }).find('.title-text').text()).toBe('me@ex.com')
+  })
+
+  it('pin ★ 渲染在标题行内（title-text 内，先星标后标题）', () => {
+    const w = mountItem({ pinned: true })
+    const title = w.find('.title-text')
+    expect(title.find('.pin').exists()).toBe(true)
+    expect(title.text()).toContain('★')
+  })
+
+  it('标题未溢出无 marquee；溢出（scrollWidth > clientWidth）加 marquee class（jsdom 无布局，mock 元素尺寸 + setProps 触发 watch 验证）', async () => {
+    const w = mountItem()
+    expect(w.find('.title-text').classes()).not.toContain('marquee')
+    const el = w.find('.title-text').element as HTMLElement
+    Object.defineProperty(el, 'scrollWidth', { value: 500, configurable: true })
+    Object.defineProperty(el, 'clientWidth', { value: 160, configurable: true })
+    await w.setProps({ entry: { ...entry, label: 'renamed@ex.com' } }) // 触发 watch(flush post) 重测溢出
+    expect(w.find('.title-text').classes()).toContain('marquee')
   })
 })
 
@@ -146,29 +187,35 @@ describe('OtpListItem 序号 / 倒计时紧急色 / 揭示醒目色（④A 三�
     expect(w.find('.index .handle').exists()).toBe(true)
     expect(w.find('.index').text()).not.toContain('2')
   })
-  it('倒计时末三分之一：progress ≤ 1/3 时 ring 加 urgent（error 色 class 挂载点）', () => {
-    expect(idxMount({ code: '123456', remaining: 10, progress: 10 / 30 }).find('svg.ring.urgent').exists()).toBe(true)
-    expect(idxMount({ code: '123456', remaining: 11, progress: 11 / 30 }).find('svg.ring.urgent').exists()).toBe(false)
+  it('倒计时末三分之一：progress ≤ 1/3 时进度条加 urgent（error 色挂载点）', () => {
+    expect(idxMount({ code: '123456', remaining: 10, progress: 10 / 30 }).find('.progress-fill.urgent').exists()).toBe(true)
+    expect(idxMount({ code: '123456', remaining: 11, progress: 11 / 30 }).find('.progress-fill.urgent').exists()).toBe(false)
   })
   it('杂-I1：hotp 码不过期，即使 progress 落末三分之一也不 urgent', () => {
     const hotpEntry: OtpEntry = { ...entry, type: 'hotp', counter: 5 }
     const w = mount(OtpListItem, { global: { plugins: [createTestI18n()] },
       props: { entry: hotpEntry, code: '123456', remaining: 2, progress: 2 / 30 } })
-    expect(w.find('svg.ring.urgent').exists()).toBe(false)
+    expect(w.find('.progress-fill.urgent').exists()).toBe(false)
   })
   it('杂-I1：占位码 ------（首帧 codes 未就绪）不 urgent，TOTP 实码同 progress 仍 urgent', () => {
     const placeholder = mount(OtpListItem, { global: { plugins: [createTestI18n()] },
       props: { entry, code: '------', remaining: 0, progress: 0 } })
-    expect(placeholder.find('svg.ring.urgent').exists()).toBe(false)
+    expect(placeholder.find('.progress-fill.urgent').exists()).toBe(false)
     const real = mount(OtpListItem, { global: { plugins: [createTestI18n()] },
       props: { entry, code: '123456', remaining: 0, progress: 0 } })
-    expect(real.find('svg.ring.urgent').exists()).toBe(true)
+    expect(real.find('.progress-fill.urgent').exists()).toBe(true)
   })
   it('杂-I1：yandex 亦时间基（counter 由 nowMs 推导），末三分之一仍 urgent', () => {
     const yandexEntry: OtpEntry = { ...entry, type: 'yandex', pin: '1234' }
     const w = mount(OtpListItem, { global: { plugins: [createTestI18n()] },
       props: { entry: yandexEntry, code: 'abcdefgh', remaining: 9, progress: 9 / 30 } })
-    expect(w.find('svg.ring.urgent').exists()).toBe(true)
+    expect(w.find('.progress-fill.urgent').exists()).toBe(true)
+  })
+  it('Enter（无 Shift）复制且不揭示（键盘复制与 Shift+Enter 揭示分链）', async () => {
+    const w = idxMount({})
+    await w.find('.otp-item').trigger('keydown', { key: 'Enter' })
+    expect(w.emitted('copy')).toHaveLength(1)
+    expect(w.find('.code.revealed').exists()).toBe(false)
   })
   it('揭示态 .code 加 revealed 醒目色 class；INVALID 恒不加（错误文案非秘密但语义不同）', async () => {
     const w = idxMount({})
