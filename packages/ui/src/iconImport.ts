@@ -15,10 +15,11 @@ export interface IconPackResult {
   names: string[]
 }
 
-const DEFAULT_MAX = 500
-const DEFAULT_MAX_BYTES = 50 * 1024
-/** F15 成员数安全上限（与 opts.max 的「store 容量 trim」语义无关）：超出整体拒绝 */
-const MAX_MEMBERS = 500
+const DEFAULT_MAX = 65536
+const DEFAULT_MAX_BYTES = 200 * 1024
+/** F15 成员数安全上限（与 opts.max 的「store 容量 trim」语义无关）：超出整体拒绝；
+ *  P2 放宽：aegis-icons 全量包（2000+ 图标）可整体导入，本值仅防病态 zip */
+const MAX_MEMBERS = 65536
 
 // F15 解压预算（针对不可信 zip 的资源耗尽防线）：
 // - 输入字节上限：压缩炸弹在入口即被拒（不进入解压）
@@ -39,8 +40,8 @@ function bytesToDataUrl(bytes: Uint8Array): string {
  * 文件名（去扩展名）normalizeIssuer 后作 stored id——控制器裁定：不自动映射 builtin，
  * 用户包可管理可删除。
  *
- * F15 有界解压：流式 Unzip + 16KB 切片推送 + 真实产出总量预算（8MiB）+ 输入 10MB 上限 +
- * 成员数硬上限（500，超出整体拒绝）——谎言头（声明尺寸与实际不符）由真实产出拦截，
+ * F15 有界解压：流式 Unzip + 16KB 切片推送 + 真实产出总量预算（64MiB）+ 输入 50MB 上限 +
+ * 成员数硬上限（65536，超出整体拒绝）——谎言头（声明尺寸与实际不符）由真实产出拦截，
  * data-descriptor 流式 zip 与普通 zip 走同一有界路径。
  *
  * I60：成员解压完毕后按文件名字典序排序处理——同名（normalize 后）后者覆盖前者的「后者」按字典序定义，
@@ -52,9 +53,9 @@ function bytesToDataUrl(bytes: Uint8Array): string {
  *     返回值附 packName（trim 后显示名）。opts 保留为第四参（现有调用无人传，纯保留）。
  */
 /** 图标包 zip 输入字节上限（解压前拒绝） */
-export const MAX_ICON_PACK_ZIP_BYTES = 10 * 1024 * 1024
+export const MAX_ICON_PACK_ZIP_BYTES = 50 * 1024 * 1024
 /** 解压真实产出总量预算（谎言头由真实产出拦截，与声明值无关） */
-export const MAX_TOTAL_UNCOMPRESSED_BYTES = 8 * 1024 * 1024
+export const MAX_TOTAL_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
 /** 流式 push 切片：单次 ondata 交付上界 = 切片 × deflate 极限压缩比（≈16.1MiB） */
 const PUSH_SLICE = 16 * 1024
 

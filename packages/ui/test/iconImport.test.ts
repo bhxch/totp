@@ -33,8 +33,8 @@ describe('importIconPackZip', () => {
   it('F15：高膨胀炸弹按真实产出预算中止（谎言头不可穿透——预算只认 inflate 真实产出）', async () => {
     const icons = createIconStore(createMemoryStorage())
     await icons.init()
-    // 20MiB 零字节 deflate 后极小（远小于 10MB 输入门），但解压产出 20MiB > 8MiB 预算
-    const zip = zipSync({ 'bomb.png': new Uint8Array(20 * 1024 * 1024) })
+    // 70MiB 零字节 deflate 后极小（远小于 50MB 输入门），但解压产出 70MiB > 64MiB 预算
+    const zip = zipSync({ 'bomb.png': new Uint8Array(70 * 1024 * 1024) })
     await expect(importIconPackZip(zip, icons, { name: '测试包' })).rejects.toThrow('超过总量上限')
     expect(icons.icons['bomb']).toBeUndefined()
   })
@@ -98,12 +98,12 @@ describe('importIconPackZip', () => {
     expect(icons.resolve({ kind: 'stored', id: 'github' })).toBe(toDataUrl(PNG_BYTES))
   })
 
-  it('F15：成员数超过 500 整体拒绝；输入超过 10MB 解压前拒绝', async () => {
+  it('F15：成员数超过 65536 整体拒绝；输入超过 50MB 解压前拒绝', async () => {
     const icons = createIconStore(createMemoryStorage())
     await icons.init()
     const many: Record<string, Uint8Array> = {}
-    for (let i = 0; i < 501; i++) many[`p/${String(i).padStart(4, '0')}.png`] = PNG_BYTES
-    await expect(importIconPackZip(zipSync(many), icons, { name: '测试包' })).rejects.toThrow('超过 500 个条目')
+    for (let i = 0; i < 65537; i++) many[`p/${String(i).padStart(5, '0')}.png`] = PNG_BYTES
+    await expect(importIconPackZip(zipSync(many), icons, { name: '测试包' })).rejects.toThrow('超过 65536 个条目')
 
     const big = new Uint8Array(MAX_ICON_PACK_ZIP_BYTES + 1)
     await expect(importIconPackZip(big, icons, { name: '测试包' })).rejects.toThrow('大小上限')
@@ -116,7 +116,7 @@ describe('importIconPackZip', () => {
       'icons/github.png': PNG_BYTES,
       'sub/google.png': PNG_BYTES,
       'readme.txt': strToU8('not an icon'),
-      'huge.png': new Uint8Array(50 * 1024 + 1),
+      'huge.png': new Uint8Array(200 * 1024 + 1),
     })
     const result = await importIconPackZip(zip, icons, { name: '测试包' })
     expect(result.imported).toBe(2)

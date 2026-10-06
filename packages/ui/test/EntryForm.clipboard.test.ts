@@ -149,17 +149,17 @@ describe('EntryForm 剪贴板预填字段回填（counter/pin 两向）', () => 
 })
 
 describe('EntryForm 图标包大小前置拦截（F15 第一道闸）', () => {
-  it('超 10MB 文件：读入前拒绝并提示，不进入 zip 解压', async () => {
+  it('超 50MB 文件：读入前拒绝并提示，不进入 zip 解压', async () => {
     const w = await mountForm()
     const importIconPackZip = vi.fn()
     const mod = await import('../src/iconImport')
     const spy = vi.spyOn(mod, 'importIconPackZip').mockImplementation(importIconPackZip as never)
     await w.find('details.icon-picker summary').trigger('click')
     const big = new File([new Uint8Array(8)], 'big.zip')
-    Object.defineProperty(big, 'size', { value: 11 * 1024 * 1024 })
+    Object.defineProperty(big, 'size', { value: 51 * 1024 * 1024 })
     Object.defineProperty(w.find('input.pack-file').element, 'files', { value: [big], configurable: true })
     await w.find('input.pack-file').trigger('change')
-    await vi.waitFor(() => expect(w.find('.icon-picker .error').text()).toContain('图标包超过 10MB 大小上限'))
+    await vi.waitFor(() => expect(w.find('.icon-picker .error').text()).toContain('图标包超过 50MB 大小上限'))
     expect(importIconPackZip).not.toHaveBeenCalled()
     spy.mockRestore()
   })
