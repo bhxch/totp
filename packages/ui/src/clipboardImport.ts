@@ -80,8 +80,10 @@ function singleEntryFromJson(text: string): ParsedEntry | null {
   }
 }
 
-/** ParsedEntry → OtpEntry 哑值形状（作 EntryForm initial / 预填；保存时宿主覆盖 uuid/order/createdAt） */
-function prefillFromParsed(e: ParsedEntry): OtpEntry {
+/** ParsedEntry → OtpEntry 哑值形状（作 EntryForm initial / 预填；保存时宿主覆盖 uuid/order/createdAt）。
+ *  导出共用：popup pending 信封 kind=pasted 单条预填（P5）与本文件 resolveTextIntent 同一转换口径，
+ *  防 toOtpDigits 非幂等收口点分叉（见 digits 注释） */
+export function prefillFromParsed(e: ParsedEntry): OtpEntry {
   return {
     uuid: '',
     type: e.type,
@@ -97,7 +99,8 @@ function prefillFromParsed(e: ParsedEntry): OtpEntry {
     period: e.period,
     ...(e.counter !== undefined ? { counter: e.counter } : {}),
     ...(e.pin !== undefined ? { pin: e.pin } : {}),
-    note: '',
+    // note 保真（P5 SteamGuard 粘贴预填）：解析器打包进 note 的 serial/revocation/device_id 进表单可改
+    note: e.note ?? '',
     tagIds: [],
     matchRules: [],
     order: 0,

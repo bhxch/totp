@@ -13,6 +13,8 @@ export * from './iconImport'
 export { ensureFullIcons, fullIconsReady, fullIconsError } from './fullIcons'
 export * from './clipboardClearer'
 export * from './otpauthFlow'
+// ParsedEntry→预填哑值转换（P5 popup pending 信封 kind=pasted 单条预填与包内剪贴板导入同一口径）
+export { prefillFromParsed } from './clipboardImport'
 export * from './popupFilter'
 // 全局 toast（P3 item-layout toast 设计）：useToast 模块级单例 + ToastHost 渲染端（三宿主根组件挂载）
 export * from './composables/useToast'

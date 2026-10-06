@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { getBuiltinIcons, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
-import { createIconStore, EntryForm, fullIconsReady, LockScreen, MdCheckbox, MdIconButton, NAV_ICONS, normalizeExtOtpauth, parseUriToEntryData, PersistErrorBanner, QuickCodesPanel, resolvePopupVisible, sortEntries, ToastHost, useOtpCodes, useTheme, useToast, type EntryFormData } from '@totp/ui'
+import { getBuiltinIcons, parsePastedText, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
+import { createIconStore, EntryForm, fullIconsReady, LockScreen, MdCheckbox, MdIconButton, NAV_ICONS, normalizeExtOtpauth, parseUriToEntryData, PersistErrorBanner, prefillFromParsed, QuickCodesPanel, resolvePopupVisible, sortEntries, ToastHost, useOtpCodes, useTheme, useToast, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
+import { decodePending, PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
 import { ext } from '../../src/extApi'
 import { createExtensionCloudRunner } from '../../src/cloudRunnerFactory'
 import { createFollowScheduler, scheduleClipboardClear } from '../../src/optionsPlatforms'
@@ -152,36 +152,63 @@ const prefill = ref<OtpEntry | null>(null)
 /** 每次导入自增，驱动 EntryForm 重挂载以刷新预填 */
 const formKey = ref(0)
 
+/** 进确认态共享收口（URI 预填 / pasted 单条预填共用）：清错误 → 挂预填 → 开表单 → 换 key 重挂载刷新 */
+function enterConfirmState(entry: OtpEntry): void {
+  importError.value = ''
+  prefill.value = entry
+  creating.value = true
+  formKey.value++
+}
+
 /** URI → 表单预填；成功返回 null（并清除既有错误提示），失败返回中文错误消息（后台入口共用） */
 function applyOtpauthPrefill(uri: string): string | null {
   const r = parseUriToEntryData(uri.trim())
   if ('error' in r) return r.error
-  importError.value = ''
-  prefill.value = r.data
-  creating.value = true
-  formKey.value++
+  enterConfirmState(r.data)
   return null
 }
 
 /**
  * 后台导入入口：popup URL 带 ?uri=（Firefox ext+otpauth 协议回调）或 local `pendingOtpauth`
- * （Chrome 右键菜单写入，读取即清除）→ 预填；非法 URI 报错提示
+ * （Chrome 右键菜单写入，读取即清除）→ 按信封 kind 分派：uri→URI 预填、pasted→parsePastedText
+ * 复解单条进确认态；旧版裸 otpauth URI（decodePending null 且非空，兼容规则见 pendingOtpauth.ts）
+ * 与非法值均走 URI 预填路径，报错提示
  */
 async function consumePendingOtpauth(): Promise<void> {
-  let uri = ''
+  let raw = ''
   try {
-    uri = new URLSearchParams(window.location.search).get('uri')?.trim() ?? ''
+    raw = new URLSearchParams(window.location.search).get('uri')?.trim() ?? ''
   } catch { /* 无 location 场景忽略 */ }
-  if (!uri) {
+  if (!raw) {
     try {
       const got = await ext!.storage.local.get(PENDING_OTPAUTH_KEY)
-      uri = typeof got[PENDING_OTPAUTH_KEY] === 'string' ? got[PENDING_OTPAUTH_KEY].trim() : ''
-      if (uri) await ext!.storage.local.remove(PENDING_OTPAUTH_KEY)
+      raw = typeof got[PENDING_OTPAUTH_KEY] === 'string' ? got[PENDING_OTPAUTH_KEY].trim() : ''
+      if (raw) await ext!.storage.local.remove(PENDING_OTPAUTH_KEY)
     } catch { /* 扩展上下文不可用（如纯浏览器调试）忽略 */ }
   }
-  if (!uri) return
-  const err = applyOtpauthPrefill(normalizeExtOtpauth(uri))
-  if (err) importError.value = err
+  if (!raw) return
+  // P5 信封分派（Global Constraints）：JSON 解析失败/形状不符 → 旧版裸 URI 兼容
+  const envelope = decodePending(raw)
+  if (envelope === null || envelope.kind === 'uri') {
+    const err = applyOtpauthPrefill(normalizeExtOtpauth(envelope === null ? raw : envelope.text))
+    if (err) importError.value = err
+    return
+  }
+  // kind=pasted：popup 侧以同一 parsePastedText 复解 background 写盘的原始文本（写读口径一致，
+  // 结果确定）。单条进确认态（哑值预填 uuid 空串 → EntryForm isNew 按「添加」处理，保存时宿主
+  // 覆盖 uuid/order/createdAt）；0 条/多条理论不可达（background 写盘前已按同口径拦截），兜底防静默
+  const parsed = parsePastedText(envelope.text)
+  if ('unsupported' in parsed) {
+    importError.value = parsed.unsupported
+    return
+  }
+  if (parsed.entries.length === 1) {
+    enterConfirmState(prefillFromParsed(parsed.entries[0]!))
+    return
+  }
+  importError.value = parsed.entries.length === 0
+    ? '未识别出可导入的条目'
+    : `识别到 ${parsed.entries.length} 条，请打开主界面导入页完成批量添加`
 }
 
 function closeForm() {

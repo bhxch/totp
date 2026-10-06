@@ -81,6 +81,7 @@ import { createTestI18n } from './helpers/i18n'
 import { installChromeShim, type ChromeShim } from './helpers/chromeShim'
 import { addEntryOp, commitSettings, initStore, locked, settings, storageAdapter, store, updateEntryOp, vault } from '../src/store'
 import { SOURCES_KEY } from '@totp/core'
+import { encodePending } from '../src/pendingOtpauth'
 
 /** P3a 补齐用例的 shim 槽：按需注入（chromeShim 注入 globalThis.chrome，extApiMock 惰性桥实时可见） */
 let shim: ChromeShim | undefined
@@ -587,6 +588,61 @@ describe('popup otpauth 导入入口（B3-13：?uri= 优先、pendingOtpauth 读
 
     expect(wrapper.find('.error').exists()).toBe(true)
     expect(wrapper.find('entry-form-stub').exists()).toBe(false)
+    expect(shim.local.data['pendingOtpauth']).toBeUndefined()
+  })
+})
+
+describe('popup pending 信封分派（P5 Task 2：kind=uri|pasted；上方裸 URI 用例即旧格式兼容回归）', () => {
+  // SteamGuard 明文 JSON 夹具（口径同 core importPaste.test：20 字节 shared_secret = Steam 真实长度）
+  const SHARED_SECRET_FF_B64 = btoa(String.fromCharCode(...new Uint8Array(20).fill(0xff)))
+  const SG_JSON = JSON.stringify({
+    shared_secret: SHARED_SECRET_FF_B64,
+    serial_number: '12345678901',
+    steamid: '76561190000000000',
+  })
+
+  afterEach(() => {
+    unmountActive()
+    withUriQuery(null)
+    shim?.restore()
+  })
+
+  it('kind=uri 信封：text 为 otpauth URI → URI 预填确认态，读取即清除', async () => {
+    shim = installChromeShim({
+      local: {
+        pendingOtpauth: encodePending({ v: 1, kind: 'uri', text: 'otpauth://totp/Acme:dev?secret=JBSWY3DPEHPK3PXP' }),
+      },
+    })
+    const wrapper = await mountTracked()
+
+    expect(wrapper.find('entry-form-stub').exists()).toBe(true)
+    const initial = wrapper.findComponent({ name: 'EntryForm' }).props('initial') as { issuer?: string } | null
+    expect(initial).toMatchObject({ issuer: 'Acme' })
+    expect(wrapper.find('.error').exists()).toBe(false)
+    expect(shim.local.data['pendingOtpauth']).toBeUndefined()
+    expect(shim.local.calls.remove).toBe(1)
+  })
+
+  it('kind=pasted 信封：单条 SteamGuard JSON → 复解进确认态 issuer=Steam（type/digits steam 收口、note 保真），读取即清除', async () => {
+    shim = installChromeShim({ local: { pendingOtpauth: encodePending({ v: 1, kind: 'pasted', text: SG_JSON }) } })
+    const wrapper = await mountTracked()
+
+    expect(wrapper.find('entry-form-stub').exists()).toBe(true)
+    const initial = wrapper.findComponent({ name: 'EntryForm' }).props('initial') as Record<string, unknown> | null
+    expect(initial).toMatchObject({ type: 'steam', issuer: 'Steam', digits: 5, note: '12345678901' })
+    // 哑值预填（uuid 空串）按新建处理：EntryForm isNew 语义（按钮「添加」），保存时宿主覆盖
+    expect(initial?.uuid).toBe('')
+    expect(wrapper.find('.error').exists()).toBe(false)
+    expect(shim.local.data['pendingOtpauth']).toBeUndefined()
+    expect(shim.local.calls.remove).toBe(1)
+  })
+
+  it('kind=pasted 信封但文本不可解析（旧盘残留/竞态兜底）：importError 透传嗅探文案，不渲染表单', async () => {
+    shim = installChromeShim({ local: { pendingOtpauth: encodePending({ v: 1, kind: 'pasted', text: 'plain junk' }) } })
+    const wrapper = await mountTracked()
+
+    expect(wrapper.find('entry-form-stub').exists()).toBe(false)
+    expect(wrapper.find('.error').text()).toBe('无法识别粘贴内容格式')
     expect(shim.local.data['pendingOtpauth']).toBeUndefined()
   })
 })
