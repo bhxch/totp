@@ -46,6 +46,9 @@ use settings_io::{
 // mini 最近一次因失焦而隐藏的时刻，用于缓解「托盘点击收起」与「失焦自动隐藏」的竞态
 static LAST_FOCUS_HIDE: Mutex<Option<Instant>> = Mutex::new(None);
 
+// ---------- mini 托盘定位（spec §1.3）：点击处弹出 + 上次位置恢复 ----------
+static LAST_MINI_POS: Mutex<Option<(i32, i32)>> = Mutex::new(None);
+
 // ---------- mini pin（spec §1.5）：settings.json miniPinned 键 + 内存缓存；失焦/复制后自动隐藏均让位 ----------
 static MINI_PINNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -230,11 +233,84 @@ fn mini_pin_set<R: Runtime>(app: AppHandle<R>, pinned: bool) -> Result<(), Strin
     Ok(())
 }
 
-fn toggle_mini(app: &AppHandle) {
+/// 纯几何（单测覆盖）：窗口右下角贴近托盘图标——右缘对齐图标右缘、底缘贴图标顶缘；
+/// clamp 进显示器工作区（任务栏任意边/多显示器不溢出）。win 大于工作区时 clamp 区间
+/// 退化（max 取 min 兜底防 i32::clamp panic）。输入输出全物理像素。
+// 10 参签名为 brief 接口契约（扁平整型入参便于纯函数单测），不加结构体包装
+#[allow(clippy::too_many_arguments)]
+fn mini_position_for_tray(
+    tray_x: f64,
+    tray_y: f64,
+    tray_w: f64,
+    tray_h: f64,
+    win_w: i32,
+    win_h: i32,
+    work_x: i32,
+    work_y: i32,
+    work_w: u32,
+    work_h: u32,
+) -> (i32, i32) {
+    // tray_h 暂不参与（底缘贴图标顶缘只用 tray_y），参数保留接口对称性
+    let _ = tray_h;
+    let max_x = (work_x + work_w as i32 - win_w).max(work_x);
+    let max_y = (work_y + work_h as i32 - win_h).max(work_y);
+    let x = ((tray_x + tray_w) as i32 - win_w).clamp(work_x, max_x);
+    let y = (tray_y as i32 - win_h).clamp(work_y, max_y);
+    (x, y)
+}
+
+/// 隐藏前记忆 mini 位置（Focused(false)/CloseRequested/托盘 toggle 三路径共用），
+/// 供销毁重建后快捷键打开恢复。参数取 Window：on_window_event 回调只给 Window，
+/// WebviewWindow 侧经 as_ref().window() 廉价克隆进入
+fn remember_mini_pos(window: &tauri::Window) {
+    if let Ok(p) = window.outer_position() {
+        if let Ok(mut g) = LAST_MINI_POS.lock() {
+            *g = Some((p.x, p.y));
+        }
+    }
+}
+
+/// 按托盘 anchor 定位 mini（物理像素）；monitor/尺寸不可得仅留痕不阻塞弹出
+fn position_mini_at_tray(mini: &tauri::WebviewWindow, anchor: (f64, f64, f64, f64)) {
+    let (tray_x, tray_y, tray_w, tray_h) = anchor;
+    let Ok(size) = mini.outer_size() else { return };
+    let mon = mini
+        .app_handle()
+        .monitor_from_point(tray_x + tray_w / 2.0, tray_y + tray_h / 2.0)
+        .ok()
+        .flatten();
+    let (x, y) = match &mon {
+        Some(m) => {
+            let wa = m.work_area();
+            mini_position_for_tray(
+                tray_x,
+                tray_y,
+                tray_w,
+                tray_h,
+                size.width as i32,
+                size.height as i32,
+                wa.position.x,
+                wa.position.y,
+                wa.size.width,
+                wa.size.height,
+            )
+        }
+        None => (
+            (tray_x + tray_w) as i32 - size.width as i32,
+            tray_y as i32 - size.height as i32,
+        ),
+    };
+    if let Err(e) = mini.set_position(tauri::PhysicalPosition::new(x, y)) {
+        eprintln!("[tray] mini set_position failed: {e}");
+    }
+}
+
+fn toggle_mini(app: &AppHandle, anchor: Option<(f64, f64, f64, f64)>) {
     // 释放策略销毁档可能已销毁 webview（仅留托盘进程）：入口先按需重建（brief Task 13）
     ensure_window(app, "mini");
     if let Some(mini) = app.get_webview_window("mini") {
         if mini.is_visible().unwrap_or(false) {
+            remember_mini_pos(&mini.as_ref().window());
             let _ = mini.hide();
         } else {
             // mini 刚因失焦被隐藏（<300ms）时，本次点击视为「点托盘收起」，保持隐藏
@@ -243,6 +319,15 @@ fn toggle_mini(app: &AppHandle) {
                     if t.elapsed() < Duration::from_millis(300) {
                         return;
                     }
+                }
+            }
+            // 定位先于 show（不可见期移动无闪烁）：托盘点击=每次锚定托盘；
+            // 快捷键=恢复上次位置（销毁重建后亦然），无记忆则 OS 默认
+            if let Some(a) = anchor {
+                position_mini_at_tray(&mini, a);
+            } else if let Ok(g) = LAST_MINI_POS.lock() {
+                if let Some((x, y)) = *g {
+                    let _ = mini.set_position(tauri::PhysicalPosition::new(x, y));
                 }
             }
             let shown = mini.show();
@@ -468,7 +553,7 @@ fn apply_shortcut_override(app: &AppHandle) {
         }
         if let Err(e) = gs.on_shortcut(configured.as_str(), |a, _s, e| {
             if e.state == ShortcutState::Pressed {
-                toggle_mini(a);
+                toggle_mini(a, None);
             }
         }) {
             eprintln!("[shortcut] register '{configured}' failed: {e}");
@@ -520,11 +605,21 @@ fn setup_tray(
             if let TrayIconEvent::Click {
                 button,
                 button_state: tauri::tray::MouseButtonState::Up,
+                rect,
                 ..
             } = event
             {
+                // 托盘点击=每次重新锚定：窗口右下角弹出在图标处。tauri 2.11 的 rect
+                // 为枚举型（dpi::Position/Size），tray_icon 的物理像素值经 Into 落在
+                // Physical 分支；Logical 分支兜底 None（退化为快捷键的恢复语义）
+                let anchor = match (rect.position, rect.size) {
+                    (tauri::Position::Physical(p), tauri::Size::Physical(s)) => {
+                        Some((p.x as f64, p.y as f64, s.width as f64, s.height as f64))
+                    }
+                    _ => None,
+                };
                 match button {
-                    tauri::tray::MouseButton::Left => toggle_mini(_tray.app_handle()),
+                    tauri::tray::MouseButton::Left => toggle_mini(_tray.app_handle(), anchor),
                     // 中键直达主窗口，省去右键菜单一步（等价「显示主窗口」）
                     tauri::tray::MouseButton::Middle => show_main(_tray.app_handle()),
                     _ => {}
@@ -627,7 +722,7 @@ pub fn run() {
                 .unwrap()
                 .with_handler(|app, _shortcut, event| {
                     if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                        toggle_mini(app);
+                        toggle_mini(app, None);
                     }
                 })
                 .build(),
@@ -685,6 +780,8 @@ pub fn run() {
                         if let Ok(mut last) = LAST_FOCUS_HIDE.lock() {
                             *last = Some(Instant::now());
                         }
+                        // 失焦隐藏前记忆位置（spec §1.3 位置恢复三路径之一）
+                        remember_mini_pos(window);
                         let _ = window.hide();
                     }
                 }
@@ -692,6 +789,9 @@ pub fn run() {
                     // main 与 mini 点 X 均拦截为隐藏：保证托盘常驻；
                     // mini 被原生标题栏销毁后 get_webview_window("mini") 恒 None，
                     // 托盘左键与 Alt+Shift+T 将永久失效，故必须 prevent_close
+                    if window.label() == "mini" {
+                        remember_mini_pos(window);
+                    }
                     api.prevent_close();
                     let _ = window.hide();
                 }
@@ -955,5 +1055,34 @@ mod tests {
             devtools_config_json(true, 9333),
             serde_json::json!({ "enabled": true, "port": 9333, "envPreset": true })
         );
+    }
+
+    // mini 托盘锚定几何（spec §1.3）：右下角贴图标 + 工作区 clamp
+    #[test]
+    fn mini_position_for_tray_aligns_bottom_right_above_icon() {
+        // 图标 (1800,1040,32,32)、窗 320x420、工作区 (0,0,1920,1040)：右缘对齐 1832-320、底贴 1040-420
+        assert_eq!(
+            mini_position_for_tray(1800.0, 1040.0, 32.0, 32.0, 320, 420, 0, 0, 1920, 1040),
+            (1512, 620)
+        );
+    }
+
+    #[test]
+    fn mini_position_for_tray_clamps_into_work_area() {
+        // 右溢 clamp 到工作区右缘；左溢 clamp 到 work_x；底贴不越界
+        assert_eq!(
+            mini_position_for_tray(1900.0, 1040.0, 32.0, 32.0, 320, 420, 0, 0, 1920, 1040),
+            (1600, 620)
+        );
+        assert_eq!(
+            mini_position_for_tray(10.0, 1000.0, 32.0, 32.0, 320, 420, 0, 0, 1920, 1040),
+            (0, 580)
+        );
+    }
+
+    #[test]
+    fn mini_position_for_tray_window_larger_than_work_area_no_panic() {
+        // 窗大于工作区：clamp 区间退化不 panic（max 取 min 兜底）
+        let _ = mini_position_for_tray(100.0, 100.0, 32.0, 32.0, 4000, 3000, 0, 0, 1920, 1040);
     }
 }
