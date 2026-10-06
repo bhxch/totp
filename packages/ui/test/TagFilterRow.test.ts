@@ -71,4 +71,14 @@ describe('TagFilterRow', () => {
     const w2 = mount(TagFilterRow, { global: { plugins: [createTestI18n()] }, props: { tags, selectedIds: [], mode: 'any', manageable: false } })
     expect(w2.find('button.manage-btn').exists()).toBe(false)
   })
+
+  it('空 tags：chips 段（「全部」+ tag chips）不渲染；mode 钮（<2 天然禁用）与管理钮仍渲染（管理入口是创建首个标签的途径）', () => {
+    const w = mount(TagFilterRow, { global: { plugins: [createTestI18n()] }, props: { tags: [], selectedIds: [], mode: 'any' } })
+    expect(w.findAll('button.md-chip')).toHaveLength(0)
+    const mode = w.find('button.mode-toggle')
+    expect(mode.exists()).toBe(true)
+    expect(mode.classes()).toContain('mode-toggle--disabled')
+    expect(mode.attributes('aria-disabled')).toBe('true')
+    expect(w.find('button.manage-btn').exists()).toBe(true)
+  })
 })

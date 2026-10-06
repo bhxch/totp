@@ -357,10 +357,9 @@ function openSheet() {
         </MdButton>
       </div>
       <SearchBar v-model="query" v-model:search-secret="searchSecret" />
-      <!-- 标签筛选：多选 chips + 行首逻辑符号模式切换 + 管理标签 icon 钮（均由 TagFilterRow 提供）；管理钮打开 TagManagerDialog -->
+      <!-- 标签筛选：多选 chips + 行首逻辑符号模式切换 + 管理标签 icon 钮（均由 TagFilterRow 提供）；零标签态行仍渲染（管理钮是创建首个标签的途径） -->
       <div class="chips-row">
         <TagFilterRow
-          v-if="store.vault.tags.length > 0"
           :tags="store.vault.tags" v-model:selected-ids="selectedTagIds"
           :mode="tagMode" @update:mode="setTagMode"
           @open-manage="tagsOpen = true; emit('open-tags')"

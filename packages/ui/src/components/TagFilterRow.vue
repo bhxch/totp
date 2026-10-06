@@ -65,11 +65,14 @@ function toggleMode() {
         {{ mode === 'any' ? t('tagFilterRow.popAny') : t('tagFilterRow.popAll') }}
       </div>
     </div>
-    <MdChip :label="t('tagFilterRow.all')" :selected="selectedIds.length === 0" @click="emit('update:selectedIds', [])" />
-    <MdChip
-      v-for="t in sorted" :key="t.id" :label="t.name"
-      :selected="selectedIds.includes(t.id)" @click="toggle(t.id)"
-    />
+    <!-- chips 段（「全部」+ 各 tag）：空 tags 整段隐藏；mode 钮（空时天然 <2 禁用）与管理钮仍渲染——管理入口是创建首个标签的途径 -->
+    <template v-if="sorted.length > 0">
+      <MdChip :label="t('tagFilterRow.all')" :selected="selectedIds.length === 0" @click="emit('update:selectedIds', [])" />
+      <MdChip
+        v-for="t in sorted" :key="t.id" :label="t.name"
+        :selected="selectedIds.includes(t.id)" @click="toggle(t.id)"
+      />
+    </template>
     <MdIconButton
       v-if="manageable" class="manage-btn"
       :title="t('codesPage.manageTags')" :aria-label="t('codesPage.manageTags')"

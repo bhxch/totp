@@ -149,6 +149,18 @@ describe('CodesPage 标签筛选（spec §3 管理页）', () => {
     expect(chip(w, '留存').classes()).not.toContain('md-chip--selected')
   })
 
+  it('零标签态：TagFilterRow 仍渲染（chips 段隐藏），manage-btn 可达并打开 TagManagerDialog（创建首个标签的途径）', async () => {
+    const s = createVueStore(createMemoryStorage())
+    await s.initStore() // 不加任何 tag
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    expect(w.findAll('button.md-chip')).toHaveLength(0) // chips 段隐藏
+    const manage = w.find('button.manage-btn')
+    expect(manage.exists()).toBe(true)
+    await manage.trigger('click')
+    expect(w.emitted('open-tags')).toHaveLength(1)
+    expect(w.find('.md-dialog__headline').text()).toBe('标签管理')
+  })
+
   it('点「管理标签」icon 钮（TagFilterRow manage-btn）emit open-tags 并打开 TagManagerDialog，遮罩关闭', async () => {
     const s = createVueStore(createMemoryStorage())
     await s.initStore()

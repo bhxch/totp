@@ -377,6 +377,7 @@ function cancelAutoClose(): void {
       v-if="vault.tags.length > 0" class="tag-row"
       :tags="vault.tags" v-model:selected-ids="selectedTagIds"
       :mode="tagMode" @update:mode="setTagMode"
+      :manageable="false"
     />
 
     <div class="filter-row" v-if="tabUrl">
