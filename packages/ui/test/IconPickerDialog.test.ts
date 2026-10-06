@@ -1,39 +1,110 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { getBuiltinIcons } from '@totp/core'
 import IconPickerDialog from '../src/components/IconPickerDialog.vue'
 import { createTestI18n } from './helpers/i18n'
 
 const icons = getBuiltinIcons()
+// 选择器 open 即触发 ensureFullIcons：stub fetch 返回微缩全量集，避免真实 3.5MB 资产
+vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ icons: {} }), { status: 200 })))
+beforeEach(() => vi.clearAllMocks())
 
-function mountPicker(issuer = '', open = true) {
-  return mount(IconPickerDialog, { global: { plugins: [createTestI18n()] }, props: { open, builtin: icons, issuer } })
+function mountPicker(opts: { issuer?: string; open?: boolean; stored?: Record<string, string>; packs?: Record<string, { name: string; iconIds: string[] }> } = {}) {
+  return mount(IconPickerDialog, {
+    global: { plugins: [createTestI18n()] },
+    props: { open: opts.open ?? true, builtin: icons, issuer: opts.issuer ?? '', stored: opts.stored ?? {}, packs: opts.packs ?? {} },
+  })
 }
+const grid = (w: ReturnType<typeof mount>) => w.find('.picker-grid--all')
+// 包 chip 内含 × 移除钮（确认时还有确认/取消钮），text() 带后缀，一律 includes 匹配
+const chipOf = (w: ReturnType<typeof mount>, label: string) => w.findAll('.picker-chip').find((c) => c.text().includes(label))!
 
 describe('IconPickerDialog', () => {
   it('open=false 时不渲染对话框', () => {
-    const w = mountPicker('', false)
-    expect(w.find('.md-dialog').exists()).toBe(false)
+    expect(mountPicker({ open: false }).find('.md-dialog').exists()).toBe(false)
   })
 
-  it('open 后全量网格渲染全部内置图标（≥200）', () => {
+  it('窗口化：data-total 报全量数（≥200 精选），实际渲染 cell 数 < total（jsdom 回退 30）', () => {
     const w = mountPicker()
-    expect(w.findAll('.picker-grid--all button').length).toBeGreaterThanOrEqual(200)
+    expect(Number(grid(w).attributes('data-total'))).toBeGreaterThanOrEqual(200)
+    expect(w.findAll('.picker-grid--all button').length).toBeLessThan(Number(grid(w).attributes('data-total')))
   })
+
+  it('chips：默认 全部/内置；有上传图标出现「上传」；各包按显示名出现', () => {
+    const w = mountPicker({ stored: { gh: 'data:image/png;base64,AA', orphan: 'data:image/png;base64,AA' }, packs: { mypack: { name: 'My Pack', iconIds: ['gh'] } } })
+    const labels = w.findAll('.picker-chip').map((c) => c.text())
+    expect(labels).toContain('全部')
+    expect(labels).toContain('内置')
+    expect(labels).toContain('上传')
+    expect(labels.some((l) => l.includes('My Pack'))).toBe(true) // 包 chip 带 × 后缀，includes 匹配
+  })
+
+  it('chip=内置 只显 builtin；chip=包 只显该包 stored（带 id 标签与 img）', async () => {
+    const w = mountPicker({ stored: { gh: 'data:image/png;base64,AA' }, packs: { mypack: { name: 'My Pack', iconIds: ['gh'] } } })
+    await chipOf(w, '内置')!.trigger('click')
+    expect(w.findAll('.picker-grid--all img').length).toBe(0)
+    await chipOf(w, 'My Pack')!.trigger('click')
+    const cells = w.findAll('.picker-grid--all button')
+    expect(cells).toHaveLength(1)
+    expect(cells[0]!.find('img').attributes('src')).toBe('data:image/png;base64,AA')
+    expect(cells[0]!.find('.picker-cell-label').text()).toBe('gh')
+  })
+
+  it('选中 stored → select 载荷 {kind:"stored", id}；选中 builtin → {kind:"builtin"}', async () => {
+    const w = mountPicker({ stored: { gh: 'data:image/png;base64,AA' }, packs: { mypack: { name: 'My Pack', iconIds: ['gh'] } } })
+    await chipOf(w, 'My Pack')!.trigger('click')
+    await w.find('.picker-grid--all button').trigger('click')
+    expect(w.emitted('select')![0]).toEqual([{ kind: 'stored', id: 'gh', title: 'gh' }])
+    await chipOf(w, '内置')!.trigger('click') // 切回 builtin 源再点任一格
+    await w.find('.picker-grid--all button').trigger('click')
+    const last = w.emitted('select')!.at(-1)![0] as { kind: string }
+    expect(last.kind).toBe('builtin')
+  })
+
+  it('搜索跨源：stored id 命中查询（extra 管线）', async () => {
+    const w = mountPicker({ stored: { githacks: 'data:image/png;base64,AA' } })
+    await w.find('.picker-search input').setValue('githacks')
+    const cells = w.findAll('.picker-grid--all button')
+    expect(cells.some((c) => c.find('.picker-cell-label').text() === 'githacks')).toBe(true)
+  })
+
+  it('中文别名搜索保留（谷歌→Google）', async () => {
+    const w = mountPicker()
+    await w.find('.picker-search input').setValue('谷歌')
+    expect(w.findAll('.picker-grid--all button')[0]!.attributes('title')).toBe('Google')
+  })
+
+  it('包 chip × 两步确认 → emit removePack(normKey)', async () => {
+    const w = mountPicker({ stored: { gh: 'data:image/png;base64,AA' }, packs: { mypack: { name: 'My Pack', iconIds: ['gh'] } } })
+    const packChip = chipOf(w, 'My Pack')
+    await packChip.find('.chip-remove').trigger('click')
+    await packChip.find('.chip-remove-confirm').trigger('click')
+    expect(w.emitted('removePack')![0]).toEqual(['mypack'])
+  })
+
+  it('推荐区 mixed：builtin 出 svg、stored 出 img', () => {
+    const w = mountPicker({ issuer: 'githublab', stored: { githublab: 'data:image/png;base64,AA' } })
+    const rec = w.findAll('.picker-recommended button')
+    expect(rec.length).toBeGreaterThan(0)
+    expect(rec.some((b) => b.find('img').exists())).toBe(true)
+    expect(rec.some((b) => b.find('svg').exists())).toBe(true)
+  })
+
+  // ---- 以下为旧测试保留断言（重写后语义仍成立） ----
 
   it('推荐区：issuer 模糊命中（githb→github）置顶显示', () => {
-    const w = mountPicker('githb')
+    const w = mountPicker({ issuer: 'githb' })
     const rec = w.findAll('.picker-recommended button')
     expect(rec.length).toBeGreaterThan(0)
     expect(rec[0]!.attributes('title')).toBe('GitHub')
   })
 
   it('issuer 为空或纯分隔符时不显示推荐区', () => {
-    expect(mountPicker('').find('.picker-recommended').exists()).toBe(false)
-    expect(mountPicker(' .-_ ').find('.picker-recommended').exists()).toBe(false)
+    expect(mountPicker().find('.picker-recommended').exists()).toBe(false)
+    expect(mountPicker({ issuer: ' .-_ ' }).find('.picker-recommended').exists()).toBe(false)
   })
 
-  it('搜索过滤：git 命中相关项（含 digitalocean 的 digit 子串）；无结果时网格为空', async () => {
+  it('搜索过滤：git 命中相关项；无结果时网格为空', async () => {
     const w = mountPicker()
     const search = () => w.find('.picker-search input')
     await search().setValue('git')
@@ -45,13 +116,6 @@ describe('IconPickerDialog', () => {
     expect(w.findAll('.picker-grid--all button')).toHaveLength(0)
   })
 
-  it('搜索支持中文别名（谷歌→Google）', async () => {
-    const w = mountPicker()
-    await w.find('.picker-search input').setValue('谷歌')
-    const cells = w.findAll('.picker-grid--all button')
-    expect(cells[0]!.attributes('title')).toBe('Google')
-  })
-
   it('打开时清空上次搜索词', async () => {
     const w = mountPicker()
     await w.find('.picker-search input').setValue('git')
@@ -60,7 +124,7 @@ describe('IconPickerDialog', () => {
     expect((w.find('.picker-search input').element as HTMLInputElement).value).toBe('')
   })
 
-  it('点选图标 emit select 携带 BuiltinIcon', async () => {
+  it('点选内置图标 emit select（toMatchObject 兼容载荷）', async () => {
     const w = mountPicker()
     const cell = w.findAll('.picker-grid--all button').find((c) => c.attributes('title') === 'GitLab')!
     await cell.trigger('click')

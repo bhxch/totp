@@ -1,40 +1,142 @@
 <script setup lang="ts">
-import { suggestIcons, type BuiltinIcon } from '@totp/core'
-import { computed, ref, watch } from 'vue'
+import { suggestIcons, type BuiltinIcon, type IconSuggestion } from '@totp/core'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { ensureFullIcons, fullIconsError, fullIconsReady } from '../fullIcons'
 import MdDialog from './md/MdDialog.vue'
 import MdTextField from './md/MdTextField.vue'
 
-const { t } = useI18n()
+/** 选中载荷：stored 含上传与包导入图标 */
+export interface PickerSelect {
+  kind: 'builtin' | 'stored'
+  id: string
+  title: string
+}
 
 const props = defineProps<{
   open: boolean
   builtin: Record<string, BuiltinIcon>
   /** 当前服务商名称：打开时按模糊匹配生成推荐区，空/无候选则不显示 */
   issuer?: string
+  /** stored dataUrl 映射（urlcache: 前缀键排除在选择源之外） */
+  stored?: Readonly<Record<string, string>>
+  /** 包注册表（normKey → { name, iconIds }）：来源筛选与按包删除 */
+  packs?: Readonly<Record<string, { name: string; iconIds: string[] }>>
 }>()
-const emit = defineEmits<{ select: [icon: BuiltinIcon]; close: [] }>()
+const emit = defineEmits<{ select: [item: PickerSelect]; removePack: [normKey: string]; close: [] }>()
 
+const { t } = useI18n()
 const query = ref('')
-// 每次打开重置搜索词，避免上次的过滤残留
 watch(
   () => props.open,
   (open) => {
-    if (open) query.value = ''
+    if (open) {
+      query.value = ''
+      active.value = 'all'
+      confirmingRemove.value = null
+      void ensureFullIcons()
+      void nextTick(measure)
+    }
   },
 )
 
-function svgHtml(path: string): string {
-  return `<path d="${path}"></path>`
+// ---- 来源分桶（派生判定，零迁移）----
+interface Item {
+  id: string
+  title: string
+  kind: 'builtin' | 'stored'
+  src?: string
+}
+const storedItems = computed<Item[]>(() =>
+  Object.entries(props.stored ?? {})
+    .filter(([id]) => !id.startsWith('urlcache:'))
+    .map(([id, src]) => ({ id, title: id, kind: 'stored' as const, src })),
+)
+function packKeyOf(id: string): string | undefined {
+  for (const [key, p] of Object.entries(props.packs ?? {})) if (p.iconIds.includes(id)) return key
+  return undefined
+}
+const storedExtras = computed(() => storedItems.value.map((i) => ({ id: i.id })))
+
+// ---- 来源筛选 chips ----
+type ChipKey = 'all' | 'builtin' | 'uploaded' | (string & {})
+const active = ref<ChipKey>('all')
+const uploadedCount = computed(() => storedItems.value.filter((i) => !packKeyOf(i.id)).length)
+const chips = computed(() => {
+  const list: Array<{ key: ChipKey; label: string }> = [
+    { key: 'all', label: t('entryForm.iconFilterAll') },
+    { key: 'builtin', label: t('entryForm.iconFilterBuiltin') },
+  ]
+  if (uploadedCount.value > 0) list.push({ key: 'uploaded', label: t('entryForm.iconFilterUploaded') })
+  for (const [key, p] of Object.entries(props.packs ?? {})) list.push({ key, label: p.name })
+  return list
+})
+function matchesChip(item: Item): boolean {
+  if (active.value === 'all') return true
+  if (active.value === 'builtin') return item.kind === 'builtin'
+  if (active.value === 'uploaded') return item.kind === 'stored' && !packKeyOf(item.id)
+  return item.kind === 'stored' && packKeyOf(item.id) === active.value
 }
 
+/** 包删除两步确认：× → 确认按钮 → emit；切换/关闭重置 */
+const confirmingRemove = ref<string | null>(null)
+function onConfirmRemove() {
+  const key = confirmingRemove.value
+  confirmingRemove.value = null
+  if (key) {
+    emit('removePack', key)
+    if (active.value === key) active.value = 'all'
+  }
+}
+
+// ---- 列表组装：搜索走 suggestIcons（含 stored extra），否则全集按 chip 过滤 ----
 const searching = computed(() => query.value.trim() !== '')
-/** 搜索复用 suggestIcons（别名参与 + 模糊纠错 + 相关度排序）；空查询展示全集 */
-const results = computed<BuiltinIcon[]>(() => {
-  if (!searching.value) return Object.values(props.builtin)
-  return suggestIcons(query.value, Number.MAX_SAFE_INTEGER).filter((i) => props.builtin[i.id])
+const results = computed<Item[]>(() => {
+  if (searching.value) {
+    return suggestIcons(query.value.trim(), Number.MAX_SAFE_INTEGER, storedExtras.value)
+      .map((s: IconSuggestion) =>
+        s.source === 'builtin'
+          ? { id: s.id, title: s.title, kind: 'builtin' as const }
+          : { id: s.id, title: s.title, kind: 'stored' as const, src: props.stored?.[s.id] },
+      )
+      .filter(matchesChip)
+  }
+  const builtinItems: Item[] = Object.values(props.builtin).map((b) => ({ id: b.id, title: b.title, kind: 'builtin' }))
+  const pool = active.value === 'builtin' ? builtinItems : [...builtinItems, ...storedItems.value]
+  return pool.filter(matchesChip)
 })
-const recommended = computed<BuiltinIcon[]>(() => (props.open ? suggestIcons(props.issuer ?? '', 3) : []))
+const recommended = computed<IconSuggestion[]>(() =>
+  props.open ? suggestIcons(props.issuer ?? '', 3, storedExtras.value) : [],
+)
+
+// ---- 窗口化：行高定值 + 列数按容器宽推算；jsdom 高度 0 → 回退 30 项 ----
+const scroller = ref<HTMLElement | null>(null)
+const CELL_H = 96
+const COL_MIN = 76
+const colCount = ref(5)
+const first = ref(0)
+const visibleCount = ref(30)
+function measure() {
+  const el = scroller.value
+  if (!el) return
+  colCount.value = Math.max(3, Math.floor((el.clientWidth + 4) / (COL_MIN + 4)))
+  if (el.clientHeight > 0) visibleCount.value = (Math.ceil(el.clientHeight / CELL_H) + 4) * colCount.value
+}
+function onScroll() {
+  const el = scroller.value
+  if (!el) return
+  const startRow = Math.max(0, Math.floor(el.scrollTop / CELL_H) - 4)
+  first.value = startRow * colCount.value
+}
+watch([results, () => props.open], () => {
+  first.value = 0
+  void nextTick(measure)
+})
+const windowed = computed(() => results.value.slice(first.value, first.value + visibleCount.value))
+
+function select(item: Item) {
+  emit('select', { kind: item.kind, id: item.id, title: item.title })
+}
 </script>
 
 <template>
@@ -43,25 +145,52 @@ const recommended = computed<BuiltinIcon[]>(() => (props.open ? suggestIcons(pro
       v-model="query" class="picker-search" :label="t('entryForm.searchIconsLabel')"
       :placeholder="t('entryForm.searchIcons')" :aria-label="t('entryForm.searchIconsLabel')"
     />
+    <div class="picker-chips">
+      <button
+        v-for="chip in chips" :key="chip.key" type="button" class="picker-chip"
+        :class="{ active: active === chip.key }" @click="active = chip.key; confirmingRemove = null"
+      >
+        {{ chip.label }}
+        <span
+          v-if="/^(?!(all|builtin|uploaded)$)/.test(String(chip.key))" class="chip-remove" role="button"
+          :aria-label="t('entryForm.iconPackRemoveConfirm')" @click.stop="confirmingRemove = String(chip.key)"
+        >×</span>
+        <template v-if="confirmingRemove === chip.key">
+          <button type="button" class="chip-remove-confirm" @click.stop="onConfirmRemove">{{ t('entryForm.iconPackRemoveConfirm') }}</button>
+          <button type="button" class="chip-remove-cancel" @click.stop="confirmingRemove = null">{{ t('entryForm.iconPackRemoveCancel') }}</button>
+        </template>
+      </button>
+    </div>
+    <p v-if="open && !fullIconsReady && !fullIconsError" class="picker-loading">{{ t('entryForm.iconsLoading') }}</p>
+    <button v-if="open && fullIconsError" type="button" class="picker-retry" @click="void ensureFullIcons()">
+      {{ t('entryForm.iconsLoadRetry') }}
+    </button>
     <div v-if="!searching && recommended.length > 0" class="picker-recommended">
       <p class="picker-section-label">{{ t('entryForm.recommendedSection') }}</p>
       <div class="picker-grid">
         <button
-          v-for="icon in recommended" :key="icon.id" type="button" class="picker-cell"
-          :title="icon.title" :aria-label="icon.title" @click="emit('select', icon)"
+          v-for="icon in recommended" :key="`rec-${icon.source}-${icon.id}`" type="button" class="picker-cell"
+          :title="icon.title" :aria-label="icon.title" @click="select(icon.source === 'builtin'
+            ? { id: icon.id, title: icon.title, kind: 'builtin' }
+            : { id: icon.id, title: icon.title, kind: 'stored' })"
         >
-          <svg viewBox="0 0 24 24" aria-hidden="true" v-html="svgHtml(icon.path)" />
+          <svg v-if="icon.path" viewBox="0 0 24 24" aria-hidden="true"><path :d="icon.path" /></svg>
+          <img v-else :src="stored?.[icon.id]" alt="" />
         </button>
       </div>
     </div>
     <p class="picker-section-label">{{ searching ? t('entryForm.searchResultsSection') : t('entryForm.allIconsSection') }}</p>
-    <div class="picker-grid picker-grid--all">
-      <button
-        v-for="icon in results" :key="icon.id" type="button" class="picker-cell"
-        :title="icon.title" :aria-label="icon.title" @click="emit('select', icon)"
-      >
-        <svg viewBox="0 0 24 24" aria-hidden="true" v-html="svgHtml(icon.path)" />
-      </button>
+    <div ref="scroller" class="picker-scroll" @scroll.passive="onScroll">
+      <div class="picker-grid picker-grid--all" :data-total="results.length">
+        <button
+          v-for="item in windowed" :key="`${item.kind}-${item.id}`" type="button" class="picker-cell picker-cell--labeled"
+          :title="item.title" :aria-label="item.title" @click="select(item)"
+        >
+          <svg v-if="item.kind === 'builtin'" viewBox="0 0 24 24" aria-hidden="true"><path :d="builtin[item.id]!.path" /></svg>
+          <img v-else :src="item.src" alt="" />
+          <span class="picker-cell-label">{{ item.title }}</span>
+        </button>
+      </div>
     </div>
     <p v-if="searching && results.length === 0" class="picker-empty">{{ t('entryForm.iconPickerNoResults') }}</p>
   </MdDialog>
@@ -69,11 +198,22 @@ const recommended = computed<BuiltinIcon[]>(() => (props.open ? suggestIcons(pro
 
 <style scoped>
 .picker-search { margin-bottom: 4px; }
+.picker-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+.picker-chip { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: 999px; background: transparent; color: var(--md-sys-color-on-surface-variant); padding: 2px 10px; font-size: var(--md-sys-typescale-body-small); cursor: pointer; }
+.picker-chip.active { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); border-color: transparent; }
+.chip-remove { cursor: pointer; opacity: 0.6; padding: 0 2px; }
+.chip-remove:hover { opacity: 1; }
+.chip-remove-confirm, .chip-remove-cancel { border: none; background: transparent; color: inherit; font-size: var(--md-sys-typescale-label-small); cursor: pointer; padding: 0 2px; }
+.chip-remove-confirm { color: var(--md-sys-color-error); }
+.picker-loading, .picker-empty { font-size: var(--md-sys-typescale-body-small); opacity: 0.6; }
+.picker-retry { border: none; background: transparent; color: var(--md-sys-color-primary); cursor: pointer; font-size: var(--md-sys-typescale-body-small); }
 .picker-section-label { font-size: var(--md-sys-typescale-label-medium); opacity: 0.65; margin: 8px 0 4px; }
-.picker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 4px; }
-.picker-grid--all { max-height: 300px; overflow-y: auto; }
-.picker-cell { display: grid; place-items: center; aspect-ratio: 1; width: 100%; padding: 0; border: none; border-radius: 8px; background: transparent; color: var(--md-sys-color-on-surface-variant); cursor: pointer; }
+.picker-scroll { max-height: 300px; overflow-y: auto; }
+.picker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 4px; }
+.picker-cell { display: grid; place-items: center; gap: 2px; width: 100%; padding: 6px 2px; border: none; border-radius: 8px; background: transparent; color: var(--md-sys-color-on-surface-variant); cursor: pointer; }
 .picker-cell:hover { background: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent); color: var(--md-sys-color-on-surface); }
 .picker-cell svg { width: 24px; height: 24px; fill: currentColor; }
-.picker-empty { font-size: var(--md-sys-typescale-body-small); opacity: 0.6; }
+.picker-cell img { width: 24px; height: 24px; object-fit: contain; }
+.picker-cell--labeled { grid-template-rows: 24px 1fr; }
+.picker-cell-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; line-height: 1.2; }
 </style>
