@@ -66,12 +66,15 @@ describe('parsePastedText', () => {
 })
 
 describe('steamGuard：SteamGuard/SDA 明文 JSON 粘贴', () => {
-  // shared_secret = 20 字节全零的标准 base64（'A'×27 + '='）→ 160 bit = 32×5bit，
-  // STEAM_ALPHABET base32 恰为 32 个 '2'（无填充）。brief 原文案 22 个 'A'+'==' 实为 16 字节，
-  // 与其自身断言「32 个 '2'」矛盾，按断言意图修正夹具字节数。
-  const SHARED_SECRET_B64 = `${'A'.repeat(27)}=`
+  // shared_secret 夹具两档（均 20 字节 = Steam 真实长度，160bit = 32×5bit 无填充）：
+  // - 全 0xFF：每 5bit 组索引 31 → RFC4648 编码 32 个 '7'（RFC4648_ALPHABET[31]）。字母表敏感——
+  //   若误用 26 字符 STEAM_ALPHABET（仅限 steamCode 取模），索引 26..31 出码表会拼入 "undefined"。
+  // - 全 0x00：索引 0 → RFC4648 编码 32 个 'A'（RFC4648_ALPHABET[0]），锁字母表低端。
+  //   （旧断言「32 个 '2'」是 STEAM_ALPHABET 误用实现下的自洽产物：'2' 是 STEAM_ALPHABET[0]。）
+  const SHARED_SECRET_FF_B64 = btoa(String.fromCharCode(...new Uint8Array(20).fill(0xff)))
+  const SHARED_SECRET_00_B64 = btoa(String.fromCharCode(...new Uint8Array(20)))
   const SG_JSON = JSON.stringify({
-    shared_secret: SHARED_SECRET_B64,
+    shared_secret: SHARED_SECRET_FF_B64,
     serial_number: '12345678901',
     revocation_code: 'R12345',
     steamid: '76561190000000000',
@@ -79,9 +82,9 @@ describe('steamGuard：SteamGuard/SDA 明文 JSON 粘贴', () => {
   const SDA_JSON = JSON.stringify({
     account_name: 'steamuser',
     device_id: 'android:1234abcd-5678',
-    shared_secret: SHARED_SECRET_B64,
+    shared_secret: SHARED_SECRET_FF_B64,
     serial_number: '12345678901',
-    uri: `otpauth://totp/Steam:steamuser?secret=${encodeURIComponent(SHARED_SECRET_B64)}`,
+    uri: `otpauth://totp/Steam:steamuser?secret=${encodeURIComponent(SHARED_SECRET_FF_B64)}`,
   })
 
   it('sniffFormat 判 steamGuard（shared_secret + serial_number/device_id）', () => {
@@ -89,7 +92,7 @@ describe('steamGuard：SteamGuard/SDA 明文 JSON 粘贴', () => {
     expect(sniffFormat(SDA_JSON)).toBe('steamGuard')
   })
 
-  it('SteamGuard JSON → steam 条目：secret=STEAM_ALPHABET base32，note 收 serial/revocation', () => {
+  it('SteamGuard JSON → steam 条目：secret=RFC4648 base32，note 收 serial/revocation', () => {
     const r = parsePastedText(SG_JSON)
     if (!('entries' in r)) throw new Error('expected entries')
     expect(r.entries).toHaveLength(1)
@@ -97,11 +100,18 @@ describe('steamGuard：SteamGuard/SDA 明文 JSON 粘贴', () => {
     expect(e.type).toBe('steam')
     expect(e.issuer).toBe('Steam')
     expect(e.label).toBe('76561190000000000') // 无 account_name 回退 steamid
-    expect(e.secret).toBe('2'.repeat(32))
+    expect(e.secret).toBe('7'.repeat(32)) // 20 字节全 0xFF → 索引 31 → RFC4648_ALPHABET[31]='7'
     expect(e.digits).toBe(5)
     expect(e.period).toBe(30)
     expect(e.algorithm).toBe('SHA1')
     expect(e.note).toBe('12345678901 / R12345')
+  })
+
+  it('全零 shared_secret → RFC4648 索引 0 → 32 个 A（core steam 条目按 RFC4648 解码，锁字母表低端）', () => {
+    const r = parsePastedText(JSON.stringify({ shared_secret: SHARED_SECRET_00_B64, serial_number: '123' }))
+    if (!('entries' in r)) throw new Error('expected entries')
+    expect(r.entries).toHaveLength(1)
+    expect(r.entries[0]!.secret).toBe('A'.repeat(32))
   })
 
   it('SDA maFile 明文 JSON：label 取 account_name，device_id 入 note', () => {

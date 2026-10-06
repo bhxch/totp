@@ -1,4 +1,4 @@
-import { base32Encode, STEAM_ALPHABET } from '../encoding/base32'
+import { base32Encode } from '../encoding/base32'
 import type { ImportResult, ParsedEntry } from './types'
 
 /**
@@ -7,7 +7,9 @@ import type { ImportResult, ParsedEntry } from './types'
  * （AddSteamAuthenticator.cs:497-511）；SDA maFile 含 device_id/shared_secret/account_name
  * （AddSteamAuthenticator.cs:534-580）。加密 maFile（base64(AES-256-CBC)）非明文 JSON，嗅探不命中，
  * 不在本通道（文件+口令范畴）。
- * secret 语义：shared_secret base64 解码后的字节 → STEAM_ALPHABET base32（core steam 条目统一语义）。
+ * secret 语义：shared_secret base64 解码后的字节 → RFC4648 标准 base32（默认字母表）——core steam
+ * 条目统一按 RFC4648 解码路径还原字节（otp/uri.ts C2；STEAM_ALPHABET 26 字符码表仅限 steamCode
+ * 取模输出，不是 base32 编码码表，误用作编码表索引 26..31 出码表会产生损坏 secret）。
  */
 export function importSteamGuard(text: string): ImportResult {
   let obj: Record<string, unknown>
@@ -40,7 +42,7 @@ export function importSteamGuard(text: string): ImportResult {
     type: 'steam',
     issuer: 'Steam',
     label,
-    secret: base32Encode(bytes, STEAM_ALPHABET),
+    secret: base32Encode(bytes),
     algorithm: 'SHA1',
     digits: 5,
     period: 30,
