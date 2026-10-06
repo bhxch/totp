@@ -39,12 +39,15 @@ use session_vaults::{
     stash_dek, take_stashed_dek, CLIPBOARD_STAGE, STASHED_DEK,
 };
 use settings_io::{
-    read_section_text, read_settings_text, read_shortcut_from_settings, settings_path,
-    write_section,
+    read_section, read_section_text, read_settings_text, read_shortcut_from_settings,
+    settings_path, write_section,
 };
 
 // mini 最近一次因失焦而隐藏的时刻，用于缓解「托盘点击收起」与「失焦自动隐藏」的竞态
 static LAST_FOCUS_HIDE: Mutex<Option<Instant>> = Mutex::new(None);
+
+// ---------- mini pin（spec §1.5）：settings.json miniPinned 键 + 内存缓存；失焦/复制后自动隐藏均让位 ----------
+static MINI_PINNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// 释放策略状态轨迹（spec 批⑧ §7.2；tick 线程独占读写；任一窗口可见由 advance 内 reset，
 /// 窗口重建成功由 ensure_window reset）
@@ -210,6 +213,23 @@ fn release_policy_set<R: Runtime>(
     write_section(&app, "releasePolicy", &cfg)
 }
 
+/// mini pin 读取（spec §1.5）：前端按钮初值与 Rust 失焦守卫共用同一缓存真源
+#[tauri::command]
+fn mini_pin_get() -> bool {
+    MINI_PINNED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// mini pin 设置：缓存 + settings.json 合并写 + 对存活窗口即时生效（重建恢复走 builder）
+#[tauri::command]
+fn mini_pin_set<R: Runtime>(app: AppHandle<R>, pinned: bool) -> Result<(), String> {
+    MINI_PINNED.store(pinned, std::sync::atomic::Ordering::Relaxed);
+    write_section(&app, "miniPinned", &pinned)?;
+    if let Some(mini) = app.get_webview_window("mini") {
+        let _ = mini.set_always_on_top(pinned);
+    }
+    Ok(())
+}
+
 fn toggle_mini(app: &AppHandle) {
     // 释放策略销毁档可能已销毁 webview（仅留托盘进程）：入口先按需重建（brief Task 13）
     ensure_window(app, "mini");
@@ -227,7 +247,7 @@ fn toggle_mini(app: &AppHandle) {
             }
             let shown = mini.show();
             // show 返回 Err 仅在窗口句柄失效等异常态，留痕；「show 成功但随即被
-            // 失焦自动隐藏收回」是 mini 的产品行为（Focused(false) 无条件 hide），
+            // 失焦自动隐藏收回」是 mini 的产品行为（Focused(false) 在未 pin 时 hide），
             // 后台进程 SetForegroundWindow 被前台锁拒绝时即出现，非缺陷
             if let Err(e) = shown {
                 eprintln!("[shortcut] toggle_mini: mini.show() failed: {e}");
@@ -389,6 +409,11 @@ fn ensure_window(app: &AppHandle, label: &str) -> bool {
         .visible(false)
         .skip_taskbar(true)
         .enable_clipboard_access()
+        // spec §1.4/§1.5：无边框 + 系统阴影 + 固定尺寸；pin 存续时重建窗口保持置顶
+        .decorations(false)
+        .shadow(true)
+        .resizable(false)
+        .always_on_top(MINI_PINNED.load(std::sync::atomic::Ordering::Relaxed))
         .build(),
         _ => return false,
     };
@@ -613,6 +638,11 @@ pub fn run() {
             // headless 同样创建：审批弹层/托盘依赖隐藏窗口存活
             ensure_window(app.handle(), "main");
             ensure_window(app.handle(), "mini");
+            // mini pin 初值：settings.json → 内存缓存（builder always_on_top 与失焦守卫共用）
+            let mini_pinned = read_section(app.handle(), "miniPinned")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            MINI_PINNED.store(mini_pinned, std::sync::atomic::Ordering::Relaxed);
             // plan17：MCP 服务器装配（manage McpState）+ 按配置自动拉起；返回含 CLI 覆盖的
             // 生效 cfg 与真实启动结果，供无头连接信息输出（stdout/托盘复制与实际监听同源）
             let (mcp_cfg, mcp_start) = mcp_server::init_state_and_autostart(app, &mcp_override)?;
@@ -648,7 +678,10 @@ pub fn run() {
         .on_window_event(|window, event| {
             match event {
                 WindowEvent::Focused(false) => {
-                    if window.label() == "mini" {
+                    // spec §1.5：pin 后失焦不再自动隐藏、不记录 300ms 防竞态时刻
+                    if window.label() == "mini"
+                        && !MINI_PINNED.load(std::sync::atomic::Ordering::Relaxed)
+                    {
                         if let Ok(mut last) = LAST_FOCUS_HIDE.lock() {
                             *last = Some(Instant::now());
                         }
@@ -686,6 +719,8 @@ pub fn run() {
             devtools_set_config,
             release_policy_get,
             release_policy_set,
+            mini_pin_get,
+            mini_pin_set,
             stash_dek,
             take_stashed_dek,
             clear_stashed_dek,

@@ -238,6 +238,26 @@ mod tests {
         std::fs::remove_dir_all(&base).ok();
     }
 
+    // mini pin（spec §1.5）：miniPinned bool 节写入后可读回，且外来键（shortcutToggleMini 等）保留
+    #[test]
+    fn mini_pinned_roundtrips_and_preserves_foreign_keys() {
+        let base = std::env::temp_dir().join("totp_mini_pinned_roundtrip");
+        std::fs::create_dir_all(&base).unwrap();
+        let p = base.join("settings.json");
+        std::fs::remove_file(&p).ok();
+        std::fs::write(&p, r#"{"shortcutToggleMini":"ctrl+shift+k"}"#).unwrap();
+        write_section_at(&p, "miniPinned", &true).unwrap();
+        assert_eq!(
+            read_section_at(&p, "miniPinned").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            read_section_at(&p, "shortcutToggleMini").and_then(|v| v.as_str().map(str::to_string)),
+            Some("ctrl+shift+k".to_string())
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
+
     // 路径级读：写后可读回同节；读不存在文件 → None
     #[test]
     fn read_section_at_roundtrip_and_missing_file_none() {
