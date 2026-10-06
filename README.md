@@ -278,7 +278,7 @@ vault 加密支持多种解锁来源（KEK 来源）并存，在「安全」页�
 **暂不支持**
 
 - **Google Authenticator 旧版 SQLite 数据库**（≤5000100 版本）：需 root 提取应用私有目录数据库，暂不支持
-- **Steam Android 客户端**：Steamguard-*.json 暂不支持；Steam 令牌可经 WinAuth 导入
+- **Steam Android 客户端**：官方客户端导出暂不支持；SteamGuard/SDA 明文 JSON（Steamguard-*.json / maFile，shared_secret Base64）已支持——粘贴或导入页直接解析（加密 maFile 需先在原工具解除口令导出明文）
 
 ### 去重与冲突处理（四档判定树）
 

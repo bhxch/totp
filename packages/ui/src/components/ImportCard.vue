@@ -72,6 +72,7 @@ const FORMAT_DEFS = {
   totpAuthenticator: { fmt: 'importCard.fmtTotpAuthenticator', manual: 'importCard.manualTotpAuthenticator' },
   andOtp: { fmt: 'importCard.fmtAndOtp', manual: 'importCard.manualAndOtp' },
   foxauth: { fmt: 'importCard.fmtFoxauth', manual: 'importCard.manualFoxauth' },
+  steamGuard: { fmt: 'importCard.fmtSteamGuard', manual: 'importCard.manualSteamGuard' },
   authenticatorPlus: { fmt: 'importCard.fmtAuthenticatorPlus', manual: 'importCard.manualAuthenticatorPlus' },
   authy: { fmt: 'importCard.fmtAuthy', manual: 'importCard.manualAuthy' },
   battleNet: { fmt: 'importCard.fmtBattleNet', manual: 'importCard.manualBattleNet' },
@@ -413,6 +414,7 @@ const TEXT_PARSERS: Record<DirectFormat, () => ImportResult | Promise<ImportResu
   totpAuthenticator: registryParse('totpAuthenticator'),
   andOtp: registryParse('andOtp'),
   foxauth: registryParse('foxauth'),
+  steamGuard: registryParse('steamGuard'),
   battleNet: () => importBattleNet(fileText.value),
   duo: () => importDuo(fileText.value),
 }
