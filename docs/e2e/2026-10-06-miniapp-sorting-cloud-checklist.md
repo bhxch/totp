@@ -110,3 +110,19 @@
 2. **拖拽根因升级**：c801b6c 的 disable_drag_drop_handler 在 WebView2 154 (Edg/154.0.4258.53) + wry 0.55.1 下不足以恢复 HTML5 DnD；叠加 SetAllowExternalDrop(false) 亦无效。升级为「WebView2 层自发起 DnD abort」，处置按 spec h2 不可修分支报批 pointer 方案。
 3. **e2e 环境坑（后续会话注意）**：debug exe 需同起 vite dev（devUrl 编入）；`cargo test` 不重链 bin——验证 Rust 行为前必须 `cargo build`；CDP 9333 端点经多轮重启易僵死（桥接 9223 通道兜底，首次调用需 --timeout ≥10s 热身）；被 kill 的后台任务可能遗留卡住的修饰键（先 clear-modifiers 再发快捷键）；跨进程重启后 hwnd 全部失效需按 pid 重新枚举（EnumWindows 回调内 Write-Output 会丢失，须累积后输出）；桥接 eval 主世界隔离——页面内 monkey-patch 注入对应用代码无效。
 4. **数据处置**：条目顺序实验写入后顺序还原尝试因 issuer 重叠产生错乱，已执行**整目录备份还原**（vault.json 与会话前备份字节一致已断言）；e2e 测试云源与凭据随还原移除；同步触发过一次坚果云真实只读（PROPFIND/GET，404/409 因其目录不存在——即本批修复的应用场景）；用户驻留 release 进程曾被结束，已重启（pid 57524）；releasePolicy 用户原值即 0/1（隐藏后 1 分钟销毁——测试期间窗口消失多为该配置所致，非缺陷）。
+
+### 补充执行（2026-10-06 第二会话：坚果云 409 修复 + pointer 拖拽报批落地）
+
+用户裁决：坚果云 404/409 确认为真 bug（exists 只容忍 404）；批准 pointer 长按方案。修复 commit 86401f8（exists 容忍 409 + 桌面通道回显请求 url）与 9540a7b（pointer 长按拖拽替代 HTML5 DnD）。
+
+| 条目 | 结果 | 证据/注记 |
+| --- | --- | --- |
+| 坚果云 404/409 根因 | ✅ 确认并修复 | keep 源首推对写入路径 exists() GET，坚果云对父目录缺失回 409 AncestorsNotFound（非 404）→ exists 抛错致同步在 MKCOL 自愈前失败。修复后真机同步：状态「已上传」，MKCOL/PUT 在真实坚果云完成（目录 /totpbackup 创建） |
+| D2 附带修复 | ✅ | 桌面 reqwest 通道 Response 回显请求 url（实例属性遮蔽），错误行不再恒「<url 解析失败>」 |
+| C1 拖拽换位（pointer 方案） | ✅ | 真实 SendInput 拖拽把手（hover 确认把手在光标下）→ 换位落库 rev 87→88 → 反向拖回还原；双向成功。注意：自动化需先 hover 预热（handle 渲染滞后于首次 hover 一拍），人手无此问题 |
+| B2 首载失败注入 | ⏳ 保持人工 | CDP addScriptToEvaluateOnNewDocument + dev 冷挂载时序 + 桥接 eval 主世界隔离三重工具限制；单测已覆盖横幅+console 路径 |
+
+### e2e 环境坑增补
+
+- 桥接 eval 偶发整批超时（两 webview 同时），等待或重启应用恢复；渲染（截图/倒计时）与真实输入（SendInput hover/选区）不受影响——怀疑 mcp-bridge/CDP 与应用主线程的相互作用，与本项目代码无关，记录备查。
+- 真 SendInput 拖拽验证前必须以 elementFromPoint 确认把手在光标下（handle 渲染有一拍滞后）。
