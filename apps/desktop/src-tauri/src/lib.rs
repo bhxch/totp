@@ -335,10 +335,6 @@ fn toggle_mini(app: &AppHandle, anchor: Option<(f64, f64, f64, f64)>) {
                     }
                 }
             }
-            // 重建路径：等前端 mini-ready（2s 超时兜底，前端卡死不堵弹出）
-            if let Some(rx) = ready_rx {
-                let _ = rx.recv_timeout(Duration::from_secs(2));
-            }
             // 定位先于 show（不可见期移动无闪烁）：托盘点击=每次锚定托盘；
             // 快捷键=恢复上次位置（销毁重建后亦然），无记忆则 OS 默认
             if let Some(a) = anchor {
@@ -348,14 +344,36 @@ fn toggle_mini(app: &AppHandle, anchor: Option<(f64, f64, f64, f64)>) {
                     let _ = mini.set_position(tauri::PhysicalPosition::new(x, y));
                 }
             }
-            let shown = mini.show();
-            // show 返回 Err 仅在窗口句柄失效等异常态，留痕；「show 成功但随即被
-            // 失焦自动隐藏收回」是 mini 的产品行为（Focused(false) 在未 pin 时 hide），
-            // 后台进程 SetForegroundWindow 被前台锁拒绝时即出现，非缺陷
-            if let Err(e) = shown {
-                eprintln!("[shortcut] toggle_mini: mini.show() failed: {e}");
+            // 重建路径：等待必须在独立线程——本回调运行于主线程事件循环，前端 emit 的
+            // WebMessageReceived 派发同样依赖主线程消息泵，同步 recv_timeout 会自我锁死
+            // 到超时并冻结主线程（终审 Important-1，2026-10-06）。就绪/超时后回主线程
+            // show+focus；is_visible 复查防陈旧等待者复活用户已手动收起的窗口
+            if let Some(rx) = ready_rx {
+                let app2 = app.clone();
+                std::thread::spawn(move || {
+                    let _ = rx.recv_timeout(Duration::from_secs(2));
+                    // 内层再克隆：app2 作为 run_on_main_thread 接收者被借用期间不能
+                    // 同时被 move 进闭包（E0505），闭包持独立句柄
+                    let app3 = app2.clone();
+                    let _ = app2.run_on_main_thread(move || {
+                        if let Some(m) = app3.get_webview_window("mini") {
+                            if !m.is_visible().unwrap_or(false) {
+                                let _ = m.show();
+                                let _ = m.set_focus();
+                            }
+                        }
+                    });
+                });
+            } else {
+                let shown = mini.show();
+                // show 返回 Err 仅在窗口句柄失效等异常态，留痕；「show 成功但随即被
+                // 失焦自动隐藏收回」是 mini 的产品行为（Focused(false) 在未 pin 时 hide），
+                // 后台进程 SetForegroundWindow 被前台锁拒绝时即出现，非缺陷
+                if let Err(e) = shown {
+                    eprintln!("[shortcut] toggle_mini: mini.show() failed: {e}");
+                }
+                let _ = mini.set_focus();
             }
-            let _ = mini.set_focus();
         }
     }
 }
