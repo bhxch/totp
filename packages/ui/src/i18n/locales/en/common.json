@@ -80,6 +80,7 @@
     "importIconPack": "Import icon pack (zip)",
     "iconPackTooLarge": "Icon pack exceeds the {limit}MB size limit",
     "iconPackImported": "Imported {imported} icons ({skipped} skipped)",
+    "iconPackRemoved": "Removed icon pack \"{name}\"",
     "iconPackImportTitle": "Import icon pack",
     "iconPackNameLabel": "Pack name",
     "iconPackNamePlaceholder": "Enter icon pack name…",

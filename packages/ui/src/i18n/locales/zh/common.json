@@ -80,6 +80,7 @@
     "importIconPack": "导入图标包（zip）",
     "iconPackTooLarge": "图标包超过 {limit}MB 大小上限",
     "iconPackImported": "已导入 {imported} 个图标（跳过 {skipped} 个）",
+    "iconPackRemoved": "已删除图标包“{name}”",
     "iconPackImportTitle": "导入图标包",
     "iconPackNameLabel": "包名称",
     "iconPackNamePlaceholder": "输入图标包名称…",

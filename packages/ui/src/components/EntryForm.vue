@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { base32Decode, getBuiltinIcons, suggestIcons, type BuiltinIcon, type HashAlgorithm, type MatchRule, type MatchStrategy, type OtpEntry, type Tag } from '@totp/core'
+import type { IconSuggestion } from '@totp/core'
 import { computed, onScopeDispose, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { readClipboardSnapshot, resolveTextIntent } from '../clipboardImport'
@@ -8,6 +9,7 @@ import { blobToPixels } from '../qr/imageSource'
 import { decodeQrToUri } from '../qr/decodeQr'
 import { parseUriToEntryData } from '../otpauthFlow'
 import type { IconStore } from '../iconStore'
+import IconPackImportDialog from './IconPackImportDialog.vue'
 import IconPickerDialog from './IconPickerDialog.vue'
 import MdButton from './md/MdButton.vue'
 import MdCheckbox from './md/MdCheckbox.vue'
@@ -228,8 +230,14 @@ const base32Hint = computed(() => {
  *  M25（intentional）：iconTouched 仅在表单实例生命周期内有效 —— 用户手动清除图标后不会再显示推荐，
  *  这是有意行为：避免「清空即重置推荐 → 推荐又立刻填充」的视觉跳跃；推荐应只在首次进入表单时介入一次。 */
 const iconTouched = ref(props.initial?.icon !== undefined)
-/** 推荐候选（莱文斯坦模糊匹配，精确命中距离 0 排第一） */
-const recommendations = ref<BuiltinIcon[]>([])
+/** 推荐候选（莱文斯坦模糊匹配，精确命中距离 0 排第一；builtin/extra 混排） */
+const recommendations = ref<IconSuggestion[]>([])
+/** stored 图标 id（排除 urlcache:）作为 suggestIcons extra 候选 */
+const storedExtras = computed(() =>
+  Object.keys(props.icons?.stored ?? {})
+    .filter((id) => !id.startsWith('urlcache:'))
+    .map((id) => ({ id })),
+)
 let recommendTimer: ReturnType<typeof setTimeout> | null = null
 // I67：组件卸载时清理防抖定时器，避免异步回调在 unmount 后写 ref 触发警告
 onScopeDispose(() => {
@@ -244,7 +252,7 @@ watch(
   (v) => {
     if (recommendTimer) clearTimeout(recommendTimer)
     recommendTimer = setTimeout(() => {
-      recommendations.value = props.icons && !iconTouched.value && !form.icon ? suggestIcons(v.trim(), 3) : []
+      recommendations.value = props.icons && !iconTouched.value && !form.icon ? suggestIcons(v.trim(), 3, storedExtras.value) : []
     }, 300)
   },
 )
@@ -253,9 +261,9 @@ const recommendVisible = computed(() => props.icons !== undefined && !iconTouche
 /** 图标库选择器对话框（图标区内「从图标库选择」入口） */
 const pickerOpen = ref(false)
 
-/** 从推荐气泡或选择器点选内置图标：回填 + 标记手动设置（推荐随之收起，不再自动推荐） */
-function applyBuiltinIcon(icon: BuiltinIcon) {
-  form.icon = { kind: 'builtin', id: icon.id }
+/** 推荐气泡/选择器统一选中入口：按 kind 落对应 IconRef（原 applyBuiltinIcon 泛化；推荐气泡处 IconSuggestion.source 已映射为 kind） */
+function applyIcon(item: { kind: 'builtin' | 'stored'; id: string }) {
+  form.icon = item.kind === 'builtin' ? { kind: 'builtin', id: item.id } : { kind: 'stored', id: item.id }
   iconTouched.value = true
   recommendations.value = []
   pickerOpen.value = false
@@ -327,32 +335,51 @@ function clearIcon() {
   iconTouched.value = true
 }
 
-// ---------- 图标包（zip）导入 ----------
+// ---------- 图标包（zip）导入：选 zip → 命名对话框 → 确认才导入（可快捷填入既有包名覆盖重导） ----------
 const packInput = ref<HTMLInputElement | null>(null)
 const packBusy = ref(false)
 const packMessage = ref('')
+const packDialogOpen = ref(false)
+const packPending = ref<{ bytes: Uint8Array; defaultName: string } | null>(null)
+const packDialogError = ref('')
 
 async function onPackFile(e: Event) {
   const input = e.target as HTMLInputElement
   const file = input.files?.[0]
   if (!file || !props.iconStore) return
-  packBusy.value = true
   iconError.value = ''
-  packMessage.value = ''
+  packDialogError.value = ''
+  // F15：读入前按文件大小前置拦截（解压预算之外的第一道闸）
+  if (file.size > MAX_ICON_PACK_ZIP_BYTES) {
+    iconError.value = t('entryForm.iconPackTooLarge', { limit: Math.floor(MAX_ICON_PACK_ZIP_BYTES / 1024 / 1024) })
+    input.value = ''
+    return
+  }
+  packPending.value = { bytes: new Uint8Array(await file.arrayBuffer()), defaultName: file.name.replace(/\.zip$/i, '') }
+  packDialogOpen.value = true
+  input.value = '' // 允许重复选择同一文件
+}
+
+async function onPackConfirm(name: string) {
+  if (!props.iconStore || !packPending.value) return
+  packBusy.value = true
+  packDialogError.value = ''
   try {
-    // F15：读入前按文件大小前置拦截（解压预算之外的第一道闸）
-    if (file.size > MAX_ICON_PACK_ZIP_BYTES) {
-      throw new Error(t('entryForm.iconPackTooLarge', { limit: Math.floor(MAX_ICON_PACK_ZIP_BYTES / 1024 / 1024) }))
-    }
-    const bytes = new Uint8Array(await file.arrayBuffer())
-    const result = await importIconPackZip(bytes, props.iconStore, { name: file.name.replace(/\.zip$/i, '') })
+    const result = await importIconPackZip(packPending.value.bytes, props.iconStore, { name })
     packMessage.value = t('entryForm.iconPackImported', { imported: result.imported, skipped: result.skipped })
+    packDialogOpen.value = false
+    packPending.value = null
   } catch (err) {
-    iconError.value = err instanceof Error ? err.message : String(err)
+    packDialogError.value = err instanceof Error ? err.message : String(err)
   } finally {
     packBusy.value = false
-    input.value = '' // 允许重复选择同一文件
   }
+}
+
+async function onRemovePack(normKey: string) {
+  const name = props.iconStore?.packs[normKey]?.name ?? normKey
+  await props.iconStore?.removePack(normKey)
+  packMessage.value = t('entryForm.iconPackRemoved', { name })
 }
 
 function submit() {
@@ -429,11 +456,14 @@ function submit() {
     <MdTextField v-model="form.issuer" :label="t('entryForm.issuerLabel')" :placeholder="t('entryForm.issuerPlaceholder')" :aria-label="t('entryForm.issuerLabel')" />
     <div v-if="recommendVisible" class="icon-recommend">
       {{ t('entryForm.iconDetected') }}
+      <!-- mixed 渲染：builtin 候选 svg path，stored（extra）候选 img dataUrl -->
       <button
-        v-for="rec in recommendations" :key="rec.id" type="button" class="recommend-item"
-        :title="rec.title" :aria-label="`${t('entryForm.useIcon')} ${rec.title}`" @click="applyBuiltinIcon(rec)"
+        v-for="rec in recommendations" :key="`${rec.source}-${rec.id}`" type="button" class="recommend-item"
+        :title="rec.title" :aria-label="`${t('entryForm.useIcon')} ${rec.title}`"
+        @click="applyIcon(rec.source === 'extra' ? { kind: 'stored', id: rec.id } : { kind: 'builtin', id: rec.id })"
       >
-        <svg viewBox="0 0 24 24" class="icon-preview" aria-hidden="true" v-html="builtinHtml(rec.path)" />
+        <svg v-if="rec.path" viewBox="0 0 24 24" class="icon-preview" aria-hidden="true" v-html="builtinHtml(rec.path)" />
+        <img v-else :src="icons?.stored?.[rec.id]" class="icon-preview" alt="" />
       </button>
     </div>
     <MdTextField v-model="form.label" :label="t('entryForm.labelLabel')" :aria-label="t('entryForm.labelLabel')" />
@@ -518,7 +548,13 @@ function submit() {
     </details>
     <IconPickerDialog
       v-if="icons" :open="pickerOpen" :builtin="icons.builtin" :issuer="form.issuer"
-      @select="applyBuiltinIcon" @close="pickerOpen = false"
+      :stored="icons.stored" :packs="iconStore?.packs"
+      @select="applyIcon" @remove-pack="onRemovePack" @close="pickerOpen = false"
+    />
+    <IconPackImportDialog
+      :open="packDialogOpen" :default-name="packPending?.defaultName ?? ''"
+      :existing-packs="iconStore?.packs ?? {}" :busy="packBusy" :error="packDialogError"
+      @confirm="onPackConfirm" @close="packDialogOpen = false"
     />
     <!-- matchRules 编辑区 -->
     <fieldset>

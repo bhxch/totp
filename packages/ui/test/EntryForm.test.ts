@@ -30,6 +30,9 @@ if (typeof Blob.prototype.arrayBuffer !== 'function') {
   }
 }
 
+// 选择器 open 即触发 ensureFullIcons：stub fetch 返回微缩全量集，避免真实 3.5MB 资产（IconPickerDialog.test.ts 同款）
+vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ icons: {} }), { status: 200 })))
+
 describe('EntryForm', () => {
   it('编辑模式回填字段，save 携带全部数据', async () => {
     const w = mount(EntryForm, { global: { plugins: [createTestI18n()] }, props: { initial: entry, tags: [] } })
@@ -242,6 +245,21 @@ describe('EntryForm 图标推荐与选择', () => {
     expect(w.emitted('save')![0]![0]).toMatchObject({ icon: { kind: 'builtin', id: 'github' } })
   })
 
+  it('推荐气泡 mixed：stored 候选出 img，点击落 IconRef{kind:"stored"}', async () => {
+    const w = mount(EntryForm, { global: { plugins: [createTestI18n()] },
+      props: { initial: null, tags: [], icons: { builtin: getBuiltinIcons(), stored: { githacks: 'data:image/png;base64,AA' } } },
+    })
+    await issuerInput(w).setValue('githacks')
+    // 精确命中 dist 0：stored 候选排第一，气泡出 img 而非 svg
+    await vi.waitFor(() => expect(w.text()).toContain('检测到图标'))
+    const bubble = w.find('.icon-recommend')
+    expect(bubble.find('img').exists()).toBe(true)
+    expect(bubble.find('img').attributes('src')).toBe('data:image/png;base64,AA')
+    await bubble.find('img').trigger('click') // img 在按钮内，click 冒泡至按钮
+    await w.find('form').trigger('submit')
+    expect(w.emitted('save')![0]![0]).toMatchObject({ icon: { kind: 'stored', id: 'githacks' } })
+  })
+
   it('issuer 拼写错误（githb）防抖后模糊推荐出现，点选后 save 携带 github', async () => {
     const w = mount(EntryForm, { global: { plugins: [createTestI18n()] }, props: { initial: null, tags: [], icons: icons() } })
     await issuerInput(w).setValue('githb')
@@ -265,10 +283,13 @@ describe('EntryForm 图标推荐与选择', () => {
     const w = mount(EntryForm, { global: { plugins: [createTestI18n()] }, props: { initial: null, tags: [], icons: icons() } })
     await w.find('details.icon-picker summary').trigger('click')
     await w.find('button.choose-builtin').trigger('click')
-    // 选择器网格渲染全部内置图标（≥200），按 title 找到 GitLab 点选
-    const cells = w.findAll('.md-dialog .picker-grid--all button')
-    expect(cells.length).toBeGreaterThanOrEqual(200)
-    await cells.find((c) => c.attributes('title') === 'GitLab')!.trigger('click')
+    // 窗口化：data-total 报全量数（≥200 精选），实际渲染 cell 数 < total（jsdom 回退 30）
+    const grid = w.find('.picker-grid--all')
+    expect(Number(grid.attributes('data-total'))).toBeGreaterThanOrEqual(200)
+    expect(w.findAll('.picker-grid--all button').length).toBeLessThan(Number(grid.attributes('data-total')))
+    // 搜索定位 GitLab（搜索走 suggestIcons，精确命中 dist 0 排第一）
+    await w.find('.picker-search input').setValue('gitlab')
+    await w.find('.picker-grid--all button').trigger('click')
     await w.find('form').trigger('submit')
     expect(w.emitted('save')![0]![0]).toMatchObject({ icon: { kind: 'builtin', id: 'gitlab' } })
     // 手动选择后 iconTouched：再输 issuer 不弹推荐气泡
@@ -329,7 +350,7 @@ describe('EntryForm 图标推荐与选择', () => {
     }
   })
 
-  it('导入图标包（zip）：busy 态期间按钮禁用，完成批量入库并提示已导入/跳过数；非法 zip 显示错误', async () => {
+  it('包导入：选 zip 先开命名对话框，确认后才导入并显示统计', async () => {
     const store = createIconStore(createMemoryStorage())
     const w = mount(EntryForm, { global: { plugins: [createTestI18n()] }, props: { initial: null, tags: [], icons: { builtin: getBuiltinIcons(), stored: store.icons }, iconStore: store } })
     await w.find('details.icon-picker summary').trigger('click')
@@ -337,29 +358,36 @@ describe('EntryForm 图标推荐与选择', () => {
     const setFiles = (el: HTMLInputElement, file: File) => {
       Object.defineProperty(el, 'files', { value: [file], configurable: true })
     }
-    // 合法 zip：任意字节当 png 内容即可（导入不校验图片内容）；实例上覆写 arrayBuffer 加闸门观察 busy 态
-    const zip = zipSync({ 'a/github.png': new Uint8Array([1]), 'b/google.png': new Uint8Array([2]) })
-    const file = new File([zip], 'pack.zip')
-    let release!: () => void
-    const gate = new Promise<void>((r) => (release = r))
-    ;(file as File & { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer = async () => {
-      await gate
-      return zip.buffer.slice(zip.byteOffset, zip.byteOffset + zip.byteLength) as ArrayBuffer
-    }
-    const packInputEl = () => w.find('input.pack-file').element as HTMLInputElement
-    setFiles(packInputEl(), file)
+    // 合法 zip：任意字节当 png 内容即可（导入不校验图片内容）
+    const zip = zipSync({ 'a/github.png': new Uint8Array([1]) })
+    setFiles(w.find('input.pack-file').element as HTMLInputElement, new File([zip], 'MyPack.zip'))
     await w.find('input.pack-file').trigger('change')
-    expect(w.find('button.import-pack').attributes('disabled')).toBeDefined()
-    release()
-    await vi.waitFor(() => expect(w.find('.pack-message').text()).toBe('已导入 2 个图标（跳过 0 个）'))
-    expect(w.find('button.import-pack').attributes('disabled')).toBeUndefined()
+    // 选完 zip 只开命名对话框（预填文件名去 .zip），未确认前不落库（arrayBuffer 异步读取完成后才打开）
+    const dialog = w.findComponent({ name: 'IconPackImportDialog' })
+    expect(dialog.exists()).toBe(true)
+    await vi.waitFor(() => expect(dialog.find('input').exists()).toBe(true))
+    expect((dialog.find('input').element as HTMLInputElement).value).toBe('MyPack')
+    expect(Object.keys(store.icons)).toHaveLength(0)
+    await dialog.find('.actions button:last-child').trigger('click')
+    await vi.waitFor(() => expect(w.find('.pack-message').text()).toBe('已导入 1 个图标（跳过 0 个）'))
     expect(store.icons['github']).toMatch(/^data:image\/png;base64,/)
-    expect(store.icons['google']).toMatch(/^data:image\/png;base64,/)
-    // 非法 zip：unzipSync 抛错 → 图标区错误提示，成功提示清空
-    setFiles(packInputEl(), new File([new Uint8Array([1, 2, 3])], 'bad.zip'))
-    await w.find('input.pack-file').trigger('change')
-    await vi.waitFor(() => expect(w.find('.icon-picker .error').exists()).toBe(true))
-    expect(w.find('.pack-message').exists()).toBe(false)
+    // 确认成功后对话框关闭
+    expect(dialog.find('.md-dialog').exists()).toBe(false)
+  })
+
+  it('picker remove-pack → iconStore.removePack 调用并提示已删除包', async () => {
+    const store = createIconStore(createMemoryStorage())
+    await store.upsertPack('mypack', { name: 'My Pack', iconIds: ['gh'] })
+    const w = mount(EntryForm, { global: { plugins: [createTestI18n()] },
+      props: { initial: null, tags: [], icons: { builtin: getBuiltinIcons(), stored: { gh: 'data:image/png;base64,AA' } }, iconStore: store },
+    })
+    const picker = w.findComponent({ name: 'IconPickerDialog' })
+    expect(picker.exists()).toBe(true)
+    picker.vm.$emit('removePack', 'mypack')
+    // removePack 持久化异步完成后提示浮现
+    await vi.waitFor(() => expect(w.find('.pack-message').exists()).toBe(true))
+    expect('mypack' in store.packs).toBe(false)
+    expect(w.find('.pack-message').text()).toContain('My Pack')
   })
 })
 

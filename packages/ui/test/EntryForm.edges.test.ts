@@ -128,14 +128,19 @@ describe('EntryForm 图标包导入异常路径', () => {
     expect(spy).not.toHaveBeenCalled()
     spy.mockRestore()
   })
-  it('解压抛非 Error 值：String 兜底展示', async () => {
+  it('解压抛非 Error 值：String 兜底展示（错误在命名对话框内）', async () => {
     const w = await mountForm()
     const mod = await import('../src/iconImport')
     const spy = vi.spyOn(mod, 'importIconPackZip').mockImplementation(() => { throw 'boom-string' })
     await w.find('details.icon-picker summary').trigger('click')
     setFiles(w, 'input.pack-file', [new File([zipSync({ 'a/x.png': new Uint8Array([1]) })], 'pack.zip')])
     await w.find('input.pack-file').trigger('change')
-    await vi.waitFor(() => expect(w.find('.icon-picker .error').text()).toBe('boom-string'))
+    // 选 zip 只开命名对话框（异步读取完成后打开），确认才触发导入；解压抛非 Error 值 → 对话框内 String 兜底
+    const dialog = w.findComponent({ name: 'IconPackImportDialog' })
+    await vi.waitFor(() => expect(dialog.find('.actions button:last-child').exists()).toBe(true))
+    await dialog.find('.actions button:last-child').trigger('click')
+    await vi.waitFor(() => expect(dialog.find('.error').text()).toBe('boom-string'))
+    expect(w.find('.icon-picker .error').exists()).toBe(false)
     spy.mockRestore()
   })
 })
