@@ -15,11 +15,13 @@ mod cloud_http;
 // ABE 提权服务帧协议（plan p6 §0.1）：管道名/marker/消息类型/错误码与帧编解码单点定义。
 // 纯逻辑无 IO，但属提权链路（Global Constraints：服务/提权代码全部 cfg(windows) 门控，
 // Linux clippy CI 门禁），消费方（elevation_service/client）均为 Windows 专属。
-// 临时 allow(dead_code)：mod 为私有声明，pub 项不出 crate 面，Task 2/4 消费方接线前
-// 全模块触发 dead_code（同 lib.rs 非 Windows 桩先例）；接线后移除本 allow
+// ErrCode::from_u16 尚无服务侧消费（Task 4 客户端解析 Resp 用），单项 allow 见该函数处
 #[cfg(windows)]
-#[allow(dead_code)]
 mod elevation_proto;
+// ABE 提权服务主体（plan p6 §0.1/§0.2）：LocalSystem 服务循环（命名管道+调用者验证+
+// DEK 包裹代理）。全部提权代码 cfg(windows) 门控（Global Constraints，Linux clippy CI 门禁）
+#[cfg(windows)]
+mod elevation_service;
 // 对话框授权登记（F4）与备份/导入文件命令（dirToken 遏制 + 扩展名白名单）
 mod dialog_grants;
 mod lock_events;
@@ -708,6 +710,17 @@ fn setup_tray(
 
 pub fn run() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
+    // ABE 提权服务分支（plan p6 §0.1）：run() 最早处分派，服务进程绝不初始化 tauri/webview。
+    // 必须先于 cli::parse_args（后者对未知参数 exit(2)）；SCM 以唯一参数启动服务进程。
+    // 非 SCM 上下文（终端直跑调试）由 run_service 内回落直接运行服务循环
+    #[cfg(windows)]
+    if args.iter().any(|a| a == "--elevation-service") {
+        if let Err(e) = elevation_service::run_service() {
+            eprintln!("[elevation-service] {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
     // 审查 I-1：接管父控制台必须先于 parse_args——否则参数错误的 eprintln 写在未连接的
     // 句柄上（windows_subsystem=windows 下 stderr 缺省无效），终端启动只见静默 exit(2)。
     // 仅带参启动时附加：双击启动（无参）不触碰控制台，正常 GUI 路径行为不变；附加失败

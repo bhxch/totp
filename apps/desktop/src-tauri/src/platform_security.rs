@@ -143,8 +143,10 @@ fn base64_encode(data: &[u8]) -> String {
 // DPAPI 字节级核心（F3 重构）：提取 pOptionalEntropy 参数。DEK 通道（下方 dek_*）绑定
 // 应用专属附加熵，使包裹/解出对任意第三方与无熵 DPAPI 密文失效；WinAuth 导入路径传 None
 // （第三方 blob 恒无熵，不得引入）。CRYPTPROTECT_UI_FORBIDDEN 禁 UI。
+// pub(crate)：elevation_service（plan p6 服务侧 DEK 包裹，恒无熵，SYSTEM 用户库）复用；
+// 除上述两处外勿再扩散
 #[cfg(windows)]
-fn dpapi_protect_bytes(plain: &[u8], entropy: Option<&[u8]>) -> Result<Vec<u8>, String> {
+pub(crate) fn dpapi_protect_bytes(plain: &[u8], entropy: Option<&[u8]>) -> Result<Vec<u8>, String> {
     use windows::Win32::Foundation::{LocalFree, HLOCAL};
     use windows::Win32::Security::Cryptography::{
         CryptProtectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
@@ -183,7 +185,10 @@ fn dpapi_protect_bytes(plain: &[u8], entropy: Option<&[u8]>) -> Result<Vec<u8>, 
 }
 
 #[cfg(windows)]
-fn dpapi_unprotect_bytes(cipher: &[u8], entropy: Option<&[u8]>) -> Result<Vec<u8>, String> {
+pub(crate) fn dpapi_unprotect_bytes(
+    cipher: &[u8],
+    entropy: Option<&[u8]>,
+) -> Result<Vec<u8>, String> {
     use windows::Win32::Foundation::{LocalFree, HLOCAL};
     use windows::Win32::Security::Cryptography::{
         CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,

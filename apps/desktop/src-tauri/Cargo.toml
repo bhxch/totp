@@ -80,14 +80,35 @@ tower = { version = "0.5", features = ["util"] }
 # 传递依赖树对齐（cargo tree -i webview2-com = 0.38.2，其内部 windows-core 0.61 与本表 windows 同源，
 # Interface::cast 跨 crate 可用），显式声明不新增编译产物
 webview2-com = "0.38"
+# 新增 feature 为 ABE 提权服务（plan p6 §0.1）：Services（SCM）/Pipes（命名管道）/
+# Threading（进程句柄与事件等待）/Storage_FileSystem（ReadFile/WriteFile/PIPE_ACCESS_DUPLEX/
+# FILE_FLAG_FIRST_PIPE_INSTANCE）/Security+Security_Authorization（SECURITY_ATTRIBUTES 与
+# SDDL 转 DACL）/System_Registry（HKLM 绑定记录）/System_IO（OVERLAPPED 重叠 ConnectNamedPipe）。
+# 版本保持 0.61 不升 0.62（计划笔误）：0.62 换 windows-core 0.62 会破坏 webview2-com 的
+# Interface::cast 跨 crate 同源假设
 windows = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_Security",
+    "Win32_Security_Authorization",
     "Win32_Security_Cryptography",
     "Win32_System_Console",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_System_Registry",
     "Win32_System_RemoteDesktop",
+    "Win32_System_Services",
     "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
 ] }
+# ABE 提权服务 SCM 接入（plan p6 §0.1）：service_dispatcher + control handler；
+# crate 自带 windows-sys 依赖，与上表 windows 互不影响
+windows-service = "0.8"
+# 调用者验证：SHA256(client exe 文件)（plan p6 §0.1；rs 调用方传入比对值，验证纯函数不落 IO）
+sha2 = "0.10"
+# DEK 与明文密钥内存清零（Global Constraints：DEK 缓冲用后即清）
+zeroize = "1"
 
 # osAutoUnlock 统一通道（mac Keychain / linux Secret Service）：仅对应目标编译，Windows 构建不下载不编译
 [target.'cfg(target_os = "macos")'.dependencies]
