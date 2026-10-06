@@ -342,10 +342,20 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
       else deps.onAuthFailure?.(authTarget.error)
     }
     // summary 动作文案（D2 i18n；merged 降级换专用文案——R1 文案表收敛 cloudSyncShared）：单目标
-    // 失败（outcome=null）记「失败」；源显示名（审查 I4）。
+    // 失败（outcome=null）摘要并入错误消息（截 60 字符）；源显示名（审查 I4）。
     // F10(B9)：ok 语义如实——任一源失败（outcome=null）或收敛失败（convergeError）记 false；
     // summary 逐源拼接（含失败源文案）不变。「部分失败仍 ok=true」为既有缺陷语义，随本修复废止
-    deps.recordStatus?.(allTargetsSettled(r.results), r.results.map((x) => `${displayName(x.key)}: ${x.outcome ? deps.t(actionStatusLabelKey(x.outcome)) : deps.t('cloudRunner.failed')}`).join('; '))
+    // spec §4.3（2026-10-06）：失败目标摘要并入错误消息（截 60 字符，与 CloudCard trunc 同量级），
+    // 结构化状态码已在消息内（CloudHttpError 形态）；逐失败目标 console.error 全量现场
+    const failLabel = (x: TargetResult): string => {
+      if (x.outcome) return deps.t(actionStatusLabelKey(x.outcome))
+      const msg = (x.error ?? '').slice(0, 60)
+      return msg ? `${deps.t('cloudRunner.failed')}（${msg}）` : deps.t('cloudRunner.failed')
+    }
+    for (const x of r.results) {
+      if (!x.outcome) console.error('[cloudRunner]', displayName(x.key), 'failed:', x.error, x.errorStatus)
+    }
+    deps.recordStatus?.(allTargetsSettled(r.results), r.results.map((x) => `${displayName(x.key)}: ${failLabel(x)}`).join('; '))
     return r
   }
 

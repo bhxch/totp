@@ -553,7 +553,7 @@ describe('createCloudSyncRunner', () => {
     expect(persistAdopted).not.toHaveBeenCalled() // 本地不被合并结果覆盖（无副本保护时同步失败）
     expect(saveSyncState).toHaveBeenCalledWith('s1', st) // 该目标失败 → state 原样，下轮重做
     expect(b.putCount).toBe(0) // 副本先行：不上传合并结果，云端旧版本原样保留
-    expect(recordStatus).toHaveBeenCalledWith(false, 's1: 失败') // F10:部分失败如实记 false
+    expect(recordStatus).toHaveBeenCalledWith(false, expect.stringContaining('失败')) // F10:部分失败如实记 false；spec §4.3 摘要并入错误消息
     expect(onError).not.toHaveBeenCalled() // 单目标失败由 core 编排隔离，不上溢
   })
 
@@ -595,7 +595,24 @@ describe('createCloudSyncRunner', () => {
     await createCloudSyncRunner(deps).run()
     expect(onAuthFailure).toHaveBeenCalledOnce()
     expect(onAuthFailure).toHaveBeenCalledWith('WebDAV 请求失败（HTTP 401）')
-    expect(recordStatus).toHaveBeenLastCalledWith(false, 's-bad: 失败; s-good: 已上传') // F10:部分失败如实记 false（summary 文案不变）
+    expect(recordStatus).toHaveBeenLastCalledWith(false, expect.stringContaining('失败')) // F10:部分失败如实记 false（spec §4.3 摘要并入错误消息）
+  })
+
+  it('自动 push 目标失败：summary 携带错误消息而非仅「失败」，并逐失败目标 console.error（spec §4.3）', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const bad = fakeBackend() // 云端无对象 → 首推 put 抛 CloudHttpError（真机 404 形态）
+    bad.put = async () => {
+      throw new CloudHttpError('WebDAV', 404)
+    }
+    const { deps, recordStatus } = makeDeps({
+      loadSources: vi.fn(async () => [{ source: source('s1'), cred: WEBDAV_CRED }]),
+      makeBackend: () => bad,
+    })
+    await createCloudSyncRunner(deps).run()
+    expect(recordStatus).toHaveBeenCalledWith(false, expect.stringContaining('失败（WebDAV 请求失败（HTTP 404）'))
+    // 逐失败目标全量现场（put 前缀形如 '源显示名 failed:'；errorStatus 结构化透传）
+    expect(errorSpy).toHaveBeenCalledWith('[cloudRunner]', 's1', 'failed:', 'WebDAV 请求失败（HTTP 404）', 404)
+    errorSpy.mockRestore()
   })
 
   it('T4 非认证错误不触发 onAuthFailure；未提供 onAuthFailure 时 401 也静默（可选依赖）', async () => {
@@ -610,7 +627,7 @@ describe('createCloudSyncRunner', () => {
     })
     await createCloudSyncRunner(deps).run()
     expect(deps.onAuthFailure).not.toHaveBeenCalled()
-    expect(recordStatus).toHaveBeenLastCalledWith(false, 's-bad: 失败') // F10:部分失败如实记 false
+    expect(recordStatus).toHaveBeenLastCalledWith(false, expect.stringContaining('失败')) // F10:部分失败如实记 false（spec §4.3 摘要并入错误消息）
     // 未提供 onAuthFailure：401 不抛错，run 照常 resolve（desktop 宿主零影响）
     const bad401 = fakeBackend()
     bad401.get = async () => {
@@ -787,8 +804,8 @@ describe('auto 内容门持久化（spec §1.3；门命中=降级 pull-only 检�
     })
     const runner = createCloudSyncRunner(deps)
     await runner.run()
-    // core 编排不抛错：summary 逐源拼接（失败源记「失败」），失败源基线原样不推进；F10:部分失败如实记 false
-    expect(recordStatus).toHaveBeenLastCalledWith(false, 's-bad: 失败; s-good: 已上传')
+    // core 编排不抛错：summary 逐源拼接（失败源记「失败」+ 错误消息），失败源基线原样不推进；F10:部分失败如实记 false
+    expect(recordStatus).toHaveBeenLastCalledWith(false, expect.stringContaining('s-bad: 失败'))
     expect(saveSyncState).toHaveBeenCalledWith('s-bad', { lastKnownRemoteRev: null, baseSnapshot: null })
     expect(deps.saveContentHash).toHaveBeenLastCalledWith(null) // 门基线置 null（部分失败）
     // → 下轮同内容不被门短路，重建 backend 全流程重试

@@ -37,7 +37,9 @@ export async function latestKeepPath(backend: CloudBackend): Promise<string | nu
   let names: string[]
   try {
     names = (await backend.listBackups()).filter((p) => BACKUP_NAME_RE.test(basename(p))).sort()
-  } catch {
+  } catch (err) {
+    // spec §4.3：吞错返回 null 的首推语义保留（读侧名单失败不得炸整轮），但留痕可排查
+    console.warn('[cloud] listBackups 失败，keep 源按云端无对象首推', err)
     return null
   }
   return names[names.length - 1] ?? null
