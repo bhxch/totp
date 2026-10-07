@@ -1,9 +1,10 @@
 //! ABE 提权安装/卸载（plan p6 §0.2）：`--elevation-install`/`--elevation-uninstall` 由
-//! runas 提权拉起（UAC 一次完成安装+绑定），执行完即退出、无 UI。安装流程（C2 终审重排，
-//! 步骤序由 [`install_plan`] 纯函数单点给出）：算自身路径+SHA256 → 探查服务（存在性/
-//! ImagePath/运行态）→ 停服（存在且运行中；先于一切写动作——运行中映像被内核锁定，
-//! 覆盖必失败）→ 建/收紧副本目录 ACL → 复制自身 → decide_service_action（纯函数，
-//! Create/Change/None，Change 仅落 ImagePath）→ 写 HKLM 绑定三值 → 启动服务。
+//! runas 提权拉起（UAC 一次完成安装+绑定），执行完即退出、无 UI。安装流程（C2 终审重排 +
+//! R6-I1 补副本完整性复核，步骤序由 [`install_plan`] 纯函数单点给出）：算自身路径+SHA256 →
+//! 探查服务（存在性/ImagePath/运行态）→ 停服（存在且运行中；先于一切写动作——运行中映像被
+//! 内核锁定，覆盖必失败）→ 建/收紧副本目录 ACL → 复制自身 → 副本完整性复核（重读哈希与
+//! 自哈希比对 + 无写共享独占打开一次，压缩预开共享句柄注入窗口）→ decide_service_action
+//! （纯函数，Create/Change/None，Change 仅落 ImagePath）→ 写 HKLM 绑定三值 → 启动服务。
 //!
 //! 结构：纯逻辑（decide_service_action / install_plan）与 IO 薄壳（SCM/HKLM/ACL/文件复制）
 //! 分层——系统调用不可单测（brief 裁定），单测只覆盖纯函数与 fs 真复制。
@@ -149,6 +150,85 @@ pub fn copy_self_to(dir: &Path) -> std::io::Result<PathBuf> {
     let dest = dir.join(COPY_EXE_NAME);
     std::fs::copy(&src, &dest)?;
     Ok(dest)
+}
+
+/// 副本完整性复核（R6-I1：LPE 面封堵）。NT ACL 对攻击者**已打开的句柄无追溯力**：
+/// 低权进程可预开全共享写句柄持有诱饵副本（fs::copy 与之兼容照常成功），copy 后继续
+/// 写入恶意 PE → StartService 加载污染映像。两道防线：
+/// ① 重读副本 SHA256 与安装时自哈希比对，不一致即中止；
+/// ② 比对通过后以无 FILE_SHARE_WRITE 打开副本一次——存在并发写句柄即共享冲突失败，
+///    且本句柄存续窗口内新的写打开被目录 DACL 拒绝，把「比对后再注入」残余窗口压到毫秒级
+fn verify_copy_step(copy_exe: &Path, expected_sha256: &str) -> Result<(), InstallError> {
+    let actual = elevation_service::sha256_file_hex(&copy_exe.to_string_lossy());
+    let exclusive = open_copy_exclusive(copy_exe);
+    verify_copy_verdict(actual.as_deref(), expected_sha256, exclusive).inspect_err(|_| {
+        // 污染/不可信副本不留待 StartService，也删除目录兜底（尽力）
+        if let Some(dir) = copy_exe.parent() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    })
+}
+
+/// VerifyCopy 裁决（纯逻辑，可测）：哈希可得且比对一致 + 独享写句柄打开成功才放行。
+/// 顺序刻意先哈希后独占打开：独占失败（共享冲突）必先于哈希也大概率失配，但两者独立
+/// 判定，任一失败即中止
+fn verify_copy_verdict(
+    actual_sha256: Option<&str>,
+    expected_sha256: &str,
+    exclusive_open_ok: bool,
+) -> Result<(), InstallError> {
+    match actual_sha256 {
+        None => {
+            return Err(InstallError(
+                "读取副本 SHA256 失败，无法确认副本完整性，已中止安装".into(),
+            ));
+        }
+        Some(actual) if !actual.eq_ignore_ascii_case(expected_sha256) => {
+            return Err(InstallError(
+                "副本 SHA256 与安装源不一致（疑似被篡改），已中止安装并清理副本".into(),
+            ));
+        }
+        Some(_) => {}
+    }
+    if !exclusive_open_ok {
+        return Err(InstallError(
+            "副本被其他进程以写模式占用（共享句柄注入特征），已中止安装并清理副本".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// 无 FILE_SHARE_WRITE 打开副本一次（GENERIC_READ + FILE_SHARE_READ）并立即关闭：
+/// 存在已打开的写句柄（预开共享句柄注入）时 CreateFileW 报 ERROR_SHARING_VIOLATION，
+/// 返回 false 交裁决中止。打开成功本身同时锁定「此刻到关闭之间」无新写句柄，
+/// 与目录 DACL（新写打开被拒）共同压缩残余注入窗口
+fn open_copy_exclusive(path: &Path) -> bool {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, OPEN_EXISTING,
+    };
+
+    let wide = elevation_service::to_wide(&path.to_string_lossy());
+    let opened = unsafe {
+        CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            windows::Win32::Foundation::GENERIC_READ.0,
+            FILE_SHARE_READ,
+            None,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            None,
+        )
+    };
+    match opened {
+        Ok(handle) => {
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 /// 收紧副本目录 DACL（§0.2 SDDL + PROTECTED_DACL 阻断继承）。目录为本安装器自建、
@@ -304,6 +384,9 @@ enum InstallStep {
     PrepareDir,
     /// 复制自身到副本（恒定文件名；前置：服务已停/本就不存在，映像无锁定）
     CopySelf,
+    /// 副本完整性复核（R6-I1）：重读副本哈希与安装时自哈希比对 + 无写共享独占打开，
+    /// 失败即中止安装并清理副本目录（先于服务动作——失败态不落 CreateService/ImagePath）
+    VerifyCopy,
     /// 服务动作落位（decide_service_action：Create/Change/None——Change 此处仅落
     /// ImagePath，服务已被前置停服步停止，重启统一收口 StartService）
     ApplyService,
@@ -314,17 +397,19 @@ enum InstallStep {
 }
 
 /// 编排纯函数（I4 终审可断言核心）：停服是探查后的条件步（服务存在且运行中才入列），
-/// 恒先于副本目录/覆盖写动作；其后固定 dir→copy→service→binding→start。
+/// 恒先于副本目录/覆盖写动作；其后固定 dir→copy→verify→service→binding→start。
 /// 「stop 先于 copy」不变量由 install_plan_stops_running_service_before_copy 锁定——
-/// 违反即回退 C2 缺陷（运行中重绑：ImagePath 相同判 None 根本不停服，映像锁定覆盖必失败）
+/// 违反即回退 C2 缺陷（运行中重绑：ImagePath 相同判 None 根本不停服，映像锁定覆盖必失败）。
+/// 「verify 在 copy 后、start 前」不变量锁 R6-I1（StartService 加载污染映像的 LPE 面）
 fn install_plan(exists: bool, running: bool) -> Vec<InstallStep> {
-    let mut plan = Vec::with_capacity(6);
+    let mut plan = Vec::with_capacity(7);
     if exists && running {
         plan.push(InstallStep::StopService);
     }
     plan.extend_from_slice(&[
         InstallStep::PrepareDir,
         InstallStep::CopySelf,
+        InstallStep::VerifyCopy,
         InstallStep::ApplyService,
         InstallStep::WriteBinding,
         InstallStep::StartService,
@@ -422,6 +507,10 @@ pub fn run_install() -> Result<(), InstallError> {
                     copy_self_to(&service_dir()?)
                         .map_err(|e| InstallError(format!("复制自身失败: {e}")))?,
                 );
+            }
+            InstallStep::VerifyCopy => {
+                let copy_exe = copy_exe.as_deref().expect("VerifyCopy 前置：副本已就位");
+                verify_copy_step(copy_exe, &sha256)?;
             }
             InstallStep::ApplyService => {
                 let copy_exe = copy_exe.as_deref().expect("ApplyService 前置：副本已就位");
@@ -593,13 +682,15 @@ mod tests {
     #[test]
     fn install_plan_stops_running_service_before_copy() {
         // 运行中服务（重绑场景）：停服是第一步且先于副本覆盖——运行中映像被内核锁定，
-        // 覆盖必失败（C2 缺陷根源）；完整序 stop→dir→copy→service→binding→start 一并锁定
+        // 覆盖必失败（C2 缺陷根源）；完整序 stop→dir→copy→verify→service→binding→start
+        // 一并锁定
         assert_eq!(
             install_plan(true, true),
             vec![
                 InstallStep::StopService,
                 InstallStep::PrepareDir,
                 InstallStep::CopySelf,
+                InstallStep::VerifyCopy,
                 InstallStep::ApplyService,
                 InstallStep::WriteBinding,
                 InstallStep::StartService,
@@ -615,6 +706,7 @@ mod tests {
             vec![
                 InstallStep::PrepareDir,
                 InstallStep::CopySelf,
+                InstallStep::VerifyCopy,
                 InstallStep::ApplyService,
                 InstallStep::WriteBinding,
                 InstallStep::StartService,
@@ -622,6 +714,31 @@ mod tests {
         );
         // 已安装但已停止：同样无需停服步（stop_service 本身幂等，计划层不入列）
         assert!(!install_plan(true, false).contains(&InstallStep::StopService));
+    }
+
+    #[test]
+    fn install_plan_verifies_copy_between_copy_and_start() {
+        // R6-I1 不变量：VerifyCopy 恒在 CopySelf 之后、StartService 之前（三态全组合）——
+        // StartService 加载污染映像的 LPE 面以「启动前必复核」封锁
+        for (exists, running) in [(false, false), (true, false), (true, true)] {
+            let plan = install_plan(exists, running);
+            let copy = plan
+                .iter()
+                .position(|s| *s == InstallStep::CopySelf)
+                .unwrap();
+            let verify = plan
+                .iter()
+                .position(|s| *s == InstallStep::VerifyCopy)
+                .unwrap();
+            let start = plan
+                .iter()
+                .position(|s| *s == InstallStep::StartService)
+                .unwrap();
+            assert!(
+                copy < verify && verify < start,
+                "exists={exists} running={running}"
+            );
+        }
     }
 
     #[test]
@@ -639,6 +756,37 @@ mod tests {
                 .unwrap();
             assert!(bind < start, "exists={exists} running={running}");
         }
+    }
+
+    // ---- verify_copy_verdict（R6-I1：哈希不匹配/独占打开失败中止路径）----
+
+    #[test]
+    fn verify_copy_verdict_passes_on_match_and_exclusive_open() {
+        let sha = "a".repeat(64);
+        // 哈希大小写不敏感（服务侧 sha256_file_hex 产小写 hex，比对一致即放行）
+        assert!(verify_copy_verdict(Some(&sha.to_uppercase()), &sha, true).is_ok());
+    }
+
+    #[test]
+    fn verify_copy_verdict_aborts_on_hash_mismatch() {
+        let err = verify_copy_verdict(Some(&"b".repeat(64)), &"a".repeat(64), true).unwrap_err();
+        assert!(err.to_string().contains("不一致"), "实际: {err}");
+        // 独占打开成功但哈希失配同样中止（两个条件独立判定）
+        assert!(verify_copy_verdict(None, &"a".repeat(64), true).is_err());
+    }
+
+    #[test]
+    fn verify_copy_verdict_aborts_on_unreadable_copy() {
+        // 哈希不可得（文件被删/读失败）：无法证明完整性，中止
+        let err = verify_copy_verdict(None, &"a".repeat(64), true).unwrap_err();
+        assert!(err.to_string().contains("SHA256"), "实际: {err}");
+    }
+
+    #[test]
+    fn verify_copy_verdict_aborts_on_exclusive_open_failure() {
+        // 哈希一致但无写共享打开失败（预开共享句柄注入特征）：中止
+        let err = verify_copy_verdict(Some(&"a".repeat(64)), &"a".repeat(64), false).unwrap_err();
+        assert!(err.to_string().contains("占用"), "实际: {err}");
     }
 
     // ---- copy_self_to（fs 真复制，tempdir 断言字节一致）----
