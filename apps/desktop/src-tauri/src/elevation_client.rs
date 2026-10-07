@@ -274,10 +274,12 @@ fn remove_verdict(code: ErrCode) -> Result<(), String> {
 // ---------- 真管道薄壳（单测不覆盖：内存流 mock 已覆盖帧逻辑） ----------
 
 /// 打开服务管道并完成一次 请求→Resp 往返（call_service 唯一入口，高层操作共用）。
-/// 读超时选型见 IO_TIMEOUT 注释；DEK 附加数据的 zeroize 责任在 unwrap_dek（本层
-/// 不识别消息类型，Ok 之外的失败路径服务端本就不回 DEK）
+/// 读超时选型见 IO_TIMEOUT 注释；连接建立后先做服务端身份校验（R6-M3，见
+/// verify_server_identity），通过后才收发帧；DEK 附加数据的 zeroize 责任在 unwrap_dek
+/// （本层不识别消息类型，Ok 之外的失败路径服务端本就不回 DEK）
 pub fn call_service(msg: MsgType, payload: &[u8]) -> Result<(ErrCode, Vec<u8>), ClientError> {
     let pipe = open_pipe()?;
+    verify_server_identity(pipe.0)?;
     let deadline = Instant::now() + IO_TIMEOUT;
     transact(
         |buf| write_all_via_pipe(pipe.0, buf),
@@ -295,6 +297,69 @@ impl Drop for PipeHandle {
         unsafe {
             let _ = CloseHandle(self.0);
         }
+    }
+}
+
+// ---------- 服务端身份校验（R6-M3） ----------
+
+/// 连接建立后的服务端身份校验：固定管道名（elevation_proto::PIPE_NAME）可被同用户
+/// 假服务先占——假服务可回假 ok（HKLM 残留误判）或收走 Wrap 明文 DEK。此处取管道
+/// 服务端 PID → 映像路径/哈希取证（与调用者验证共用 elevation_service 原语）→
+/// 比对「规范副本路径 + HKLM 绑定哈希」，不过即断开报错。纯比对逻辑在
+/// elevation_service::validate_server_image（单测覆盖），本函数为取证 IO 薄壳
+fn verify_server_identity(pipe: HANDLE) -> Result<(), ClientError> {
+    use windows::Win32::System::Pipes::GetNamedPipeServerProcessId;
+
+    use crate::elevation_service::ElevationStore as _;
+
+    let mut pid = 0u32;
+    if let Err(e) = unsafe { GetNamedPipeServerProcessId(pipe, &mut pid) } {
+        return Err(server_identity_error(
+            false,
+            format!("GetNamedPipeServerProcessId 失败: {e}"),
+        ));
+    }
+    // HKLM 绑定记录先行：缺失=未安装语义（服务已卸载的管道残留/假服务均归此，
+    // abe_status 据 Unavailable 报 installed:false）
+    let Some(bound) = crate::elevation_service::HklmStore.read_bound() else {
+        return Err(server_identity_error(true, "HKLM 无绑定记录".into()));
+    };
+    let expected = match crate::elevation_install::expected_service_copy_path() {
+        Ok(p) => p,
+        Err(e) => {
+            return Err(server_identity_error(
+                false,
+                format!("解析规范副本路径失败: {e}"),
+            ))
+        }
+    };
+    let Some((image, sha256)) = crate::elevation_service::process_image_evidence(pid) else {
+        return Err(server_identity_error(
+            false,
+            "管道服务端进程取证失败（PID 已退出或映像不可读）".into(),
+        ));
+    };
+    match crate::elevation_service::validate_server_image(
+        &image,
+        &sha256,
+        &expected.to_string_lossy(),
+        &bound.sha256,
+    ) {
+        ErrCode::Ok => Ok(()),
+        code => Err(server_identity_error(
+            false,
+            format!("管道对端非绑定服务（路径/哈希校验未过: {code:?}）"),
+        )),
+    }
+}
+
+/// 服务端身份校验失败的错误分型（纯逻辑，可测）：HKLM 无绑定记录=未安装语义
+/// （Unavailable）；其余=管道在但对端不可信（Protocol）
+fn server_identity_error(bound_missing: bool, detail: String) -> ClientError {
+    if bound_missing {
+        ClientError::Unavailable(format!("服务端身份校验跳过（{detail}）"))
+    } else {
+        ClientError::Protocol(format!("服务端身份校验失败: {detail}"))
     }
 }
 
@@ -628,6 +693,22 @@ mod tests {
             Err(ClientError::Io(_))
         ));
         assert!(io.borrow().written.is_empty());
+    }
+
+    // ---- 服务端身份校验错误分型（R6-M3；纯比对逻辑在 elevation_service 侧单测）----
+
+    #[test]
+    fn server_identity_error_types_missing_bound_as_unavailable() {
+        // HKLM 无绑定记录=未安装语义：Unavailable（abe_status 报 installed:false）
+        assert!(matches!(
+            server_identity_error(true, "HKLM 无绑定记录".into()),
+            ClientError::Unavailable(_)
+        ));
+        // 取证失败/路径哈希失配=管道在但对端不可信：Protocol
+        assert!(matches!(
+            server_identity_error(false, "HashMismatch".into()),
+            ClientError::Protocol(ref m) if m.contains("HashMismatch")
+        ));
     }
 
     // ---- status_reply_from：ok 解析 JSON / 非 ok 直传 / 坏 JSON 拒绝 ----

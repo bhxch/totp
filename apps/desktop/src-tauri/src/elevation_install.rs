@@ -144,6 +144,12 @@ fn service_dir() -> Result<PathBuf, InstallError> {
     Ok(PathBuf::from(root).join(SERVICE_DIR_SEGMENTS))
 }
 
+/// 规范副本 exe 路径（%PROGRAMDATA%\TotpTools\service\TotpTools.exe）：R6-M3 客户端
+/// 服务端身份校验共用——管道对端映像必须恰为该路径（安装编排与 copy_self_to 同源常量）
+pub(crate) fn expected_service_copy_path() -> Result<PathBuf, InstallError> {
+    Ok(service_dir()?.join(COPY_EXE_NAME))
+}
+
 /// 复制自身 exe 到 dir（恒定文件名 [`COPY_EXE_NAME`]），返回目标路径（§0.2 副本正本）
 pub fn copy_self_to(dir: &Path) -> std::io::Result<PathBuf> {
     let src = std::env::current_exe()?;
@@ -893,6 +899,24 @@ mod tests {
         assert!(!values
             .iter()
             .any(|(k, _)| k == elevation_service::REG_CALLER_SID));
+    }
+
+    // ---- expected_service_copy_path（R6-M3 客户端服务端身份校验共用）----
+
+    #[test]
+    fn expected_service_copy_path_is_programdata_dir_plus_constant_name() {
+        let expected = expected_service_copy_path().expect("测试环境应有 PROGRAMDATA");
+        assert_eq!(
+            expected
+                .to_string_lossy()
+                .to_lowercase()
+                .ends_with(r"totptools\service\totptools.exe"),
+            true,
+            "规范副本路径收尾: {expected:?}"
+        );
+        // 与安装编排同源：copy_self_to 落点即该路径
+        let dir = expected.parent().unwrap();
+        assert_eq!(dir.join(COPY_EXE_NAME), expected);
     }
 
     // ---- copy_self_to（fs 真复制，tempdir 断言字节一致）----

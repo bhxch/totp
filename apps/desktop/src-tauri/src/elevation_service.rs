@@ -119,6 +119,33 @@ pub fn validate_caller(client_exe: &str, client_sha256: &str, bound: &Bound) -> 
     ErrCode::Ok
 }
 
+/// 服务端身份比对（纯逻辑，R6-M3 客户端消费）：管道对端映像路径须恰为规范副本路径、
+/// 文件哈希须与 HKLM 绑定哈希一致——副本与安装源同字节（绑定哈希=安装时自哈希，
+/// VerifyCopy 步已按该值复核副本），故绑定哈希可直接校验副本进程。
+/// 路径归一化与 UNC 拒收语义同 validate_caller
+pub(crate) fn validate_server_image(
+    image: &str,
+    image_sha256: &str,
+    expected_copy_path: &str,
+    bound_sha256: &str,
+) -> ErrCode {
+    if bound_sha256.is_empty() {
+        return ErrCode::VerifyError;
+    }
+    let exe = normalize_path(image);
+    // 网络路径拒收：副本恒在本机 %ProgramData%，UNC 映像即冒充
+    if exe.starts_with(r"\\") || exe.starts_with(r"unc\") {
+        return ErrCode::PathMismatch;
+    }
+    if exe != normalize_path(expected_copy_path) {
+        return ErrCode::PathMismatch;
+    }
+    if image_sha256.to_lowercase() != bound_sha256.to_lowercase() {
+        return ErrCode::HashMismatch;
+    }
+    ErrCode::Ok
+}
+
 /// 路径归一化（§0.1，对齐 Chrome MaybeTrimProcessPath 的防混淆目的）：to_lowercase +
 /// 剥 `\\?\` 设备前缀。不 trim 版本目录——我们用哈希绑定，升级必须重绑，trim 反而错误。
 /// `\\?\UNC\server\share` 剥前缀后成 `unc\server\share`，UNC 形态由调用方识别拒收
@@ -459,23 +486,29 @@ fn respond(pipe: HANDLE, code: ErrCode, deadline: Instant) {
 
 // ---------- 调用者身份取证（IO 薄壳） ----------
 
-/// 连接级身份取证（§0.1）：连接建立后立即取客户端 PID → 开快照句柄（防 PID 复用 TOCTOU）
-/// → 查镜像路径 → SHA256(exe 文件) hex。任一步失败 → None（调用方回 VerifyError）
+/// 连接级身份取证（§0.1）：连接建立后立即取客户端 PID → [`process_image_evidence`]
+/// 取证。任一步失败 → None（调用方回 VerifyError）
 fn verify_client_process(pipe: HANDLE) -> Option<(String, String)> {
-    use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
-    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
 
     let mut pid = 0u32;
     unsafe { GetNamedPipeClientProcessId(pipe, &mut pid) }.ok()?;
+    process_image_evidence(pid)
+}
+
+/// 进程映像取证（PID → 映像路径 + 双读哈希）：服务端验证调用者与客户端校验服务端身份
+/// （elevation_client，R6-M3）共用原语——取证链单点，勿两处复制。哈希走
+/// sha256_file_double_read（R6-I2：无写共享打开 + 双读比较），两侧同款缓解
+pub(crate) fn process_image_evidence(pid: u32) -> Option<(String, String)> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+
     let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
     let image = query_process_image(process);
     unsafe {
         let _ = CloseHandle(process);
     }
     let image = image?;
-    // R6-I2：双读比较 + 无写共享打开，缓解便携版形态的文件替换 TOCTOU
-    // （sha256_file_double_read 注释；README 威胁模型「不防」清单已同步登记残余面）
     let sha256 = sha256_file_double_read(&image)?;
     Some((image, sha256))
 }
@@ -1331,6 +1364,60 @@ mod tests {
         assert!(
             !is_plausible_sid_string("s-1-5-18"),
             "大小写敏感（SDDL SID 串恒大写）"
+        );
+    }
+
+    // ---- 服务端身份比对（R6-M3：客户端校验管道对端）----
+
+    #[test]
+    fn validate_server_image_accepts_bound_copy() {
+        let copy = r"C:\ProgramData\TotpTools\service\TotpTools.exe";
+        assert_eq!(
+            validate_server_image(copy, &sha('a'), copy, &sha('a')),
+            ErrCode::Ok
+        );
+        // 路径/哈希归一化：\\?\ 前缀 + 大小写漂移照常命中
+        assert_eq!(
+            validate_server_image(
+                r"\\?\c:\programdata\totptools\service\totptools.exe",
+                &sha('A').to_uppercase(),
+                copy,
+                &sha('a')
+            ),
+            ErrCode::Ok
+        );
+    }
+
+    #[test]
+    fn validate_server_image_rejects_foreign_path_and_unc() {
+        let copy = r"C:\ProgramData\TotpTools\service\TotpTools.exe";
+        // 同目录假名 / 完全异路径 → PathMismatch
+        assert_eq!(
+            validate_server_image(
+                r"C:\ProgramData\TotpTools\service\Evil.exe",
+                &sha('a'),
+                copy,
+                &sha('a')
+            ),
+            ErrCode::PathMismatch
+        );
+        // UNC 映像（副本恒在本机）→ PathMismatch
+        assert_eq!(
+            validate_server_image(r"\\?\UNC\srv\share\x.exe", &sha('a'), copy, &sha('a')),
+            ErrCode::PathMismatch
+        );
+    }
+
+    #[test]
+    fn validate_server_image_rejects_hash_mismatch_and_empty_bound() {
+        let copy = r"C:\ProgramData\TotpTools\service\TotpTools.exe";
+        assert_eq!(
+            validate_server_image(copy, &sha('b'), copy, &sha('a')),
+            ErrCode::HashMismatch
+        );
+        assert_eq!(
+            validate_server_image(copy, &sha('a'), copy, ""),
+            ErrCode::VerifyError
         );
     }
 
