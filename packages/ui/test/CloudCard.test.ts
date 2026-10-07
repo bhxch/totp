@@ -301,6 +301,29 @@ describe('CloudCard（多源）', () => {
     expect(statuses).toEqual(['失败：网络错误', '已上传'])
   })
 
+  it('R2-M3：手动通道错误消息含换行（CloudHttpError bodySnippet 前缀形态）→ 状态行归一单行', async () => {
+    const multilineError = 'WebDAV 请求失败（HTTP 500）：\nPUT https://dav/f oops'
+    mockedSync.mockResolvedValue({
+      results: [
+        // 生产形态：bodySnippet 以 \n 前缀拼入 message（core backend.ts），截断/展示前必须归一
+        { key: 's-webdav', outcome: null, error: multilineError },
+      ],
+      finalVaultJson: VALID_VAULT,
+      adopted: false,
+      conflicts: [],
+      states: {},
+    })
+    const p = makePlatform({
+      loadSources: vi.fn().mockResolvedValue([WEBDAV_SOURCE]),
+      creds: { 's-webdav': WEBDAV_CRED },
+    })
+    const w = await mountCard(p)
+    await clickSync(w)
+    const status = w.find('.target-status').text()
+    expect(status).toBe('失败：WebDAV 请求失败（HTTP 500）： PUT https://dav/f oops') // 换行归一单空格
+    expect(status.includes('\n')).toBe(false)
+  })
+
   it('⑫自动区：开关/间隔回写 set（get 异步返回兼容）', async () => {
     const p = makePlatform({
       autoPrefs: {

@@ -36,8 +36,8 @@ import {
   type KdfProfile, type RevSyncOutcome, type SourceSyncState, type TargetResult,
 } from '@totp/core'
 import {
-  CLOUD_ACTION_STATUS_KEYS, actionStatusLabelKey, allTargetsSettled, buildSyncTargets, latestKeepPath,
-  runExclusive, runKeepRetention,
+  CLOUD_ACTION_STATUS_KEYS, actionStatusLabelKey, allTargetsSettled, buildSyncTargets, errorDigest,
+  latestKeepPath, runExclusive, runKeepRetention,
 } from './cloudSyncShared'
 
 /** 手动合并预览摘要（onManualConfirm 入参）：T11 差异预览对话框消费 */
@@ -349,9 +349,9 @@ export function createCloudSyncRunner(deps: CloudRunnerDeps): { run(mode?: 'auto
     // 结构化状态码已在消息内（CloudHttpError 形态）；逐失败目标 console.error 全量现场
     const failLabel = (x: TargetResult): string => {
       if (x.outcome) return deps.t(actionStatusLabelKey(x.outcome))
-      // CloudHttpError message 内嵌 \n（bodySnippet 前缀，core backend.ts），截断前先归一空白——
-      // 摘要随 recordStatus 上设置页状态行，须单行
-      const msg = (x.error ?? '').replace(/\s+/g, ' ').slice(0, 60)
+      // R2-M3：归一空白+截断下沉 cloudSyncShared.errorDigest（CloudHttpError message 内嵌 \n
+      // 的 bodySnippet 前缀），与手动卡 trunc 共用单一口径
+      const msg = errorDigest(x.error ?? '')
       return msg ? `${deps.t('cloudRunner.failed')}（${msg}）` : deps.t('cloudRunner.failed')
     }
     for (const x of r.results) {

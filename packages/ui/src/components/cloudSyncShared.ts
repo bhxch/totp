@@ -28,6 +28,14 @@ export function actionStatusLabelKey(o: RevSyncOutcome): string {
   return o.action === 'merged' && o.mergeDegraded === true ? MERGED_DEGRADED_KEY : CLOUD_ACTION_STATUS_KEYS[o.action]
 }
 
+/** 错误消息单行摘要（R2-M3 双通道共用）：CloudHttpError message 内嵌 \n（bodySnippet 前缀，
+ *  core backend.ts）与 XML 响应体碎片，截断前先归一空白——摘要进设置页状态行/手动卡状态行
+ *  须单行。e4c6e5c 只修了 runner 侧（内联 replace），本函数下沉后 runner 与 CloudCard.trunc
+ *  共用单一口径。max 默认 60 字符（两通道既有截断宽度） */
+export function errorDigest(message: string, max = 60): string {
+  return message.replace(/\s+/g, ' ').slice(0, max)
+}
+
 /** keep 源远端最新份路径：listBackups 名单内时间戳备份的最新份（字典序=时间序，与滚动删除同口径）；
  *  后端不支持列名单/名单为空/listBackups 抛错 → null。抛错同按 null 走（该源按云端无对象首推，
  *  收敛归后续轮；本地/远端内容零丢失）——读侧名单失败不得炸整轮 Promise.all（逐源隔离，同 ⑮ 裁定） */

@@ -62,6 +62,14 @@ describe('CloudCredFields 实际目标完整显示与目录语义（spec §4.5�
     const noDir = mountFields({ ...WEBDAV, objectPath: 'onlyname.totpbackup' }, KEEP3)
     expect(noDir.text()).toContain('整体不参与')
   })
+  it('R2-M4：keep 模式路径非法（a/../b）时只渲染「路径无效」警示，不再并显文件名忽略行（其引用无效路径）', () => {
+    const w = mountFields({ ...WEBDAV, objectPath: 'a/../b' }, KEEP3)
+    expect(w.find('.path-preview[role="alert"]').exists()).toBe(true)
+    expect(w.text()).toContain('路径无效')
+    // 忽略警示的两条文案均不得出现（keepIgnoreWarn 在 state !== 'ok' 时返回 null）
+    expect(w.text()).not.toContain('不生效')
+    expect(w.text()).not.toContain('整体不参与')
+  })
   it('s3：bucket 已填显示 s3:// URI；bucket 空回落裸路径', () => {
     const s3 = mountFields({ backend: 's3', region: 'r', bucket: 'bk', accessKeyId: 'a', secretAccessKey: 's', objectPath: 'p/x.totpbackup' })
     expect(s3.text()).toContain('s3://bk/p/x.totpbackup')

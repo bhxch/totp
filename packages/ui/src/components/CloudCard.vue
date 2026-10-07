@@ -10,7 +10,7 @@ import { useAutoPrefs } from '../composables/useAutoPrefs'
 import { blankCred, customProxyUrlError, hasPlaintextUrl, intervalOptions, isBlankCred, newSourceId, retentionOptions } from './cardShared'
 import { createCloudBackend } from './cloudPlatform'
 import type { CloudPlatform } from './cloudPlatform'
-import { actionStatusLabelKey, allTargetsSettled, buildSyncTargets, runExclusive, runKeepRetention } from './cloudSyncShared'
+import { actionStatusLabelKey, allTargetsSettled, buildSyncTargets, errorDigest, runExclusive, runKeepRetention } from './cloudSyncShared'
 import { pendingMergeConfirm, requestMergeConfirm, settleMergeConfirm, syncProgressState } from './cloudSyncBridge'
 import CloudCredFields from './CloudCredFields.vue'
 import MergeConflictList from './MergeConflictList.vue'
@@ -370,7 +370,9 @@ async function onSaveCreds(): Promise<void> {
   }
 }
 
-const trunc = (s: string, n = 60) => (s.length > n ? `${s.slice(0, n)}…` : s)
+// R2-M3：错误摘要「归一空白+截断」下沉 cloudSyncShared.errorDigest 双通道共用（手动通道
+// 此前只截断不归一，CloudHttpError message 内嵌换行+bodySnippet 会把换行带进状态行）
+const trunc = (s: string, n = 60) => errorDigest(s, n)
 
 /**
  * 手动多源同步（复用 core syncMultipleTargets）：仅 enabled 源参与；凭据取编辑副本（无则已存凭据）。

@@ -58,9 +58,12 @@ const pathPreviewText = computed(() => {
 })
 
 /** keep 文件名段忽略回显（spec §4.5）：目录意向（尾分隔符）不警示；
- *  有目录段警示文件名忽略；仅单段警示整体不参与 */
+ *  有目录段警示文件名忽略；仅单段警示整体不参与。
+ *  R2-M4：路径非法（state !== 'ok'，如含 . / .. 相对段）时不渲染——warn 行引用的目录/文件名
+ *  源自无效路径，「路径非法」警示已覆盖，两行并存且后者引用无效路径反而误导 */
 const keepIgnoreWarn = computed(() => {
   if (!isKeep.value) return null
+  if (pathPreview.value?.state !== 'ok') return null
   const raw = (props.draft?.objectPath ?? '').trim()
   if (raw === '' || /[\\/]$/.test(raw)) return null
   const segs = raw.split(/[\\/]/).filter((s) => s !== '')
