@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const css = readFileSync(join(__dirname, '../src/theme/tokens.css'), 'utf8')
+const amoledCss = readFileSync(join(__dirname, '../src/theme/amoled.css'), 'utf8')
 
 describe('MD3 token 体系完整性（spec §2.8）', () => {
   it('typescale 补齐 4 档', () => {
@@ -24,5 +25,13 @@ describe('MD3 token 体系完整性（spec §2.8）', () => {
   it('state-layer token 存在', () => {
     expect(css).toContain('--md-sys-state-layer-hover:8%')
     expect(css).toContain('--md-sys-state-layer-pressed:12%')
+  })
+  it('amoled 暗色覆写块补 background 纯黑（spec §2.8.1）', () => {
+    // dark 直写块与 auto@media 块均须覆写;amoled.css 值风格为「: 」带空格,用正则兼容
+    const blocks = amoledCss.match(/html\[data-contrast='amoled'\]\[data-mode='(?:dark|auto)'\][^}]*\}/g) ?? []
+    expect(blocks.length).toBe(2)
+    for (const block of blocks) {
+      expect(block).toMatch(/--md-sys-color-background:\s*#000000/)
+    }
   })
 })

@@ -2,10 +2,12 @@
  * 变量名以 tokens.css 实际产出核对（Task 20 Step 3）：surface-variant 为 brief 漏项，按同梯度补
  * （dark 值 #45464f → #262626，介于 highest #1a1a1a 与 outline-variant #2a2a2a 之间）；
  * surface-tint 与 primary 联动，不覆盖。on-surface / outline 等文本描边色不动，保证可读性。
+ * background 随纯黑语义覆写为 #000000（spec §2.8.1：role 须覆盖 amoled）；on-background 沿用 dark 值不动。
  * 特异度 (0,2,1) 恒胜 tokens.css (0,1,0) 与 tokens-palettes.css (0,2,0)。
  * 结构与 tokens.css 对称：dark 顶层直写；auto 走 media query——auto+浅色系统下不生效
  * （brief 原案 :not([data-mode='light']) 会让 auto+浅色系统吃到纯黑表面 + 浅色文字，不可读）。 */
 html[data-contrast='amoled'][data-mode='dark'] {
+  --md-sys-color-background: #000000;
   --md-sys-color-surface: #000000;
   --md-sys-color-surface-dim: #000000;
   --md-sys-color-surface-bright: #0f0f0f;
@@ -20,6 +22,7 @@ html[data-contrast='amoled'][data-mode='dark'] {
 
 @media (prefers-color-scheme: dark) {
   html[data-contrast='amoled'][data-mode='auto'] {
+    --md-sys-color-background: #000000;
     --md-sys-color-surface: #000000;
     --md-sys-color-surface-dim: #000000;
     --md-sys-color-surface-bright: #0f0f0f;
