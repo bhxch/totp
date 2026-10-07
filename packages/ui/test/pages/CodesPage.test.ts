@@ -175,7 +175,8 @@ describe('CodesPage 标签筛选（spec §3 管理页）', () => {
     const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
     const manage = w.find('button.manage-btn')
     expect(manage.exists()).toBe(true)
-    expect(manage.attributes('title')).toBe('管理标签') // 悬浮提示
+    // R3-M5：原生 :title 已移除（触屏不可用），tooltip 形态由 TagFilterRow 组件测试覆盖
+    expect(manage.attributes('title')).toBeUndefined()
     await manage.trigger('click')
     expect(w.emitted('open-tags')).toHaveLength(1)
     expect(w.find('.md-dialog').exists()).toBe(true)
@@ -462,6 +463,34 @@ describe('CodesPage P3：右键复制验证码/删除项 + 复制 toast + 筛选
     await w.find('.otp-item').trigger('click')
     expect(w.emitted('copy')).toHaveLength(1)
     expect(useToast().toasts.value).toHaveLength(0)
+  })
+
+  it('R3-M3：secret 非法（code=INVALID）行内点击不 emit copy，error toast 说明', async () => {
+    const s = createVueStore(createMemoryStorage())
+    await s.initStore()
+    // 非法 base32 secret 可落库（addEntry 不校验），取码抛错 → codes 标 INVALID
+    await s.addEntryOp({ uuid: 'bad', type: 'totp', issuer: 'Broken', label: 'x', secret: 'not-base32!', algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 0 })
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    await vi.waitFor(() => expect(w.find('.otp-item .code').classes()).toContain('invalid'))
+    await w.find('.otp-item').trigger('click')
+    expect(w.emitted('copy')).toBeUndefined()
+    const toasts = useToast().toasts.value
+    expect(toasts).toHaveLength(1)
+    expect(toasts[0]).toMatchObject({ message: '密钥非法，无法复制', kind: 'error' })
+  })
+
+  it('R3-M3：右键「复制验证码」INVALID 条目不 emit copy，error toast + 关菜单', async () => {
+    const s = createVueStore(createMemoryStorage())
+    await s.initStore()
+    await s.addEntryOp({ uuid: 'bad', type: 'totp', issuer: 'Broken', label: 'x', secret: 'not-base32!', algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 0 })
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    await vi.waitFor(() => expect(w.find('.otp-item .code').classes()).toContain('invalid'))
+    await w.find('.otp-item').trigger('contextmenu', { clientX: 10, clientY: 10 })
+    const btn = w.findAll('.md-menu button').find((b) => b.text() === '复制验证码')!
+    await btn.trigger('click')
+    expect(w.emitted('copy')).toBeUndefined()
+    expect(useToast().toasts.value[0]).toMatchObject({ kind: 'error' })
+    expect(w.find('.md-menu').exists()).toBe(false)
   })
 
   it('SearchBar 与 chips-row 包进 .frozen 冻结容器（sticky 顶部）', async () => {

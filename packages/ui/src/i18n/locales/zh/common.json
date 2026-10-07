@@ -718,7 +718,8 @@
     "ctxDelete": "删除",
     "pin": "置顶",
     "unpin": "取消置顶",
-    "batchImported": "已入库 {n} 条"
+    "batchImported": "已入库 {n} 条",
+    "copyInvalid": "密钥非法，无法复制"
   },
   "settingsPage": {
     "appearance": "外观",

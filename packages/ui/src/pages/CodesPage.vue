@@ -151,10 +151,18 @@ function askRemove(uuid: string) {
   if (confirmTimer) clearTimeout(confirmTimer)
   confirmTimer = setTimeout(() => (confirmingDelete.value = null), 3000)
 }
+/** 行内复制（单击/Enter）：取码经 emit('copy') 上抛宿主写入剪贴板（CodesPage 无 enableCopy
+ *  门控，复制语义恒开启；30s 清除链挂宿主 @copy）。R3-M3：secret 非法条目 code='INVALID'
+ *  （truthy，会漏过 !code 守卫）——复制字面量 "INVALID" 无意义，跳过 emit（宿主不写剪贴板、
+ *  HOTP 不递增）并 error toast 说明。R3-I1：复制成败反馈上移宿主（emit 无回执），本侧不再
+ *  自弹成功提示 */
 async function onCopy(entry: OtpEntry) {
-  // CodesPage 无 enableCopy 门控：复制语义恒开启，剪贴板写入由宿主 @copy 决定
   const c = codes.value.get(entry.uuid)?.code
   if (!c) return
+  if (c === 'INVALID') {
+    toast.show(t('codesPage.copyInvalid'), 'error')
+    return
+  }
   emit('copy', c)
   // HOTP：复制的是旧 counter 的码（RFC 语义），复制完成后再递增
   if (entry.type === 'hotp') await props.store.updateEntryOp(entry.uuid, { counter: (entry.counter ?? 0) + 1 })
@@ -175,11 +183,17 @@ function contextEdit(entry: OtpEntry) {
 }
 /** 右键「复制验证码」（P3）：取当前码走与行内复制同一 emit('copy') 通道（宿主写剪贴板+30s 清除），
  *  成败反馈由宿主按写入结果 toast（R3-I1：emit 无回执，本侧弹「已复制」会在宿主写入失败时
- *  矛盾双反馈）。码未就绪时不动作（菜单保持打开）。HOTP 与行内 onCopy 同口径：
+ *  矛盾双反馈）。R3-M3：INVALID 同 onCopy 口径——error toast 不 emit（菜单关闭，操作有响应）。
+ *  码未就绪时不动作（菜单保持打开）。HOTP 与行内 onCopy 同口径：
  *  复制的是旧 counter 的码（RFC 语义），emit 在前、递增在后（审查修复：右键入口此前漏递增） */
 async function contextCopyCode(entry: OtpEntry) {
   const code = codes.value.get(entry.uuid)?.code
   if (!code) return
+  if (code === 'INVALID') {
+    toast.show(t('codesPage.copyInvalid'), 'error')
+    closeContextMenu()
+    return
+  }
   emit('copy', code)
   if (entry.type === 'hotp') await props.store.updateEntryOp(entry.uuid, { counter: (entry.counter ?? 0) + 1 })
   closeContextMenu()

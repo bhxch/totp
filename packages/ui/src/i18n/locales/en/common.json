@@ -718,7 +718,8 @@
     "ctxDelete": "Delete",
     "pin": "Pin",
     "unpin": "Unpin",
-    "batchImported": "{n} entries imported"
+    "batchImported": "{n} entries imported",
+    "copyInvalid": "Invalid secret, nothing to copy"
   },
   "settingsPage": {
     "appearance": "Appearance",
