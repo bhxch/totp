@@ -115,6 +115,25 @@ describe('LockScreen 静默解锁 abe→dpapi 回退（plan p6 §0.3）', () => 
     expect(w.emitted('unlocked')).toHaveLength(1)
   })
 
+  it('R7-M6：abe unwrap 成功但 unlockWithDek 失败（旧 DEK 残留态）→ rejection 落入 catch 回退 dpapi', async () => {
+    // 场景：服务 HKLM 密文还是轮换前旧 DEK（换口令时 ABE 联动降级失败等），unwrap 解出旧 DEK，
+    // unlockWithDek 对新 DEK vault 的 GCM 证明失败——then 链上的 rejection 同样进 catch，
+    // 无声回退 dpapi（行为级锁定现状，防未来重构成 if/return 时漏掉该回退分支）
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const dpapiDek = randomBytes(32)
+    const unprotect = vi.fn().mockResolvedValue(dpapiDek)
+    const unlockWithDek = vi.fn()
+      .mockRejectedValueOnce(new Error('DEK 解密失败（vault 已被新 DEK 重加密）'))
+      .mockResolvedValueOnce(undefined)
+    const store = storeWithAbe({ unlockWithDek })
+    const w = mountScreen({ store, dpapi: makeDpapi({ unprotect }), abe: makeAbe({ unwrap: vi.fn().mockResolvedValue(randomBytes(32)) }) })
+    // 等全链完成（共 2 次：abe 旧 DEK 失败 + dpapi 回退成功）——该等待隐含 rejection 已落 catch
+    await vi.waitFor(() => expect(unlockWithDek).toHaveBeenCalledTimes(2))
+    expect(unprotect).toHaveBeenCalledWith('WRAPPED-DEK')
+    expect(unlockWithDek).toHaveBeenNthCalledWith(2, dpapiDek)
+    expect(w.emitted('unlocked')).toHaveLength(1)
+  })
+
   it('两者皆败：abe 失败回退 dpapi 也失败 → 1s 后显示「重试 Windows 自动解锁」', async () => {
     vi.useFakeTimers()
     try {
