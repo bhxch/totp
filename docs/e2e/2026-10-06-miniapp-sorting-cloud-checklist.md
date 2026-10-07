@@ -139,3 +139,11 @@
 结论：**B1 release 口径达标（≈1.3s，余量 0.7s）**；dev+vite 的 6.1s 系开发服务器冷编译所致，与产品无关。ready 门控（窗口随内容就位）在 release 下同样成立。
 
 附带观察：本轮 0/1 策略下销毁时点明显晚于预期（隐藏后 155s+ 仍未销毁，最终 ~4min 内完成）——与 backlog B24（release_tick is_visible 误判）的方向吻合：误判「可见」会重置轨迹使销毁延迟。B24 排查优先级建议提高。
+
+## 附录三：双批次审查修复回归项（2026-10-07 补）
+
+来源：docs/review/2026-10-07-dual-batch-code-review-findings.md（R2-I1 / R2-M5 修复配套）。
+
+- [ ] **主窗任意区域拖入文件不导航**：向主窗未被 preventDefault 的区域（设置页、codes 空白处、对话框遮罩外围）拖入任意文件——页面不得导航到 `file://`、SPA 不替换、解锁会话不丢（修复 c72b0c3 全局 dragDropGuard；附录二第 1 条"前端无 OS 文件拖入依赖"的旧结论仅覆盖排序语义，不覆盖 WebView2 默认投放导航）
+- [ ] **粘贴区文件投放不受全局兜底影响**：BatchPastePanel 粘贴区自身的 paste/元素级 drop 投放仍工作（元素级 handler 先于 window 冒泡，preventDefault 幂等）
+- [ ] **长列表（超出可视区）拖拽排序可用性**：pointer 长按拖拽行至列表上/下缘 24px 内触发边缘自动滚动（bed3739 edgeAutoScroll），可拖到视口外条目位置；触屏宿主把手 touch-action:none 后长按拖拽不被滚动抢先
