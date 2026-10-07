@@ -8,7 +8,7 @@
 
 use std::ffi::OsString;
 use std::fmt;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use sha2::Digest;
@@ -43,6 +43,14 @@ const PIPE_SDDL: &str = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)";
 
 /// 管道收发缓冲（§0.1 64KiB，与 MAX_FRAME_LEN 对齐）
 const PIPE_BUFFER_SIZE: u32 = 64 * 1024;
+
+/// 单连接帧收发超时（R6-M1）：镜像客户端 [`crate::elevation_client::IO_TIMEOUT`]。
+/// 服务单实例串行，读帧无 deadline 时半帧停住的连接即卡死服务循环（后续客户端全部
+/// ERROR_PIPE_BUSY 耗尽重试——慢连接可用性 DoS）；读帧（头+体）与写响应各享一个全量 deadline
+const FRAME_DEADLINE: Duration = crate::elevation_client::IO_TIMEOUT;
+
+/// 服务端 PeekNamedPipe 读轮询间隔（与客户端同款粒度）
+const READ_POLL_INTERVAL: Duration = crate::elevation_client::PEEK_POLL_INTERVAL;
 
 /// Resp 帧 wire 头长度：u32 len ‖ u8 msg_type ‖ u16 errcode（DEK 附加数据自第 8 字节起）
 const RESP_WIRE_HEADER_LEN: usize = 4 + 1 + 2;
@@ -229,13 +237,15 @@ fn resp_frame(code: ErrCode, extra: &[u8]) -> Vec<u8> {
 // ---------- 单连接处理（IO 薄壳，单测不覆盖） ----------
 
 /// 处理单连接（§0.1）：连接级验证 → 按契约读一帧 → 分派 → 写 Resp →（调用方）断开。
-/// 任何失败写一条错误响应后返回；服务主循环随后 DisconnectNamedPipe 并检查停止标志
+/// 任何失败写一条错误响应后返回；服务主循环随后 DisconnectNamedPipe 并检查停止标志。
+/// 全程帧收发带 deadline（R6-M1）：慢连接/半帧停住的连接超时断开，服务循环不被卡死
 fn pipe_server_once(pipe: HANDLE) {
     let mut store = HklmStore;
+    let deadline = Instant::now() + FRAME_DEADLINE;
     // ① 连接级验证：未绑定 → VerifyError（brief：Bound 缺失全部请求回 VerifyError——
     //    连接级短路下每个连接恰得一条 VerifyError 响应，语义一致且实现最简）
     let Some(bound) = store.read_bound() else {
-        respond(pipe, ErrCode::VerifyError);
+        respond(pipe, ErrCode::VerifyError, deadline);
         return;
     };
     let verdict = match verify_client_process(pipe) {
@@ -244,33 +254,36 @@ fn pipe_server_once(pipe: HANDLE) {
         None => ErrCode::VerifyError,
     };
     if verdict != ErrCode::Ok {
-        respond(pipe, verdict);
+        respond(pipe, verdict, deadline);
         return;
     }
     // ② 读帧——契约（Task 1 审查裁定）：先验 declared ≤ MAX_FRAME_LEN 再分配/读取；
     //    decode_frame 只在字节读入后判定，若先按声明 len（可达 4GB）读体即是无界分配洞。
-    //    超限回 BadRequest 且不读体，随后断开
-    let mut frame = match read_request_frame(pipe) {
+    //    超限回 BadRequest 且不读体，随后断开。读头/读体共享同一 deadline（R6-M1）：
+    //    超时静默断开——不回包（对端停住收不到）、不 eprintln（防低权者灌满服务日志）
+    let mut frame = match read_request_frame(pipe, deadline) {
         FrameRead::Frame(f) => f,
         FrameRead::TooLarge => {
-            respond(pipe, ErrCode::BadRequest);
+            respond(pipe, ErrCode::BadRequest, deadline);
             return;
         }
-        // 头/体未读满即断开（含停机自唤醒空连接）：无可响应对象
+        // 头/体未读满即断开（含停机自唤醒空连接与读超时）：无可响应对象
         FrameRead::Eof => return,
     };
     // ③ 形状终审 + 分派 + 响应
     let (msg, payload) = match decode_frame(&frame) {
         Ok(x) => x,
         Err(_) => {
-            respond(pipe, ErrCode::BadRequest);
+            respond(pipe, ErrCode::BadRequest, deadline);
             frame.zeroize();
             return;
         }
     };
     let (code, mut extra) = handle_payload(msg, payload, &mut store);
     let mut resp = resp_frame(code, &extra);
-    write_all(pipe, &resp);
+    // 写响应同样过 deadline（R6-M1）：客户端连接后不读时 CancelIo 收尾断开，
+    // SYSTEM 服务线程不悬挂
+    write_all_with_deadline(pipe, &resp, deadline);
     // DEK 清理（Global Constraints）：请求 Wrap 载荷与响应 Unwrap 附加数据均为明文 DEK，
     // 处理完立即 zeroize（Task 3 审查裁定：写失败路径同样清零——对端断开不代表进程内
     // 缓冲可留明文；服务端 Unwrap 契约是「不落明文副本」而非「成功送达才清」）
@@ -283,10 +296,10 @@ fn pipe_server_once(pipe: HANDLE) {
 
 /// 读一帧请求。契约（Task 1 审查裁定）读序：先读 4B 头 → u32 LE 解 declared →
 /// `declared > MAX_FRAME_LEN` 即 TooLarge（调用方回 BadRequest 且不读体）→
-/// 否则按 declared 精确读体 → 交 decode_frame 终审
-fn read_request_frame(pipe: HANDLE) -> FrameRead {
+/// 否则按 declared 精确读体 → 交 decode_frame 终审。头与体共享 deadline（R6-M1）
+fn read_request_frame(pipe: HANDLE, deadline: Instant) -> FrameRead {
     let mut header = [0u8; 4];
-    if !read_exact(pipe, &mut header) {
+    if !read_exact_with_deadline(pipe, &mut header, deadline) {
         return FrameRead::Eof;
     }
     let declared = u32::from_le_bytes(header) as usize;
@@ -298,7 +311,7 @@ fn read_request_frame(pipe: HANDLE) -> FrameRead {
     buf.extend_from_slice(&header);
     let body_start = buf.len();
     buf.resize(body_start + declared, 0);
-    if !read_exact(pipe, &mut buf[body_start..]) {
+    if !read_exact_with_deadline(pipe, &mut buf[body_start..], deadline) {
         return FrameRead::Eof;
     }
     FrameRead::Frame(buf)
@@ -309,16 +322,31 @@ enum FrameRead {
     Frame(Vec<u8>),
     /// 声明长度超上限（不读体）
     TooLarge,
-    /// 头/体未读满即 EOF 或 IO 失败
+    /// 头/体未读满即 EOF、IO 失败或超时（超时与断开同等处理：静默断开本次连接）
     Eof,
 }
 
-/// 字节模式管道精确读（PIPE_TYPE_BYTE 流语义；EOF/错误返回 false）
-fn read_exact(pipe: HANDLE, buf: &mut [u8]) -> bool {
+/// 字节模式管道带超时精确读（PIPE_TYPE_BYTE 流语义；镜像 elevation_client 的
+/// PeekNamedPipe 轮询 + deadline 方案，R6-M1）：到 deadline 仍无新字节 → false
+/// （调用方断开本次连接，服务循环继续）。Peek 确认有数据再 ReadFile——available>0
+/// 保证 ReadFile 不阻塞，等待期以 READ_POLL_INTERVAL 粒度让出线程
+fn read_exact_with_deadline(pipe: HANDLE, buf: &mut [u8], deadline: Instant) -> bool {
     use windows::Win32::Storage::FileSystem::ReadFile;
+    use windows::Win32::System::Pipes::PeekNamedPipe;
 
     let mut filled = 0usize;
     while filled < buf.len() {
+        let mut available = 0u32;
+        if unsafe { PeekNamedPipe(pipe, None, 0, None, Some(&mut available), None) }.is_err() {
+            return false;
+        }
+        if available == 0 {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(READ_POLL_INTERVAL);
+            continue;
+        }
         let mut n = 0u32;
         if unsafe { ReadFile(pipe, Some(&mut buf[filled..]), Some(&mut n), None) }.is_err() {
             return false;
@@ -331,25 +359,71 @@ fn read_exact(pipe: HANDLE, buf: &mut [u8]) -> bool {
     true
 }
 
-/// 字节模式管道精确写
-fn write_all(pipe: HANDLE, buf: &[u8]) -> bool {
+/// 字节模式管道带超时精确写（R6-M1）：重叠 WriteFile + 事件等待，超时 CancelIoEx
+/// 取消未决写并等其终结后才失效 OVERLAPPED/事件。响应帧 ≤64KiB 与管道出缓冲同量级、
+/// 正常路径单次写入即入缓冲不阻塞；此处防客户端连接后不读响应卡死 SYSTEM 服务线程
+fn write_all_with_deadline(pipe: HANDLE, buf: &[u8], deadline: Instant) -> bool {
+    use windows::core::{HRESULT, PCWSTR};
+    use windows::Win32::Foundation::{ERROR_IO_PENDING, WAIT_OBJECT_0};
     use windows::Win32::Storage::FileSystem::WriteFile;
+    use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
+    use windows::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 
+    let Ok(event) = (unsafe { CreateEventW(None, true, false, PCWSTR::null()) }) else {
+        return false;
+    };
     let mut written = 0usize;
     while written < buf.len() {
         let mut n = 0u32;
-        if unsafe { WriteFile(pipe, Some(&buf[written..]), Some(&mut n), None) }.is_err() || n == 0
-        {
-            return false;
+        let mut overlapped = OVERLAPPED {
+            hEvent: event,
+            ..Default::default()
+        };
+        match unsafe {
+            WriteFile(
+                pipe,
+                Some(&buf[written..]),
+                Some(&mut n),
+                Some(&mut overlapped),
+            )
+        } {
+            // 同步完成（数据入管道缓冲即返回）
+            Ok(()) if n > 0 => written += n as usize,
+            Ok(()) => break, // 零写入（不应发生，防御性视同失败）
+            Err(e) if e.code() == HRESULT::from_win32(ERROR_IO_PENDING.0) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                let waited = unsafe { WaitForSingleObject(event, remaining.as_millis() as u32) };
+                if waited == WAIT_OBJECT_0 {
+                    let mut got = 0u32;
+                    if unsafe { GetOverlappedResult(pipe, &overlapped, &mut got, false) }.is_err()
+                        || got == 0
+                    {
+                        break;
+                    }
+                    written += got as usize;
+                } else {
+                    // 超时/等待异常：取消未决写并等其终结（OVERLAPPED 与事件在其后
+                    // 才出作用域），断开本次连接
+                    unsafe {
+                        let _ = CancelIoEx(pipe, Some(&overlapped));
+                        let mut got = 0u32;
+                        let _ = GetOverlappedResult(pipe, &overlapped, &mut got, true);
+                    }
+                    break;
+                }
+            }
+            Err(_) => break,
         }
-        written += n as usize;
     }
-    true
+    unsafe {
+        let _ = CloseHandle(event);
+    }
+    written == buf.len()
 }
 
 /// 写一条错误响应（验证失败/坏请求路径；写失败静默——对端可能已断开）
-fn respond(pipe: HANDLE, code: ErrCode) {
-    let _ = write_all(pipe, &resp_frame(code, &[]));
+fn respond(pipe: HANDLE, code: ErrCode, deadline: Instant) {
+    let _ = write_all_with_deadline(pipe, &resp_frame(code, &[]), deadline);
 }
 
 // ---------- 调用者身份取证（IO 薄壳） ----------
@@ -1158,6 +1232,18 @@ mod tests {
     }
 
     // ---- 双读哈希（R6-I2：文件替换 TOCTOU 缓解）----
+
+    #[test]
+    fn frame_deadline_mirrors_client_io_timeout() {
+        // R6-M1：服务端帧收发超时与客户端 IO_TIMEOUT 同源同值（单实例串行服务被慢连接
+        // 卡死的 DoS 防线两侧对齐；常量改引用后断言防其一侧漂移回无界等待）
+        assert_eq!(FRAME_DEADLINE, crate::elevation_client::IO_TIMEOUT);
+        assert_eq!(
+            READ_POLL_INTERVAL,
+            crate::elevation_client::PEEK_POLL_INTERVAL
+        );
+        assert_eq!(FRAME_DEADLINE, Duration::from_secs(3));
+    }
 
     #[test]
     fn double_read_verdict_requires_two_consistent_hashes() {

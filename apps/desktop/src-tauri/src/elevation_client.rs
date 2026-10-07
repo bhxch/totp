@@ -30,11 +30,12 @@ use crate::elevation_proto::{
 /// 单次 call_service 的响应读超时：字节模式同步管道读无内建超时，采用 PeekNamedPipe 轮询
 /// 加墙钟 deadline 的硬上界。「阻塞读+信任服务端 3s 内响应」方案在服务端僵死（被调试器
 /// 挂起/单线程循环卡在别处）时调用线程永久悬挂（Tauri command 线程泄漏且 UI 无从得知）；
-/// 10ms 轮询粒度对 UI 感知无差，3s 与服务端缓冲内响应的正常耗时余量充足
-const IO_TIMEOUT: Duration = Duration::from_secs(3);
+/// 10ms 轮询粒度对 UI 感知无差，3s 与服务端缓冲内响应的正常耗时余量充足。
+/// 服务端读帧/写响应同量级复用（R6-M1：慢连接 DoS 防线两侧对齐，避免一侧 3s 一侧无界）
+pub(crate) const IO_TIMEOUT: Duration = Duration::from_secs(3);
 
-/// PeekNamedPipe 轮询间隔（IO_TIMEOUT 选型注释）
-const PEEK_POLL_INTERVAL: Duration = Duration::from_millis(10);
+/// PeekNamedPipe 轮询间隔（IO_TIMEOUT 选型注释；服务端 read_with_deadline 镜像同款）
+pub(crate) const PEEK_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 /// ERROR_PIPE_BUSY 短重试上界（I3 终审修复）：服务单实例串行（elevation_service
 /// create_pipe_instance 注释），前一连接未断开时新客户端 CreateFileW 收 ERROR_PIPE_BUSY。
