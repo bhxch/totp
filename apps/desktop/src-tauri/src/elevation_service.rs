@@ -123,7 +123,8 @@ fn normalize_path(path: &str) -> String {
 /// 单请求分派：msg/payload 来自已 decode 的帧，store 为绑定+包裹存储。
 /// 返回 (errcode, 附加数据)；Resp 帧由调用方经 [`resp_frame`] 统一加 u16 LE errcode 前缀。
 /// 契约：进入本函数的连接已通过调用者验证（验证失败在 pipe_server_once 连接级短路），
-/// 故 Status 的 matches_caller 恒 true
+/// 失配者收到的是连接级错误码 Resp——「是否匹配调用者」由 Resp 层 errcode 语义承担，
+/// Status JSON 不再冗余携带 matches_caller 字段
 pub(crate) fn handle_payload(
     msg: MsgType,
     payload: &[u8],
@@ -202,7 +203,7 @@ fn unwrap_dek(store: &mut dyn ElevationStore) -> (ErrCode, Vec<u8>) {
     (ErrCode::Ok, plain)
 }
 
-/// Status：JSON `{bound_path, sha256_prefix(8), version, matches_caller}`（§0.1）。
+/// Status：JSON `{bound_path, sha256_prefix(8), version}`（§0.1）。
 /// 未绑定 → VerifyError（brief：Bound 缺失全部请求回 VerifyError）
 fn status_json(store: &mut dyn ElevationStore) -> (ErrCode, Vec<u8>) {
     let Some(bound) = store.read_bound() else {
@@ -212,8 +213,6 @@ fn status_json(store: &mut dyn ElevationStore) -> (ErrCode, Vec<u8>) {
         "bound_path": bound.path,
         "sha256_prefix": bound.sha256.chars().take(8).collect::<String>(),
         "version": env!("CARGO_PKG_VERSION"),
-        // 连接级验证已通过（见 handle_payload 契约）；失配者收到的是连接级错误码响应
-        "matches_caller": true,
     });
     (ErrCode::Ok, json.to_string().into_bytes())
 }
@@ -1035,8 +1034,10 @@ mod tests {
         let v: serde_json::Value = serde_json::from_slice(&extra).unwrap();
         assert_eq!(v["bound_path"], EXE);
         assert_eq!(v["sha256_prefix"], "aaaaaaaa");
-        assert_eq!(v["matches_caller"], true);
         assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
+        // matches_caller 已删（YAGNI）：「是否匹配调用者」由 Resp 层 errcode 语义承担，
+        // 客户端 StatusInfo 从未解析该字段
+        assert!(v.get("matches_caller").is_none());
     }
 
     #[test]

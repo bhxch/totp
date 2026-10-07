@@ -633,11 +633,11 @@ mod tests {
 
     #[test]
     fn status_reply_parses_json_fields() {
+        // 夹具与服务端 status_json 实际输出对齐（matches_caller 已删，YAGNI）
         let json = serde_json::json!({
             "bound_path": r"C:\App\TotpTools.exe",
             "sha256_prefix": "abcd1234",
             "version": "1.2.3",
-            "matches_caller": true,
         });
         let reply = status_reply_from(ErrCode::Ok, json.to_string().into_bytes()).unwrap();
         assert_eq!(
