@@ -42,6 +42,9 @@ export function fakeStore(overrides: Record<string, unknown> = {}): any {
     removeDpapiSourceOp: vi.fn(async () => {}),
     addPrfSourceOp: vi.fn(async () => {}),
     removePrfSourceOp: vi.fn(async () => {}),
+    // R7-I2：abe 标记源 op（换口令轮换后恢复源的安全写路径走此通道）
+    addAbeSourceOp: vi.fn(async () => {}),
+    removeAbeSourceOp: vi.fn(async () => {}),
     getCurrentDek: vi.fn((): Uint8Array | null => null),
     sealWithDek: vi.fn(async (): Promise<string | null> => null),
     unsealWithDek: vi.fn(async (): Promise<string | null> => null),

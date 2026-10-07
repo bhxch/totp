@@ -593,6 +593,7 @@
     "abeRemove": "移除",
     "abeRemoveConfirm": "确认移除",
     "abeMismatch": "应用已更新或路径已变，需要重新绑定",
+    "abeSourceMissing": "应用绑定已失效（如更换主口令后未恢复），需要重新绑定",
     "abeBoundLine": "版本 {version} · 绑定 {path}",
     "abeBindFailed": "安装未完成（已取消或服务未就绪），可重试",
     "abeWrapFailed": "服务密文写入未完成，绑定未生效，可重试",

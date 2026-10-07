@@ -30,10 +30,12 @@ function makePlatform(over: Partial<SecurityPlatform> = {}): SecurityPlatform {
 }
 
 /** ABE 提权服务通道 mock（默认 supported+未安装：status→null；bind 成功；wrap 成功；
- *  源 op 空实现对 spy 断言用；unwrap 为 T7 锁屏通道，SecurityCard 不消费——桩为 null 回退语义即可） */
+ *  源 op 空实现对 spy 断言用；source 默认在场（R7-I2 判定数据口，源缺失用例单独覆写）；
+ *  unwrap 为 T7 锁屏通道，SecurityCard 不消费——桩为 null 回退语义即可） */
 function makeAbe(over: Partial<AbeOps> = {}): AbeOps {
   return {
     supported: true,
+    source: computed(() => ({ kind: 'abe' as const })),
     status: vi.fn().mockResolvedValue(null),
     bind: vi.fn().mockResolvedValue(true),
     wrap: vi.fn().mockResolvedValue(true),
@@ -60,7 +62,7 @@ function mountCard(abe: AbeOps | null, platform?: SecurityPlatform) {
   })
 }
 
-describe('SecurityCard ABE 区块（plan p6 §0.3 三态）', () => {
+describe('SecurityCard ABE 区块（plan p6 §0.3 三态 + R7-I2 源缺失引导态）', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('supported=false 不渲染区块也不调 status；abe 为 null（宿主未提供）同样不渲染', async () => {
@@ -103,6 +105,20 @@ describe('SecurityCard ABE 区块（plan p6 §0.3 三态）', () => {
     expect(w.text()).toContain('应用已更新或路径已变，需要重新绑定')
     expect(w.find('button.abe-install').exists()).toBe(false)
     expect(w.find('button.remove-abe').exists()).toBe(false)
+  })
+
+  it('R7-I2 源缺失（服务在但 abe 标记源不在——换口令轮换降级态）：显示重绑引导而非假「已启用」状态行', async () => {
+    const w = mountCard(makeAbe({ source: computed(() => null), status: vi.fn().mockResolvedValue(matchedStatus) }))
+    await vi.waitFor(() => expect(w.find('button.abe-rebind').exists()).toBe(true))
+    expect(w.text()).toContain('应用绑定已失效（如更换主口令后未恢复），需要重新绑定')
+    // 假「已启用」防御：无状态行（版本+路径）、无移除按钮
+    expect(w.text()).not.toContain('版本 1.2.3')
+    expect(w.find('button.remove-abe').exists()).toBe(false)
+    expect(w.find('button.abe-install').exists()).toBe(false)
+    // 重绑走安装序列（bind→wrap→addSource），可恢复
+    await w.find('button.abe-rebind').trigger('click')
+    const abe = w.props('abe')!
+    await vi.waitFor(() => expect(abe.addSource).toHaveBeenCalledTimes(1))
   })
 
   it('绑定调用序列（C1 终审）：点击安装 → abe.bind → wrap(当前 DEK) → addSource → status 刷新（共 2 次）→ 成功提示', async () => {

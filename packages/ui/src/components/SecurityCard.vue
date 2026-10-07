@@ -62,6 +62,9 @@ const abe = computed<AbeOps | null>(() => {
   const ops = props.abe ?? props.platform?.abe ?? null
   return ops && ops.supported ? ops : null
 })
+/** abe 标记源（R7-I2）：null=源不在场。服务在（matchesCaller）但源不在=换口令轮换降级/
+ *  半绑定态，不是「已启用」——须走重绑引导而非状态行（dpapi 区块语义不动） */
+const abeSource = computed(() => abe.value?.source.value ?? null)
 /** 服务状态快照（挂载时 status() 一次 + bind/remove 成功后刷新；null=未拉到/查询失败 → 按未安装渲染） */
 const abeStatus = ref<AbeStatus | null>(null)
 /** ABE 绑定/移除进行中（bind 走 UAC 提权、desktop 侧轮询服务可达可长达 10s+；独立于卡片全局
@@ -403,7 +406,7 @@ async function onDelayChange(value: string): Promise<void> {
             </div>
           </template>
           <!-- ABE 提权服务区块（plan p6 §0.3；abe 为 null/supported=false 整块不渲染——computed 已滤）。
-               三态按键判定：abeStatus null（未拉到/查询失败）按未安装渲染 -->
+               三态按键判定 + R7-I2 源缺失引导态：abeStatus null（未拉到/查询失败）按未安装渲染 -->
           <template v-if="abe">
             <!-- 未安装：安装服务（busy 防重复点击；bind=UAC 一次完成安装+绑定） -->
             <div v-if="!abeStatus?.installed" class="dpapi-row">
@@ -411,16 +414,18 @@ async function onDelayChange(value: string): Promise<void> {
               <MdButton variant="tonal" class="abe-install" :disabled="busy || abeBusy" @click="onAbeBind">{{ abeBusy ? t('securityCard.abeInstalling') : t('securityCard.abeInstall') }}</MdButton>
               <span v-if="abeHint" class="method-hint">{{ abeHint }}</span>
             </div>
-            <!-- 已安装且调用者匹配：状态行（版本+绑定路径尾段）+ 两击移除 -->
-            <div v-else-if="abeStatus.matchesCaller" class="dpapi-row">
+            <!-- 已安装且调用者匹配且标记源在场：状态行（版本+绑定路径尾段）+ 两击移除。
+                 R7-I2：matchesCaller 仅证服务侧认可调用者，源不在场（换口令轮换降级/半绑定态）
+                 不算已启用 → 落入下方重绑引导，防假「已启用」 -->
+            <div v-else-if="abeStatus.matchesCaller && abeSource" class="dpapi-row">
               <span class="method">{{ t('securityCard.abeTitle') }}</span>
               <span class="method-hint">{{ abeBoundLine }}</span>
               <MdButton variant="text" danger class="remove-abe" :disabled="busy || abeBusy" @click="onAbeRemove">{{ abeConfirmRemove ? t('securityCard.abeRemoveConfirm') : t('securityCard.abeRemove') }}</MdButton>
             </div>
-            <!-- 已安装但调用者失配（应用更新/目录迁移）：提示+重新绑定（=安装流程） -->
+            <!-- 已安装但调用者失配（应用更新/目录迁移）或标记源缺失（换口令降级态）：提示+重新绑定（=安装流程） -->
             <div v-else class="dpapi-row">
               <span class="method">{{ t('securityCard.abeTitle') }}</span>
-              <span class="method-hint">{{ t('securityCard.abeMismatch') }}</span>
+              <span class="method-hint">{{ t(abeSource ? 'securityCard.abeMismatch' : 'securityCard.abeSourceMissing') }}</span>
               <MdButton variant="tonal" class="abe-rebind" :disabled="busy || abeBusy" @click="onAbeBind">{{ t('securityCard.abeRebind') }}</MdButton>
             </div>
           </template>

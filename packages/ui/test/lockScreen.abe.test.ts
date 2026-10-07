@@ -33,6 +33,9 @@ function storeWithAbe(over: Partial<VueStore> = {}): VueStore {
 function makeAbe(over: Partial<AbeOps> = {}): AbeOps {
   return {
     supported: true,
+    // R7-I2：标记源视图为 AbeOps 必填成员（SecurityCard 判定数据口；LockScreen 不消费——
+    // 静默解锁入口直接读 store.abeSource，桩为 null 即可）
+    source: computed(() => null),
     status: vi.fn().mockResolvedValue(null),
     bind: vi.fn().mockResolvedValue(true),
     // C1 终审：绑定编排新增成员（LockScreen 不消费，桩为成功语义即可）

@@ -62,6 +62,10 @@ export interface AbeResult {
  *  store 源 op 包装，extension 无此能力 → 不注入；SecurityCard 仅 supported=true 渲染） */
 export interface AbeOps {
   supported: boolean
+  /** 已绑定的 abe 标记源视图（R7-I2：null=源不在场。SecurityCard「已启用」态判定用——
+   *  服务在（matchesCaller）但源不在（换口令轮换降级/半绑定态）≠ 已启用，须引导重绑；
+   *  desktop 宿主映射 store.abeSource，形态同 DpapiUnlockOps.source（无载荷标记源） */
+  source: ComputedRef<{ kind: 'abe' } | null>
   status(): Promise<AbeStatus | null>
   bind(): Promise<boolean>
   /** 服务侧 Wrap（C1 终审：绑定编排 bind→wrap→addSource 的 wrap 步）：当前 DEK →

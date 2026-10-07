@@ -106,6 +106,9 @@ export function createSecurityPlatform(deps: SecurityPlatformDeps): DesktopSecur
   const abeSupported = deps.flags.isWin
   const abeOps: AbeOps = {
     supported: abeSupported,
+    // R7-I2：abe 标记源视图（SecurityCard「已启用」态判定 = matchesCaller && 源在场；
+    // LockScreen 静默解锁入口读同一 store.abeSource）
+    source: computed(() => deps.getStore()?.abeSource.value ?? null),
     async status() {
       if (!abeSupported) return null
       try {
@@ -173,23 +176,42 @@ export function createSecurityPlatform(deps: SecurityPlatformDeps): DesktopSecur
 
   /** I2 终审：ABE 服务侧密文与 DEK 生命周期联动（dpapi migrateDekWrapToEntropyBound 同域的
    *  宿主编排点——DEK 前进/退役的既有 SecurityOps 通道完成后接服务侧动作）。
-   *  轮换重 Wrap（rotateDek=true 换新 DEK 后 abe 源仍在 → abeOps.wrap 新 DEK；档位切换
-   *  rotateDek=false DEK 不变，HKLM 密文仍有效无需重包）；关加密清密文（abe 标记源随
-   *  SECURITY_KEY 整体删除消失，无需 removeAbeSourceOp——此时调用必抛 'encryption not
-   *  enabled'，仅清服务侧 HKLM）。两路失败均仅 warn 不阻断主流程：换口令/关加密已生效，
-   *  残留由 UI 下次 status/失配重绑或卸载清理收尾 */
-  async function rewrapAbeCiphertext(): Promise<void> {
+   *  轮换（rotateDek=true 换新 DEK）：服务在线重 Wrap + 恢复标记源，离线/失败清密文降级
+   *  （restoreAbeAfterRotation）；档位切换 rotateDek=false DEK 不变，HKLM 密文仍有效无需重包；
+   *  关加密清密文（abe 标记源随 SECURITY_KEY 整体删除消失，无需 removeAbeSourceOp——此时调用
+   *  必抛 'encryption not enabled'，仅清服务侧 HKLM）。失败均仅 warn 不阻断主流程 */
+  /** R7-I2：轮换后 ABE 恢复/降级。core changeVaultPassphrase(rotateDek=true) 把 kekSources
+   *  重置为 password-only（旧 prf/dpapi/abe 死凭证数据层丢弃），故换口令后 abe 源必不在——
+   *  须主动二选一：服务在线（status matchesCaller，触发一次查询）→ 新 DEK 重 Wrap + addAbeSourceOp
+   *  恢复标记源（mutateSecurityOp 守卫止步 security 不需 DEK；换口令需旧解锁会话，此处会话仍
+   *  解锁，落盘生效）保持 ABE 继续工作；服务离线/失配/查询失败/重 Wrap 失败/恢复落盘失败 →
+   *  removeAbeCiphertext 清 HKLM 密文降级退出（标记源与密文必须成对，避免残留旧 DEK 无主密文），
+   *  用户可后续在 SecurityCard 重装绑定。全程仅 warn 不阻断换口令主流程（换口令已生效） */
+  async function restoreAbeAfterRotation(): Promise<void> {
     const s = deps.getStore()
-    if (!s || !s.abeSource.value) return
-    const dek = s.getCurrentDek()
-    if (!dek) return
-    const ok = await abeOps.wrap(dek).catch(() => false)
-    if (!ok) console.warn('[desktop] ABE 重 Wrap 失败（换口令已生效；服务密文未更新，重绑可恢复）')
+    const dek = s?.getCurrentDek()
+    if (!s || !dek) return
+    let restored = false
+    if ((await abeOps.status().catch(() => null))?.matchesCaller === true) {
+      if (await abeOps.wrap(dek).catch(() => false)) {
+        try {
+          await s.addAbeSourceOp()
+          restored = true
+        } catch (e) {
+          console.warn('[desktop] ABE 标记源恢复失败（换口令已生效；标记源与 HKLM 密文须成对，清密文降级）', e)
+        }
+      } else {
+        console.warn('[desktop] ABE 重 Wrap 失败（换口令已生效；清服务密文降级，重装可恢复）')
+      }
+    } else {
+      console.warn('[desktop] ABE 服务离线/失配（换口令已生效；清服务密文降级，重装可恢复）')
+    }
+    if (!restored) await removeAbeCiphertext()
   }
 
   async function removeAbeCiphertext(): Promise<void> {
     const r = await abeOps.remove().catch(() => null)
-    if (!r?.ok) console.warn('[desktop] ABE 服务密文清理失败（关加密已生效；卸载/重装可清）', r?.message)
+    if (!r?.ok) console.warn('[desktop] ABE 服务密文清理失败（安全操作已生效；卸载/重装可清）', r?.message)
   }
 
   const securityPlatform = computed<SecurityPlatform | null>(() => {
@@ -211,10 +233,14 @@ export function createSecurityPlatform(deps: SecurityPlatformDeps): DesktopSecur
     const security: SecurityOps = {
       ...baseSecurity,
       async changePassphrase(pw, opts) {
+        // R7-I2：轮换前先记 abe 源在场（disableEncryption 同手法）——core 轮换把 kekSources
+        // 重置为 password-only，轮换后再读 abeSource 恒 null（旧实现即因此成死代码，HKLM
+        // 残留旧 DEK 密文且 UI 假「已启用」）
+        const hadAbe = s.abeSource.value !== null
         await baseSecurity.changePassphrase(pw, opts)
-        // 轮换（rotateDek 缺省 true）后新 DEK 已在会话（提交点同步前进）：abe 源在即重 Wrap；
-        // 档位切换（rotateDek=false）DEK 不变，跳过
-        if ((opts?.rotateDek ?? true) && s.abeSource.value) await rewrapAbeCiphertext()
+        // 轮换（rotateDek 缺省 true）后新 DEK 已在会话（提交点同步前进）：abe 源在场即走
+        // 恢复/降级；档位切换（rotateDek=false）DEK 不变，HKLM 密文仍有效，跳过
+        if ((opts?.rotateDek ?? true) && hadAbe) await restoreAbeAfterRotation()
       },
       async disableEncryption() {
         // 先记 abe 源在场（disable 后 security 缓存清空，abeSource 恒 null 不可再判）

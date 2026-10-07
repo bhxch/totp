@@ -593,6 +593,7 @@
     "abeRemove": "Remove",
     "abeRemoveConfirm": "Confirm removal",
     "abeMismatch": "App updated or path changed — rebinding required",
+    "abeSourceMissing": "App binding is no longer active (e.g. not restored after a passphrase change) — rebinding required",
     "abeBoundLine": "Version {version} · bound to {path}",
     "abeBindFailed": "Install was not completed (cancelled or service not ready); you can retry",
     "abeWrapFailed": "Service ciphertext write did not complete; binding not activated. You can retry",

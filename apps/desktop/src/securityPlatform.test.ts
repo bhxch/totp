@@ -319,35 +319,91 @@ describe('I2 终审：ABE 服务侧密文与 DEK 生命周期联动（security �
     tauriMock.reset()
   })
 
-  it('轮换换口令（rotateDek 缺省/true）+ abe 源在场 → 新 DEK 重 Wrap；abe 源缺席不 wrap', async () => {
+  /** R7-I2：fake store 的 changePassphrase 模拟 core 真实语义——rotateDek=true（缺省）时
+   *  kekSources 重置为 password-only（abe/dpapi/prf 源数据层全清）；rotateDek=false 保留。
+   *  旧口径（手动设 abeSource 且换口令后仍保留）与真实语义背离，联动测试以此为准绳 */
+  function simulateRealRotation(store: ReturnType<typeof fakeStore>): void {
+    store.changePassphrase.mockImplementation(async (_pw: string, opts?: { rotateDek?: boolean }) => {
+      if (opts?.rotateDek ?? true) {
+        store.abeSource.value = null
+        store.dpapiSource.value = null
+        store.prfSources.value = []
+      }
+    })
+  }
+
+  it('轮换换口令（rotateDek 缺省/true）+ abe 源在场 + 服务在线 → 新 DEK 重 Wrap + 恢复标记源（不清密文）', async () => {
+    const { f, store } = makeFactory()
+    store.getCurrentDek.mockReturnValue(DEK)
+    store.abeSource.value = { kind: 'abe' as const }
+    simulateRealRotation(store)
+    tauriMock.onReturn('abe_status', { installed: true, matchesCaller: true, boundPath: 'C:\\x\\TotpTools.exe', version: '1.2.3' })
+    await f.platform.value!.security!.changePassphrase('new')
+    expect(tauriMock.calls('abe_status')).toHaveLength(1) // 服务在线判定：触发一次 status 查询
+    expect(tauriMock.calls('abe_wrap')).toHaveLength(1) // 新 DEK（number 数组入 invoke）
+    expect(tauriMock.calls('abe_wrap')[0]?.args).toEqual({ dek: Array.from(DEK) })
+    expect(store.addAbeSourceOp).toHaveBeenCalledTimes(1) // 恢复 abe 标记源（换口令后会话仍解锁，落盘生效）
+    expect(tauriMock.calls('abe_remove')).toHaveLength(0)
+  })
+
+  it('服务离线/失配/查询失败 → 不 wrap 不恢复源，abe_remove 清密文降级退出（仅告警不阻断）', async () => {
     const { f, store } = makeFactory()
     store.getCurrentDek.mockReturnValue(DEK)
     const sec = f.platform.value!.security!
-    // abe 源缺席：不触服务
+    // 失配（服务在但 matchesCaller:false）
+    store.abeSource.value = { kind: 'abe' as const }
+    simulateRealRotation(store)
+    tauriMock.onReturn('abe_status', { installed: true, matchesCaller: false })
     await sec.changePassphrase('new')
     expect(tauriMock.calls('abe_wrap')).toHaveLength(0)
-    // abe 源在场：wrap 新 DEK（number 数组入 invoke）
+    expect(store.addAbeSourceOp).not.toHaveBeenCalled()
+    expect(tauriMock.calls('abe_remove')).toHaveLength(1)
+    expect(warnSpy).toHaveBeenCalledWith('[desktop] ABE 服务离线/失配（换口令已生效；清服务密文降级，重装可恢复）')
+    // status 查询失败（null）同降级
+    tauriMock.reset()
     store.abeSource.value = { kind: 'abe' as const }
+    tauriMock.on('abe_status', () => { throw new Error('pipe gone') })
+    await sec.changePassphrase('new')
+    expect(tauriMock.calls('abe_remove')).toHaveLength(1)
+  })
+
+  it('服务在线但重 Wrap 失败 / 标记源恢复落盘失败 → 清密文降级（标记源与 HKLM 密文须成对）', async () => {
+    const { f, store } = makeFactory()
+    store.getCurrentDek.mockReturnValue(DEK)
+    const sec = f.platform.value!.security!
+    // rewrap 失败
+    store.abeSource.value = { kind: 'abe' as const }
+    simulateRealRotation(store)
+    tauriMock.onReturn('abe_status', { installed: true, matchesCaller: true })
+    tauriMock.on('abe_wrap', () => { throw new Error('service busy') })
+    await expect(sec.changePassphrase('new')).resolves.toBeUndefined()
+    expect(tauriMock.calls('abe_wrap')).toHaveLength(1)
+    expect(tauriMock.calls('abe_remove')).toHaveLength(1)
+    expect(warnSpy).toHaveBeenCalledWith('[desktop] ABE 重 Wrap 失败（换口令已生效；清服务密文降级，重装可恢复）')
+    // 恢复源落盘失败（如轮换窗口内恰被锁定）
+    tauriMock.reset()
+    store.abeSource.value = { kind: 'abe' as const }
+    tauriMock.onReturn('abe_status', { installed: true, matchesCaller: true })
+    tauriMock.onReturn('abe_wrap', null)
+    store.addAbeSourceOp.mockRejectedValue(new Error('vault locked'))
     await sec.changePassphrase('new')
     expect(tauriMock.calls('abe_wrap')).toHaveLength(1)
-    expect(tauriMock.calls('abe_wrap')[0]?.args).toEqual({ dek: Array.from(DEK) })
+    expect(store.addAbeSourceOp).toHaveBeenCalledTimes(1)
+    expect(tauriMock.calls('abe_remove')).toHaveLength(1)
+    expect(warnSpy).toHaveBeenCalledWith('[desktop] ABE 标记源恢复失败（换口令已生效；标记源与 HKLM 密文须成对，清密文降级）', expect.any(Error))
   })
 
-  it('档位切换（rotateDek:false）DEK 不变 → 不重 Wrap（HKLM 密文仍有效）', async () => {
+  it('abe 源缺席或档位切换（rotateDek:false）→ 不查状态不触服务（HKLM 密文无需动）', async () => {
     const { f, store } = makeFactory()
     store.getCurrentDek.mockReturnValue(DEK)
+    const sec = f.platform.value!.security!
+    // abe 源缺席：零触达
+    await sec.changePassphrase('new')
+    expect(tauriMock.calls()).toHaveLength(0)
+    // 档位切换：DEK 不变，不查状态不重包
     store.abeSource.value = { kind: 'abe' as const }
-    await f.platform.value!.security!.changePassphrase('pw', { rotateDek: false, profile: 'fast' })
-    expect(tauriMock.calls('abe_wrap')).toHaveLength(0)
-  })
-
-  it('重 Wrap 失败 → 仅告警不抛（换口令主流程不阻断，重绑可恢复）', async () => {
-    const { f, store } = makeFactory()
-    store.getCurrentDek.mockReturnValue(DEK)
-    store.abeSource.value = { kind: 'abe' as const }
-    tauriMock.on('abe_wrap', () => { throw new Error('service busy') })
-    await expect(f.platform.value!.security!.changePassphrase('new')).resolves.toBeUndefined()
-    expect(warnSpy).toHaveBeenCalledWith('[desktop] ABE 重 Wrap 失败（换口令已生效；服务密文未更新，重绑可恢复）')
+    await sec.changePassphrase('pw', { rotateDek: false, profile: 'fast' })
+    expect(tauriMock.calls()).toHaveLength(0)
   })
 
   it('关加密 + abe 源在场 → abe_remove 清服务密文；失败仅告警；abe 源缺席不触服务', async () => {
@@ -365,7 +421,7 @@ describe('I2 终审：ABE 服务侧密文与 DEK 生命周期联动（security �
     tauriMock.reset()
     tauriMock.onReturn('abe_remove', { ok: false, message: 'unreachable' })
     await expect(sec.disableEncryption()).resolves.toBeUndefined()
-    expect(warnSpy).toHaveBeenCalledWith('[desktop] ABE 服务密文清理失败（关加密已生效；卸载/重装可清）', 'unreachable')
+    expect(warnSpy).toHaveBeenCalledWith('[desktop] ABE 服务密文清理失败（安全操作已生效；卸载/重装可清）', 'unreachable')
   })
 
   it('security 其余成员透传不变（locked/kdfProfile 等浅拷贝语义）', () => {
@@ -374,5 +430,12 @@ describe('I2 终审：ABE 服务侧密文与 DEK 生命周期联动（security �
     expect(sec.locked).toBe(store.locked)
     expect(sec.hasEncryption).toBe(store.hasEncryption)
     expect(sec.getCurrentDek?.()).toBeNull() // C1：factory 注入的 DEK 面板出口透传
+  })
+
+  it('abeOps.source 映射 store.abeSource（R7-I2：SecurityCard「已启用」态判定数据口）', () => {
+    const { f, store } = makeFactory()
+    expect(f.abe.source.value).toBeNull()
+    store.abeSource.value = { kind: 'abe' as const }
+    expect(f.abe.source.value).toEqual({ kind: 'abe' })
   })
 })
