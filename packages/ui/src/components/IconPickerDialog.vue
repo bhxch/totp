@@ -220,6 +220,10 @@ function select(item: Item) {
 .picker-chip { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: 999px; background: transparent; color: var(--md-sys-color-on-surface-variant); padding: 2px 10px; font-size: var(--md-sys-typescale-body-small); cursor: pointer; position: relative; }
 /* 命中层:inset -6px 扩薄 chip 触达(视觉尺寸不变;相邻 chip 命中带重叠,MD3 允许) */
 .picker-chip::after { content: ''; position: absolute; inset: -6px; border-radius: inherit; }
+/* C1:packChips 宿主为 span(非交互),命中层是绝对定位盒、绘制于流内内容之上——真实浏览器命中测试
+ * 取顶层盒,内嵌 4 类 button(选包/删包/确认/取消)点击全被截走(jsdom 无 hit-testing 故测试未拦)。
+ * 内嵌交互元素统一抬高到伪元素之上恢复点击;plainChips 宿主自身为 button(无子 button),不受影响 */
+.picker-chip > button { position: relative; z-index: 1; }
 .picker-chip.active { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); border-color: transparent; }
 .chip-label { border: none; background: transparent; color: inherit; cursor: pointer; font: inherit; padding: 0; }
 .chip-remove { border: none; background: transparent; color: inherit; font: inherit; cursor: pointer; opacity: 0.6; padding: 0 2px; min-width: 40px; min-height: 40px; }
