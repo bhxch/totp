@@ -1,4 +1,6 @@
-//! ABE 提权 Tauri 命令层（plan p6 §T4）：abe_status / abe_bind / abe_remove / abe_unwrap。
+//! ABE 提权 Tauri 命令层（plan p6 §T4）：abe_status / abe_bind / abe_wrap / abe_remove /
+//! abe_unwrap。I1 终审：bind/wrap/remove/unwrap 四个动状态或动 DEK 的命令均按主窗口
+//! 门控（ensure_main_window_label，先例 db33486 abe_unwrap）；abe_status 只读无门控。
 //!
 //! 本模块全平台编译：`generate_handler!` 宏不支持条目级 cfg，注册须无条件（审查裁定
 //! 拆 cfg 包装层的样板远贵于 3 个桩）；Windows 真实现经 [`crate::elevation_client`] /
@@ -10,6 +12,7 @@
 //! 前端展示「需要重新绑定」即可，无需路径细节（预期行为）。
 
 use serde::Serialize;
+use zeroize::Zeroize;
 
 /// abe_status 返回（前端契约 §T4；serde camelCase 对齐 TS AbeStatus：
 /// { installed, matchesCaller, boundPath?, version? }——supported 由 AbeOps.supported 表达，
@@ -41,20 +44,40 @@ pub async fn abe_status() -> AbeStatusResult {
 
 /// abe_bind（§T4）：trigger_install 一次 UAC → 1.5s 间隔轮询 Status 至服务可达，最多 10s。
 /// UAC 交互与轮询循环均为分钟级无上界阻塞段（T4 审查 ⚠️）：整体收敛 spawn_blocking，
-/// worker 线程不被占。UAC 取消/提权进程失败/join 失败经 Err(String) 传播（TS 侧捕获为 false）
+/// worker 线程不被占。UAC 取消/提权进程失败/join 失败经 Err(String) 传播（TS 侧捕获为 false）。
+/// 主窗口门控（I1 终审）：UAC 提权安装属动系统状态的高权命令，mini webview 内脚本 invoke
+/// 恒 Err「仅主窗口可调用此命令」（同 abe_unwrap 先例 db33486）；label 先取再 move
 #[tauri::command]
-pub async fn abe_bind() -> Result<serde_json::Value, String> {
-    tauri::async_runtime::spawn_blocking(abe_bind_impl)
+pub async fn abe_bind(window: tauri::WebviewWindow) -> Result<serde_json::Value, String> {
+    let label = window.label().to_string();
+    tauri::async_runtime::spawn_blocking(move || abe_bind_impl(&label))
         .await
         .map_err(|e| format!("abe_bind 后台任务异常: {e}"))?
 }
 
+/// abe_wrap（C1 终审：绑定链补 Wrap 一步）：当前进程 DEK → 服务侧 Wrap → HKLM WrappedDek。
+/// 与 abe_bind/addSource 编排为 bind→wrap→addSource（SecurityCard.onAbeBind），缺 wrap 步
+/// 则 HKLM 永无密文、锁屏 abe.unwrap 恒 NoWrappedDek。DEK 入口命令与 abe_unwrap（DEK 出口）
+/// 同标准：主窗口门控 + spawn_blocking（DEK 管道 IO 阻塞段，T4 审查 ⚠️）。入参形态与
+/// abe_unwrap 返回对称：JSON number 数组（Vec<u8> serde 通道），32B 校验在实现层先行
+/// （非 32B 直接拒，不发起管道往返）；DEK 缓冲处理完 zeroize（成功失败路径同清）
+#[tauri::command]
+pub async fn abe_wrap(window: tauri::WebviewWindow, dek: Vec<u8>) -> Result<(), String> {
+    let label = window.label().to_string();
+    tauri::async_runtime::spawn_blocking(move || abe_wrap_impl(&label, dek))
+        .await
+        .map_err(|e| format!("abe_wrap 后台任务异常: {e}"))?
+}
+
 /// abe_remove（§T4）：管道 Remove 删 HKLM WrappedDek。恒回 {ok, message?} 不抛 invoke 错
 /// ——服务不可达仅意味密文已随卸载消失，前端移除流程（清 security.json abe 源）不应被阻断；
-/// 管道 IO 阻塞段收敛 spawn_blocking，join 失败折入 ok:false（与错误通道同形态）
+/// 管道 IO 阻塞段收敛 spawn_blocking，join 失败折入 ok:false（与错误通道同形态）。
+/// 主窗口门控（I1 终审）：动 HKLM 密文的写命令，mini 内 invoke 恒拒（门控失败折入
+/// {ok:false,message}，与该命令恒不抛 invoke 错的通道契约一致）
 #[tauri::command]
-pub async fn abe_remove() -> serde_json::Value {
-    tauri::async_runtime::spawn_blocking(abe_remove_impl)
+pub async fn abe_remove(window: tauri::WebviewWindow) -> serde_json::Value {
+    let label = window.label().to_string();
+    tauri::async_runtime::spawn_blocking(move || abe_remove_impl(&label))
         .await
         .unwrap_or_else(|e| {
             serde_json::json!({ "ok": false, "message": format!("abe_remove 后台任务异常: {e}") })
@@ -91,22 +114,44 @@ fn abe_status_impl() -> AbeStatusResult {
 }
 
 #[cfg(windows)]
-fn abe_bind_impl() -> Result<serde_json::Value, String> {
+fn abe_bind_impl(window_label: &str) -> Result<serde_json::Value, String> {
+    crate::platform_security::ensure_main_window_label(window_label)?;
     bind_and_wait()
 }
 
 #[cfg(not(windows))]
-fn abe_bind_impl() -> Result<serde_json::Value, String> {
+fn abe_bind_impl(_window_label: &str) -> Result<serde_json::Value, String> {
     Err("当前平台不支持 ABE 服务".into())
 }
 
 #[cfg(windows)]
-fn abe_remove_impl() -> serde_json::Value {
+fn abe_wrap_impl(window_label: &str, mut dek: Vec<u8>) -> Result<(), String> {
+    crate::platform_security::ensure_main_window_label(window_label)?;
+    let result = match <[u8; 32]>::try_from(dek.as_slice()) {
+        Ok(arr) => crate::elevation_client::wrap_dek(&arr).map_err(|e| e.to_string())?,
+        Err(_) => Err(format!("DEK 长度非 32B: {}B", dek.len())),
+    };
+    // 明文 DEK 处理完即清（Global Constraints；成功失败路径同清）
+    dek.zeroize();
+    result
+}
+
+/// 非 Windows：平台不支持即无 DEK 可入，不门控直接桩（与 abe_unwrap 非 Windows 形态一致）
+#[cfg(not(windows))]
+fn abe_wrap_impl(_window_label: &str, _dek: Vec<u8>) -> Result<(), String> {
+    Err("当前平台不支持 ABE 服务".into())
+}
+
+#[cfg(windows)]
+fn abe_remove_impl(window_label: &str) -> serde_json::Value {
+    if let Err(e) = crate::platform_security::ensure_main_window_label(window_label) {
+        return serde_json::json!({ "ok": false, "message": e });
+    }
     remove_result_to_json(crate::elevation_client::remove_binding())
 }
 
 #[cfg(not(windows))]
-fn abe_remove_impl() -> serde_json::Value {
+fn abe_remove_impl(_window_label: &str) -> serde_json::Value {
     // 经同一折叠通道产出桩（{ok:false,message}），保持 Linux CI 下该纯函数有非测试消费方
     remove_result_to_json(Err("当前平台不支持 ABE 服务".to_string()))
 }
@@ -356,25 +401,56 @@ mod tests {
         assert_ne!(err, "仅主窗口可调用此命令");
     }
 
+    // ---- abe_bind/abe_remove 主窗口门控（I1 终审）----
+    // 仅测 mini 拒绝：main 路径 bind 会拉 UAC、remove 会动 HKLM WrappedDek，测试禁触
+
+    #[cfg(windows)]
+    #[test]
+    fn abe_bind_impl_gates_mini_window() {
+        assert_eq!(abe_bind_impl("mini").unwrap_err(), "仅主窗口可调用此命令");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn abe_remove_impl_gates_mini_window() {
+        // 门控失败折入 {ok:false,message}（本命令恒不抛 invoke 错的通道契约）
+        assert_eq!(
+            abe_remove_impl("mini"),
+            serde_json::json!({ "ok": false, "message": "仅主窗口可调用此命令" })
+        );
+    }
+
+    // ---- abe_wrap 门控与 32B 校验（C1 终审；DEK 入口命令同 unwrap 门控标准）----
+
+    #[cfg(windows)]
+    #[test]
+    fn abe_wrap_impl_gates_mini_window() {
+        assert_eq!(
+            abe_wrap_impl("mini", vec![0u8; 32]).unwrap_err(),
+            "仅主窗口可调用此命令"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn abe_wrap_impl_rejects_non_32b_after_gate() {
+        // 主窗口放行至长度校验（非 32B 在实现层先拒，不发起管道往返——错误非门控文案）
+        let err = abe_wrap_impl("main", vec![0u8; 31]).unwrap_err();
+        assert!(err.contains("32B"), "实际: {err}");
+        assert_ne!(err, "仅主窗口可调用此命令");
+    }
+
     // ---- 命令层 async 通道守护（T4 审查 ⚠️ 收敛）：命令经 spawn_blocking 返回与同步
-    // 实现一致。只探只读 status——bind 会拉 UAC、remove 会动 HKLM WrappedDek，测试禁触；
+    // 实现一致。只探只读 status——bind/remove/wrap 带 WebviewWindow 参数（测试环境无法
+    // 构造窗口）且会动 UAC/HKLM，禁触，门控与折叠已由各 impl 层测试覆盖；
     // Windows 下 installed 随真机环境可真可假，仅断言平台位 supported（四分支映射已由
-    // status_outcome_mapping 纯函数覆盖）；非 Windows 桩路径全量断言 ----
+    // status_outcome_mapping 纯函数覆盖）；非 Windows 桩路径全量断言见 unsupported_platform_stub ----
 
     #[test]
     fn async_commands_delegate_via_blocking_pool() {
         tauri::async_runtime::block_on(async {
             let s = abe_status().await;
             assert_eq!(s.supported, cfg!(windows));
-            #[cfg(not(windows))]
-            {
-                assert_eq!(s, unsupported());
-                assert!(abe_bind().await.is_err());
-                assert_eq!(
-                    abe_remove().await,
-                    serde_json::json!({ "ok": false, "message": "当前平台不支持 ABE 服务" })
-                );
-            }
         });
     }
 
@@ -406,10 +482,17 @@ mod tests {
     fn unsupported_platform_stub() {
         let s = abe_status_impl();
         assert!(!s.supported && !s.installed && !s.matches_caller);
-        assert!(abe_bind_impl().is_err());
         assert_eq!(
-            abe_remove_impl(),
+            abe_bind_impl("main").unwrap_err(),
+            "当前平台不支持 ABE 服务"
+        );
+        assert_eq!(
+            abe_remove_impl("main"),
             serde_json::json!({ "ok": false, "message": "当前平台不支持 ABE 服务" })
+        );
+        assert_eq!(
+            abe_wrap_impl("main", vec![0u8; 32]).unwrap_err(),
+            "当前平台不支持 ABE 服务"
         );
         assert_eq!(
             abe_unwrap_impl("main").unwrap_err(),

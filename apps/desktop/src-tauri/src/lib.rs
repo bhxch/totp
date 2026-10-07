@@ -940,6 +940,7 @@ pub fn run() {
             cloud_http::cloud_http_fetch,
             elevation_commands::abe_status,
             elevation_commands::abe_bind,
+            elevation_commands::abe_wrap,
             elevation_commands::abe_remove,
             elevation_commands::abe_unwrap
         ])

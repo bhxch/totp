@@ -2,8 +2,9 @@
 //! 帧协议复用 [`crate::elevation_proto`]（单点定义，Global Constraints）。
 //!
 //! 结构：`transact` 可测核心（读写经闭包注入——内存流单测覆盖半帧/分片/超长声明拒绝）、
-//! 真管道薄壳（CreateFileW 打开 / PeekNamedPipe 轮询读）与三个高层操作
-//! （`status` / `unwrap_dek` / `remove_binding`）。上游契约（Task 1/2 审查裁定）：
+//! 真管道薄壳（CreateFileW 打开（ERROR_PIPE_BUSY 经 WaitNamedPipeW 短重试，I3 终审）/
+//! PeekNamedPipe 轮询读）与四个高层操作
+//! （`status` / `wrap_dek` / `unwrap_dek` / `remove_binding`）。上游契约（Task 1/2 审查裁定）：
 //! ① 读循环先验 declared ≤ MAX_FRAME_LEN 再分配/读取（防按恶意声明无界分配，服务端
 //!    read_request_frame 同款形态）；② 全部 Resp 帧恒以 u16 LE errcode 前缀开头
 //!    （ok=0，JSON/DEK 为附加数据）。
@@ -128,8 +129,12 @@ where
     W: FnMut(&[u8]) -> std::io::Result<()>,
     R: FnMut(&mut [u8]) -> std::io::Result<usize>,
 {
-    let frame = encode_frame(msg, payload);
-    write(&frame).map_err(|e| ClientError::Io(format!("请求帧写入失败: {e}")))?;
+    let mut frame = encode_frame(msg, payload);
+    let write_result = write(&frame).map_err(|e| ClientError::Io(format!("请求帧写入失败: {e}")));
+    // 请求帧可能携带明文 DEK（Wrap 载荷）：写完即清，成功失败路径同清（Global Constraints，
+    // 与响应侧 Unwrap 附加数据 zeroize 纪律对称）
+    frame.zeroize();
+    write_result?;
 
     // ① 头 4B：u32 LE 声明长度（= 除长度前缀外的帧体字节数）
     let mut header = [0u8; 4];
@@ -398,6 +403,31 @@ pub fn unwrap_dek() -> Result<[u8; 32], UnwrapError> {
         other => UnwrapError::Other(other.to_string()),
     })?;
     unwrap_dek_from(code, extra)
+}
+
+/// 服务端 Wrap 代理：32B DEK → SYSTEM 上下文 DPAPI → HKLM WrappedDek（C1 终审修复：
+/// 绑定编排 bind→wrap→addSource 的 wrap 步——无此步 HKLM 永无密文，锁屏 abe.unwrap
+/// 恒 NoWrappedDek 无声回退，ABE 通道端到端断裂）。管道契约同 unwrap：declared 先验
+/// MAX_FRAME_LEN、Resp u16 errcode 前缀（transact 单点实现）；DEK 缓冲 zeroize 纪律同现有
+/// （请求帧于 transact 写后即清，调用方缓冲所有权不变）。服务侧裁决分两层外传
+/// （remove_binding 同形）：管道层错误外层，服务裁决内层（Err(msg)=被拒/内部错误）
+pub fn wrap_dek(dek: &[u8; 32]) -> Result<Result<(), String>, ClientError> {
+    let (code, _) = call_service(MsgType::Wrap, dek)?;
+    Ok(wrap_verdict(code))
+}
+
+/// wrap_dek() 的服务侧裁决（可测核心，同 remove_verdict 手法）：ok=HKLM 已写入；
+/// 失配/未绑定=调用者未过验证（绑定流程前置已保证匹配，出现即环境异常）；
+/// BadRequest=服务判载荷非 32B（客户端已保证，服务侧违约）；Internal=DPAPI/存储失败
+fn wrap_verdict(code: ErrCode) -> Result<(), String> {
+    match code {
+        ErrCode::Ok => Ok(()),
+        ErrCode::PathMismatch | ErrCode::HashMismatch | ErrCode::VerifyError => {
+            Err("本进程未通过服务验证（应用已更新或未绑定），包裹被拒".into())
+        }
+        ErrCode::BadRequest => Err("服务侧判定 Wrap 载荷非 32B DEK".into()),
+        other => Err(format!("服务侧 Wrap 失败: {other:?}")),
+    }
 }
 
 /// Remove：管道层错误外传；服务侧裁决内层（Err(msg)=被拒/内部错误，折叠进
@@ -694,5 +724,43 @@ mod tests {
         let err = remove_verdict(ErrCode::PathMismatch).unwrap_err();
         assert!(err.contains("验证"));
         assert!(remove_verdict(ErrCode::Internal).is_err());
+    }
+
+    // ---- wrap_verdict：ok 与拒绝/违约/内部错误分型（C1 终审）----
+
+    #[test]
+    fn wrap_verdict_mapping() {
+        assert_eq!(wrap_verdict(ErrCode::Ok), Ok(()));
+        // 调用者未过验证：可读错误
+        for code in [
+            ErrCode::PathMismatch,
+            ErrCode::HashMismatch,
+            ErrCode::VerifyError,
+        ] {
+            let err = wrap_verdict(code).unwrap_err();
+            assert!(err.contains("验证"), "{code:?}");
+        }
+        // 服务判载荷非 32B（客户端已保证，违约路径单列）
+        let err = wrap_verdict(ErrCode::BadRequest).unwrap_err();
+        assert!(err.contains("32B"));
+        // DPAPI/存储内部错误
+        assert!(wrap_verdict(ErrCode::Internal).is_err());
+        // NoWrappedDek 等 Wrap 语义外错误码：兜底服务侧失败
+        assert!(wrap_verdict(ErrCode::NoWrappedDek).is_err());
+    }
+
+    // ---- transact 请求帧 zeroize（Wrap 载荷纪律；MockIo.written 为 write 期拷贝，
+    //      断言帧字节不受写后清零影响）----
+
+    #[test]
+    fn request_frame_zeroized_after_write() {
+        let io = MockIo::chunks(vec![resp_frame_bytes(ErrCode::Ok, &[])]);
+        let out = transact_mock(&io, MsgType::Wrap, &[0x5Au8; 32]).unwrap();
+        assert_eq!(out.0, ErrCode::Ok);
+        // 写出字节完整（DEK 明文已送达对端），且请求帧确为 Wrap+32B 载荷形态
+        assert_eq!(
+            io.borrow().written,
+            encode_frame(MsgType::Wrap, &[0x5Au8; 32])
+        );
     }
 }
