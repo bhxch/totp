@@ -190,7 +190,9 @@ export default defineBackground(() => {
   // SW 唤醒要求。R5-I2：批量导入通知点击 → options#/codes 导入页（通知点击后浏览器自动消失）
   ext!.notifications.onClicked.addListener((notificationId) => {
     if (notificationId === PENDING_NOTIFY_ID) {
-      void ext!.tabs.create({ url: ext!.runtime.getURL('popup.html') }).catch(() => {})
+      // R5-M2：?pending=1 标记标签页形态（设计 §5.4）——popup 以此跳过弹窗形态的复制后自动关窗
+      // （storage 兜底消费不依赖该参数，缺参也可正常消费）
+      void ext!.tabs.create({ url: ext!.runtime.getURL('popup.html?pending=1') }).catch(() => {})
       return
     }
     if (notificationId === BATCH_IMPORT_NOTIFY_ID) {

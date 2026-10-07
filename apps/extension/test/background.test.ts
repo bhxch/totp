@@ -210,11 +210,11 @@ describe('右键菜单 otpauth-add（B1-4）', () => {
     })
   })
 
-  it('notifications.onClicked 只认 totp-pending-add：点击 → tabs.create 打开 popup.html；其他通知 id 不动作', async () => {
+  it('notifications.onClicked 只认 totp-pending-add：点击 → tabs.create 打开 popup.html?pending=1（R5-M2 标签页形态标记）；其他通知 id 不动作', async () => {
     await loadBackground()
     shim.emitNotificationClick('totp-pending-add')
     expect(shim.tabs.create).toHaveBeenCalledTimes(1)
-    expect(shim.tabs.create).toHaveBeenCalledWith({ url: 'chrome-extension://test-id/popup.html' })
+    expect(shim.tabs.create).toHaveBeenCalledWith({ url: 'chrome-extension://test-id/popup.html?pending=1' })
 
     // notify() 的默认通知（无自定义 id）与任意其他 id：点击不动作
     shim.emitNotificationClick('notification-1')
@@ -262,7 +262,7 @@ describe('右键菜单 qr-decode-image（B1-5）', () => {
     })
   })
 
-  it('QR 成功通知可点击回退（M4）：点击 totp-pending-add → tabs.create 打开 popup.html 消费 kind=uri pending', async () => {
+  it('QR 成功通知可点击回退（M4）：点击 totp-pending-add → tabs.create 打开 popup.html?pending=1 消费 kind=uri pending', async () => {
     decodeImageBytesToUri.mockResolvedValue(VALID_URI)
     vi.stubGlobal('fetch', vi.fn(async () => ({ arrayBuffer: async () => new ArrayBuffer(4) })))
     await loadBackground()
@@ -272,7 +272,7 @@ describe('右键菜单 qr-decode-image（B1-5）', () => {
     shim.emitNotificationClick('totp-pending-add')
 
     expect(shim.tabs.create).toHaveBeenCalledTimes(1)
-    expect(shim.tabs.create).toHaveBeenCalledWith({ url: 'chrome-extension://test-id/popup.html' })
+    expect(shim.tabs.create).toHaveBeenCalledWith({ url: 'chrome-extension://test-id/popup.html?pending=1' })
     expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'uri', text: VALID_URI, ts: expect.any(Number) })
   })
 

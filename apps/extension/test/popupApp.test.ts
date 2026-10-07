@@ -431,6 +431,41 @@ describe('popup 双击揭示 vs copy 武装竞态（审查 I-1）', () => {
   })
 })
 
+describe('popup 标签页形态跳过自动关窗（R5-M2，?pending=1 Firefox 回退标签页）', () => {
+  it('复制成功后不武装自动关窗：到期不 window.close，「已复制」反馈照常，用户自行关闭标签页', async () => {
+    const closeSpy = vi.spyOn(window, 'close').mockImplementation(() => {})
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn(async () => {}) },
+      configurable: true,
+    })
+    withUriQuery(null)
+    window.history.replaceState({}, '', '/?pending=1')
+    vault.entries.push({
+      uuid: 'e1', type: 'totp', issuer: 'GitHub', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
+      algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 0,
+    } as never)
+    try {
+      const wrapper = await mountApp({ otpListItem: OtpListItemStub })
+      await vi.waitFor(() => {
+        expect(wrapper.find('.otp-item-stub').text()).not.toBe('------')
+      })
+      vi.useFakeTimers()
+
+      wrapper.findComponent({ name: 'OtpListItemStub' }).vm.$emit('copy')
+      await flushPromises()
+      // 「已复制」反馈照常（fake timers 推进前断言：toast 3s 自动过期会被推进掉）
+      expect(wrapper.find('.toast:not(.toast--error)').exists()).toBe(true)
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(closeSpy).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+      closeSpy.mockRestore()
+      vault.entries.length = 0
+      withUriQuery(null)
+    }
+  })
+})
+
 describe('popup 复制失败反馈（真机发现：剪贴板被第三方独占时静默无提示）', () => {
   it('writeText 拒绝：入队 error toast（复制失败文案）不显示「已复制」，且不武装自动关窗', async () => {
     const closeSpy = vi.spyOn(window, 'close').mockImplementation(() => {})

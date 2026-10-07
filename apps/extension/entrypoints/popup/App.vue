@@ -248,6 +248,10 @@ async function onSave(data: EntryFormData) {
 let closeTimer: ReturnType<typeof setTimeout> | null = null
 /** 双击揭示代次（审查 I-1 武装竞态守卫）：copy 开始快照、武装前比对 */
 let revealGeneration = 0
+/** R5-M2 标签页形态标记（background Firefox 回退 tabs.create popup.html?pending=1）：
+ * 弹窗形态取完码自动关窗收起；标签页形态跳过自动关窗武装——window.close 关用户标签页语义突兀
+ * （storage 兜底消费不依赖该参数，仅作形态判别） */
+const isTabFallback = new URLSearchParams(window.location.search).has('pending')
 
 async function copy(entry: OtpEntry) {
   // I-1：copy 开始即快照揭示代次——copy 是 async，若双击落在下方 await 期间，
@@ -270,6 +274,8 @@ async function copy(entry: OtpEntry) {
   if (closeTimer) clearTimeout(closeTimer)
   // I-1 竞态守卫：await 期间发生过双击揭示 → 不武装，否则刚取消过的揭示又被本 timer 截断
   if (generation !== revealGeneration) return
+  // R5-M2：标签页形态不武装自动关窗（用户自行关闭，closeTimer 空转无意义）
+  if (isTabFallback) return
   // M23：loadSettings 走 DEFAULT_SETTINGS 合并兜底（见 vaultStore.loadSettings M4），popupCloseDelayMs 必为 number
   closeTimer = setTimeout(() => window.close(), settings.popupCloseDelayMs)
 }
