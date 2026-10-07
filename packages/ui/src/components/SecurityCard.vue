@@ -85,8 +85,11 @@ async function refreshAbeStatus(): Promise<void> {
   }
 }
 
-/** 绑定流程（安装与失配重绑共用）：bind()（UAC 安装+服务可达复核）→ abe 标记源落盘 → 刷新状态。
- *  bind false（UAC 取消/超时）保持当前态给内联提示；addSource 失败（锁定代数中止等）走错误消息通道 */
+/** 绑定流程（安装与失配重绑共用）：bind()（UAC 安装+服务可达复核）→ wrap（当前 DEK 写服务
+ *  HKLM 密文，C1 终审——无此步锁屏 unwrap 恒 NoWrappedDek）→ abe 标记源落盘 → 刷新状态。
+ *  bind false（UAC 取消/超时）保持当前态给内联提示；wrap 失败（服务不可达/被拒）不 addSource
+ *  ——标记源与 HKLM 密文必须成对，半绑定态比未绑定更误导；addSource 失败（锁定代数中止等）
+ *  走错误消息通道 */
 async function onAbeBind(): Promise<void> {
   const ops = abe.value
   if (!ops || abeBusy.value) return
@@ -95,6 +98,13 @@ async function onAbeBind(): Promise<void> {
   try {
     if (!(await ops.bind())) {
       abeHint.value = t('securityCard.abeBindFailed')
+      return
+    }
+    // C1 终审：bind 成功后、addSource 之前 Wrap 当前 DEK。DEK 获取口：platform.security
+    // .getCurrentDek（解锁态持有；无 DEK/未注入视为不可绑定，同 wrap 失败口径中止）
+    const dek = props.platform?.security?.getCurrentDek?.() ?? null
+    if (!dek || !(await ops.wrap(dek))) {
+      abeHint.value = t('securityCard.abeWrapFailed')
       return
     }
     await ops.addSource()

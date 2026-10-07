@@ -57,6 +57,9 @@ export function createSecurityOpsFromStore(store: VueStore, overrides: SecurityO
       disableEncryption: () => store.disableEncryption(),
       // opts 透传:档位切换走 { rotateDek: false, profile }(重 wrap 立即生效,不误触发全库轮换)
       changePassphrase: (pw, opts) => store.changePassphrase(pw, opts),
+      // C1 终审:ABE 绑定编排 wrap 入参取用(encryptionSession.getCurrentDek 面板透出;
+      // 锁定/未启用 null,SecurityCard 据此中止 bind→wrap→addSource 序列于 wrap 前)
+      getCurrentDek: () => store.getCurrentDek(),
       kdfProfile: computed(() => store.securitySettings.value?.profile ?? 'balanced'),
       passwordChangedAt: computed(() => store.securitySettings.value?.passwordChangedAt ?? null),
       passkey: {

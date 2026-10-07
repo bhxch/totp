@@ -18,7 +18,7 @@ import { computed, type ComputedRef } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 // AbeStatus/AbeResult/AbeOps 正本在 @totp/ui（T5 起，防两处类型漂移——Rust abe_status 返回体
 // camelCase 字段与 ui AbeStatus 对齐，单测 abe_status_result_serializes_camel_case 守护）
-import type { AbeOps, AbeResult, AbeStatus, DpapiUnlockOps, SecurityPlatform, VueStore } from '@totp/ui'
+import type { AbeOps, AbeResult, AbeStatus, DpapiUnlockOps, SecurityOps, SecurityPlatform, VueStore } from '@totp/ui'
 // host 工厂经 '@totp/ui/host' 子出口导入(理由同 host/index.ts 头注释:宿主 mock 拦截点唯一)
 import { createSecurityOpsFromStore } from '@totp/ui/host'
 import { lockPrefsUnsupportedKeys } from './lockPrefs'
@@ -125,6 +125,19 @@ export function createSecurityPlatform(deps: SecurityPlatformDeps): DesktopSecur
         return false
       }
     },
+    // 服务侧 Wrap（C1 终审：绑定编排 bind→wrap→addSource 的 wrap 步）：当前 DEK →
+    // abe_wrap（服务 HKLM WrappedDek）。失败折叠 false（语义同 unwrap：任何管道/服务侧
+    // 失败均非异常路径，SecurityCard 据此中止绑定序列于 addSource 之前）
+    async wrap(dek) {
+      if (!abeSupported) return false
+      try {
+        await invoke('abe_wrap', { dek: Array.from(dek) })
+        return true
+      } catch (e) {
+        console.warn('[desktop] abe_wrap 失败（服务不可达/被拒），绑定序列中止', e)
+        return false
+      }
+    },
     async remove() {
       if (!abeSupported) return { ok: false, message: '当前平台不支持 ABE 服务' }
       try {
@@ -158,10 +171,31 @@ export function createSecurityPlatform(deps: SecurityPlatformDeps): DesktopSecur
     },
   }
 
+  /** I2 终审：ABE 服务侧密文与 DEK 生命周期联动（dpapi migrateDekWrapToEntropyBound 同域的
+   *  宿主编排点——DEK 前进/退役的既有 SecurityOps 通道完成后接服务侧动作）。
+   *  轮换重 Wrap（rotateDek=true 换新 DEK 后 abe 源仍在 → abeOps.wrap 新 DEK；档位切换
+   *  rotateDek=false DEK 不变，HKLM 密文仍有效无需重包）；关加密清密文（abe 标记源随
+   *  SECURITY_KEY 整体删除消失，无需 removeAbeSourceOp——此时调用必抛 'encryption not
+   *  enabled'，仅清服务侧 HKLM）。两路失败均仅 warn 不阻断主流程：换口令/关加密已生效，
+   *  残留由 UI 下次 status/失配重绑或卸载清理收尾 */
+  async function rewrapAbeCiphertext(): Promise<void> {
+    const s = deps.getStore()
+    if (!s || !s.abeSource.value) return
+    const dek = s.getCurrentDek()
+    if (!dek) return
+    const ok = await abeOps.wrap(dek).catch(() => false)
+    if (!ok) console.warn('[desktop] ABE 重 Wrap 失败（换口令已生效；服务密文未更新，重绑可恢复）')
+  }
+
+  async function removeAbeCiphertext(): Promise<void> {
+    const r = await abeOps.remove().catch(() => null)
+    if (!r?.ok) console.warn('[desktop] ABE 服务密文清理失败（关加密已生效；卸载/重装可清）', r?.message)
+  }
+
   const securityPlatform = computed<SecurityPlatform | null>(() => {
     const s = deps.getStore()
     if (!s) return null
-    return createSecurityOpsFromStore(s, {
+    const base = createSecurityOpsFromStore(s, {
       dpapi: dpapiOps,
       abe: abeOps,
       unlockNaming: deps.naming(),
@@ -170,6 +204,26 @@ export function createSecurityPlatform(deps: SecurityPlatformDeps): DesktopSecur
       // SecurityCard 按 unsupported 隐藏对应开关防无效设置
       lockPrefsUnsupported: lockPrefsUnsupportedKeys(deps.ua),
     })
+    // I2 终审：security 通道包装（工厂内置实现之上叠加服务侧密文联动；其余成员浅拷贝透传）。
+    // 工厂 store 已就绪路径下 security 恒非空（类型层 null 仅服务 popup 整体缺卡形态），守卫只为收窄
+    const baseSecurity = base.security
+    if (!baseSecurity) return base
+    const security: SecurityOps = {
+      ...baseSecurity,
+      async changePassphrase(pw, opts) {
+        await baseSecurity.changePassphrase(pw, opts)
+        // 轮换（rotateDek 缺省 true）后新 DEK 已在会话（提交点同步前进）：abe 源在即重 Wrap；
+        // 档位切换（rotateDek=false）DEK 不变，跳过
+        if ((opts?.rotateDek ?? true) && s.abeSource.value) await rewrapAbeCiphertext()
+      },
+      async disableEncryption() {
+        // 先记 abe 源在场（disable 后 security 缓存清空，abeSource 恒 null 不可再判）
+        const hadAbe = s.abeSource.value !== null
+        await baseSecurity.disableEncryption()
+        if (hadAbe) await removeAbeCiphertext()
+      },
+    }
+    return { ...base, security }
   })
 
   return { platform: securityPlatform, dpapi: dpapiOps, abe: abeOps, migrateDekWrapToEntropyBound }

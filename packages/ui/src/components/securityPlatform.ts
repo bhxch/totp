@@ -64,9 +64,14 @@ export interface AbeOps {
   supported: boolean
   status(): Promise<AbeStatus | null>
   bind(): Promise<boolean>
+  /** 服务侧 Wrap（C1 终审：绑定编排 bind→wrap→addSource 的 wrap 步）：当前 DEK →
+   *  服务 HKLM WrappedDek——无此步锁屏 unwrap 恒 NoWrappedDek（ABE 通道端到端断裂）。
+   *  失败折叠 false，折叠语义同 unwrap（任何管道/服务侧失败均非异常路径，调用方据
+   *  false 中止绑定序列于 addSource 之前） */
+  wrap(dek: Uint8Array): Promise<boolean>
   remove(): Promise<AbeResult>
   /** 绑定成功后 security.json abe 标记源落盘（宿主包装 store addAbeSourceOp；T6 UI 编排
-   *  bind→addSource→刷新 status）。无载荷——密文由服务侧重包裹存 HKLM，源仅标记存在
+   *  bind→wrap→addSource→刷新 status）。无载荷——密文由服务侧重包裹存 HKLM，源仅标记存在
    *  （对照 dpapi add 携带 wrappedDekD 载荷的差异是刻意收窄泄露面） */
   addSource(): Promise<void>
   /** 移除 security.json abe 标记源（宿主包装 store removeAbeSourceOp；core 守卫：移除后
@@ -91,6 +96,10 @@ export interface SecurityOps {
   /** 更换口令/调整 KDF 档位（plan16 T11）：opts 缺省 rotateDek=true（改口令即被动轮换，prf/dpapi 来源失效待重绑）；
    *  档位切换走 { rotateDek: false, profile }（重 wrap 立即生效，数据无需重加密，口令不变） */
   changePassphrase(newPassword: string, opts?: { rotateDek?: boolean; profile?: KdfProfile }): Promise<void>
+  /** [可选] 当前解锁态持有的 DEK（锁定/未启用 null；C1 终审：ABE 绑定编排 wrap 入参取用——
+   *  encryptionSession.getCurrentDek 的宿主面板透出，宿主工厂统一注入；未注入时 ABE 绑定
+   *  序列按无 DEK 处理中止于 wrap 前） */
+  getCurrentDek?(): Uint8Array | null
   /** 当前 KDF 档位（宿主从 store.securitySettings 映射，缺省 'balanced'；SecurityCard 档位行展示用） */
   kdfProfile: Readonly<Ref<KdfProfile>>
   /** 主口令最近更换时间（宿主从 store.securitySettings 映射；null=未记录，SecurityCard 天数提示用） */

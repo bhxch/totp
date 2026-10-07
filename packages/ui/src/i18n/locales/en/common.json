@@ -595,6 +595,7 @@
     "abeMismatch": "App updated or path changed — rebinding required",
     "abeBoundLine": "Version {version} · bound to {path}",
     "abeBindFailed": "Install was not completed (cancelled or service not ready); you can retry",
+    "abeWrapFailed": "Service ciphertext write did not complete; binding not activated. You can retry",
     "abeBound": "App-bound unlock enabled",
     "abeRemoved": "App-bound unlock removed",
     "cancel": "Cancel"

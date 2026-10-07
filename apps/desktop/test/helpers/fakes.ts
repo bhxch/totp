@@ -24,6 +24,8 @@ export function fakeStore(overrides: Record<string, unknown> = {}): any {
     securitySettings: ref<{ profile?: string; passwordChangedAt?: number } | null>(null),
     prfSources: ref<Array<{ credentialId: string }>>([]),
     dpapiSource: ref<{ wrappedDekD: string } | null>(null),
+    // I2 终审：ABE 标记源（至多一个、无载荷；securityPlatform 服务密文联动判定用）
+    abeSource: ref<{ kind: 'abe' } | null>(null),
     conflictCount: ref(0),
     initStore: vi.fn(async () => {}),
     commitSettings: vi.fn(async () => {}),

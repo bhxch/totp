@@ -4,7 +4,7 @@
  * 失败仅告警、passkey(PRF) 绑定链（随机盐/exclude/取消 false）、lockPrefs unsupported 平台矩阵。
  * '@totp/ui' 局部替换（importOriginal）：WebAuthn 创建交互不可在测试环境发生，替换为可编程桩。
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { shallowRef } from 'vue'
 import { tauriMock } from '../test/mocks/tauri'
 import { echoTr, fakeStore } from '../test/helpers/fakes'
@@ -194,11 +194,12 @@ describe('dpapi（OS 自动解锁通道）', () => {
 })
 
 describe('abeOps（ABE 服务宿主通道，P6 T4）', () => {
-  it('supported 按 UA（win=true/linux=false）；非 Windows 三操作短路不打 invoke，兜底返回', async () => {
+  it('supported 按 UA（win=true/linux=false）；非 Windows 全操作短路不打 invoke，兜底返回', async () => {
     const { f } = makeFactory(UA_LINUX)
     expect(f.abe.supported).toBe(false)
     expect(await f.abe.status()).toBeNull()
     expect(await f.abe.bind()).toBe(false)
+    expect(await f.abe.wrap(new Uint8Array(32))).toBe(false) // C1 终审：wrap 同口径短路
     expect(await f.abe.remove()).toEqual({ ok: false, message: expect.any(String) })
     expect(tauriMock.calls()).toHaveLength(0) // invoke 零触达
   })
@@ -234,6 +235,18 @@ describe('abeOps（ABE 服务宿主通道，P6 T4）', () => {
     expect(await f.abe.bind()).toBe(true)
     tauriMock.on('abe_bind', () => { throw new Error('UAC canceled') })
     expect(await f.abe.bind()).toBe(false)
+    warnSpy.mockRestore()
+  })
+
+  it('wrap（C1 终审）：DEK 以 number 数组入 abe_wrap，成功 true；invoke Err 折叠 false', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { f } = makeFactory()
+    tauriMock.onReturn('abe_wrap', null)
+    expect(await f.abe.wrap(DEK)).toBe(true)
+    expect(tauriMock.calls('abe_wrap')[0]?.args).toEqual({ dek: Array.from(DEK) })
+    tauriMock.on('abe_wrap', () => { throw new Error('pipe busy') })
+    expect(await f.abe.wrap(DEK)).toBe(false)
+    expect(warnSpy).toHaveBeenCalledWith('[desktop] abe_wrap 失败（服务不可达/被拒），绑定序列中止', expect.any(Error))
     warnSpy.mockRestore()
   })
 
@@ -295,5 +308,71 @@ describe('migrateDekWrapToEntropyBound（F3 幂等/best-effort）', () => {
     await expect(f.migrateDekWrapToEntropyBound()).resolves.toBeUndefined()
     await vi.waitFor(() => expect(warnSpy).toHaveBeenCalledWith('[migrate] DEK 包裹升级为应用熵绑定格式失败（旧格式仍可解锁，下次重试）', expect.any(Error)))
     warnSpy.mockRestore()
+  })
+})
+
+describe('I2 终审：ABE 服务侧密文与 DEK 生命周期联动（security 通道包装）', () => {
+  const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+  afterEach(() => {
+    warnSpy.mockClear()
+    tauriMock.reset()
+  })
+
+  it('轮换换口令（rotateDek 缺省/true）+ abe 源在场 → 新 DEK 重 Wrap；abe 源缺席不 wrap', async () => {
+    const { f, store } = makeFactory()
+    store.getCurrentDek.mockReturnValue(DEK)
+    const sec = f.platform.value!.security!
+    // abe 源缺席：不触服务
+    await sec.changePassphrase('new')
+    expect(tauriMock.calls('abe_wrap')).toHaveLength(0)
+    // abe 源在场：wrap 新 DEK（number 数组入 invoke）
+    store.abeSource.value = { kind: 'abe' as const }
+    await sec.changePassphrase('new')
+    expect(tauriMock.calls('abe_wrap')).toHaveLength(1)
+    expect(tauriMock.calls('abe_wrap')[0]?.args).toEqual({ dek: Array.from(DEK) })
+  })
+
+  it('档位切换（rotateDek:false）DEK 不变 → 不重 Wrap（HKLM 密文仍有效）', async () => {
+    const { f, store } = makeFactory()
+    store.getCurrentDek.mockReturnValue(DEK)
+    store.abeSource.value = { kind: 'abe' as const }
+    await f.platform.value!.security!.changePassphrase('pw', { rotateDek: false, profile: 'fast' })
+    expect(tauriMock.calls('abe_wrap')).toHaveLength(0)
+  })
+
+  it('重 Wrap 失败 → 仅告警不抛（换口令主流程不阻断，重绑可恢复）', async () => {
+    const { f, store } = makeFactory()
+    store.getCurrentDek.mockReturnValue(DEK)
+    store.abeSource.value = { kind: 'abe' as const }
+    tauriMock.on('abe_wrap', () => { throw new Error('service busy') })
+    await expect(f.platform.value!.security!.changePassphrase('new')).resolves.toBeUndefined()
+    expect(warnSpy).toHaveBeenCalledWith('[desktop] ABE 重 Wrap 失败（换口令已生效；服务密文未更新，重绑可恢复）')
+  })
+
+  it('关加密 + abe 源在场 → abe_remove 清服务密文；失败仅告警；abe 源缺席不触服务', async () => {
+    const { f, store } = makeFactory()
+    const sec = f.platform.value!.security!
+    // abe 源缺席：不触服务
+    await sec.disableEncryption()
+    expect(tauriMock.calls('abe_remove')).toHaveLength(0)
+    // 在场：清服务侧 HKLM（标记源随 SECURITY_KEY 整体删除，无需 removeAbeSourceOp）
+    store.abeSource.value = { kind: 'abe' as const }
+    tauriMock.onReturn('abe_remove', { ok: true })
+    await sec.disableEncryption()
+    expect(tauriMock.calls('abe_remove')).toHaveLength(1)
+    // 服务不可达：{ok:false} 折叠为告警，不阻断关闭
+    tauriMock.reset()
+    tauriMock.onReturn('abe_remove', { ok: false, message: 'unreachable' })
+    await expect(sec.disableEncryption()).resolves.toBeUndefined()
+    expect(warnSpy).toHaveBeenCalledWith('[desktop] ABE 服务密文清理失败（关加密已生效；卸载/重装可清）', 'unreachable')
+  })
+
+  it('security 其余成员透传不变（locked/kdfProfile 等浅拷贝语义）', () => {
+    const { f, store } = makeFactory()
+    const sec = f.platform.value!.security!
+    expect(sec.locked).toBe(store.locked)
+    expect(sec.hasEncryption).toBe(store.hasEncryption)
+    expect(sec.getCurrentDek?.()).toBeNull() // C1：factory 注入的 DEK 面板出口透传
   })
 })

@@ -75,9 +75,10 @@ export const INVOKE_COMMANDS = [
   'devtools_set_config',
   'release_policy_get',
   'release_policy_set',
-  // ABE 服务（P6 T4：非 Windows 桩返回 supported:false，前端短路另有 UA 守卫）
+  // ABE 服务（P6 T4：非 Windows 桩返回 supported:false，前端短路另有 UA 守卫；C1 终审续增 abe_wrap）
   'abe_status',
   'abe_bind',
+  'abe_wrap',
   'abe_remove',
 ] as const
 

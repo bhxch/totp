@@ -35,6 +35,8 @@ function makeAbe(over: Partial<AbeOps> = {}): AbeOps {
     supported: true,
     status: vi.fn().mockResolvedValue(null),
     bind: vi.fn().mockResolvedValue(true),
+    // C1 终审：绑定编排新增成员（LockScreen 不消费，桩为成功语义即可）
+    wrap: vi.fn().mockResolvedValue(true),
     remove: vi.fn().mockResolvedValue({ ok: true } as AbeResult),
     addSource: vi.fn().mockResolvedValue(undefined),
     removeSource: vi.fn().mockResolvedValue(undefined),
