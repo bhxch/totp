@@ -369,7 +369,9 @@ fn verify_client_process(pipe: HANDLE) -> Option<(String, String)> {
         let _ = CloseHandle(process);
     }
     let image = image?;
-    let sha256 = sha256_file_hex(&image)?;
+    // R6-I2：双读比较 + 无写共享打开，缓解便携版形态的文件替换 TOCTOU
+    // （sha256_file_double_read 注释；README 威胁模型「不防」清单已同步登记残余面）
+    let sha256 = sha256_file_double_read(&image)?;
     Some((image, sha256))
 }
 
@@ -402,6 +404,62 @@ fn query_process_image(process: HANDLE) -> Option<String> {
 /// SHA256(exe 文件字节) 小写 hex（流式读，不整文件进内存）；Task 3 安装侧复用
 pub(crate) fn sha256_file_hex(path: &str) -> Option<String> {
     let file = std::fs::File::open(path).ok()?;
+    let mut hasher = sha2::Sha256::new();
+    std::io::copy(&mut std::io::BufReader::new(file), &mut hasher).ok()?;
+    Some(
+        hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect(),
+    )
+}
+
+/// 双读比较哈希（R6-I2）：以无 FILE_SHARE_WRITE 共享模式打开读两次，两次一致才返回。
+/// 威胁：std File::open 以 READ|WRITE|DELETE 宽共享打开，对「进程运行中 rename 自身并在
+/// 原路径写入合法字节」的文件替换 TOCTOU 无防御（便携版冒充调用者取 DEK）。缓解手法：
+/// ① 受限共享打开（READ|DELETE，留 DELETE 免杀软/更新器误伤）——存在并发写句柄即
+///    ERROR_SHARING_VIOLATION，判定为可疑拒绝；句柄存续至哈希读取完成；
+/// ② 双读比较——「读窗口外替换、下次读前还原」的两窗重合攻击面被压缩。
+/// 任一读失败/两次不一致 → None（不可验证，调用方回 VerifyError）。
+/// 根本方案为 Authenticode 签名校验（SignerSubject 预留位），登记 backlog 另立 round
+pub(crate) fn sha256_file_double_read(path: &str) -> Option<String> {
+    let first = sha256_file_hex_shared(path)?;
+    let second = sha256_file_hex_shared(path)?;
+    double_read_verdict(Some(first), Some(second))
+}
+
+/// 双读比较裁决（纯逻辑，R6-I2 可测核心）：两次哈希均可得且一致才通过
+fn double_read_verdict(first: Option<String>, second: Option<String>) -> Option<String> {
+    match (first, second) {
+        (Some(a), Some(b)) if a == b => Some(a),
+        _ => None,
+    }
+}
+
+/// 共享受限打开（无 FILE_SHARE_WRITE）+ 流式 SHA256 小写 hex。
+/// FILE_SHARE_READ|DELETE：允许并发读者（杀软扫描/同进程二次打开），仅拒并发写——
+/// 打开瞬间若已有写句柄即共享冲突失败，本句柄存续期间新的写打开同样被拒
+fn sha256_file_hex_shared(path: &str) -> Option<String> {
+    use std::os::windows::io::FromRawHandle;
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_DELETE, FILE_SHARE_READ, OPEN_EXISTING,
+    };
+
+    let wide = to_wide(path);
+    let opened = unsafe {
+        CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            windows::Win32::Foundation::GENERIC_READ.0,
+            FILE_SHARE_READ | FILE_SHARE_DELETE,
+            None,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            None,
+        )
+    };
+    // 裸句柄交 std::fs::File 托管（Drop 即 CloseHandle），流式读复用 sha256_file_hex 同款形态
+    let file = unsafe { std::fs::File::from_raw_handle(opened.ok()?.0) };
     let mut hasher = sha2::Sha256::new();
     std::io::copy(&mut std::io::BufReader::new(file), &mut hasher).ok()?;
     Some(
@@ -1097,5 +1155,115 @@ mod tests {
         assert_eq!(handle_payload(MsgType::Wrap, &dek2, &mut s).0, ErrCode::Ok);
         assert_ne!(s.wrapped.as_deref(), Some(stored.as_str()));
         assert_eq!(handle_payload(MsgType::Unwrap, &[], &mut s).1, dek2);
+    }
+
+    // ---- 双读哈希（R6-I2：文件替换 TOCTOU 缓解）----
+
+    #[test]
+    fn double_read_verdict_requires_two_consistent_hashes() {
+        let a = Some("a".repeat(64));
+        let b = Some("b".repeat(64));
+        // 两次一致才通过
+        assert_eq!(double_read_verdict(a.clone(), a.clone()), a);
+        // 任一不一致/不可得即不可验证
+        assert_eq!(double_read_verdict(a.clone(), b.clone()), None);
+        assert_eq!(double_read_verdict(a.clone(), None), None);
+        assert_eq!(double_read_verdict(None, a), None);
+    }
+
+    #[test]
+    fn double_read_hash_matches_plain_hash_for_stable_file() {
+        // 稳定文件：受限共享双读与普通单读哈希一致（受限共享不改变读到的字节）
+        let dir = std::env::temp_dir().join(format!(
+            "totp-elev-hash-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("victim.exe");
+        std::fs::write(&path, b"stable-bytes-0123456789").unwrap();
+        let plain = sha256_file_hex(&path.to_string_lossy()).unwrap();
+        assert_eq!(
+            sha256_file_double_read(&path.to_string_lossy()).as_ref(),
+            Some(&plain)
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn shared_hash_rejects_concurrent_write_handle() {
+        use windows::Win32::Storage::FileSystem::{FILE_SHARE_NONE, FILE_SHARE_READ};
+        // 场景 a：写句柄不共享读（FILE_SHARE_NONE）——受限共享打开即共享冲突失败
+        // （可疑判定拒），双读随之 None；释放后恢复可用
+        let (path_str, lock) = open_locked(b"locked-bytes", FILE_SHARE_NONE);
+        assert!(
+            sha256_file_hex_shared(&path_str).is_none(),
+            "无读共享的写句柄须被受限打开拒绝"
+        );
+        assert_eq!(sha256_file_double_read(&path_str), None);
+        unsafe {
+            let _ = CloseHandle(lock);
+        }
+        assert!(sha256_file_hex_shared(&path_str).is_some());
+
+        // 场景 b：写句柄共享读（FILE_SHARE_READ）——宽共享的 std::fs::File::open
+        // 自带 WRITE 共享位、对既有写句柄照开照读（并发写下读到什么不可控）；
+        // 受限共享不授予 WRITE 共享位，与既有写访问冲突即拒（可疑判定）
+        let (path_str, lock) = open_locked(b"read-shared-writer", FILE_SHARE_READ);
+        assert!(
+            sha256_file_hex(&path_str).is_some(),
+            "宽共享对并发写句柄无防御（照开照读）"
+        );
+        assert!(
+            sha256_file_hex_shared(&path_str).is_none(),
+            "受限共享须对并发写句柄打开即拒"
+        );
+        unsafe {
+            let _ = CloseHandle(lock);
+        }
+        std::fs::remove_dir_all(temp_lock_dir()).ok();
+    }
+
+    /// 测试夹具：写内容文件后以 GENERIC_WRITE + 指定共享模式持住句柄（R6-I2 场景模拟）
+    fn open_locked(
+        bytes: &[u8],
+        share_mode: windows::Win32::Storage::FileSystem::FILE_SHARE_MODE,
+    ) -> (String, HANDLE) {
+        use windows::Win32::Foundation::GENERIC_WRITE;
+        use windows::Win32::Storage::FileSystem::{
+            CreateFileW, FILE_ATTRIBUTE_NORMAL, OPEN_EXISTING,
+        };
+
+        let dir = temp_lock_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("locked.exe");
+        std::fs::write(&path, bytes).unwrap();
+        let path_str = path.to_string_lossy().into_owned();
+        let wide = to_wide(&path_str);
+        let lock = unsafe {
+            CreateFileW(
+                PCWSTR(wide.as_ptr()),
+                GENERIC_WRITE.0,
+                share_mode,
+                None,
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                None,
+            )
+        }
+        .expect("测试写句柄应可打开");
+        (path_str, lock)
+    }
+
+    fn temp_lock_dir() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "totp-elev-lock-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
     }
 }
