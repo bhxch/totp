@@ -30,8 +30,12 @@ const MAX_MEMBERS = 65536
 // （Java ZipOutputStream/Go streaming 等工具产物，本地头无 sizes）与普通 zip 走同一有界路径，正常导入；
 // CRC 不再校验（图标损坏仅渲染失败，无内存安全问题）。
 function bytesToDataUrl(bytes: Uint8Array): string {
+  // R4-M5：分块 String.fromCharCode.apply 拼接（每块 0x8000，引擎栈安全上限内）——
+  // 逐字节 `bin += charCode` 在大预算下（64MiB 成员）产生 O(n) 次字符串重分配，内存峰值放大数倍
   let bin = ''
-  for (const b of bytes) bin += String.fromCharCode(b)
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000) as unknown as number[])
+  }
   return `data:image/png;base64,${btoa(bin)}`
 }
 
