@@ -29,24 +29,36 @@ pub struct AbeStatusResult {
     pub version: Option<String>,
 }
 
-/// abe_status（同步快查，管道 3s 超时上界内返回；async 标记避免阻塞主线程）
-#[tauri::command(async)]
-pub fn abe_status() -> AbeStatusResult {
-    abe_status_impl()
+/// abe_status（管道 3s 超时上界的阻塞 IO）。形态（T4 审查 ⚠️ 收敛裁定）：async fn +
+/// spawn_blocking——原 `#[tauri::command(async)]` 标同步体只会把阻塞挪到 tokio worker
+/// 上原地阻塞；现收敛到 blocking 池。join 失败仅可能是纯映射实现 panic（无此路径），expect 兜底
+#[tauri::command]
+pub async fn abe_status() -> AbeStatusResult {
+    tauri::async_runtime::spawn_blocking(abe_status_impl)
+        .await
+        .expect("abe_status 后台任务失败（实现 panic）")
 }
 
 /// abe_bind（§T4）：trigger_install 一次 UAC → 1.5s 间隔轮询 Status 至服务可达，最多 10s。
-/// UAC 取消/提权进程失败经 Err(String) 传播（TS 侧 bind() 捕获为 false）
-#[tauri::command(async)]
-pub fn abe_bind() -> Result<serde_json::Value, String> {
-    abe_bind_impl()
+/// UAC 交互与轮询循环均为分钟级无上界阻塞段（T4 审查 ⚠️）：整体收敛 spawn_blocking，
+/// worker 线程不被占。UAC 取消/提权进程失败/join 失败经 Err(String) 传播（TS 侧捕获为 false）
+#[tauri::command]
+pub async fn abe_bind() -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(abe_bind_impl)
+        .await
+        .map_err(|e| format!("abe_bind 后台任务异常: {e}"))?
 }
 
 /// abe_remove（§T4）：管道 Remove 删 HKLM WrappedDek。恒回 {ok, message?} 不抛 invoke 错
-/// ——服务不可达仅意味密文已随卸载消失，前端移除流程（清 security.json abe 源）不应被阻断
-#[tauri::command(async)]
-pub fn abe_remove() -> serde_json::Value {
-    abe_remove_impl()
+/// ——服务不可达仅意味密文已随卸载消失，前端移除流程（清 security.json abe 源）不应被阻断；
+/// 管道 IO 阻塞段收敛 spawn_blocking，join 失败折入 ok:false（与错误通道同形态）
+#[tauri::command]
+pub async fn abe_remove() -> serde_json::Value {
+    tauri::async_runtime::spawn_blocking(abe_remove_impl)
+        .await
+        .unwrap_or_else(|e| {
+            serde_json::json!({ "ok": false, "message": format!("abe_remove 后台任务异常: {e}") })
+        })
 }
 
 /// abe_unwrap（plan p6 §0.3/T7 锁屏静默解锁）：服务侧 Unwrap 代理返回明文 DEK（32B）。
@@ -56,10 +68,14 @@ pub fn abe_remove() -> serde_json::Value {
 /// 错误以 Err(String) 折叠外传——锁屏回退语义下 TS 侧仅 console.warn 留痕并回退 dpapi。
 /// 主窗口门控（T7 fix 1/5）：DEK 出口命令与 dek_unprotect/os_auto_unprotect 同标准——
 /// 命令体内按窗口 label 收窄（Tauri v2 对应用自有 command 无按窗口 ACL 细分），mini
-/// webview 内脚本 invoke 恒 Err「仅主窗口可调用此命令」
-#[tauri::command(async)]
-pub fn abe_unwrap(window: tauri::WebviewWindow) -> Result<Vec<u8>, String> {
-    abe_unwrap_impl(window.label())
+/// webview 内脚本 invoke 恒 Err「仅主窗口可调用此命令」。DEK 管道 IO 阻塞段收敛
+/// spawn_blocking（T4 审查 ⚠️）；label 先取再 move，窗口句柄不进 blocking 池
+#[tauri::command]
+pub async fn abe_unwrap(window: tauri::WebviewWindow) -> Result<Vec<u8>, String> {
+    let label = window.label().to_string();
+    tauri::async_runtime::spawn_blocking(move || abe_unwrap_impl(&label))
+        .await
+        .map_err(|e| format!("abe_unwrap 后台任务异常: {e}"))?
 }
 
 // ---------- 实现分派（cfg 内联，保持命令签名单点） ----------
@@ -340,7 +356,27 @@ mod tests {
         assert_ne!(err, "仅主窗口可调用此命令");
     }
 
-    // ---- 命令返回形状守护（serde camelCase 对齐 TS AbeStatus/AbeResult）----
+    // ---- 命令层 async 通道守护（T4 审查 ⚠️ 收敛）：命令经 spawn_blocking 返回与同步
+    // 实现一致。只探只读 status——bind 会拉 UAC、remove 会动 HKLM WrappedDek，测试禁触；
+    // Windows 下 installed 随真机环境可真可假，仅断言平台位 supported（四分支映射已由
+    // status_outcome_mapping 纯函数覆盖）；非 Windows 桩路径全量断言 ----
+
+    #[test]
+    fn async_commands_delegate_via_blocking_pool() {
+        tauri::async_runtime::block_on(async {
+            let s = abe_status().await;
+            assert_eq!(s.supported, cfg!(windows));
+            #[cfg(not(windows))]
+            {
+                assert_eq!(s, unsupported());
+                assert!(abe_bind().await.is_err());
+                assert_eq!(
+                    abe_remove().await,
+                    serde_json::json!({ "ok": false, "message": "当前平台不支持 ABE 服务" })
+                );
+            }
+        });
+    }
 
     #[test]
     fn abe_status_result_serializes_camel_case() {
