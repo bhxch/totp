@@ -147,7 +147,10 @@ fn abe_wrap_impl(window_label: &str, dek: &mut Vec<u8>) -> Result<(), String> {
 
 /// 非 Windows：平台不支持即无 DEK 可入，不门控直接桩（与 abe_unwrap 非 Windows 形态一致）
 #[cfg(not(windows))]
-fn abe_wrap_impl(_window_label: &str, _dek: &mut Vec<u8>) -> Result<(), String> {
+fn abe_wrap_impl(_window_label: &str, dek: &mut Vec<u8>) -> Result<(), String> {
+    // 平台不支持同样不得滞留明文 DEK（与 Windows 出口同清——Global Constraints 跨平台一致，
+    // 亦令 use zeroize::Zeroize 在两平台均有消费方，Linux clippy -D warnings 不报 unused）
+    dek.zeroize();
     Err("当前平台不支持 ABE 服务".into())
 }
 
