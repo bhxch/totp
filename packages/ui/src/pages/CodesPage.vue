@@ -557,7 +557,9 @@ h2 { margin: 0; font-size: var(--md-sys-typescale-title-medium); }
    z-index 5，且本层无 overflow 裁剪，气泡正常浮出。R5-M6：负 margin+padding 自补偿盖住卡片
    padding（16px，见 .page --frozen-bleed）两侧缝隙，列表内容不再从冻结条两侧穿过 */
 .frozen { position: sticky; top: 0; z-index: 5; background: var(--md-sys-color-surface); padding-bottom: 4px;
-  margin-inline: calc(-1 * var(--frozen-bleed, 0px)); padding-inline: var(--frozen-bleed, 0px); }
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  margin-inline: calc(-1 * var(--frozen-bleed, 0px) + 1px); /* 收 1px 保卡片描边 */
+  padding-inline: var(--frozen-bleed, 0px); }
 /* 选择模式底部浮动操作条（悬浮于列表上方，FAB 左侧留位） */
 .select-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: 24px; z-index: 20;
   display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 100px;
