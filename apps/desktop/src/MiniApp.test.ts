@@ -364,10 +364,30 @@ describe('mini 标题区 chrome（spec §1.4/§1.5）', () => {
     }
   })
 
-  it('收起按钮：调用 window.hide', async () => {
+  it('R1-M3：mini_pin_set 失败 → 本地 pinned 不翻转（aria-pressed 复原），成功才提交', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const w = await mountMini()
+    const btn = w.find('[data-test="pin-btn"]')
+    // 首次 invoke mini_pin_set 失败（写盘拒绝），其后自动回落 mock 默认实现
+    ;(tauriMock.invoke as Mock).mockImplementationOnce(async (cmd: string) => {
+      if (cmd === 'mini_pin_set') throw new Error('disk full')
+    })
+    await btn.trigger('click')
+    await flushPromises()
+    // 失败不乐观更新：UI 与 Rust 真源（缓存/盘上旧值）一致
+    expect(w.find('[data-test="pin-btn"]').attributes('aria-pressed')).toBe('false')
+    expect(errSpy).toHaveBeenCalled()
+    errSpy.mockRestore()
+    await btn.trigger('click')
+    await flushPromises()
+    expect(w.find('[data-test="pin-btn"]').attributes('aria-pressed')).toBe('true')
+  })
+
+  it('R1-M2：收起按钮走 window.close（复用 Rust CloseRequested 拦截链记忆位置），不再直调 hide', async () => {
     const w = await mountMini()
     await w.find('[data-test="hide-btn"]').trigger('click')
-    expect(tauriMock.window.hide).toHaveBeenCalled()
+    expect(tauriMock.window.close).toHaveBeenCalled()
+    expect(tauriMock.window.hide).not.toHaveBeenCalled()
   })
 })
 

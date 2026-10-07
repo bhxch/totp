@@ -176,13 +176,21 @@ const { copyToClipboard } = createDesktopCopy({
   clearIfStaged: () => invoke('clipboard_clear_if_staged').then(() => {}),
 })
 
-/** mini pin（spec §1.5）：状态真源在 Rust（settings.json+缓存），本地 ref 镜像供按钮与自动隐藏判定 */
+/** mini pin（spec §1.5）：状态真源在 Rust（settings.json+缓存），本地 ref 镜像供按钮与自动隐藏判定。
+ *  R1-M3：invoke 成功才提交本地翻转——失败（写盘拒绝）不乐观更新，UI 与 Rust 真源保持一致 */
 const pinned = ref(false)
 async function togglePin() {
-  pinned.value = !pinned.value
-  await invoke('mini_pin_set', { pinned: pinned.value }).catch((e) => console.error('[mini] pin set failed:', e))
+  const next = !pinned.value
+  try {
+    await invoke('mini_pin_set', { pinned: next })
+    pinned.value = next
+  } catch (e) {
+    console.error('[mini] pin set failed:', e)
+  }
 }
-function hideMini() { void getCurrentWindow().hide() }
+/** 收起（R1-M2）：走 close() 复用 Rust CloseRequested 拦截链（prevent_close→记忆位置→hide），
+ *  直调 hide() 不记录位置会使 LAST_MINI_POS 陈旧（销毁重建后快捷键恢复到旧位） */
+function hideMini() { void getCurrentWindow().close() }
 
 /** 复制后 500ms 自动隐藏控制器（审查 I-1 武装竞态守卫）：纯逻辑抽至 miniAutoHide.ts 便于单测覆盖取消时序；
  *  pinned 时让位（hide 回调内动态检查，取消 pin 即恢复自动隐藏，无需重建控制器） */

@@ -197,7 +197,7 @@ export function emitToCalls(): Array<[string, string, unknown]> {
 }
 
 // ---------------------------------------------------------------------------
-// window：getCurrentWindow 的使用面（App.vue/MiniApp.vue：label/hide/onFocusChanged）
+// window：getCurrentWindow 的使用面（App.vue/MiniApp.vue：label/hide/close/onFocusChanged）
 // ---------------------------------------------------------------------------
 type FocusHandler = (e: { payload: boolean }) => void
 const focusListeners = new Set<FocusHandler>()
@@ -211,6 +211,8 @@ export const window = {
     currentWindowLabel = v
   },
   hide: vi.fn(async (): Promise<void> => undefined),
+  // R1-M2：mini 收起按钮走 close()（Rust CloseRequested 拦截链记忆位置），mock 供断言
+  close: vi.fn(async (): Promise<void> => undefined),
   onFocusChanged: vi.fn(async (cb: FocusHandler): Promise<() => void> => {
     focusListeners.add(cb)
     return () => {
@@ -280,6 +282,7 @@ export function reset(): void {
   focusListeners.clear()
   currentWindowLabel = 'main'
   window.hide.mockClear()
+  window.close.mockClear()
   window.onFocusChanged.mockClear()
   resetFsDefaults()
 }

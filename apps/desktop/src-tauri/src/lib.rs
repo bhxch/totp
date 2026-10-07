@@ -283,11 +283,13 @@ fn mini_pin_get() -> bool {
     MINI_PINNED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// mini pin 设置：缓存 + settings.json 合并写 + 对存活窗口即时生效（重建恢复走 builder）
+/// mini pin 设置：settings.json 合并写 + 缓存 + 对存活窗口即时生效（重建恢复走 builder）。
+/// R1-M3：写盘成功后才更新内存缓存——写失败返回 Err 时缓存保持旧值，不出现
+/// 「盘上旧值、内存新值」的失配（失焦守卫/前端初值读的都是这份缓存）
 #[tauri::command]
 fn mini_pin_set<R: Runtime>(app: AppHandle<R>, pinned: bool) -> Result<(), String> {
-    MINI_PINNED.store(pinned, std::sync::atomic::Ordering::Relaxed);
     write_section(&app, "miniPinned", &pinned)?;
+    MINI_PINNED.store(pinned, std::sync::atomic::Ordering::Relaxed);
     if let Some(mini) = app.get_webview_window("mini") {
         let _ = mini.set_always_on_top(pinned);
     }
