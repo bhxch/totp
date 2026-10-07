@@ -124,6 +124,16 @@ describe('SecurityCard ABE 区块（plan p6 §0.3 三态）', () => {
     expect(w.text()).toContain('安装未完成')
   })
 
+  it('bind 成功但 addSource 抛错：仍刷新 status（共 2 次，服务侧已装已绑应反映真实态），错误走消息通道', async () => {
+    const abe = makeAbe({ addSource: vi.fn().mockRejectedValue(new Error('锁定代数冲突')) })
+    const w = mountCard(abe)
+    await vi.waitFor(() => expect(w.find('button.abe-install').exists()).toBe(true))
+    await w.find('button.abe-install').trigger('click')
+    await vi.waitFor(() => expect(abe.addSource).toHaveBeenCalledTimes(1))
+    expect(abe.status).toHaveBeenCalledTimes(2) // 挂载 1 次 + catch 内刷新 1 次
+    await vi.waitFor(() => expect(w.text()).toContain('锁定代数冲突'))
+  })
+
   it('失配态点击重新绑定：走同一绑定序列（bind→addSource→刷新）', async () => {
     const abe = makeAbe({ status: vi.fn().mockResolvedValue({ installed: true, matchesCaller: false }) })
     const w = mountCard(abe)

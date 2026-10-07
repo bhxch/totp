@@ -102,6 +102,10 @@ async function onAbeBind(): Promise<void> {
     msg.value = t('securityCard.abeBound')
     msgKind.value = 'ok'
   } catch (e) {
+    // Task 6 审查 ⚠️1 裁定：bind 成功后 addSource 抛错（锁定代数中止等）——服务侧可能
+    // 已安装+已绑定，先刷新状态让区块反映真实服务态而非留旧「未安装」；刷新自身失败
+    // 按 null（未安装）渲染，随后错误消息照常走 fail 通道
+    await refreshAbeStatus()
     fail(e)
   } finally {
     abeBusy.value = false
