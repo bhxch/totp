@@ -107,6 +107,9 @@ async function onAbeBind(): Promise<void> {
     // .getCurrentDek（解锁态持有；无 DEK/未注入视为不可绑定，同 wrap 失败口径中止）
     const dek = props.platform?.security?.getCurrentDek?.() ?? null
     if (!dek || !(await ops.wrap(dek))) {
+      // R7-M5：bind 已成功（服务侧可能已安装甚至已可验证），return 前刷新状态让区块反映
+      // 真实服务态而非留旧「未安装」（否则密文写入失败后仍显示「安装服务」按钮误导重装）
+      await refreshAbeStatus()
       abeHint.value = t('securityCard.abeWrapFailed')
       return
     }
@@ -141,11 +144,17 @@ async function onAbeRemove(): Promise<void> {
   abeBusy.value = true
   try {
     await ops.removeSource()
-    await ops.remove()
+    // R7-M2：消费 remove() 结果（{ok,message} 恒不抛 invoke 错）——ok:false 时按失败提示，
+    // 不得误报「已移除」；此时标记源已清而服务密文可能仍在场（半移除态），由 catch 刷新呈现
+    const r = await ops.remove()
+    if (!r.ok) throw new Error(r.message || t('securityCard.abeRemoveFailed'))
     await refreshAbeStatus()
     msg.value = t('securityCard.abeRemoved')
     msgKind.value = 'ok'
   } catch (e) {
+    // 对齐 onAbeBind catch：序列中断时服务侧可能已部分变更（安装/密文在场），先刷新状态
+    // 让区块反映真实服务态，再走错误消息通道
+    await refreshAbeStatus()
     fail(e)
   } finally {
     abeBusy.value = false

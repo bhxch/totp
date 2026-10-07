@@ -599,6 +599,7 @@
     "abeWrapFailed": "服务密文写入未完成，绑定未生效，可重试",
     "abeBound": "应用绑定解锁已启用",
     "abeRemoved": "应用绑定解锁已移除",
+    "abeRemoveFailed": "服务密文移除未完成，可重试",
     "cancel": "取消"
   },
   "mcpServer": {

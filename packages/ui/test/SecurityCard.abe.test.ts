@@ -162,7 +162,8 @@ describe('SecurityCard ABE 区块（plan p6 §0.3 三态 + R7-I2 源缺失引导
     await flushPromises()
     // 标记源不得落盘：HKLM 密文未写成的半绑定态比未绑定更误导
     expect(abe.addSource).not.toHaveBeenCalled()
-    expect(abe.status).toHaveBeenCalledTimes(1) // 未刷新状态（保持未安装态+提示）
+    // R7-M5：bind 已成功（服务可能已装），失败路径同样刷新状态反映真实服务态（挂载 1 + 刷新 1）
+    expect(abe.status).toHaveBeenCalledTimes(2)
     expect(w.find('button.abe-install').exists()).toBe(true)
     expect(w.text()).toContain('服务密文写入未完成')
     w.unmount()
@@ -228,6 +229,36 @@ describe('SecurityCard ABE 区块（plan p6 §0.3 三态 + R7-I2 源缺失引导
     expect(abe.removeSource).toHaveBeenCalledTimes(1)
     await vi.waitFor(() => expect(w.text()).toContain('应用绑定解锁已移除'))
     w.unmount() // 卸载兜底清确认态 3s 定时器
+  })
+
+  it('R7-M2 remove 返回 ok:false（服务拒/不可达）：不报「已移除」，走错误提示并刷新状态', async () => {
+    const abe = makeAbe({
+      status: vi.fn().mockResolvedValue(matchedStatus),
+      remove: vi.fn().mockResolvedValue({ ok: false, message: '本进程未通过服务验证，删除被拒' } as AbeResult),
+    })
+    const w = mountCard(abe)
+    const btn = () => w.find('button.remove-abe')
+    await vi.waitFor(() => expect(btn().exists()).toBe(true))
+    await btn().trigger('click')
+    await btn().trigger('click')
+    await vi.waitFor(() => expect(abe.remove).toHaveBeenCalledTimes(1))
+    await flushPromises()
+    expect(w.text()).not.toContain('应用绑定解锁已移除')
+    expect(w.text()).toContain('本进程未通过服务验证，删除被拒')
+    // 半移除态（标记源已清、密文仍在场）：catch 内刷新状态呈现真实服务态（挂载 1 + 刷新 1）
+    expect(abe.status).toHaveBeenCalledTimes(2)
+    // message 缺失兜底：走 abeRemoveFailed 文案而非静默成功
+    const abe2 = makeAbe({ status: vi.fn().mockResolvedValue(matchedStatus), remove: vi.fn().mockResolvedValue({ ok: false } as AbeResult) })
+    const w2 = mountCard(abe2)
+    const btn2 = () => w2.find('button.remove-abe')
+    await vi.waitFor(() => expect(btn2().exists()).toBe(true))
+    await btn2().trigger('click')
+    await btn2().trigger('click')
+    await flushPromises()
+    expect(w2.text()).not.toContain('应用绑定解锁已移除')
+    expect(w2.text()).toContain('服务密文移除未完成')
+    w.unmount()
+    w2.unmount()
   })
 
   it('prop 直传缺省回落 platform.abe 挂载点（desktop 工厂注入路径）', async () => {

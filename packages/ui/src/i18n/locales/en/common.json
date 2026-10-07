@@ -599,6 +599,7 @@
     "abeWrapFailed": "Service ciphertext write did not complete; binding not activated. You can retry",
     "abeBound": "App-bound unlock enabled",
     "abeRemoved": "App-bound unlock removed",
+    "abeRemoveFailed": "Service ciphertext removal did not complete; you can retry",
     "cancel": "Cancel"
   },
   "mcpServer": {
