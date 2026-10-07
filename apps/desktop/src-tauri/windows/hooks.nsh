@@ -11,9 +11,9 @@
 ; 服务未安装（sc 返回 1060）、目录不存在（RMDir 静默成功）、键不存在（DeleteRegKey
 ; 静默成功）均不得报错或阻断卸载。
 ; 权限注记：本应用为 currentUser 安装模式（RequestExecutionLevel user），常规卸载
-; 流程卸载器非提权，sc/delete HKLM 可能因权限不足失败——主清理通道是安全页「移除」
-;/「卸载清理」触发的 --elevation-uninstall（UAC 提权），此处失败静默继续（nsExec
-; 退出码仅 Pop 丢弃，不 Abort）。
+; 流程卸载器非提权，sc/delete HKLM 可能因权限不足失败——完整清理通道是提权的
+; --elevation-uninstall（安全页「移除」只删服务侧密文，不卸服务），此处失败静默继续
+; （nsExec 退出码仅 Pop 丢弃，不 Abort）。
 
 !macro NSIS_HOOK_PREUNINSTALL
   DetailPrint "TOTP Tools: 清理 ABE 提权服务与绑定记录"
