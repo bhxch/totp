@@ -18,7 +18,7 @@ import { computed, type ComputedRef } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 // AbeStatus/AbeResult/AbeOps 正本在 @totp/ui（T5 起，防两处类型漂移——Rust abe_status 返回体
 // camelCase 字段与 ui AbeStatus 对齐，单测 abe_status_result_serializes_camel_case 守护）
-import type { AbeOps, AbeResult, AbeStatus, DpapiUnlockOps, SecurityOps, SecurityPlatform, VueStore } from '@totp/ui'
+import type { AbeBindResult, AbeOps, AbeResult, AbeStatus, DpapiUnlockOps, SecurityOps, SecurityPlatform, VueStore } from '@totp/ui'
 // host 工厂经 '@totp/ui/host' 子出口导入(理由同 host/index.ts 头注释:宿主 mock 拦截点唯一)
 import { createSecurityOpsFromStore } from '@totp/ui/host'
 import { lockPrefsUnsupportedKeys } from './lockPrefs'
@@ -52,6 +52,16 @@ export interface DesktopSecurityPlatform {
   abe: AbeOps
   /** F3 迁移：历史 wrappedDekD(无应用附加熵的旧格式)在下一次成功解锁后重包为 v2 应用熵绑定格式 */
   migrateDekWrapToEntropyBound(): Promise<void>
+}
+
+/** abe_bind Err 前缀解析（Task 11，协议见 elevation_install.rs/trigger_install 注释）：
+ *  `cancelled:`/`failed:`/`notready:` 三前缀取前缀后原文为 detail；无前缀兜底归 failed
+ *  （主窗口门控「仅主窗口可调用此命令」与 join 失败不带前缀——上游裁定，detail 不透传
+ *  内部命令语义，收敛通用文案由 UI 侧统一引导看安装日志） */
+function classifyAbeBindError(e: unknown): AbeBindResult {
+  const m = /^(cancelled|failed|notready):([\s\S]*)$/.exec(String(e))
+  if (!m) return { ok: false, reason: 'failed', detail: '安装过程异常终止' }
+  return { ok: false, reason: m[1] as 'cancelled' | 'failed' | 'notready', detail: m[2] }
 }
 
 export function createSecurityPlatform(deps: SecurityPlatformDeps): DesktopSecurityPlatform {
@@ -102,7 +112,7 @@ export function createSecurityPlatform(deps: SecurityPlatformDeps): DesktopSecur
 
   // ABE 服务通道（P6 §0.3）：supported 按 UA 判定（与 lockPrefs/naming 同源 flags）——
   // abe_* 命令虽全平台注册（非 Windows supported:false 桩），前端短路可省无效 IPC；
-  // 失败一律收敛 null/false/{ok:false}（UAC 取消、服务不可达均非异常路径，不打断 UI）
+  // 失败收敛 null/{ok:false}/判别联合（Task 11：UAC 取消/失败/未就绪均非异常路径，不打断 UI）
   const abeSupported = deps.flags.isWin
   const abeOps: AbeOps = {
     supported: abeSupported,
@@ -118,14 +128,16 @@ export function createSecurityPlatform(deps: SecurityPlatformDeps): DesktopSecur
         return null
       }
     },
+    // Task 11：Err 前缀协议（Task 10：cancelled:/failed:/notready:）解析为判别联合，
+    // SecurityCard 据此分类文案；无前缀兜底归 failed（detail 收敛通用文案）
     async bind() {
-      if (!abeSupported) return false
+      if (!abeSupported) return { ok: false, reason: 'failed', detail: '当前平台不支持 ABE 服务' }
       try {
         await invoke('abe_bind')
-        return true
+        return { ok: true }
       } catch (e) {
-        console.warn('[desktop] abe_bind 失败（UAC 取消或安装未达可用态）', e)
-        return false
+        console.warn('[desktop] abe_bind 失败（前缀分类供 UI 文案）', e)
+        return classifyAbeBindError(e)
       }
     },
     // 服务侧 Wrap（C1 终审：绑定编排 bind→wrap→addSource 的 wrap 步）：当前 DEK →

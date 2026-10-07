@@ -731,15 +731,18 @@ pub fn run_uninstall() -> Result<(), InstallError> {
 }
 
 /// trigger_install 失败二分（Task 10 前缀协议，供 abe_bind 的 Err 分流）：Cancelled
-/// 仅限 runas 退出码 -1（UAC 弹窗被用户取消，runas 1.2 ExitStatus raw 0xFFFFFFFF
-/// → code() == Some(-1)）；其余（提权进程非零退出，含 SCM 错误码文案）归 Failed
+/// 仅限 runas 退出码 -1（0xFFFFFFFF）——注意 runas 1.2 Windows 侧 .status() 恒返回
+/// Ok(ExitStatus)，ShellExecute 启动失败/策略拒绝同样折叠为 -1（上游 impl_windows.rs
+/// 已核），故 cancelled: 实际语义是「未完成授权」而非严格「用户主动取消」（前端
+/// abeBindCancelled 文案口径对齐）；其余（提权进程非零退出，含 SCM 错误码文案）归 Failed
 #[derive(Debug, PartialEq, Eq)]
 enum TriggerFailure {
     Cancelled,
     Failed(String),
 }
 
-/// 分类纯函数：`Some(-1)` 即 0xFFFFFFFF → Cancelled；其余（含 code()==None 的
+/// 分类纯函数：`Some(-1)` 即 0xFFFFFFFF → Cancelled（含 runas 1.2 折叠进来的
+/// ShellExecute 失败/策略拒绝，见 TriggerFailure 注释）；其余（含 code()==None 的
 /// 信号终止形态）一律 Failed 携带 detail
 fn classify_trigger_failure(exit_code: Option<i32>, detail: Option<String>) -> TriggerFailure {
     if exit_code == Some(-1) {
@@ -761,8 +764,10 @@ pub fn trigger_install() -> Result<(), InstallError> {
     let status = runas::Command::new(&exe)
         .arg("--elevation-install")
         .status()
-        // ShellExecute 层启动失败（exe 缺失/策略拒绝等）非用户取消 → failed:；
-        // 仅 UAC 弹窗取消（退出码 -1）归 cancelled:（审查裁定）
+        // 审查 M1 局限留档：runas 1.2 Windows 侧 .status() 恒返回 Ok(ExitStatus)——
+        // ShellExecute 层启动失败/策略拒绝同样折叠为退出码 -1（上游 impl_windows.rs 已核），
+        // 此 `failed:` 分支实为防御性（上游未来行为变化兜底）；真实二分由
+        // classify_trigger_failure 依退出码完成（-1 → cancelled:，其余 → failed:）
         .map_err(|e| InstallError(format!("failed:UAC 提权启动失败: {e}")))?;
     if status.success() {
         return Ok(());

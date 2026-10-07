@@ -198,7 +198,7 @@ describe('abeOps（ABE 服务宿主通道，P6 T4）', () => {
     const { f } = makeFactory(UA_LINUX)
     expect(f.abe.supported).toBe(false)
     expect(await f.abe.status()).toBeNull()
-    expect(await f.abe.bind()).toBe(false)
+    expect(await f.abe.bind()).toEqual({ ok: false, reason: 'failed', detail: '当前平台不支持 ABE 服务' }) // 判别联合兜底（Task 11）
     expect(await f.abe.wrap(new Uint8Array(32))).toBe(false) // C1 终审：wrap 同口径短路
     expect(await f.abe.remove()).toEqual({ ok: false, message: expect.any(String) })
     expect(tauriMock.calls()).toHaveLength(0) // invoke 零触达
@@ -228,13 +228,24 @@ describe('abeOps（ABE 服务宿主通道，P6 T4）', () => {
     warnSpy.mockRestore()
   })
 
-  it('bind：成功 true；UAC 取消/安装未达可用态（invoke Err）传播为 false 不抛', async () => {
+  it('bind：成功 {ok:true}；Err 前缀协议解析判别联合（cancelled/failed/notready），无前缀兜底 failed 不抛（Task 11）', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const { f } = makeFactory()
     tauriMock.onReturn('abe_bind', { ok: true })
-    expect(await f.abe.bind()).toBe(true)
-    tauriMock.on('abe_bind', () => { throw new Error('UAC canceled') })
-    expect(await f.abe.bind()).toBe(false)
+    expect(await f.abe.bind()).toEqual({ ok: true })
+    // 前缀三态（Task 10 协议）：真 Tauri 通道 Err(String) reject 即字符串原样带前缀
+    tauriMock.on('abe_bind', () => { throw 'cancelled:UAC 提权被用户取消（exit -1）' })
+    expect(await f.abe.bind()).toEqual({ ok: false, reason: 'cancelled', detail: 'UAC 提权被用户取消（exit -1）' })
+    tauriMock.on('abe_bind', () => { throw 'failed:服务启动未完成（可能被安全软件拦截）' })
+    expect(await f.abe.bind()).toEqual({ ok: false, reason: 'failed', detail: '服务启动未完成（可能被安全软件拦截）' })
+    tauriMock.on('abe_bind', () => { throw 'notready:安装命令已完成，但服务未在 10s 内可达' })
+    expect(await f.abe.bind()).toEqual({ ok: false, reason: 'notready', detail: '安装命令已完成，但服务未在 10s 内可达' })
+    // 无前缀兜底（主窗口门控/join 失败不带前缀）：归 failed，detail 收敛通用文案不透传内部语义
+    tauriMock.on('abe_bind', () => { throw '仅主窗口可调用此命令' })
+    const bare = await f.abe.bind()
+    if (bare.ok) throw new Error('expected bind failure')
+    expect(bare.reason).toBe('failed')
+    expect(bare.detail).toBe('安装过程异常终止')
     warnSpy.mockRestore()
   })
 

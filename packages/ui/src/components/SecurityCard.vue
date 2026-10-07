@@ -70,7 +70,8 @@ const abeStatus = ref<AbeStatus | null>(null)
 /** ABE 绑定/移除进行中（bind 走 UAC 提权、desktop 侧轮询服务可达可长达 10s+；独立于卡片全局
  *  busy——UAC 弹窗等待期间不动 else 分支的口令输入禁用态，仅锁 ABE 区自身防重复点击） */
 const abeBusy = ref(false)
-/** bind 返回 false（UAC 取消/超时）时的内联提示（保持当前三态，取消属正常路径不走错误通道） */
+/** bind 失败时的内联提示（Task 11 分类文案：cancelled/failed/notready 三分支；
+ *  取消属正常路径不走错误通道） */
 const abeHint = ref('')
 /** 移除两击确认（TagManagerDialog/CodesPage askRemove 同款）：首击进入确认态 3s 超时复位，再击执行 */
 const abeConfirmRemove = ref(false)
@@ -90,17 +91,26 @@ async function refreshAbeStatus(): Promise<void> {
 
 /** 绑定流程（安装与失配重绑共用）：bind()（UAC 安装+服务可达复核）→ wrap（当前 DEK 写服务
  *  HKLM 密文，C1 终审——无此步锁屏 unwrap 恒 NoWrappedDek）→ abe 标记源落盘 → 刷新状态。
- *  bind false（UAC 取消/超时）保持当前态给内联提示；wrap 失败（服务不可达/被拒）不 addSource
- *  ——标记源与 HKLM 密文必须成对，半绑定态比未绑定更误导；addSource 失败（锁定代数中止等）
- *  走错误消息通道 */
+ *  bind 失败按判别联合 reason 分类给内联提示（Task 11：cancelled 固定文案、failed 拼
+ *  Rust detail 并引导看安装日志、notready 内嵌杀软信任指引），保持当前态；wrap 失败
+ *  （服务不可达/被拒）不 addSource——标记源与 HKLM 密文必须成对，半绑定态比未绑定更误导；
+ *  addSource 失败（锁定代数中止等）走错误消息通道 */
 async function onAbeBind(): Promise<void> {
   const ops = abe.value
   if (!ops || abeBusy.value) return
   abeBusy.value = true
   abeHint.value = ''
   try {
-    if (!(await ops.bind())) {
-      abeHint.value = t('securityCard.abeBindFailed')
+    // Task 11：按 bind 判别联合 reason 选分类文案——cancelled 固定口径（runas 1.2 语义
+    // 折叠，策略拒绝等也报取消，不写死「用户取消」）；failed 拼 detail 并指向安装日志；
+    // notready 固定文案内嵌杀软排除指引（本机 ESET 拦截场景可自助排查）
+    const bindRet = await ops.bind()
+    if (!bindRet.ok) {
+      abeHint.value = bindRet.reason === 'cancelled'
+        ? t('securityCard.abeBindCancelled')
+        : bindRet.reason === 'notready'
+          ? t('securityCard.abeNotReady')
+          : t('securityCard.abeBindFailed', { detail: bindRet.detail })
       return
     }
     // C1 终审：bind 成功后、addSource 之前 Wrap 当前 DEK。DEK 获取口：platform.security

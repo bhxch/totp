@@ -58,6 +58,15 @@ export interface AbeResult {
   message?: string
 }
 
+/** ABE 绑定（bind）失败判别联合（Task 11，消费 Task 10 Rust Err 前缀协议）：
+ *  reason 三态对应 abe_bind Err(String) 的 `cancelled:`/`failed:`/`notready:` 前缀，
+ *  detail 为前缀后的 Rust 侧诊断原文。known limitation（上游 runas 1.2 实测）：策略拒绝
+ *  等 ShellExecute 层失败同样折叠退出码 -1 → 报 cancelled:，故 cancelled 语义为
+ *  「未完成授权」而非严格「用户主动取消」（文案口径见 abeBindCancelled） */
+export type AbeBindResult =
+  | { ok: true }
+  | { ok: false; reason: 'cancelled' | 'failed' | 'notready'; detail: string }
+
 /** ABE 提权服务宿主操作集（plan p6 §0.3；desktop 宿主实现=Rust abe_* 命令 invoke 包装 +
  *  store 源 op 包装，extension 无此能力 → 不注入；SecurityCard 仅 supported=true 渲染） */
 export interface AbeOps {
@@ -67,7 +76,9 @@ export interface AbeOps {
    *  desktop 宿主映射 store.abeSource，形态同 DpapiUnlockOps.source（无载荷标记源） */
   source: ComputedRef<{ kind: 'abe' } | null>
   status(): Promise<AbeStatus | null>
-  bind(): Promise<boolean>
+  /** 绑定安装（UAC 一次完成安装+绑定+服务可达复核，desktop 轮询可长达 10s+）：失败按
+   *  Rust 前缀协议返回判别联合（Task 11，SecurityCard 据此分类文案），不抛 invoke 错 */
+  bind(): Promise<AbeBindResult>
   /** 服务侧 Wrap（C1 终审：绑定编排 bind→wrap→addSource 的 wrap 步）：当前 DEK →
    *  服务 HKLM WrappedDek——无此步锁屏 unwrap 恒 NoWrappedDek（ABE 通道端到端断裂）。
    *  失败折叠 false，折叠语义同 unwrap（任何管道/服务侧失败均非异常路径，调用方据

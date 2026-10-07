@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { computed, ref } from 'vue'
 import SecurityCard from '../src/components/SecurityCard.vue'
 import { createTestI18n } from './helpers/i18n'
-import type { AbeOps, AbeResult, AbeStatus, SecurityOps, SecurityPlatform } from '../src/components/securityPlatform'
+import type { AbeBindResult, AbeOps, AbeResult, AbeStatus, SecurityOps, SecurityPlatform } from '../src/components/securityPlatform'
 
 function makeSecurity(over: Partial<SecurityOps> = {}): SecurityOps {
   return {
@@ -37,7 +37,7 @@ function makeAbe(over: Partial<AbeOps> = {}): AbeOps {
     supported: true,
     source: computed(() => ({ kind: 'abe' as const })),
     status: vi.fn().mockResolvedValue(null),
-    bind: vi.fn().mockResolvedValue(true),
+    bind: vi.fn().mockResolvedValue({ ok: true }),
     wrap: vi.fn().mockResolvedValue(true),
     remove: vi.fn().mockResolvedValue({ ok: true } as AbeResult),
     addSource: vi.fn().mockResolvedValue(undefined),
@@ -182,17 +182,25 @@ describe('SecurityCard ABE 区块（plan p6 §0.3 三态 + R7-I2 源缺失引导
     w.unmount()
   })
 
-  it('bind 返回 false（UAC 取消/超时）：不调 addSource，保持未安装态并给内联提示', async () => {
-    const abe = makeAbe({ bind: vi.fn().mockResolvedValue(false) })
+  // Task 11 三分支分类文案（Rust Err 前缀协议 → 判别联合 reason → i18n key；cancelled
+  // 口径按 runas 1.2 语义折叠裁定为「取消或未完成授权」）
+  const bindFailCases: Array<[AbeBindResult, string]> = [
+    [{ ok: false, reason: 'cancelled', detail: 'UAC 取消' }, '已取消 UAC 授权或未完成授权，安装中止'],
+    [{ ok: false, reason: 'failed', detail: '创建服务失败' }, '安装失败：创建服务失败'],
+    [{ ok: false, reason: 'notready', detail: '10s 内不可达' }, '服务未就绪：若安装了第三方安全软件（如 ESET），请将 C:\\ProgramData\\TotpTools\\service\\ 加入信任后重试'],
+  ]
+  it.each(bindFailCases)('bind 失败 %j → 不调 addSource，保持未安装态并给分类内联文案（含「%s」）', async (ret, expected) => {
+    const abe = makeAbe({ bind: vi.fn().mockResolvedValue(ret) })
     const w = mountCard(abe)
     await vi.waitFor(() => expect(w.find('button.abe-install').exists()).toBe(true))
     await w.find('button.abe-install').trigger('click')
     await vi.waitFor(() => expect(abe.bind).toHaveBeenCalledTimes(1))
     await flushPromises()
     expect(abe.addSource).not.toHaveBeenCalled()
-    expect(abe.status).toHaveBeenCalledTimes(1) // 未刷新状态
+    expect(abe.status).toHaveBeenCalledTimes(1) // 失败不刷新状态（区别于 wrap 失败路径的 R7-M5 刷新）
     expect(w.find('button.abe-install').exists()).toBe(true)
-    expect(w.text()).toContain('安装未完成')
+    expect(w.text()).toContain(expected)
+    w.unmount()
   })
 
   it('bind 成功但 addSource 抛错：仍刷新 status（共 2 次，服务侧已装已绑应反映真实态），错误走消息通道', async () => {
