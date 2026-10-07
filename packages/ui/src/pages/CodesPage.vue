@@ -158,8 +158,6 @@ async function onCopy(entry: OtpEntry) {
   emit('copy', c)
   // HOTP：复制的是旧 counter 的码（RFC 语义），复制完成后再递增
   if (entry.type === 'hotp') await props.store.updateEntryOp(entry.uuid, { counter: (entry.counter ?? 0) + 1 })
-  // P3：复制成功提示走全局 toast（失败仍由宿主横幅负责，本条只做成功提示）
-  toast.show(t('codesPage.copied'))
 }
 
 /** 右键菜单：复制验证码 / 编辑 / 复制 URI / 删除 / 置顶切换 */
@@ -176,14 +174,14 @@ function contextEdit(entry: OtpEntry) {
   closeContextMenu()
 }
 /** 右键「复制验证码」（P3）：取当前码走与行内复制同一 emit('copy') 通道（宿主写剪贴板+30s 清除），
- *  成功提示入队全局 toast；码未就绪时不动作（菜单保持打开）。HOTP 与行内 onCopy 同口径：
+ *  成败反馈由宿主按写入结果 toast（R3-I1：emit 无回执，本侧弹「已复制」会在宿主写入失败时
+ *  矛盾双反馈）。码未就绪时不动作（菜单保持打开）。HOTP 与行内 onCopy 同口径：
  *  复制的是旧 counter 的码（RFC 语义），emit 在前、递增在后（审查修复：右键入口此前漏递增） */
 async function contextCopyCode(entry: OtpEntry) {
   const code = codes.value.get(entry.uuid)?.code
   if (!code) return
   emit('copy', code)
   if (entry.type === 'hotp') await props.store.updateEntryOp(entry.uuid, { counter: (entry.counter ?? 0) + 1 })
-  toast.show(t('codesPage.copied'))
   closeContextMenu()
 }
 /** 右键「删除」（P3）：关菜单并进入行内两击确认态——显式置 confirmingDelete 并武装 3s 超时

@@ -1,8 +1,8 @@
 /**
  * MiniApp 挂载冒烟（P4，盘点 B10.33-36 双窗口缺口）：windowId='mini' 独立 store（与 main 隔离）、
  * 未加密可读/加密经槽 peek 自动解锁（①跟随主窗解锁）、复制编排（HOTP 复制旧 counter 码→递增→
- * 500ms 自动隐藏）、stage 失败→copyFailed 保持可见且 HOTP 不推进、force-lock/mini-session 事件联动、
- * mini 不监听回注事件。
+ * 500ms 自动隐藏）、stage 失败→error toast 且列表不被顶替/HOTP 不推进、force-lock/mini-session
+ * 事件联动、mini 不监听回注事件。
  * Tauri 边界走 test/mocks/tauri（fs 以内存 map 供给）；store 走真实 createTauriFs+createVueStore
  * （createVueStore 局部包装仅记录 windowId 实参）；i18n 用真实 createAppI18n（断言 zh 文案）。
  */
@@ -151,7 +151,7 @@ describe('复制编排（B10.36）', () => {
     }
   })
 
-  it('stage 失败（剪贴板被占用）→ copyFailed 保持可见、不武装隐藏、HOTP 不推进', async () => {
+  it('stage 失败（剪贴板被占用）→ error toast（列表不被顶替）、不武装隐藏、HOTP 不推进', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
       await seedVault([HOTP])
@@ -160,11 +160,13 @@ describe('复制编排（B10.36）', () => {
       const before = await waitForCode(wrapper, (c) => /^\d{6}$/.test(c))
       await wrapper.find('[data-test="copy"]').trigger('click')
       await flushPromises()
-      expect(wrapper.text()).toContain('复制失败：剪贴板被占用')
-      // 面板装配后沿旧 v-else 链语义：失败横幅 3s 复位期间列表区被横幅顶替——推进越过复位点
-      // （fake 时间确定性，不依赖 shouldAdvanceTime 的真实时间泄漏），再验未隐藏与 HOTP 不推进
+      // R3-I1：失败反馈走全局 error toast（原 copyFailed 横幅顶替列表区，已移除）
+      expect(wrapper.find('.toast--error').text()).toBe('复制失败：剪贴板被占用')
+      expect(wrapper.find('[data-test="item"]').exists()).toBe(true) // 列表区不被失败提示顶替
+      // toast 3s 自动过期；推进越过过期点验证窗口未被自动隐藏（失败保持可见）且 HOTP 不推进
       await vi.advanceTimersByTimeAsync(3100)
       await flushPromises()
+      expect(wrapper.find('.toast--error').exists()).toBe(false)
       expect(tauriMock.window.hide).not.toHaveBeenCalled() // 失败保持窗口可见
       expect(wrapper.find('[data-test="item"]').attributes('data-code')).toBe(before) // 码未复制成功 → counter 不推进
     } finally {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { createAutoRunScheduler } from '@totp/core'
-import { createAppI18n, createIconStore, LockScreen, NavigationShell, PersistErrorBanner, ToastHost, useTheme } from '@totp/ui'
+import { createAppI18n, createIconStore, LockScreen, NavigationShell, PersistErrorBanner, ToastHost, useTheme, useToast } from '@totp/ui'
 import { getCurrentInstance, onMounted, onUnmounted, ref, watch } from 'vue'
 import { createExtensionCloudRunner } from '../../src/cloudRunnerFactory'
 import { hasLegacyCloudKeys, migrateLegacySources } from '../../src/cloudCredStore'
@@ -109,9 +109,18 @@ onUnmounted(() => {
   lockWatcher.stop()
 })
 
+// R3-I1：复制成败反馈上移宿主（CodesPage emit 无回执不再自弹「已复制」）——写入完成按结果
+// toast，失败 error toast（与 desktop/popup 同口径，设计 §3.2）；仍纳入 scheduleClipboardClear
+// 30s 清除链（写入成功才武装，失败不武装）
+const toast = useToast()
 async function copyToClipboard(code: string) {
-  await navigator.clipboard.writeText(code)
-  scheduleClipboardClear(settings)
+  try {
+    await navigator.clipboard.writeText(code)
+    scheduleClipboardClear(settings)
+    toast.show(tr('options.copied'))
+  } catch {
+    toast.show(tr('options.copyFailed'), 'error')
+  }
 }
 
 // ---------- 平台装配（R4 抽 optionsPlatforms；App.vue 留生命周期接线）----------

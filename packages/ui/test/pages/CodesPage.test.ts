@@ -409,7 +409,7 @@ describe('CodesPage P3：右键复制验证码/删除项 + 复制 toast + 筛选
     expect(items).toEqual(['复制验证码', '编辑', '显示二维码', '复制 URI', '删除', '置顶'])
   })
 
-  it('右键「复制验证码」：emit copy 携带验证码 + 入队「已复制」toast + 关菜单（不直写剪贴板）', async () => {
+  it('右键「复制验证码」：emit copy 携带验证码 + 关菜单（不直写剪贴板）；成败反馈上移宿主不自弹 toast（R3-I1）', async () => {
     const { w } = await readyRevealed()
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.assign(navigator, { clipboard: { writeText } })
@@ -420,7 +420,9 @@ describe('CodesPage P3：右键复制验证码/删除项 + 复制 toast + 筛选
     expect(writeText).not.toHaveBeenCalled()
     expect(w.emitted('copy')).toHaveLength(1)
     expect(String(w.emitted('copy')![0]![0])).toMatch(/^\d{6}$/)
-    expect(useToast().toasts.value.map((t) => t.message)).toContain('已复制')
+    // R3-I1：emit 无回执，宿主写入失败时本侧「已复制」会与宿主失败提示矛盾双反馈——
+    // 成败 toast 一并上移宿主（desktop/options @copy handler），CodesPage 不再入队任何 toast
+    expect(useToast().toasts.value).toHaveLength(0)
     expect(w.find('.md-menu').exists()).toBe(false)
   })
 
@@ -455,11 +457,11 @@ describe('CodesPage P3：右键复制验证码/删除项 + 复制 toast + 筛选
     await vi.waitFor(() => expect(s.vault.entries).toHaveLength(0))
   })
 
-  it('行内复制（onCopy）成功后入队「已复制」toast', async () => {
+  it('行内复制（onCopy）emit copy 不自弹 toast——成败反馈上移宿主（R3-I1）', async () => {
     const { w } = await readyRevealed()
     await w.find('.otp-item').trigger('click')
     expect(w.emitted('copy')).toHaveLength(1)
-    expect(useToast().toasts.value.map((t) => t.message)).toContain('已复制')
+    expect(useToast().toasts.value).toHaveLength(0)
   })
 
   it('SearchBar 与 chips-row 包进 .frozen 冻结容器（sticky 顶部）', async () => {

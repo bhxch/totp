@@ -2,7 +2,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { StorageAdapter } from '@totp/core'
-import { LockScreen, NavigationShell, PersistErrorBanner, ToastHost, type IconStore, type VueStore } from '@totp/ui'
+import { LockScreen, NavigationShell, PersistErrorBanner, ToastHost, type IconStore, type VueStore, useToast } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, shallowRef } from 'vue'
 import { createDesktopAutoChannels } from './autoBackup'
 import { createBackupPlatform, createImportSchemesApi } from './backupPlatform'
@@ -65,20 +65,34 @@ const migrateDekWrapToEntropyBound = securityFactory.migrateDekWrapToEntropyBoun
 const runLegacyMigrations = createLegacyMigrations({ getStore, getAdapter, migrateDekWrapToEntropyBound })
 
 // ---------- 复制编排 / 审批队列 / 配置平台 ----------
-// 复制失败横幅（stage 拒绝 3s）与 30s 清剪贴板武装抽至 desktopCopy.ts；Rust 边界在此接线
-const { copyFailed, copyToClipboard } = createDesktopCopy({
+// 复制编排（stage + 30s 清剪贴板武装）抽至 desktopCopy.ts；Rust 边界在此接线。
+// R3-I1：复制成败反馈上移宿主——desktopCopy 按写入结果 resolve boolean，此处 toast
+// （成功「已复制」/失败 error toast），替代原 copyFailed 横幅（设计 §3.2，三宿主一致）；
+// CodesPage emit 无回执不再自弹成功提示，任何失败路径不再出现成功 toast
+const toast = useToast()
+const { copyToClipboard } = createDesktopCopy({
   isEnabled: () => store.value?.settings.clipboardClearEnabled === true,
   stage: (value) => invoke('stage_clipboard_write', { value }).then(() => {}),
   clearIfStaged: () => invoke('clipboard_clear_if_staged').then(() => {}),
 })
+async function onCopy(code: string) {
+  const ok = await copyToClipboard(code)
+  if (ok) toast.show(tr('desktop.copied'))
+  else toast.show(tr('desktop.copyFailed'), 'error')
+}
 // 首连审批队列（原单槽位 approval 的并发根修，见 mcpApprovalQueue.ts）。审批窗独立于锁定态
 // （锁定时取码在桥内报 vault locked，属预期）；队列创建与回执接线抽至 desktopShell.ts
 const approvalQueue = createDesktopApprovalQueue()
 /** 模板消费的队首待审批；null=无待审批 */
 const approval = approvalQueue.current
 const { onApprovalAction, onToolAllow, onConsentClose } = createMcpConsentFlow(approvalQueue)
-// MCP/远程调试/释放策略配置平台适配器抽至 desktopShell.ts
-const mcpPlatform = createMcpPlatform({ copyText: (value) => copyToClipboard(value) })
+// MCP/远程调试/释放策略配置平台适配器抽至 desktopShell.ts；MCP 卡复制成功反馈走卡内
+// 「已复制」标签，失败（原全局横幅兜底，R3-I1 移除）此处补 error toast 不回退为静默
+const mcpPlatform = createMcpPlatform({
+  copyText: async (value) => {
+    if (!(await copyToClipboard(value))) toast.show(tr('desktop.copyFailed'), 'error')
+  },
+})
 const devtoolsPlatform = createDevtoolsPlatform()
 const releasePlatform = createReleasePlatform()
 // MCP 桥依赖（requireEntries 锁定门控/tagsOf/triggers 前置判定）抽至 desktopShell.ts
@@ -108,13 +122,12 @@ onScopeDispose(() => shell.dispose())
 const railActions = [{ get label() { return tr('desktop.hideToTray') }, onClick: () => void getCurrentWindow().hide() }]
 </script>
 <template>
-  <div v-if="copyFailed" class="copy-failed" role="alert">{{ tr('desktop.copyFailed') }}</div>
   <!-- R16⑤（评审 A2 方案 a）：落盘失败常驻告警，与主体并列不互斥 -->
   <PersistErrorBanner :show="persistFailed" :text="tr('app.persistError')" />
   <div v-if="loadError && !store" class="error">{{ tr('desktop.loadFailed', { message: loadError }) }}</div>
   <!-- 解锁成功回调补跑迁移（plan16 T14，幂等）：口令/PRF 解锁各路径在 LockScreen 内 emit unlocked -->
   <LockScreen v-else-if="store && locked" :store="store" :dpapi="dpapiOps" :abe="abeOps" @unlocked="runLegacyMigrations" />
-  <NavigationShell v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :cloud-platform="cloudPlatform" :icons="icons" :schemes-api="schemesApi" :rail-actions="railActions" :mcp-platform="mcpPlatform" :devtools-platform="devtoolsPlatform" :release-platform="releasePlatform" @copy="copyToClipboard" />
+  <NavigationShell v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :cloud-platform="cloudPlatform" :icons="icons" :schemes-api="schemesApi" :rail-actions="railActions" :mcp-platform="mcpPlatform" :devtools-platform="devtoolsPlatform" :release-platform="releasePlatform" @copy="onCopy" />
   <!-- MCP 首连审批/工具确认独立于上方 v-if 链：锁定态也要能弹（plan17 T10）；t 走壳层 tr（desktop 无 useI18n 注入） -->
   <!-- 关闭（Esc/遮罩/工具 Deny）按通道分流 deny：首连回执进 60s 冷却，工具确认回 result:false（逐次即焚）——
        否则 "approval pending" 诱导 AI 每 10s 重试、对话框反复重开抢焦点 -->
@@ -126,5 +139,4 @@ const railActions = [{ get label() { return tr('desktop.hideToTray') }, onClick:
 <style>
 body { font-family: system-ui, sans-serif; margin: 0; }
 .error { color: var(--md-sys-color-error); padding: 16px; }
-.copy-failed { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 1000; color: var(--md-sys-color-error); background: var(--md-sys-color-error-container); border-radius: 8px; padding: 8px 16px; font-size: var(--md-sys-typescale-body-medium); box-shadow: 0 1px 3px var(--md-sys-color-shadow); }
 </style>

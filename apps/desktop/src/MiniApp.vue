@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { emit, listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { filterByTags, type TagFilterMode } from '@totp/core'
-import { PersistErrorBanner, QuickCodesPanel, createIconStore, searchEntries, useOtpCodes, useTheme, type IconStore, type VueStore } from '@totp/ui'
+import { PersistErrorBanner, QuickCodesPanel, ToastHost, createIconStore, searchEntries, useOtpCodes, useTheme, useToast, type IconStore, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, shallowRef, watch } from 'vue'
 import { createTauriFs } from './tauriFs'
 import { bootDesktopStore, persistFailed, useDesktopI18n } from './desktopShell'
@@ -166,9 +166,11 @@ watch(
   { immediate: true },
 )
 
-/** 复制编排统一走 createDesktopCopy（R13，与主窗同一事实源）：stage 成功武装 30s 清空、失败横幅
- *  3s 自动复位（修复：mini 原横幅不复位，行为已与 desktopCopy 漂移，以 desktopCopy 为准） */
-const { copyFailed, copyToClipboard } = createDesktopCopy({
+/** 复制编排统一走 createDesktopCopy（R13，与主窗同一事实源）：stage 成功武装 30s 清空。
+ *  R3-I1：失败反馈改全局 error toast（原 copyFailed 横幅会顶替列表区且与主窗形态漂移，
+ *  设计 §3.2 三宿主一致）；成功反馈仍是复制后 500ms 自动隐藏，不重复提示 */
+const toast = useToast()
+const { copyToClipboard } = createDesktopCopy({
   isEnabled: () => store.value?.settings.clipboardClearEnabled === true,
   stage: (value) => invoke('stage_clipboard_write', { value }).then(() => {}),
   clearIfStaged: () => invoke('clipboard_clear_if_staged').then(() => {}),
@@ -196,7 +198,7 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
   // C14：HOTP 复制的是旧 counter 的码（RFC 语义），复制完成后再递增；TOTP 不动 counter。
   // mini 锁定时模板不渲染条目（见 template v-if="store && locked" 分支），故此处 store 必已解锁；
   // updateEntryOp 在 locked 态会抛错，捕获避免在某些边界场景把窗口隐藏打断
-  await copyToClipboard(code, {
+  const ok = await copyToClipboard(code, {
     onStaged: async () => {
       if (entry.type === 'hotp') {
         try { await store.value?.updateEntryOp(entry.uuid, { counter: (entry.counter ?? 0) + 1 }) } catch { /* mini 降级不打扰 */ }
@@ -204,6 +206,8 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
       autoHide.completeCopy(generation)
     },
   })
+  // R3-I1：stage 失败（剪贴板被独占等）→ error toast；不武装隐藏，窗口保持可见供用户重试
+  if (!ok) toast.show(tr('mini.copyFailed'), 'error')
 }
 </script>
 
@@ -218,12 +222,11 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
     <!-- R16⑤（评审 A2 方案 a）：落盘失败常驻告警，与主体并列不互斥 -->
     <PersistErrorBanner :show="persistFailed" :text="tr('app.persistError')" />
     <div v-if="store && locked" class="empty">{{ tr('mini.lockedNote') }}</div>
-    <div v-else-if="copyFailed" class="copy-error" role="alert">{{ tr('mini.copyFailed') }}</div>
     <div v-else-if="loadFailed && !store" class="copy-error" role="alert">{{ tr('mini.loadFailed') }}</div>
     <!-- P4 Task 2：搜索行 + 列表区整体换装 QuickCodesPanel（冻结筛选行 + 纯取码列表 + 两态空文案，
          行内 QR 入口面板内恒关）。过滤编排（搜索→标签）与复制/自动隐藏通道留宿主。面板内
-         SearchBar/TagFilterRow 依赖 i18n 插件，i18nReady 门控保留；锁定/复制失败/load 失败分支
-         仍沿旧 v-else-if 链优先于面板 -->
+         SearchBar/TagFilterRow 依赖 i18n 插件，i18nReady 门控保留；锁定/load 失败分支仍沿
+         v-else-if 链优先于面板（复制失败 R3-I1 起走 toast 不再占位） -->
     <QuickCodesPanel
       v-else-if="i18nReady"
       :entries="visible" :codes="codes" :icons="icons"
@@ -238,6 +241,8 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
     <!-- 双击揭示：面板把 OtpListItem 根元素 dblclick 显式上抛（declared emit，携带 MouseEvent），
          宿主接 autoHide.onDblclick 取消 500ms 自动隐藏（控制器内部递增揭示代次，使 await 期间
          在途的 copy 不再武装自动隐藏，审查 I-1） -->
+    <!-- 全局 toast 渲染端（R3-I1：复制失败 error toast 与三宿主同口径） -->
+    <ToastHost />
   </main>
 </template>
 

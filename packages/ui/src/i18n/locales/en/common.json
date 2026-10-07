@@ -718,7 +718,6 @@
     "ctxDelete": "Delete",
     "pin": "Pin",
     "unpin": "Unpin",
-    "copied": "Copied",
     "batchImported": "{n} entries imported"
   },
   "settingsPage": {
@@ -793,7 +792,9 @@
     "legacyNote": "Legacy cloud sync configuration detected: it will migrate automatically once encryption is enabled",
     "readError": "Failed to read local data: {message}",
     "exported": "Backup file exported: {name}",
-    "exportedOverwrite": "Backup file exported (overwrite): {name}"
+    "exportedOverwrite": "Backup file exported (overwrite): {name}",
+    "copied": "Copied",
+    "copyFailed": "Copy failed: clipboard unavailable"
   },
   "desktop": {
     "loadFailed": "Failed to initialize local data: {message}",
@@ -808,7 +809,8 @@
     "copyFailed": "Copy failed: clipboard busy or unwritable",
     "unlockKeychain": "Keychain auto-unlock",
     "unlockWindows": "Windows auto-unlock",
-    "unlockKeyring": "Keyring auto-unlock"
+    "unlockKeyring": "Keyring auto-unlock",
+    "copied": "Copied"
   },
   "mini": {
     "loadFailed": "Load failed — refocus this window to retry",

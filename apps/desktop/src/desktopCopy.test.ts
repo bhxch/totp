@@ -1,11 +1,12 @@
 /**
  * desktopCopy 直测（P4，盘点 B9.31/32 装配层缺口）：复制编排——stage 成功武装 30s 清空
- * （开关关闭不武装）、stage 失败（第三方独占剪贴板）横幅 3s 自动复位且不武装清空、
- * 重复失败重置计时。fake timers 驱动 createClipboardClearer 30s 定时。
+ * （开关关闭不武装）、stage 失败（第三方独占剪贴板）resolve false 且不武装清空。
+ * fake timers 驱动 createClipboardClearer 30s 定时。R3-I1：成败反馈（toast）由调用方按
+ * 返回值提示，本模块不再持有横幅状态。
  */
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { COPY_FAILED_BANNER_MS, createDesktopCopy } from '../src/desktopCopy'
+import { createDesktopCopy } from '../src/desktopCopy'
 
 const CLEAR_DELAY_MS = 30_000
 
@@ -30,10 +31,10 @@ afterEach(() => {
 })
 
 describe('复制成功路径', () => {
-  it('stage 成功 → notifyCopied 武装清空：开关开启时 30s 后调 clipboard_clear_if_staged 通道', async () => {
+  it('stage 成功 → resolve true + notifyCopied 武装清空：开关开启时 30s 后调 clipboard_clear_if_staged 通道', async () => {
     const { deps, clearIfStaged } = makeDeps({ enabled: true })
     const { copyToClipboard } = createDesktopCopy(deps)
-    await copyToClipboard('123456')
+    await expect(copyToClipboard('123456')).resolves.toBe(true)
     expect(deps.stage).toHaveBeenCalledWith('123456')
     expect(clearIfStaged).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(CLEAR_DELAY_MS)
@@ -62,26 +63,29 @@ describe('复制成功路径', () => {
 })
 
 describe('复制失败路径（剪贴板被第三方进程独占）', () => {
-  it('stage 拒绝 → copyFailed 横幅置真、不武装清空；3s 后自动复位', async () => {
+  it('stage 拒绝 → resolve false、不武装清空（码未复制成功不得清走用户原剪贴板）', async () => {
     const { deps, clearIfStaged } = makeDeps({ stageOk: false, enabled: true })
-    const { copyFailed, copyToClipboard } = createDesktopCopy(deps)
-    await copyToClipboard('123456')
-    expect(copyFailed.value).toBe(true)
+    const { copyToClipboard } = createDesktopCopy(deps)
+    await expect(copyToClipboard('123456')).resolves.toBe(false)
     await vi.advanceTimersByTimeAsync(CLEAR_DELAY_MS)
     expect(clearIfStaged).not.toHaveBeenCalled() // 码未复制成功，不得清空/隐藏
-    await vi.advanceTimersByTimeAsync(COPY_FAILED_BANNER_MS)
-    expect(copyFailed.value).toBe(false)
   })
 
-  it('重复失败重置 3s 计时（横幅不闪断）', async () => {
+  it('stage 失败不调用 onStaged 收尾（HOTP 递增/自动隐藏武装只在成功路径）', async () => {
     const { deps } = makeDeps({ stageOk: false })
-    const { copyFailed, copyToClipboard } = createDesktopCopy(deps)
-    await copyToClipboard('1')
-    await vi.advanceTimersByTimeAsync(COPY_FAILED_BANNER_MS - 500)
-    await copyToClipboard('2') // 2.5s 处再次失败 → 计时重置
-    await vi.advanceTimersByTimeAsync(500)
-    expect(copyFailed.value).toBe(true) // 距首次失败已 3s，但计时被重置仍显示
-    await vi.advanceTimersByTimeAsync(COPY_FAILED_BANNER_MS)
-    expect(copyFailed.value).toBe(false)
+    const { copyToClipboard } = createDesktopCopy(deps)
+    const onStaged = vi.fn()
+    await copyToClipboard('123456', { onStaged })
+    expect(onStaged).not.toHaveBeenCalled()
+  })
+
+  it('成功路径 onStaged 在武装清空前调用（收尾完成才 notifyCopied）', async () => {
+    const { deps, clearIfStaged } = makeDeps({ enabled: true })
+    const { copyToClipboard } = createDesktopCopy(deps)
+    const order: string[] = []
+    await copyToClipboard('123456', { onStaged: () => { order.push('staged') } })
+    await vi.advanceTimersByTimeAsync(CLEAR_DELAY_MS)
+    expect(clearIfStaged).toHaveBeenCalledOnce() // 武装生效
+    expect(order).toEqual(['staged'])
   })
 })

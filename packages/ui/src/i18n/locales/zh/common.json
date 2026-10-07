@@ -718,7 +718,6 @@
     "ctxDelete": "删除",
     "pin": "置顶",
     "unpin": "取消置顶",
-    "copied": "已复制",
     "batchImported": "已入库 {n} 条"
   },
   "settingsPage": {
@@ -793,7 +792,9 @@
     "legacyNote": "检测到旧版云同步配置：启用加密后将自动迁移到新模型",
     "readError": "本地数据读取失败：{message}",
     "exported": "已导出备份文件：{name}",
-    "exportedOverwrite": "已导出备份文件（覆盖）：{name}"
+    "exportedOverwrite": "已导出备份文件（覆盖）：{name}",
+    "copied": "已复制",
+    "copyFailed": "复制失败：剪贴板不可用"
   },
   "desktop": {
     "loadFailed": "本地数据初始化失败：{message}",
@@ -808,7 +809,8 @@
     "copyFailed": "复制失败：剪贴板被占用或不可写",
     "unlockKeychain": "钥匙串自动解锁",
     "unlockWindows": "Windows 自动解锁",
-    "unlockKeyring": "密钥环自动解锁"
+    "unlockKeyring": "密钥环自动解锁",
+    "copied": "已复制"
   },
   "mini": {
     "loadFailed": "加载失败：聚焦本窗口将自动重试",
