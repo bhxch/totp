@@ -22,6 +22,9 @@ mod elevation_proto;
 // DEK 包裹代理）。全部提权代码 cfg(windows) 门控（Global Constraints，Linux clippy CI 门禁）
 #[cfg(windows)]
 mod elevation_service;
+// ABE 提权安装/卸载（plan p6 §0.2）：UAC 单命令装服务+ProgramData 副本+HKLM 绑定
+#[cfg(windows)]
+mod elevation_install;
 // 对话框授权登记（F4）与备份/导入文件命令（dirToken 遏制 + 扩展名白名单）
 mod dialog_grants;
 mod lock_events;
@@ -710,6 +713,16 @@ fn setup_tray(
 
 pub fn run() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
+    // 审查 I-1：接管父控制台必须先于 parse_args——否则参数错误的 eprintln 写在未连接的
+    // 句柄上（windows_subsystem=windows 下 stderr 缺省无效），终端启动只见静默 exit(2)。
+    // Task 3 审查裁定提前到全部带参分支之前：提权/服务分支的 eprintln 同样依赖已附加的
+    // 控制台才在终端启动时可见。仅带参启动时附加：双击启动（无参）不触碰控制台，正常
+    // GUI 路径行为不变；附加失败（无宿主控制台等）AttachConsole 返回值被忽略，静默无害
+    // （SCM 拉起的服务进程父为 services.exe 无控制台，同样失败即静默，见 attach_parent_console 注释）
+    #[cfg(windows)]
+    if !args.is_empty() {
+        attach_parent_console();
+    }
     // ABE 提权服务分支（plan p6 §0.1）：run() 最早处分派，服务进程绝不初始化 tauri/webview。
     // 必须先于 cli::parse_args（后者对未知参数 exit(2)）；SCM 以唯一参数启动服务进程。
     // 非 SCM 上下文（终端直跑调试）由 run_service 内回落直接运行服务循环
@@ -721,13 +734,23 @@ pub fn run() {
         }
         return;
     }
-    // 审查 I-1：接管父控制台必须先于 parse_args——否则参数错误的 eprintln 写在未连接的
-    // 句柄上（windows_subsystem=windows 下 stderr 缺省无效），终端启动只见静默 exit(2)。
-    // 仅带参启动时附加：双击启动（无参）不触碰控制台，正常 GUI 路径行为不变；附加失败
-    // （无宿主控制台等）AttachConsole 返回值被忽略，静默无害（见 attach_parent_console 注释）
+    // ABE 提权安装/卸载分支（plan p6 §0.2）：由 runas 提权拉起，执行完即退出、无 UI，
+    // 绝不初始化 tauri/webview；同样先于 parse_args（未知参数会 exit(2)）
     #[cfg(windows)]
-    if !args.is_empty() {
-        attach_parent_console();
+    if args
+        .iter()
+        .any(|a| a == "--elevation-install" || a == "--elevation-uninstall")
+    {
+        let result = if args.iter().any(|a| a == "--elevation-install") {
+            elevation_install::run_install()
+        } else {
+            elevation_install::run_uninstall()
+        };
+        if let Err(e) = result {
+            eprintln!("[elevation-install] {e}");
+            std::process::exit(1);
+        }
+        return;
     }
     // 验收条目13：CLI 参数最先解析，失败 stderr + exit(2)（GUI 子系统下仅终端启动可见错误）
     let cli = match cli::parse_args(&args) {

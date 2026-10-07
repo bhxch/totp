@@ -109,6 +109,8 @@ windows-service = "0.8"
 sha2 = "0.10"
 # DEK 与明文密钥内存清零（Global Constraints：DEK 缓冲用后即清）
 zeroize = "1"
+# UAC 单命令提权（plan p6 §0.2）：trigger_install 以 runas 拉起自身 --elevation-install
+runas = "1.2"
 
 # osAutoUnlock 统一通道（mac Keychain / linux Secret Service）：仅对应目标编译，Windows 构建不下载不编译
 [target.'cfg(target_os = "macos")'.dependencies]

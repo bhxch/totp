@@ -13,10 +13,11 @@ use std::time::Duration;
 use base64::Engine as _;
 use sha2::Digest;
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE};
+use windows::Win32::Foundation::{CloseHandle, ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, HANDLE};
 use windows::Win32::System::Registry::{
-    RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY,
-    HKEY_LOCAL_MACHINE, KEY_READ, KEY_SET_VALUE, REG_SAM_FLAGS, REG_SZ,
+    RegCloseKey, RegCreateKeyExW, RegDeleteTreeW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW,
+    RegSetValueExW, HKEY, HKEY_LOCAL_MACHINE, KEY_READ, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE,
+    REG_SAM_FLAGS, REG_SZ,
 };
 use windows_service::service::ServiceState;
 use zeroize::Zeroize;
@@ -28,10 +29,13 @@ use crate::elevation_proto::{
 /// 服务名（§0.1，windows-service 注册；Task 3 安装/卸载与 NSIS 钩子共用同一字面量）
 pub const SERVICE_NAME: &str = "TotpToolsElevationService";
 
-/// HKLM 绑定键（§0.2）；Task 3 安装侧写绑定三值，本任务只读绑定 + 管 WrappedDek
-const REG_SUBKEY: &str = r"SOFTWARE\TotpTools\Elevation";
-const REG_BOUND_PATH: &str = "BoundPath";
-const REG_BOUND_SHA: &str = "BoundSha256";
+/// HKLM 绑定键（§0.2）；Task 3 安装侧写绑定三值、卸载侧删键，本模块统一收口注册表
+/// 读写（windows 原生 API 单点，Task 3 审查裁定不引 windows-registry）
+pub(crate) const REG_SUBKEY: &str = r"SOFTWARE\TotpTools\Elevation";
+pub(crate) const REG_BOUND_PATH: &str = "BoundPath";
+pub(crate) const REG_BOUND_SHA: &str = "BoundSha256";
+/// 安装侧写入的服务版本标记（§0.2 绑定三值之一）
+pub(crate) const REG_SERVICE_VERSION: &str = "ServiceVersion";
 const REG_WRAPPED_DEK: &str = "WrappedDek";
 
 /// 管道 DACL（§0.1 SDDL）：拒绝继承（P）；SYSTEM/Administrators 完全；Authenticated Users 读写
@@ -267,10 +271,11 @@ fn pipe_server_once(pipe: HANDLE) {
     };
     let (code, mut extra) = handle_payload(msg, payload, &mut store);
     let mut resp = resp_frame(code, &extra);
-    let sent = write_all(pipe, &resp);
+    write_all(pipe, &resp);
     // DEK 清理（Global Constraints）：请求 Wrap 载荷与响应 Unwrap 附加数据均为明文 DEK，
-    // 处理完（响应写出）立即 zeroize
-    if msg == MsgType::Unwrap && sent {
+    // 处理完立即 zeroize（Task 3 审查裁定：写失败路径同样清零——对端断开不代表进程内
+    // 缓冲可留明文；服务端 Unwrap 契约是「不落明文副本」而非「成功送达才清」）
+    if msg == MsgType::Unwrap {
         resp[RESP_WIRE_HEADER_LEN..].zeroize();
     }
     extra.zeroize();
@@ -395,8 +400,8 @@ fn query_process_image(process: HANDLE) -> Option<String> {
     None
 }
 
-/// SHA256(exe 文件字节) 小写 hex（流式读，不整文件进内存）
-fn sha256_file_hex(path: &str) -> Option<String> {
+/// SHA256(exe 文件字节) 小写 hex（流式读，不整文件进内存）；Task 3 安装侧复用
+pub(crate) fn sha256_file_hex(path: &str) -> Option<String> {
     let file = std::fs::File::open(path).ok()?;
     let mut hasher = sha2::Sha256::new();
     std::io::copy(&mut std::io::BufReader::new(file), &mut hasher).ok()?;
@@ -509,8 +514,41 @@ fn reg_read_sz(key: HKEY, name: &str) -> Option<String> {
     )
 }
 
+/// 建/打开 HKLM 绑定键（Task 3 安装侧；键不存在则创建）。安装进程已提权，默认 HKLM
+/// 子键 ACL（SYSTEM/Administrators 可写、Users 读）即 §0.2 要求，无需自定义
+pub(crate) fn reg_ensure_key() -> bool {
+    let mut key = HKEY::default();
+    let status = unsafe {
+        RegCreateKeyExW(
+            HKEY_LOCAL_MACHINE,
+            PCWSTR(to_wide(REG_SUBKEY).as_ptr()),
+            None, // reserved
+            PCWSTR::null(),
+            REG_OPTION_NON_VOLATILE,
+            KEY_SET_VALUE,
+            None,
+            &mut key,
+            None,
+        )
+    };
+    if status != ERROR_SUCCESS {
+        return false;
+    }
+    unsafe {
+        let _ = RegCloseKey(key);
+    }
+    true
+}
+
+/// 删除 HKLM 绑定键整棵子树（Task 3 卸载侧）。键不存在（未安装/已删）视同幂等成功
+pub(crate) fn reg_delete_key() -> bool {
+    let status =
+        unsafe { RegDeleteTreeW(HKEY_LOCAL_MACHINE, PCWSTR(to_wide(REG_SUBKEY).as_ptr())) };
+    status == ERROR_SUCCESS || status == ERROR_FILE_NOT_FOUND
+}
+
 /// 写 REG_SZ（数据须含 UTF-16 结尾 NUL，to_wide 已带）
-fn reg_write_sz(name: &str, value: &str) -> bool {
+pub(crate) fn reg_write_sz(name: &str, value: &str) -> bool {
     let Some(key) = open_key(KEY_SET_VALUE) else {
         return false;
     };
@@ -531,7 +569,8 @@ fn reg_write_sz(name: &str, value: &str) -> bool {
     status == ERROR_SUCCESS
 }
 
-fn to_wide(s: &str) -> Vec<u16> {
+/// UTF-16 宽串（带结尾 NUL）；Task 3 安装侧（SDDL/目录路径）复用
+pub(crate) fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
