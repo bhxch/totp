@@ -75,6 +75,44 @@ static MINI_PINNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 // ---------- mini ready 门控（spec §2.4）：重建后等前端首屏就绪再 show（2s 超时兜底） ----------
 static MINI_READY_TX: Mutex<Option<std::sync::mpsc::Sender<()>>> = Mutex::new(None);
 
+/// R1-I1：重建在途标志——重建路径（入口缺窗）置位，waiter 回主线程 show（或 2s 超时兜底）
+/// 完成后清零。2s ready 窗口内二次 toggle_mini（快捷键连按）看到窗口已建（is_none=false）
+/// 且不可见，若无此标志会误走非重建 show 分支绕过 ready 门控（首屏就绪前 show = 冷启动空白一闪）
+static MINI_REBUILD_INFLIGHT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// toggle_mini 动作判定（纯函数，R1-M6 状态机层单测）：输入窗口可见性、重建在途、失焦隐藏
+/// 距今，输出动作。优先级：可见→收起；刚失焦隐藏（<300ms 防抖）→保持隐藏；重建在途→仅定位
+/// 不 show（show 统一收敛到 ready waiter 回主线程处，封堵二次触发旁路）；其余→定位后立即 show
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MiniToggleAction {
+    /// 窗口可见：记忆位置并收起
+    Hide,
+    /// 刚失焦隐藏（<300ms）：本次点击视为「点托盘收起」，保持隐藏
+    KeepHidden,
+    /// 重建在途（本次发起或 ready 窗口内二次触发）：仅更新位置，show 由 waiter 统一执行
+    RepositionOnly,
+    /// 常规弹出：定位后立即 show+focus
+    Show,
+}
+
+fn mini_toggle_action(
+    visible: bool,
+    rebuild_inflight: bool,
+    since_focus_hide: Option<Duration>,
+) -> MiniToggleAction {
+    if visible {
+        return MiniToggleAction::Hide;
+    }
+    if since_focus_hide.is_some_and(|t| t < Duration::from_millis(300)) {
+        return MiniToggleAction::KeepHidden;
+    }
+    if rebuild_inflight {
+        return MiniToggleAction::RepositionOnly;
+    }
+    MiniToggleAction::Show
+}
+
 /// 释放策略状态轨迹（spec 批⑧ §7.2；tick 线程独占读写；任一窗口可见由 advance 内 reset，
 /// 窗口重建成功由 ensure_window reset）
 static RELEASE_TRACK: Mutex<release_policy::ReleaseTrack> =
@@ -333,6 +371,7 @@ fn toggle_mini(app: &AppHandle, anchor: Option<(f64, f64, f64, f64)>) {
     // 重建路径（spec §2.4）：入口判定缺窗即挂 ready 通道——通道挂载先于建窗，
     // 前端首屏 emit 不会落在建窗与等待之间丢失；非重建路径 ready_rx 为 None 零等待
     let mut ready_rx: Option<std::sync::mpsc::Receiver<()>> = None;
+    let mut rebuild_inflight = MINI_REBUILD_INFLIGHT.load(std::sync::atomic::Ordering::Relaxed);
     if app.get_webview_window("mini").is_none() {
         let (tx, rx) = std::sync::mpsc::channel();
         // 先挂通道再建窗：前端首屏 emit 不会落在建窗与等待之间丢失
@@ -340,21 +379,31 @@ fn toggle_mini(app: &AppHandle, anchor: Option<(f64, f64, f64, f64)>) {
             *g = Some(tx);
         }
         ready_rx = Some(rx);
+        // R1-I1：重建在途显式化（waiter 完成后清零）——2s ready 窗口内二次触发凭此标志
+        // 走 RepositionOnly，不再误判为常规弹出绕过 ready 门控
+        MINI_REBUILD_INFLIGHT.store(true, std::sync::atomic::Ordering::Relaxed);
+        rebuild_inflight = true;
     }
     ensure_window(app, "mini");
-    if let Some(mini) = app.get_webview_window("mini") {
-        if mini.is_visible().unwrap_or(false) {
+    let Some(mini) = app.get_webview_window("mini") else {
+        return;
+    };
+    // is_visible 是阻塞 getter，先取值再进纯函数判定；失焦隐藏时刻转 elapsed（None=未记录）
+    let visible = mini.is_visible().unwrap_or(false);
+    let since_focus_hide = LAST_FOCUS_HIDE
+        .lock()
+        .ok()
+        .and_then(|g| g.map(|t| t.elapsed()));
+    let action = mini_toggle_action(visible, rebuild_inflight, since_focus_hide);
+    match action {
+        MiniToggleAction::Hide => {
             remember_mini_pos(&mini.as_ref().window());
             let _ = mini.hide();
-        } else {
+        }
+        MiniToggleAction::KeepHidden => {
             // mini 刚因失焦被隐藏（<300ms）时，本次点击视为「点托盘收起」，保持隐藏
-            if let Ok(last) = LAST_FOCUS_HIDE.lock() {
-                if let Some(t) = *last {
-                    if t.elapsed() < Duration::from_millis(300) {
-                        return;
-                    }
-                }
-            }
+        }
+        MiniToggleAction::RepositionOnly | MiniToggleAction::Show => {
             // 定位先于 show（不可见期移动无闪烁）：托盘点击=每次锚定托盘；
             // 快捷键=恢复上次位置（销毁重建后亦然），无记忆则 OS 默认
             if let Some(a) = anchor {
@@ -364,38 +413,53 @@ fn toggle_mini(app: &AppHandle, anchor: Option<(f64, f64, f64, f64)>) {
                     let _ = mini.set_position(tauri::PhysicalPosition::new(x, y));
                 }
             }
-            // 重建路径：等待必须在独立线程——本回调运行于主线程事件循环，前端 emit 的
-            // WebMessageReceived 派发同样依赖主线程消息泵，同步 recv_timeout 会自我锁死
-            // 到超时并冻结主线程（终审 Important-1，2026-10-06）。就绪/超时后回主线程
-            // show+focus；is_visible 复查防陈旧等待者复活用户已手动收起的窗口
-            if let Some(rx) = ready_rx {
-                let app2 = app.clone();
-                std::thread::spawn(move || {
-                    let _ = rx.recv_timeout(Duration::from_secs(2));
-                    // 内层再克隆：app2 作为 run_on_main_thread 接收者被借用期间不能
-                    // 同时被 move 进闭包（E0505），闭包持独立句柄
-                    let app3 = app2.clone();
-                    let _ = app2.run_on_main_thread(move || {
-                        if let Some(m) = app3.get_webview_window("mini") {
-                            if !m.is_visible().unwrap_or(false) {
-                                let _ = m.show();
-                                let _ = m.set_focus();
-                            }
+            match ready_rx {
+                // 重建路径：等待必须在独立线程（主线程同步 recv_timeout 会锁死消息泵，
+                // 终审 Important-1，2026-10-06），就绪/超时后由 waiter 回主线程统一 show
+                Some(rx) => spawn_mini_ready_waiter(app, rx),
+                None => {
+                    // RepositionOnly 且无 ready_rx = 重建在途的二次触发（R1-I1）：
+                    // 定位已更新，show 收敛到 waiter，不在此立即 show 绕过 ready 门控
+                    if action == MiniToggleAction::Show {
+                        let shown = mini.show();
+                        // show 返回 Err 仅在窗口句柄失效等异常态，留痕；「show 成功但随即被
+                        // 失焦自动隐藏收回」是 mini 的产品行为（Focused(false) 在未 pin 时
+                        // hide），后台进程 SetForegroundWindow 被前台锁拒绝时即出现，非缺陷
+                        if let Err(e) = shown {
+                            eprintln!("[shortcut] toggle_mini: mini.show() failed: {e}");
                         }
-                    });
-                });
-            } else {
-                let shown = mini.show();
-                // show 返回 Err 仅在窗口句柄失效等异常态，留痕；「show 成功但随即被
-                // 失焦自动隐藏收回」是 mini 的产品行为（Focused(false) 在未 pin 时 hide），
-                // 后台进程 SetForegroundWindow 被前台锁拒绝时即出现，非缺陷
-                if let Err(e) = shown {
-                    eprintln!("[shortcut] toggle_mini: mini.show() failed: {e}");
+                        let _ = mini.set_focus();
+                    }
                 }
-                let _ = mini.set_focus();
             }
         }
     }
+}
+
+/// ready waiter（spec §2.4）：等待必须在独立线程——本回调运行于主线程事件循环，前端 emit 的
+/// WebMessageReceived 派发同样依赖主线程消息泵，同步 recv_timeout 会自我锁死到超时并冻结
+/// 主线程（终审 Important-1，2026-10-06）。就绪/超时后回主线程 show+focus；is_visible 复查
+/// 防陈旧等待者复活用户已手动收起的窗口。show 失败留痕对齐非重建分支（R1-M4）；回主线程
+/// 即清重建在途标志（R1-I1，主线程串行执行与 toggle_mini 不交叠），此后二次触发恢复正常弹出
+fn spawn_mini_ready_waiter(app: &AppHandle, rx: std::sync::mpsc::Receiver<()>) {
+    let app2 = app.clone();
+    std::thread::spawn(move || {
+        let _ = rx.recv_timeout(Duration::from_secs(2));
+        // 内层再克隆：app2 作为 run_on_main_thread 接收者被借用期间不能
+        // 同时被 move 进闭包（E0505），闭包持独立句柄
+        let app3 = app2.clone();
+        let _ = app2.run_on_main_thread(move || {
+            MINI_REBUILD_INFLIGHT.store(false, std::sync::atomic::Ordering::Relaxed);
+            if let Some(m) = app3.get_webview_window("mini") {
+                if !m.is_visible().unwrap_or(false) {
+                    if let Err(e) = m.show() {
+                        eprintln!("[shortcut] toggle_mini: mini.show() failed: {e}");
+                    }
+                    let _ = m.set_focus();
+                }
+            }
+        });
+    });
 }
 
 fn show_main(app: &AppHandle) {
@@ -1177,6 +1241,30 @@ mod tests {
             mini_position_for_tray(1800.0, 1040.0, 32.0, 32.0, 320, 420, 0, 0, 1920, 1040),
             (1512, 620)
         );
+    }
+
+    // R1-I1/R1-M6：mini toggle 动作状态机（纯函数）——可见收起、失焦防抖、重建在途仅定位
+    // （show 收敛 waiter，封堵 ready 窗口内二次触发旁路）、常规弹出
+    #[test]
+    fn mini_toggle_action_state_machine() {
+        use MiniToggleAction::{Hide, KeepHidden, RepositionOnly, Show};
+        let ms = |n: u64| Duration::from_millis(n);
+        // 可见优先（即便重建在途/刚失焦，也一律记忆位置并收起）
+        assert_eq!(mini_toggle_action(true, false, None), Hide);
+        assert_eq!(mini_toggle_action(true, true, Some(ms(10))), Hide);
+        // 刚失焦隐藏 <300ms：防抖窗口内保持隐藏（托盘点击 vs 失焦自动隐藏竞态）
+        assert_eq!(mini_toggle_action(false, false, Some(ms(299))), KeepHidden);
+        assert_eq!(mini_toggle_action(false, true, Some(ms(299))), KeepHidden);
+        // 重建在途（本次发起或 ready 窗口内二次触发）：仅定位，show 统一收敛到 waiter
+        assert_eq!(mini_toggle_action(false, true, None), RepositionOnly);
+        assert_eq!(
+            mini_toggle_action(false, true, Some(ms(10_000))),
+            RepositionOnly
+        );
+        // 常规弹出：非防抖窗口内的失焦隐藏态同样立即 show
+        assert_eq!(mini_toggle_action(false, false, None), Show);
+        assert_eq!(mini_toggle_action(false, false, Some(ms(300))), Show);
+        assert_eq!(mini_toggle_action(false, false, Some(ms(1_000))), Show);
     }
 
     #[test]
