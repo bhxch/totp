@@ -135,7 +135,7 @@ vault 加密支持多种解锁来源（KEK 来源）并存，在「安全」页�
   - 插件端不提供此方式
 - **应用绑定解锁（ABE 服务，仅 Windows 桌面版）**：
   - 在「安全」页「应用绑定解锁（服务）」区块点「安装服务」，一次 UAC 完成本地系统服务安装与绑定；启用后锁定页静默解锁优先经该服务取 DEK，失败自动回退 Windows 自动解锁（DPAPI）
-  - 原理：DEK 密文由 LocalSystem 服务以 SYSTEM 上下文 DPAPI 包裹后存 `HKLM\SOFTWARE\TotpTools\Elevation`；服务对每次连接按调用者 exe 路径 + SHA256 验证后才代理包裹/解包；服务副本二进制放在 ACL 锁定的 `ProgramData\TotpTools\service`（拒绝继承 + OWNER_RIGHTS ACE，抑制「预建目录抢占后所有者重开 DACL」）
+  - 原理：DEK 密文由 LocalSystem 服务以 SYSTEM 上下文 DPAPI 包裹后存 `HKLM\SOFTWARE\TotpTools\Elevation`；服务对每次连接按调用者 exe 路径 + SHA256 验证后才代理包裹/解包；服务管道 DACL 收窄到安装发起用户（发起用户 SID 存 HKLM CallerSid，值缺失或非法时回退已认证用户兜底；借用他人管理员账户做 UAC 提权的场景仅该管理员可连接，发起用户自动回退 DPAPI）；服务副本二进制放在 ACL 锁定的 `ProgramData\TotpTools\service`（拒绝继承 + OWNER_RIGHTS ACE，抑制「预建目录抢占后所有者重开 DACL」）
   - 威胁模型（防）：同用户运行的第三方进程读到 security.json 也无法自行解密（密文不在用户区，也无法冒充调用者向服务取 DEK）；用户区对服务二进制的篡改不影响服务运行
   - 威胁模型（不防）：已验证的应用进程本身被注入/入侵（Chrome 应用绑定加密同类局限）；管理员/SYSTEM 直接读 HKLM 与服务内存；目标 exe 被替换且攻击者可重走 UAC 重绑；便携版（用户可写安装目录）形态下，运行中的第三方进程可经文件替换在哈希读取窗口外绕过路径+哈希验证（服务读取已用无写共享打开+双读比较压缩窗口，安装版 ProgramData 副本不受影响）。代码签名校验为后续计划（预留接口已留、当前未启用）
   - 应用更新或安装路径变化后绑定失配：区块提示「需要重新绑定」，再走一次 UAC 即可；「移除」删服务侧密文与本地标记（服务本体保留）；卸载应用时 NSIS 卸载钩子尽力停删服务并清理 ProgramData 副本与 HKLM 键（currentUser 模式卸载器非提权时以提权的 `--elevation-uninstall` 为准）

@@ -29,17 +29,21 @@ use crate::elevation_proto::{
 /// 服务名（§0.1，windows-service 注册；Task 3 安装/卸载与 NSIS 钩子共用同一字面量）
 pub const SERVICE_NAME: &str = "TotpToolsElevationService";
 
-/// HKLM 绑定键（§0.2）；Task 3 安装侧写绑定三值、卸载侧删键，本模块统一收口注册表
+/// HKLM 绑定键（§0.2）；Task 3 安装侧写绑定值、卸载侧删键，本模块统一收口注册表
 /// 读写（windows 原生 API 单点，Task 3 审查裁定不引 windows-registry）
 pub(crate) const REG_SUBKEY: &str = r"SOFTWARE\TotpTools\Elevation";
 pub(crate) const REG_BOUND_PATH: &str = "BoundPath";
 pub(crate) const REG_BOUND_SHA: &str = "BoundSha256";
 /// 安装侧写入的服务版本标记（§0.2 绑定三值之一）
 pub(crate) const REG_SERVICE_VERSION: &str = "ServiceVersion";
+/// 安装侧写入的发起用户 SID（R6-M2：管道 DACL 收窄到发起用户，服务启动时读取构造 SDDL）
+pub(crate) const REG_CALLER_SID: &str = "CallerSid";
 const REG_WRAPPED_DEK: &str = "WrappedDek";
 
-/// 管道 DACL（§0.1 SDDL）：拒绝继承（P）；SYSTEM/Administrators 完全；Authenticated Users 读写
-const PIPE_SDDL: &str = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)";
+/// 管道 DACL 兜底形态（§0.1 SDDL）：拒绝继承（P）；SYSTEM/Administrators 完全；
+/// Authenticated Users 读写。R6-M2 兼容式收紧：CallerSid 可得且形态合法时经
+/// [`pipe_sddl_for`] 收窄到发起用户，本形态仅作缺失/非法回退（保底可用）
+const PIPE_SDDL_FALLBACK: &str = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)";
 
 /// 管道收发缓冲（§0.1 64KiB，与 MAX_FRAME_LEN 对齐）
 const PIPE_BUFFER_SIZE: u32 = 64 * 1024;
@@ -124,6 +128,33 @@ fn normalize_path(path: &str) -> String {
         Some(rest) => rest.to_string(),
         None => lower,
     }
+}
+
+/// 管道 DACL 构造（R6-M2 兼容式收紧）：发起用户 SID 可得且形态合法时把读写 ACE 从
+/// Authenticated Users（AU，多用户机器任意本地用户可连）收窄到该用户；缺失/非法回退
+/// [`PIPE_SDDL_FALLBACK`]（保底可用）。SYSTEM/Administrators ACE 与拒绝继承标记恒保留
+fn pipe_sddl_for(caller_sid: Option<&str>) -> String {
+    match caller_sid {
+        Some(sid) if is_plausible_sid_string(sid) => {
+            format!("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;{sid})")
+        }
+        _ => PIPE_SDDL_FALLBACK.to_string(),
+    }
+}
+
+/// CallerSid 形态校验（服务端消费前验证）：仅接受 `S-1-` 前缀 + 纯数字段、总长 ≤184
+/// （Windows SID 字符串上界）——HKLM 值被篡改/写坏时不得污染 SDDL 语义（回退兜底形态）
+fn is_plausible_sid_string(s: &str) -> bool {
+    if s.len() > 184 {
+        return false;
+    }
+    let Some(rest) = s.strip_prefix("S-1-") else {
+        return false;
+    };
+    !rest.is_empty()
+        && rest
+            .split('-')
+            .all(|seg| !seg.is_empty() && seg.bytes().all(|b| b.is_ascii_digit()))
 }
 
 // ---------- 请求分派（纯逻辑，FakeStore 单测） ----------
@@ -590,6 +621,16 @@ impl ElevationStore for HklmStore {
     }
 }
 
+/// 读 HKLM CallerSid（R6-M2：安装侧写入的发起用户 SID 字符串）；键/值缺失 → None
+fn read_caller_sid() -> Option<String> {
+    let key = open_key(KEY_READ)?;
+    let value = reg_read_sz(key, REG_CALLER_SID);
+    unsafe {
+        let _ = RegCloseKey(key);
+    }
+    value
+}
+
 fn open_key(access: REG_SAM_FLAGS) -> Option<HKEY> {
     let mut key = HKEY::default();
     let status = unsafe {
@@ -713,8 +754,8 @@ pub(crate) fn to_wide(s: &str) -> Vec<u16> {
 /// dwPipeMode 含 PIPE_REJECT_REMOTE_CLIENTS（拒远程连接）。实例数上界
 /// PIPE_UNLIMITED_INSTANCES，实际仅建单实例串行服务（单用户 UI 场景足够；并发客户端
 /// 收 ERROR_PIPE_BUSY 由客户端 WaitNamedPipeW 短重试消化——elevation_client::open_pipe，
-/// I3 终审）
-fn create_pipe_instance(first: bool) -> Result<HANDLE, ServiceError> {
+/// I3 终审）。DACL 形态由调用方经 sddl 传入（R6-M2：按 CallerSid 收窄或 AU 兜底）
+fn create_pipe_instance(sddl_str: &str, first: bool) -> Result<HANDLE, ServiceError> {
     use windows::core::Error as WinError;
     use windows::Win32::Foundation::{LocalFree, HLOCAL, INVALID_HANDLE_VALUE};
     use windows::Win32::Security::Authorization::{
@@ -728,7 +769,7 @@ fn create_pipe_instance(first: bool) -> Result<HANDLE, ServiceError> {
     };
 
     let name = to_wide(PIPE_NAME);
-    let sddl = to_wide(PIPE_SDDL);
+    let sddl = to_wide(sddl_str);
     let mut psd = PSECURITY_DESCRIPTOR(std::ptr::null_mut());
     unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
@@ -815,7 +856,15 @@ fn service_run(scm: bool) -> Result<(), ServiceError> {
         ServiceControlAccept::empty(),
         ServiceExitCode::NO_ERROR,
     )?;
-    let pipe = match create_pipe_instance(true) {
+    // 管道 DACL 收窄（R6-M2）：读 HKLM CallerSid 构造发起用户 SDDL；缺失/非法回退
+    // AU 兜底（保底可用）并 console 留痕（不 abort——装好即用优于拒绝服务）
+    let caller_sid = read_caller_sid().filter(|s| is_plausible_sid_string(s));
+    if caller_sid.is_none() {
+        eprintln!(
+            "[elevation-service] HKLM CallerSid 缺失或非法，管道 DACL 回退 Authenticated Users 兜底"
+        );
+    }
+    let pipe = match create_pipe_instance(&pipe_sddl_for(caller_sid.as_deref()), true) {
         Ok(p) => p,
         Err(e) => {
             let _ = report_status(
@@ -1229,6 +1278,60 @@ mod tests {
         assert_eq!(handle_payload(MsgType::Wrap, &dek2, &mut s).0, ErrCode::Ok);
         assert_ne!(s.wrapped.as_deref(), Some(stored.as_str()));
         assert_eq!(handle_payload(MsgType::Unwrap, &[], &mut s).1, dek2);
+    }
+
+    // ---- 管道 DACL 构造（R6-M2：CallerSid 收窄 + 兜底回退）----
+
+    const TEST_SID: &str = "S-1-5-21-1004336348-1177238915-682003330-1001";
+
+    #[test]
+    fn pipe_sddl_narrows_to_caller_sid_when_valid() {
+        let sddl = pipe_sddl_for(Some(TEST_SID));
+        assert!(sddl.starts_with("D:P("), "拒绝继承标记不可丢");
+        assert!(sddl.contains("(A;;GA;;;SY)"), "SYSTEM 完全控制不可丢");
+        assert!(
+            sddl.contains("(A;;GA;;;BA)"),
+            "Administrators 完全控制不可丢"
+        );
+        assert!(
+            sddl.contains(&format!("(A;;GRGW;;;{TEST_SID})")),
+            "读写 ACE 收窄到发起用户: {sddl}"
+        );
+        assert!(!sddl.contains("AU"), "收窄形态不得再放 Authenticated Users");
+    }
+
+    #[test]
+    fn pipe_sddl_falls_back_to_au_when_sid_missing_or_invalid() {
+        // 缺失与全部非法形态均回退兜底（保底可用；不因 HKLM 值损坏拒绝服务）
+        let sddl_injection = format!("{TEST_SID};D:(A;;FA;;;WD)"); // SDDL 注入形态
+        let too_long = format!("S-1-{}", "1-".repeat(100)); // 超长（>184 上界）
+        assert_eq!(pipe_sddl_for(None), PIPE_SDDL_FALLBACK);
+        for bad in [
+            "",
+            "AU",
+            "garbage",
+            "S-2-5-21-1",  // 前缀非法
+            "S-1-",        // 空段
+            "S-1-5--1004", // 空数字段
+            "S-1-5-2x",    // 非数字
+            sddl_injection.as_str(),
+            too_long.as_str(),
+        ] {
+            assert_eq!(pipe_sddl_for(Some(bad)), PIPE_SDDL_FALLBACK, "{bad}");
+        }
+    }
+
+    #[test]
+    fn sid_string_validation_accepts_account_shapes() {
+        assert!(is_plausible_sid_string(TEST_SID));
+        assert!(is_plausible_sid_string("S-1-5-18")); // LocalSystem
+        assert!(is_plausible_sid_string("S-1-5-32-544")); // 内置组
+        assert!(!is_plausible_sid_string("S-1-"));
+        assert!(!is_plausible_sid_string(""));
+        assert!(
+            !is_plausible_sid_string("s-1-5-18"),
+            "大小写敏感（SDDL SID 串恒大写）"
+        );
     }
 
     // ---- 双读哈希（R6-I2：文件替换 TOCTOU 缓解）----

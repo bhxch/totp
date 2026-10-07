@@ -23,7 +23,7 @@ icacls "%ProgramData%\TotpTools\service"
 
 - [ ] 安全页点「安装服务」→ 弹一次 UAC → 同意 → 区块变已绑定态，toast「应用绑定解锁已启用」
 - [ ] `sc qc`：ImagePath 指向 `%ProgramData%\TotpTools\service\TotpTools.exe` 且带 `--elevation-service` 参数；启动类型「按需 (DEMAND_START)」；账户 LocalSystem
-- [ ] `reg query`：`HKLM\SOFTWARE\TotpTools\Elevation` 下 `BoundPath`（提权发起方 exe 绝对路径）、`BoundSha256`（64 位 hex）、`ServiceVersion` 三值齐全
+- [ ] `reg query`：`HKLM\SOFTWARE\TotpTools\Elevation` 下 `BoundPath`（提权发起方 exe 绝对路径）、`BoundSha256`（64 位 hex）、`ServiceVersion`、`CallerSid`（发起用户 SID 串，R6-M2）四值齐全
 - [ ] 副本目录存在 `TotpTools.exe`；服务处于 RUNNING
 - [ ] 全程仅一次 UAC（安装+绑定+启动在提权进程内一次完成）；**体感**：UAC 期间 UI 不冻结（T4 收敛后 abe_bind 走 blocking 池，其他页面操作不卡）
 

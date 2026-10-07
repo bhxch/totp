@@ -279,29 +279,97 @@ fn tighten_dir_acl(dir: &Path) -> Result<(), InstallError> {
     Ok(())
 }
 
-/// HKLM 绑定三值（§0.2）：BoundPath=提权调用方 exe 绝对路径、BoundSha256=hex 64 字符、
-/// ServiceVersion=构建版本。注册表读写统一走 elevation_service 收口（见模块注释裁定）
-fn write_hklm_binding(exe: &Path, sha256: &str) -> Result<(), InstallError> {
-    if !elevation_service::reg_ensure_key() {
-        return Err(InstallError("创建 HKLM 绑定键失败（需管理员权限）".into()));
-    }
-    let values = [
+/// HKLM 绑定值集（§0.2 三值 + R6-M2 CallerSid，纯函数可测）：BoundPath/BoundSha256/
+/// ServiceVersion 恒写；CallerSid 可得才写——服务端缺失该值回退 AU DACL 兜底，安装侧
+/// 不因取不到 SID 而失败（保底可用优先）
+fn binding_values(exe: &Path, sha256: &str, caller_sid: Option<&str>) -> Vec<(String, String)> {
+    let mut values = vec![
         (
-            elevation_service::REG_BOUND_PATH,
+            elevation_service::REG_BOUND_PATH.to_string(),
             exe.to_string_lossy().into_owned(),
         ),
-        (elevation_service::REG_BOUND_SHA, sha256.to_string()),
         (
-            elevation_service::REG_SERVICE_VERSION,
+            elevation_service::REG_BOUND_SHA.to_string(),
+            sha256.to_string(),
+        ),
+        (
+            elevation_service::REG_SERVICE_VERSION.to_string(),
             env!("CARGO_PKG_VERSION").to_string(),
         ),
     ];
-    for (name, value) in &values {
-        if !elevation_service::reg_write_sz(name, value) {
+    if let Some(sid) = caller_sid {
+        values.push((
+            elevation_service::REG_CALLER_SID.to_string(),
+            sid.to_string(),
+        ));
+    }
+    values
+}
+
+/// HKLM 绑定写入（§0.2）：注册表读写统一走 elevation_service 收口（见模块注释裁定）。
+/// CallerSid（R6-M2）为发起用户 SID——服务端据此把管道 DACL 收窄到该用户
+fn write_hklm_binding(
+    exe: &Path,
+    sha256: &str,
+    caller_sid: Option<&str>,
+) -> Result<(), InstallError> {
+    if !elevation_service::reg_ensure_key() {
+        return Err(InstallError("创建 HKLM 绑定键失败（需管理员权限）".into()));
+    }
+    for (name, value) in binding_values(exe, sha256, caller_sid) {
+        if !elevation_service::reg_write_sz(&name, &value) {
             return Err(InstallError(format!("写 HKLM 绑定值 {name} 失败")));
         }
     }
     Ok(())
+}
+
+/// 当前进程令牌的用户 SID 字符串（S-1-… 形态，R6-M2）。安装进程已提权：同账户 UAC
+/// （绝大多数场景，consenting admin 即本人）即发起用户；over-the-shoulder 提权（标准
+/// 用户借他人管理员账户）绑定的是提权账户——该场景发起用户的管道连接被 DACL 拒、
+/// ABE 静默回退 DPAPI（安全性不受损，可用性受限登记于 README 威胁模型注记）
+fn current_user_sid() -> Option<String> {
+    use windows::core::PWSTR;
+    use windows::Win32::Foundation::{CloseHandle, LocalFree, HANDLE, HLOCAL};
+    use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
+    use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    let mut token = HANDLE::default();
+    unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }.ok()?;
+    let sid = (|| {
+        // 两段式取 TOKEN_USER（首探必报 ERROR_INSUFFICIENT_BUFFER 并回填所需长度，
+        // 同 reg_read_sz 手法）
+        let mut size = 0u32;
+        let _ = unsafe { GetTokenInformation(token, TokenUser, None, 0, &mut size) };
+        if size == 0 {
+            return None;
+        }
+        let mut buf = vec![0u8; size as usize];
+        unsafe {
+            GetTokenInformation(
+                token,
+                TokenUser,
+                Some(buf.as_mut_ptr().cast()),
+                size,
+                &mut size,
+            )
+        }
+        .ok()?;
+        let token_user = unsafe { &*(buf.as_ptr().cast::<TOKEN_USER>()) };
+        let mut sid_str = PWSTR::null();
+        unsafe { ConvertSidToStringSidW(token_user.User.Sid, &mut sid_str) }.ok()?;
+        let out = unsafe { sid_str.to_string() }.ok();
+        // ConvertSidToStringSidW 的输出缓冲由调用方 LocalFree 释放
+        unsafe {
+            let _ = LocalFree(Some(HLOCAL(sid_str.0.cast())));
+        }
+        out
+    })();
+    unsafe {
+        let _ = CloseHandle(token);
+    }
+    sid
 }
 
 /// 服务启动参数（LocalSystem、OnDemand、OWN_PROCESS、ImagePath 带服务分支参数，§0.1/§0.2）
@@ -469,11 +537,18 @@ fn probe_service(
 /// `--elevation-install` 入口（已提权进程内执行，§0.2 全流程；步骤序=install_plan 纯函数
 /// 产物，C2 终审重排后停服先于副本覆盖）
 pub fn run_install() -> Result<(), InstallError> {
-    // ① 自身路径 + SHA256（绑定正本：BoundPath/BoundSha256 指向提权发起方 exe）
+    // ① 自身路径 + SHA256（绑定正本：BoundPath/BoundSha256 指向提权发起方 exe）+
+    //    发起用户 SID（R6-M2：服务端管道 DACL 收窄依据；取不到仅留痕跳过，服务端回退 AU）
     let exe =
         std::env::current_exe().map_err(|e| InstallError(format!("获取自身路径失败: {e}")))?;
     let sha256 = elevation_service::sha256_file_hex(&exe.to_string_lossy())
         .ok_or_else(|| InstallError("计算自身 SHA256 失败".into()))?;
+    let caller_sid = current_user_sid();
+    if caller_sid.is_none() {
+        eprintln!(
+            "[elevation-install] 取当前用户 SID 失败，跳过 CallerSid 写入（服务管道回退 AU DACL 兜底）"
+        );
+    }
     // ② 探查服务（C2：一切写动作之前——停服决策依赖存在性与运行态；同一句柄贯穿停服/
     //    变更/启动，QUERY_CONFIG 仅探查期需要）
     let manager = ServiceManager::local_computer(
@@ -535,7 +610,7 @@ pub fn run_install() -> Result<(), InstallError> {
                     }
                 }
             }
-            InstallStep::WriteBinding => write_hklm_binding(&exe, &sha256)?,
+            InstallStep::WriteBinding => write_hklm_binding(&exe, &sha256, caller_sid.as_deref())?,
             InstallStep::StartService => {
                 start_if_stopped(service.as_ref().expect("Start 前置：服务已就位"))?;
             }
@@ -787,6 +862,37 @@ mod tests {
         // 哈希一致但无写共享打开失败（预开共享句柄注入特征）：中止
         let err = verify_copy_verdict(Some(&"a".repeat(64)), &"a".repeat(64), false).unwrap_err();
         assert!(err.to_string().contains("占用"), "实际: {err}");
+    }
+
+    // ---- binding_values（R6-M2：CallerSid 有则写、无则跳过不阻断）----
+
+    #[test]
+    fn binding_values_carry_caller_sid_when_available() {
+        let exe = PathBuf::from(WANT);
+        let values = binding_values(&exe, "abc", Some("S-1-5-18"));
+        assert_eq!(values.len(), 4, "三值 + CallerSid");
+        let get = |name: &str| {
+            values
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.as_str())
+        };
+        assert_eq!(get(elevation_service::REG_BOUND_PATH), Some(WANT));
+        assert_eq!(get(elevation_service::REG_BOUND_SHA), Some("abc"));
+        assert_eq!(
+            get(elevation_service::REG_SERVICE_VERSION),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert_eq!(get(elevation_service::REG_CALLER_SID), Some("S-1-5-18"));
+    }
+
+    #[test]
+    fn binding_values_skip_caller_sid_when_unavailable() {
+        let values = binding_values(&PathBuf::from(WANT), "abc", None);
+        assert_eq!(values.len(), 3, "SID 缺失不阻断安装（服务端回退 AU 兜底）");
+        assert!(!values
+            .iter()
+            .any(|(k, _)| k == elevation_service::REG_CALLER_SID));
     }
 
     // ---- copy_self_to（fs 真复制，tempdir 断言字节一致）----
