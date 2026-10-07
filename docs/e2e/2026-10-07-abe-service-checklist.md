@@ -1,5 +1,7 @@
 # ABE 提权服务（P6）真机验证清单
 
+> **2026-10-08 勘误**：服务未就绪排查先看 `install.log`/`service.log`（`%ProgramData%\TotpTools\service\`）；ESET 等第三方安全软件需将服务目录加入信任后重试。§0 的失败提示已随 Task 11 改为三分支分类文案（取消 UAC / 失败+日志指引 / 未就绪+杀软指引），不再是单一「安装未完成（已取消或服务未就绪），可重试」——§0 对应条目按 docs/e2e/2026-10-08-md3-compact-checklist.md「三类失败文案」节执行。
+
 对应计划：docs/superpowers/plans/2026-10-07-p6-abe-service.md（§0 ABE 设计正本）。
 历次审查挂账的真机验证项已全部并入本清单：T2 慢客户端阻塞 Stop 观察、T3 目录抢占 OWNER_RIGHTS / HKLM WOW64 / StopPending 竞态、T4 命令阻塞段真机体感、T7 unwrap 端到端。
 
