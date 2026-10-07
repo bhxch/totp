@@ -240,6 +240,7 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
       :entries="visible" :codes="codes" :icons="icons"
       :empty-text="tr('mini.empty')" :no-match-text="tr('mini.searchEmpty')"
       v-model:query="query"
+      compact
       tag-row :tags="store?.vault.tags ?? []"
       v-model:selected-tag-ids="selectedTagIds" v-model:tag-mode="tagMode"
       @copy="(e) => copy(e)" @dblclick="autoHide.onDblclick"
@@ -258,11 +259,12 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
 body { font-family: system-ui, sans-serif; margin: 0; }
 /* R5-M6：.mini padding 6px = sticky 冻结条两侧缝隙宽，面板 .frozen 负 margin 补偿取同值 */
 .mini { display: flex; flex-direction: column; gap: 2px; padding: 6px; --frozen-bleed: 6px; }
-.titlebar { display: flex; align-items: center; gap: 2px; height: 34px; padding: 0 4px 0 10px; user-select: none; }
+.titlebar { display: flex; align-items: center; gap: 2px; height: 30px; padding: 0 4px 0 10px; user-select: none; }
 .title-drag { flex: 1; font-size: var(--md-sys-typescale-body-small); opacity: .6; }
-.tb-btn { border: none; background: transparent; cursor: pointer; width: 40px; height: 40px; border-radius: var(--md-sys-shape-corner-small); color: inherit; font-size: 12px; line-height: 1; position: relative; }
-/* 命中层:inset -2px 使 40px 钮达 44px 触达(标题栏紧凑语境不追 48) */
-.tb-btn::after { content: ''; position: absolute; inset: -2px; border-radius: inherit; }
+/* 32px 视觉（spec §2.5 titlebar 30px 紧凑档）；Task 2 曾为 40px 视觉，与 30px titlebar 溢出收敛 */
+.tb-btn { border: none; background: transparent; cursor: pointer; width: 32px; height: 32px; border-radius: var(--md-sys-shape-corner-small); color: inherit; font-size: 12px; line-height: 1; position: relative; }
+/* 命中层:inset -4px 使 32px 钮达 40px 触达（compact 裁定，spec §2.9 内部冲突以小窗紧凑优先） */
+.tb-btn::after { content: ''; position: absolute; inset: -4px; border-radius: inherit; }
 .tb-btn:hover { background: var(--md-sys-color-surface-container-highest, rgba(0, 0, 0, .08)); }
 .tb-btn.active { color: var(--md-sys-color-primary); }
 .empty { text-align: center; opacity: .6; padding: 32px 0; font-size: var(--md-sys-typescale-body-medium); }

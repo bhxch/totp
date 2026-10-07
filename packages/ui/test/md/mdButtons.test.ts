@@ -78,6 +78,11 @@ describe('MdChip', () => {
     expect(mount(MdChip, { props: { label: '工作', selected: true } }).attributes('aria-pressed')).toBe('true')
     expect(mount(MdChip, { props: { label: '全部' } }).attributes('aria-pressed')).toBe('false')
   })
+  it('compact 档渲染紧凑类', () => {
+    const w = mount(MdChip, { props: { label: 'tag', compact: true } })
+    expect(w.classes()).toContain('md-chip--compact')
+    expect(mount(MdChip, { props: { label: 'tag' } }).classes()).not.toContain('md-chip--compact')
+  })
 })
 
 describe('MdCard', () => {

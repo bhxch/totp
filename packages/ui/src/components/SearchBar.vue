@@ -5,11 +5,13 @@ import MdTextField from './md/MdTextField.vue'
 
 const { t } = useI18n()
 
-defineProps<{
+withDefaults(defineProps<{
   modelValue: string
   /** I49：开启后搜索会匹配 secret（密钥 base32），默认关闭（避免明文密钥常驻列表 DOM/UI 状态） */
   searchSecret?: boolean
-}>()
+  /** 紧凑档（QuickCodesPanel compact 透传）：内部 MdTextField dense（40px 档，spec §2.5） */
+  dense?: boolean
+}>(), { dense: false })
 const emit = defineEmits<{
   'update:modelValue': [string]
   'update:searchSecret': [boolean]
@@ -21,6 +23,7 @@ const emit = defineEmits<{
     <MdTextField
       class="grow"
       type="search"
+      :dense="dense"
       :label="t('searchBar.searchLabel')"
       :placeholder="t('searchBar.searchPlaceholder')"
       :aria-label="t('searchBar.searchAria')"

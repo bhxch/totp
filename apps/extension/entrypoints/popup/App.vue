@@ -361,6 +361,7 @@ function cancelAutoClose(): void {
       v-model:query="query"
       :codes="codes" :icons="icons" :loading="!loaded" :entries="visible"
       :empty-text="filterOn && tabUrl ? t('popup.noMatch') : t('popup.empty')" :no-match-text="t('popup.noMatch')"
+      compact
       tag-row :tags="vault.tags"
       v-model:selected-tag-ids="selectedTagIds"
       :tag-mode="tagMode" @update:tag-mode="setTagMode"

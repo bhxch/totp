@@ -127,4 +127,16 @@ describe('TagFilterRow', () => {
     expect(mode.attributes('aria-disabled')).toBe('true')
     expect(w.find('button.manage-btn').exists()).toBe(true)
   })
+
+  it('compact 档：行紧凑类渲染，chips 经 MdChip compact prop 全量透传', () => {
+    const w = mount(TagFilterRow, { global: { plugins: [createTestI18n()] }, props: { tags, selectedIds: [], mode: 'any', compact: true } })
+    expect(w.find('.tag-filter-row').classes()).toContain('tag-filter-row--compact')
+    const chips = w.findAll('button.md-chip')
+    expect(chips.length).toBe(3) // 「全部」+ 2 tags
+    expect(chips.every((c) => c.classes().includes('md-chip--compact'))).toBe(true)
+    // 非 compact 对照：chip 不带紧凑类
+    const w2 = mount(TagFilterRow, { global: { plugins: [createTestI18n()] }, props: { tags, selectedIds: [], mode: 'any' } })
+    expect(w2.find('.tag-filter-row').classes()).not.toContain('tag-filter-row--compact')
+    expect(w2.findAll('button.md-chip').every((c) => !c.classes().includes('md-chip--compact'))).toBe(true)
+  })
 })

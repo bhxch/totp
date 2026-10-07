@@ -15,7 +15,9 @@ const props = withDefaults(defineProps<{
   disabled?: boolean
   /** 管理标签入口开关（快速取码面板传 false）；open-manage 由宿主接线 TagManagerDialog */
   manageable?: boolean
-}>(), { manageable: true })
+  /** 紧凑档（QuickCodesPanel compact 透传）：行 gap 6px、chips 28px、mode 钮 28px（spec §2.5） */
+  compact?: boolean
+}>(), { manageable: true, compact: false })
 const emit = defineEmits<{
   'update:selectedIds': [ids: string[]]
   'update:mode': [mode: TagFilterMode]
@@ -69,7 +71,7 @@ function openManage() {
 }
 </script>
 <template>
-  <div class="tag-filter-row" role="group" :aria-label="t('tagFilterRow.groupAria')">
+  <div class="tag-filter-row" :class="{ 'tag-filter-row--compact': compact }" role="group" :aria-label="t('tagFilterRow.groupAria')">
     <div ref="modeWrap" class="mode-wrap">
       <MdIconButton
         class="mode-toggle" :class="{ 'mode-toggle--disabled': modeDisabled }"
@@ -85,10 +87,10 @@ function openManage() {
     </div>
     <!-- chips 段（「全部」+ 各 tag）：空 tags 整段隐藏；mode 钮（空时天然 <2 禁用）与管理钮仍渲染——管理入口是创建首个标签的途径 -->
     <template v-if="sorted.length > 0">
-      <MdChip :label="t('tagFilterRow.all')" :selected="selectedIds.length === 0" @click="emit('update:selectedIds', [])" />
+      <MdChip :label="t('tagFilterRow.all')" :selected="selectedIds.length === 0" :compact="compact" @click="emit('update:selectedIds', [])" />
       <MdChip
         v-for="t in sorted" :key="t.id" :label="t.name"
-        :selected="selectedIds.includes(t.id)" @click="toggle(t.id)"
+        :selected="selectedIds.includes(t.id)" :compact="compact" @click="toggle(t.id)"
       />
     </template>
     <span v-if="manageable" class="manage-wrap">
@@ -111,6 +113,11 @@ function openManage() {
 </template>
 <style scoped>
 .tag-filter-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+/* compact 档（spec §2.5）：行 gap 6px、mode 钮 28px 视觉 + ::after inset -2px（32px 命中，
+ * 与 chips 28px 同档；deviation 已裁低于 48dp 触控目标） */
+.tag-filter-row--compact { gap: 6px; }
+.tag-filter-row--compact .mode-toggle { width: 28px; height: 28px; }
+.tag-filter-row--compact .mode-toggle::after { inset: -2px; }
 .mode-wrap { position: relative; display: inline-flex; }
 /* 模式钮紧凑化与 chips 同档（MdIconButton 默认 40px）；禁用语义靠 disabled prop，颜色降级补一层 */
 .mode-toggle { width: 32px; height: 32px; font-size: 18px; line-height: 1; }

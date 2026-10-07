@@ -38,7 +38,10 @@ const props = withDefaults(defineProps<{
   contextMenu?: boolean
   /** 行首 1-based 序号（默认 true；透传 OtpListItem index=i+1） */
   showIndex?: boolean
-}>(), { showIndex: true })
+  /** 紧凑档（spec §2.5，mini/popup 320×420 小窗）：根 gap 6px、SearchBar dense、
+   *  TagFilterRow/OtpListItem compact（MD3 density 语义，deviation 已裁） */
+  compact?: boolean
+}>(), { showIndex: true, contextMenu: false, compact: false })
 const emit = defineEmits<{
   'update:query': [string]
   'update:searchSecret': [boolean]
@@ -65,16 +68,17 @@ const emptyDisplay = computed(() => {
 </script>
 
 <template>
-  <div class="quick-codes-panel">
+  <div class="quick-codes-panel" :class="{ 'quick-codes-panel--compact': compact }">
     <!-- 冻结容器（对照 CodesPage .frozen 先例）：搜索行+标签筛选行 sticky 挂滚动祖先，列表滚动时保持可见 -->
     <div class="frozen">
       <SearchBar
+        :dense="compact"
         :model-value="query" :search-secret="searchSecret"
         @update:model-value="emit('update:query', $event)"
         @update:search-secret="emit('update:searchSecret', $event)"
       />
       <TagFilterRow
-        v-if="showTagRow" :manageable="false"
+        v-if="showTagRow" :manageable="false" :compact="compact"
         :tags="tags ?? []" :selected-ids="selectedTagIds ?? []" :mode="tagMode ?? 'any'"
         @update:selected-ids="emit('update:selectedTagIds', $event)"
         @update:mode="emit('update:tagMode', $event)"
@@ -83,7 +87,7 @@ const emptyDisplay = computed(() => {
     <template v-if="!loading">
       <OtpListItem
         v-for="(e, i) in entries" :key="e.uuid"
-        :entry="e" :icon="iconView(e.icon, icons ?? undefined)"
+        :entry="e" :icon="iconView(e.icon, icons ?? undefined)" :compact="compact"
         :index="showIndex ? i + 1 : undefined" :context-menu="contextMenu"
         v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 1 }"
         @copy="emit('copy', e)" @dblclick="emit('dblclick', $event)"
@@ -104,4 +108,7 @@ const emptyDisplay = computed(() => {
   margin-inline: calc(-1 * var(--frozen-bleed, 0px)); padding-inline: var(--frozen-bleed, 0px); }
 /* 两态空态文案（同 popup .empty） */
 .empty { text-align: center; opacity: .6; padding: 32px 0; }
+/* compact 档（spec §2.5）：面板纵向 gap 与冻结区行间距 8→6px */
+.quick-codes-panel--compact { gap: 6px; }
+.quick-codes-panel--compact .frozen { gap: 6px; }
 </style>

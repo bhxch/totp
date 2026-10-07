@@ -21,3 +21,14 @@ describe('MdTextField multiline', () => {
     expect(w.find('.md-text-field__label').classes()).toContain('md-text-field__label--floated')
   })
 })
+
+describe('MdTextField dense', () => {
+  it('dense 档渲染紧凑类', () => {
+    const w = mount(MdTextField, { props: { modelValue: '', label: '搜索', dense: true } })
+    expect(w.find('.md-text-field__box').classes()).toContain('md-text-field__box--dense')
+  })
+  it('默认非 dense：不渲染紧凑类', () => {
+    const w = mount(MdTextField, { props: { modelValue: '', label: '搜索' } })
+    expect(w.find('.md-text-field__box').classes()).not.toContain('md-text-field__box--dense')
+  })
+})

@@ -85,6 +85,28 @@ describe('QuickCodesPanel v-model 透传与事件上抛', () => {
   })
 })
 
+describe('QuickCodesPanel compact 档（mini/popup MD3 density 语义）', () => {
+  it('compact 透传给 SearchBar/TagRow/ListItem；contextMenu 默认 false', () => {
+    const w = mountPanel({ compact: true, tagRow: true, tags })
+    expect(w.find('.quick-codes-panel').classes()).toContain('quick-codes-panel--compact')
+    // SearchBar 内部 MdTextField dense（搜索框 40px 档）
+    expect(w.find('.md-text-field__box--dense').exists()).toBe(true)
+    // chips 全量 compact（「全部」+ tag chips）
+    const chips = w.findAll('button.md-chip')
+    expect(chips.length).toBeGreaterThan(0)
+    expect(chips.every((c) => c.classes().includes('md-chip--compact'))).toBe(true)
+    expect(w.find('.otp-item--compact').exists()).toBe(true)
+    // withDefaults 显式默认（spec §2.6）：声明语义对齐，不依赖 Boolean casting 巧合
+    expect(w.props('contextMenu')).toBe(false)
+  })
+  it('非 compact（默认）：不渲染紧凑类', () => {
+    const w = mountPanel({ tagRow: true, tags })
+    expect(w.find('.quick-codes-panel').classes()).not.toContain('quick-codes-panel--compact')
+    expect(w.find('.md-text-field__box--dense').exists()).toBe(false)
+    expect(w.find('.otp-item--compact').exists()).toBe(false)
+  })
+})
+
 describe('QuickCodesPanel loading 门控与两态空文案', () => {
   it('loading=true：不渲染列表与空态（冻结搜索行仍在）', () => {
     const w = mountPanel({ loading: true, emptyText: '没有条目', noMatchText: '无匹配' })
