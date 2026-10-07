@@ -61,7 +61,9 @@ export interface DesktopSecurityPlatform {
 function classifyAbeBindError(e: unknown): AbeBindResult {
   const m = /^(cancelled|failed|notready):([\s\S]*)$/.exec(String(e))
   if (!m) return { ok: false, reason: 'failed', detail: '安装过程异常终止' }
-  return { ok: false, reason: m[1] as 'cancelled' | 'failed' | 'notready', detail: m[2] }
+  // ?? '' 审查 C1：noUncheckedIndexedAccess 下 m[2] 为 string | undefined——正则组匹配
+  // 成功时恒为 string，仅类型层兜底（语义等价）
+  return { ok: false, reason: m[1] as 'cancelled' | 'failed' | 'notready', detail: m[2] ?? '' }
 }
 
 export function createSecurityPlatform(deps: SecurityPlatformDeps): DesktopSecurityPlatform {

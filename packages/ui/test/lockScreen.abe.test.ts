@@ -37,7 +37,7 @@ function makeAbe(over: Partial<AbeOps> = {}): AbeOps {
     // 静默解锁入口直接读 store.abeSource，桩为 null 即可）
     source: computed(() => null),
     status: vi.fn().mockResolvedValue(null),
-    bind: vi.fn().mockResolvedValue(true),
+    bind: vi.fn().mockResolvedValue({ ok: true }), // Task 11 判别联合形态（LockScreen 不消费，桩为成功语义）
     // C1 终审：绑定编排新增成员（LockScreen 不消费，桩为成功语义即可）
     wrap: vi.fn().mockResolvedValue(true),
     remove: vi.fn().mockResolvedValue({ ok: true } as AbeResult),

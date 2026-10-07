@@ -200,6 +200,8 @@ describe('SecurityCard ABE 区块（plan p6 §0.3 三态 + R7-I2 源缺失引导
     expect(abe.status).toHaveBeenCalledTimes(1) // 失败不刷新状态（区别于 wrap 失败路径的 R7-M5 刷新）
     expect(w.find('button.abe-install').exists()).toBe(true)
     expect(w.text()).toContain(expected)
+    // 审查 M3：failed 文案须引导看安装日志（SCM 细节只在 %ProgramData%\TotpTools\service\install.log）
+    if (!ret.ok && ret.reason === 'failed') expect(w.text()).toContain('install.log')
     w.unmount()
   })
 
