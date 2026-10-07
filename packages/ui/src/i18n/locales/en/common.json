@@ -783,7 +783,10 @@
     "filterBySite": "Filter by current site",
     "matchCount": "{count} matches",
     "empty": "No entries yet. Open the main window to create one.",
-    "noMatch": "No matching results"
+    "noMatch": "No matching results",
+    "importNone": "No importable entries recognized",
+    "batchImportHint": "Recognized {count} entries. Open the main window's import page to add them in bulk",
+    "pendingExpired": "The add request expired. Right-click to add it again"
   },
   "options": {
     "migrated": "Migrated {count} cloud targets to the new model",

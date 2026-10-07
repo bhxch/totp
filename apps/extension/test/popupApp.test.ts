@@ -669,6 +669,41 @@ describe('popup pending 信封分派（P5 Task 2：kind=uri|pasted；上方裸 U
     expect(wrapper.find('.error').text()).toBe('无法识别粘贴内容格式')
     expect(shim.local.data['pendingOtpauth']).toBeUndefined()
   })
+
+  it('带 ts 未过期信封（R5-I3）：消费成功进确认态，读取即清除', async () => {
+    shim = installChromeShim({
+      local: { pendingOtpauth: encodePending({ v: 1, kind: 'uri', text: 'otpauth://totp/Acme:dev?secret=JBSWY3DPEHPK3PXP' }) },
+    })
+    const wrapper = await mountTracked()
+
+    expect(wrapper.find('entry-form-stub').exists()).toBe(true)
+    expect(wrapper.find('.error').exists()).toBe(false)
+    expect(shim.local.data['pendingOtpauth']).toBeUndefined()
+  })
+
+  it('带 ts 过期信封（R5-I3）：删除 + 提示重新右键添加，不渲染表单', async () => {
+    const expired = JSON.stringify({
+      v: 1, kind: 'pasted', text: SG_JSON, ts: Date.now() - (10 * 60 * 1000) - 1, // 超过 PENDING_TTL_MS 1ms
+    })
+    shim = installChromeShim({ local: { pendingOtpauth: expired } })
+    const wrapper = await mountTracked()
+
+    expect(wrapper.find('entry-form-stub').exists()).toBe(false)
+    expect(wrapper.find('.error').text()).toBe('添加请求已过期，请重新右键添加')
+    // 信封已删除（raw 读取即 remove 路径覆盖过期分支），不残留重弹
+    expect(shim.local.data['pendingOtpauth']).toBeUndefined()
+    expect(shim.local.calls.remove).toBe(1)
+  })
+
+  it('无 ts 旧信封（R5-I3 升级兼容）：不过期，正常消费', async () => {
+    shim = installChromeShim({
+      local: { pendingOtpauth: JSON.stringify({ v: 1, kind: 'uri', text: 'otpauth://totp/Acme:dev?secret=JBSWY3DPEHPK3PXP' }) },
+    })
+    const wrapper = await mountTracked()
+
+    expect(wrapper.find('entry-form-stub').exists()).toBe(true)
+    expect(wrapper.find('.error').exists()).toBe(false)
+  })
 })
 
 describe('popup 复制行为补齐（B3-15/16：HOTP 递增、清剪贴板三重门控）', () => {

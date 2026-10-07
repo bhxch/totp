@@ -138,7 +138,7 @@ describe('右键菜单 otpauth-add（B1-4）', () => {
     clickMenu({ menuItemId: 'otpauth-add', selectionText: `  ${VALID_URI}  ` })
     await flush()
 
-    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'pasted', text: VALID_URI })
+    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'pasted', text: VALID_URI, ts: expect.any(Number) })
     expect(openPopup).toHaveBeenCalledTimes(1)
     expect(shim.notifications.created).toHaveLength(0) // 成功路径静默（popup 自动开即见预填）
   })
@@ -150,7 +150,7 @@ describe('右键菜单 otpauth-add（B1-4）', () => {
     clickMenu({ menuItemId: 'otpauth-add', selectionText: SG_JSON })
     await flush()
 
-    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'pasted', text: SG_JSON })
+    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'pasted', text: SG_JSON, ts: expect.any(Number) })
     expect(openPopup).toHaveBeenCalledTimes(1)
     expect(shim.notifications.created).toHaveLength(0)
   })
@@ -189,7 +189,7 @@ describe('右键菜单 otpauth-add（B1-4）', () => {
     clickMenu({ menuItemId: 'otpauth-add', selectionText: VALID_URI })
     await flush()
 
-    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'pasted', text: VALID_URI })
+    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'pasted', text: VALID_URI, ts: expect.any(Number) })
     expect(shim.notifications.created).toHaveLength(1)
     expect(shim.notifications.created[0]).toMatchObject({
       id: 'totp-pending-add',
@@ -201,7 +201,7 @@ describe('右键菜单 otpauth-add（B1-4）', () => {
     await loadBackground() // 未注入 openPopup → canOpenPopup false
     clickMenu({ menuItemId: 'otpauth-add', selectionText: VALID_URI })
     await flush()
-    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'pasted', text: VALID_URI })
+    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'pasted', text: VALID_URI, ts: expect.any(Number) })
     expect(shim.notifications.created).toHaveLength(1)
     expect(shim.notifications.created[0]).toMatchObject({
       id: 'totp-pending-add',
@@ -230,7 +230,7 @@ describe('右键菜单 otpauth-add（B1-4）', () => {
     clickMenu({ menuItemId: 'otpauth-add', selectionText: VALID_URI })
     await flush()
     expect(openPopup).toHaveBeenCalledTimes(1)
-    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'pasted', text: VALID_URI })
+    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'pasted', text: VALID_URI, ts: expect.any(Number) })
   })
 
   it('非 otpauth 菜单 id：忽略（菜单点击派发给不相关监听器的防御）', async () => {
@@ -254,7 +254,7 @@ describe('右键菜单 qr-decode-image（B1-5）', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('https://example.com/qr.png')
     expect(decodeImageBytesToUri).toHaveBeenCalledWith(expect.any(Uint8Array))
-    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'uri', text: VALID_URI })
+    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'uri', text: VALID_URI, ts: expect.any(Number) })
     expect(shim.notifications.created[0]).toMatchObject({
       id: 'totp-pending-add',
       type: 'basic',
@@ -273,7 +273,7 @@ describe('右键菜单 qr-decode-image（B1-5）', () => {
 
     expect(shim.tabs.create).toHaveBeenCalledTimes(1)
     expect(shim.tabs.create).toHaveBeenCalledWith({ url: 'chrome-extension://test-id/popup.html' })
-    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'uri', text: VALID_URI })
+    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'uri', text: VALID_URI, ts: expect.any(Number) })
   })
 
   it('data: URL 图片（内嵌 base64）：fetch 走同一链路（MV3 SW fetch 支持 data: scheme），解码成功写 kind=uri 信封', async () => {
@@ -288,7 +288,7 @@ describe('右键菜单 qr-decode-image（B1-5）', () => {
 
     expect(fetchMock).toHaveBeenCalledWith(dataUrl)
     expect(decodeImageBytesToUri).toHaveBeenCalledWith(expect.any(Uint8Array))
-    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'uri', text: VALID_URI })
+    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'uri', text: VALID_URI, ts: expect.any(Number) })
   })
 
   it('解码失败（返回 null）：「图中未识别」通知，不写 pendingOtpauth', async () => {

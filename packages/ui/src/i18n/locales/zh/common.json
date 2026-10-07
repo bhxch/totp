@@ -783,7 +783,10 @@
     "filterBySite": "按当前站点过滤",
     "matchCount": "匹配 {count} 条",
     "empty": "暂无条目，点击右上角「打开主界面」录入。",
-    "noMatch": "无匹配结果"
+    "noMatch": "无匹配结果",
+    "importNone": "未识别出可导入的条目",
+    "batchImportHint": "识别到 {count} 条，请打开主界面导入页完成批量添加",
+    "pendingExpired": "添加请求已过期，请重新右键添加"
   },
   "options": {
     "migrated": "已迁移 {count} 个云目标到新模型",

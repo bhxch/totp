@@ -3,7 +3,7 @@ import { getBuiltinIcons, parsePastedText, toOtpDigits, type OtpEntry, type TagF
 import { createIconStore, EntryForm, fullIconsReady, LockScreen, MdCheckbox, MdIconButton, NAV_ICONS, normalizeExtOtpauth, parseUriToEntryData, PersistErrorBanner, prefillFromParsed, QuickCodesPanel, resolvePopupVisible, sortEntries, ToastHost, useOtpCodes, useTheme, useToast, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { decodePending, PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
+import { decodePending, isPendingExpired, PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
 import { ext } from '../../src/extApi'
 import { createExtensionCloudRunner } from '../../src/cloudRunnerFactory'
 import { createFollowScheduler, scheduleClipboardClear } from '../../src/optionsPlatforms'
@@ -189,6 +189,12 @@ async function consumePendingOtpauth(): Promise<void> {
   if (!raw) return
   // P5 信封分派（Global Constraints）：JSON 解析失败/形状不符 → 旧版裸 URI 兼容
   const envelope = decodePending(raw)
+  // R5-I3：带 ts 信封超过 PENDING_TTL_MS → 信封已在读取时删除（raw 路径先 remove），提示重试；
+  // 无 ts 旧信封不过期（升级兼容，isPendingExpired 内裁定）
+  if (envelope !== null && isPendingExpired(envelope)) {
+    importError.value = t('popup.pendingExpired')
+    return
+  }
   if (envelope === null || envelope.kind === 'uri') {
     const err = applyOtpauthPrefill(normalizeExtOtpauth(envelope === null ? raw : envelope.text))
     if (err) importError.value = err
@@ -206,9 +212,10 @@ async function consumePendingOtpauth(): Promise<void> {
     enterConfirmState(prefillFromParsed(parsed.entries[0]!))
     return
   }
+  // R5-M1：原硬编码中文入 i18n 键表（popup.importNone / popup.batchImportHint）
   importError.value = parsed.entries.length === 0
-    ? '未识别出可导入的条目'
-    : `识别到 ${parsed.entries.length} 条，请打开主界面导入页完成批量添加`
+    ? t('popup.importNone')
+    : t('popup.batchImportHint', { count: parsed.entries.length })
 }
 
 function closeForm() {
