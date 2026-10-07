@@ -723,9 +723,16 @@ pub fn run_uninstall() -> Result<(), InstallError> {
             }
         }
     }
-    // 删 HKLM 绑定键（尽力；键不存在已幂等）
+    // 删 HKLM 绑定键（尽力；键不存在已幂等）。elog 落盘目标即副本目录，目录已删净时
+    // 不可再走 elog（其 create(true) 追加写会复活刚删净的服务目录，违背清理目标）——
+    // 目录不在时降级仅 stderr（GUI 子系统下不可见但语义保留；服务/日志目录仍在时走 elog）
     if !elevation_service::reg_delete_key() {
-        crate::elevation_log::elog("install", "删除 HKLM 绑定键失败（继续）");
+        const MSG: &str = "删除 HKLM 绑定键失败（继续）";
+        if service_dir().map(|d| d.exists()).unwrap_or(false) {
+            crate::elevation_log::elog("install", MSG);
+        } else {
+            eprintln!("[elevation-install] {MSG}");
+        }
     }
     Ok(())
 }
