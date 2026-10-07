@@ -13,13 +13,13 @@ use std::time::{Duration, Instant};
 
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_BROKEN_PIPE, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, GENERIC_READ,
-    GENERIC_WRITE, HANDLE,
+    CloseHandle, ERROR_BROKEN_PIPE, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, ERROR_PIPE_BUSY,
+    GENERIC_READ, GENERIC_WRITE, HANDLE,
 };
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_NONE, OPEN_EXISTING,
 };
-use windows::Win32::System::Pipes::PeekNamedPipe;
+use windows::Win32::System::Pipes::{PeekNamedPipe, WaitNamedPipeW};
 use zeroize::Zeroize;
 
 use crate::elevation_proto::{
@@ -34,6 +34,14 @@ const IO_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// PeekNamedPipe 轮询间隔（IO_TIMEOUT 选型注释）
 const PEEK_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+/// ERROR_PIPE_BUSY 短重试上界（I3 终审修复）：服务单实例串行（elevation_service
+/// create_pipe_instance 注释），前一连接未断开时新客户端 CreateFileW 收 ERROR_PIPE_BUSY。
+/// WaitNamedPipeW 等待服务端下一实例可用（3×100ms 上界）消并发打开失败面——锁屏 unwrap
+/// 与 SecurityCard status/bind 同帧并发是真实场景，直接拒绝会 UP 端折叠为随机失败
+const PIPE_BUSY_RETRIES: u32 = 3;
+/// WaitNamedPipeW 单次等待毫秒数（nTimeOut；到期返回 false，下轮 CreateFileW 重探管道态）
+const PIPE_BUSY_WAIT_MS: u32 = 100;
 
 /// 客户端错误（abe_status 映射 installed/matchesCaller 的分型依据，§T4 审查裁定；
 /// 不携带 DEK 等敏感内容）
@@ -286,29 +294,47 @@ impl Drop for PipeHandle {
 
 /// CreateFileW 同步模式打开服务管道（服务端 DACL 允许 Authenticated Users 读写）。
 /// 错误分类：FILE_NOT_FOUND/PATH_NOT_FOUND → Unavailable（未安装/未运行）；
-/// 其余（含 ERROR_PIPE_BUSY 实例全忙——管道在即证明已安装）→ OpenFailed
+/// ERROR_PIPE_BUSY → WaitNamedPipeW 短重试（I3 终审，见 PIPE_BUSY_RETRIES 注释），
+/// 重试耗尽仍忙 → OpenFailed；其余 → OpenFailed（管道在即证明已安装）
 fn open_pipe() -> Result<PipeHandle, ClientError> {
     let wide = to_wide(PIPE_NAME);
-    let handle = unsafe {
-        CreateFileW(
-            PCWSTR(wide.as_ptr()),
-            (GENERIC_READ | GENERIC_WRITE).0,
-            FILE_SHARE_NONE,
-            None,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-            None,
-        )
-    }
-    .map_err(|e| {
-        let code = e.code();
-        if code == ERROR_FILE_NOT_FOUND.into() || code == ERROR_PATH_NOT_FOUND.into() {
-            ClientError::Unavailable(format!("服务管道不存在: {e}"))
-        } else {
-            ClientError::OpenFailed(format!("CreateFileW: {e}"))
+    let mut busy_waits = 0u32;
+    loop {
+        let opened = unsafe {
+            CreateFileW(
+                PCWSTR(wide.as_ptr()),
+                (GENERIC_READ | GENERIC_WRITE).0,
+                FILE_SHARE_NONE,
+                None,
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                None,
+            )
+        };
+        match opened {
+            Ok(handle) => return Ok(PipeHandle(handle)),
+            Err(e) if e.code() == ERROR_PIPE_BUSY.into() => {
+                if busy_waits >= PIPE_BUSY_RETRIES {
+                    return Err(ClientError::OpenFailed(format!(
+                        "CreateFileW: {e}（实例全忙，重试 {busy_waits} 次后放弃）"
+                    )));
+                }
+                busy_waits += 1;
+                // 等待服务端下一管道实例可用；失败（超时/句柄态变化）不细化——
+                // 下轮 CreateFileW 重探即为权威判定
+                unsafe {
+                    let _ = WaitNamedPipeW(PCWSTR(wide.as_ptr()), PIPE_BUSY_WAIT_MS);
+                }
+            }
+            Err(e) => {
+                let code = e.code();
+                if code == ERROR_FILE_NOT_FOUND.into() || code == ERROR_PATH_NOT_FOUND.into() {
+                    return Err(ClientError::Unavailable(format!("服务管道不存在: {e}")));
+                }
+                return Err(ClientError::OpenFailed(format!("CreateFileW: {e}")));
+            }
         }
-    })?;
-    Ok(PipeHandle(handle))
+    }
 }
 
 /// 轮询读：PeekNamedPipe 查可用字节 → 有则 ReadFile 一次；到 deadline 仍无 → 超时。

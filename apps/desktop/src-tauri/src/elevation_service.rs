@@ -581,7 +581,8 @@ pub(crate) fn to_wide(s: &str) -> Vec<u16> {
 /// 帧协议（请求+响应）必须双向。首实例带 FILE_FLAG_FIRST_PIPE_INSTANCE（防管道名被抢占）。
 /// dwPipeMode 含 PIPE_REJECT_REMOTE_CLIENTS（拒远程连接）。实例数上界
 /// PIPE_UNLIMITED_INSTANCES，实际仅建单实例串行服务（单用户 UI 场景足够；并发客户端
-/// 收 ERROR_PIPE_BUSY 由客户端重试）
+/// 收 ERROR_PIPE_BUSY 由客户端 WaitNamedPipeW 短重试消化——elevation_client::open_pipe，
+/// I3 终审）
 fn create_pipe_instance(first: bool) -> Result<HANDLE, ServiceError> {
     use windows::core::Error as WinError;
     use windows::Win32::Foundation::{LocalFree, HLOCAL, INVALID_HANDLE_VALUE};
