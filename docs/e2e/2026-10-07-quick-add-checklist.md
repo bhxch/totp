@@ -33,6 +33,6 @@
 - [ ] 非法预填值（如手工写入 `pendingOtpauth: 'junk'`）→ popup 报错横幅常显、不渲染表单、值被清除不重弹
 
 ## 重点观察项
-- [ ] selection 菜单标题仍为「将选中的 otpauth 链接添加为条目」，但实际已支持全格式文本（P5 Task 1 未改文案）——文案与能力的脱节是否调整，走查后裁定
+- [ ] selection 菜单标题为「将选中的验证码内容添加为条目」（3d48282 已对齐全格式能力；原「otpauth 链接」旧文案描述已过时）——走查确认标题与全格式行为一致
 - [ ] data: URL 页面右键时 activeTab 授权是否覆盖 data: scheme（Chrome 对 data: 页面权限口径）——若 fetch 被拒走统一失败通知，记录实际表现
 - [ ] SteamGuard 预填的 note（serial/revocation）在表单内可编辑且随保存落库
