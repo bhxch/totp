@@ -137,8 +137,8 @@ fn normalize_image_path(path: &str) -> String {
     path.trim().trim_matches('"').trim().to_lowercase()
 }
 
-/// %PROGRAMDATA%\TotpTools\service（§0.2 副本目录）
-fn service_dir() -> Result<PathBuf, InstallError> {
+/// %PROGRAMDATA%\TotpTools\service（§0.2 副本目录；elevation_log 落盘同目录共用）
+pub(crate) fn service_dir() -> Result<PathBuf, InstallError> {
     let root = std::env::var_os("PROGRAMDATA")
         .ok_or_else(|| InstallError("环境变量 PROGRAMDATA 未设置".into()))?;
     Ok(PathBuf::from(root).join(SERVICE_DIR_SEGMENTS))
@@ -436,7 +436,17 @@ fn wait_stopped_best_effort(svc: &Service) {
     }
 }
 
-/// 启动服务（幂等：仅 Stopped 时拉起，运行中跳过）
+/// 启动后等待 RUNNING 的轮询间隔与次数（预算 5s = 500ms × 10；Task 10：
+/// StartService 返回 ≠ 真正起跑——被安全软件静默拦截/映像加载失败在此暴露）
+const RUNNING_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const RUNNING_POLL_COUNT: u32 = 10;
+/// SERVICE_RUNNING 的 wire 值（winsvc.h SERVICE_STATE；wait_running_n 比对用，
+/// 避免 windows_service 枚举跨边界依赖）
+const SERVICE_STATE_RUNNING: u32 = 4;
+
+/// 启动服务并等待至 RUNNING（Task 10：start 后直接返回会把「SCM 受理但起跑失败」
+/// 误报为安装成功——bind 轮询只能看到不可达，无从区分被杀原因；此处 5s 预算内
+/// 等 RUNNING，超时报错携带 SCM 最后状态/错误码）
 fn start_if_stopped(svc: &Service) -> Result<(), InstallError> {
     let status = svc
         .query_status()
@@ -445,7 +455,47 @@ fn start_if_stopped(svc: &Service) -> Result<(), InstallError> {
         return Ok(());
     }
     svc.start(&[] as &[&str])
-        .map_err(|e| scm_err(e, "启动服务失败"))
+        .map_err(|e| scm_err(e, "启动服务失败"))?;
+    wait_running(svc)
+}
+
+/// query_status → 状态/错误码轮询（SCM 绑定形）：Ok=当前状态 wire 值，Err=Win32 错误码
+/// （无码错误回落 0，仅诊断展示语义）
+fn wait_running(svc: &Service) -> Result<(), InstallError> {
+    wait_running_n(
+        &mut || {
+            svc.query_status()
+                .map(|s| s.current_state as u32)
+                .map_err(|e| raw_code(&e).unwrap_or_default() as u32)
+        },
+        RUNNING_POLL_COUNT,
+        RUNNING_POLL_INTERVAL,
+    )
+    .map_err(InstallError)
+}
+
+/// 等待至 RUNNING 的注入式轮询（纯逻辑可测）：至多 max_polls 次、间隔 interval；
+/// 达 RUNNING 即 Ok。超时 Err 带 failed: 前缀（Task 10 前缀协议）并附最后一次
+/// SCM 状态/错误码——安全软件静默击杀的主要定位线索
+fn wait_running_n<P: FnMut() -> Result<u32, u32>>(
+    polls: &mut P,
+    max_polls: u32,
+    interval: Duration,
+) -> Result<(), String> {
+    let mut last = String::new();
+    for _ in 0..max_polls {
+        match polls() {
+            Ok(state) if state == SERVICE_STATE_RUNNING => return Ok(()),
+            Ok(state) => last = state.to_string(),
+            Err(code) => last = code.to_string(),
+        }
+        if !interval.is_zero() {
+            std::thread::sleep(interval);
+        }
+    }
+    Err(format!(
+        "failed:服务启动未完成（可能被安全软件拦截）, SCM 最后状态/错误: {last}"
+    ))
 }
 
 /// 安装编排步骤（C2 终审：序由 [`install_plan`] 纯函数单点给出，[`run_install`] 逐项执行
@@ -551,8 +601,9 @@ pub fn run_install() -> Result<(), InstallError> {
         .ok_or_else(|| InstallError("计算自身 SHA256 失败".into()))?;
     let caller_sid = current_user_sid();
     if caller_sid.is_none() {
-        eprintln!(
-            "[elevation-install] 取当前用户 SID 失败，跳过 CallerSid 写入（服务管道回退 AU DACL 兜底）"
+        crate::elevation_log::elog(
+            "install",
+            "取当前用户 SID 失败，跳过 CallerSid 写入（服务管道回退 AU DACL 兜底）",
         );
     }
     // ② 探查服务（C2：一切写动作之前——停服决策依赖存在性与运行态；同一句柄贯穿停服/
@@ -648,7 +699,7 @@ pub fn run_uninstall() -> Result<(), InstallError> {
                 if raw_code(&e) != Some(SCM_E_NOT_ACTIVE)
                     && raw_code(&e) != Some(SCM_E_MARKED_FOR_DELETE) =>
             {
-                eprintln!("[elevation-install] 停止服务失败（继续清理）: {e}");
+                crate::elevation_log::elog("install", &format!("停止服务失败（继续清理）: {e}"));
             }
             Err(_) => {}
         }
@@ -658,39 +709,74 @@ pub fn run_uninstall() -> Result<(), InstallError> {
             if code != Some(SCM_E_MARKED_FOR_DELETE) && code != Some(SCM_E_NOT_EXISTS) {
                 return Err(scm_err(e, "删除服务失败"));
             }
-            eprintln!("[elevation-install] 服务已标记待删除，重启后完全移除");
+            crate::elevation_log::elog("install", "服务已标记待删除，重启后完全移除");
         }
     }
     // 删副本目录（尽力）
     if let Ok(dir) = service_dir() {
         if let Err(e) = std::fs::remove_dir_all(&dir) {
             if e.kind() != std::io::ErrorKind::NotFound {
-                eprintln!("[elevation-install] 删除副本目录失败（继续清理）: {e}");
+                crate::elevation_log::elog(
+                    "install",
+                    &format!("删除副本目录失败（继续清理）: {e}"),
+                );
             }
         }
     }
     // 删 HKLM 绑定键（尽力；键不存在已幂等）
     if !elevation_service::reg_delete_key() {
-        eprintln!("[elevation-install] 删除 HKLM 绑定键失败（继续）");
+        crate::elevation_log::elog("install", "删除 HKLM 绑定键失败（继续）");
     }
     Ok(())
 }
 
+/// trigger_install 失败二分（Task 10 前缀协议，供 abe_bind 的 Err 分流）：Cancelled
+/// 仅限 runas 退出码 -1（UAC 弹窗被用户取消，runas 1.2 ExitStatus raw 0xFFFFFFFF
+/// → code() == Some(-1)）；其余（提权进程非零退出，含 SCM 错误码文案）归 Failed
+#[derive(Debug, PartialEq, Eq)]
+enum TriggerFailure {
+    Cancelled,
+    Failed(String),
+}
+
+/// 分类纯函数：`Some(-1)` 即 0xFFFFFFFF → Cancelled；其余（含 code()==None 的
+/// 信号终止形态）一律 Failed 携带 detail
+fn classify_trigger_failure(exit_code: Option<i32>, detail: Option<String>) -> TriggerFailure {
+    if exit_code == Some(-1) {
+        TriggerFailure::Cancelled
+    } else {
+        TriggerFailure::Failed(detail.unwrap_or_else(|| "提权安装进程退出码非零".into()))
+    }
+}
+
 /// 非提权应用侧入口：runas 拉起自身 `--elevation-install`（UAC），阻塞至提权进程退出，
-/// 以其退出码为结果（提权进程错误经 stderr 输出，GUI 子系统下通常不可见——安装结果
-/// 由调用方（abe_bind）经管道 Status 复核）
+/// 以其退出码为结果（提权进程错误经 elog 落盘 + stderr 输出，GUI 子系统下 stderr
+/// 通常不可见——安装结果由调用方（abe_bind）经管道 Status 复核）。
+/// Err(String) 恒为前缀协议二态之一（Task 10，前端写死解析）：`cancelled:`（UAC
+/// 取消）/ `failed:`（ShellExecute 启动失败或提权进程非零退出）；bind 轮询超时的
+/// `notready:` 由 elevation_commands::bind_and_wait 负责
 pub fn trigger_install() -> Result<(), InstallError> {
-    let exe =
-        std::env::current_exe().map_err(|e| InstallError(format!("获取自身路径失败: {e}")))?;
+    let exe = std::env::current_exe()
+        .map_err(|e| InstallError(format!("failed:获取自身路径失败: {e}")))?;
     let status = runas::Command::new(&exe)
         .arg("--elevation-install")
         .status()
-        .map_err(|e| InstallError(format!("UAC 提权启动失败: {e}")))?;
+        // ShellExecute 层启动失败（exe 缺失/策略拒绝等）非用户取消 → failed:；
+        // 仅 UAC 弹窗取消（退出码 -1）归 cancelled:（审查裁定）
+        .map_err(|e| InstallError(format!("failed:UAC 提权启动失败: {e}")))?;
     if status.success() {
-        Ok(())
-    } else {
-        Err(InstallError(format!("提权安装进程退出码非零: {status}")))
+        return Ok(());
     }
+    let detail = format!("提权安装进程退出码非零: {status}");
+    Err(InstallError(
+        match classify_trigger_failure(status.code(), Some(detail)) {
+            TriggerFailure::Cancelled => format!(
+                "cancelled:UAC 提权被用户取消（exit {}）",
+                status.code().unwrap_or(-1)
+            ),
+            TriggerFailure::Failed(detail) => format!("failed:{detail}"),
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -939,5 +1025,40 @@ mod tests {
             "副本字节须与自身一致"
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ---- trigger 失败分类（Task 10 错误前缀协议：cancelled/failed 二分）----
+
+    #[test]
+    fn classify_cancelled_when_runas_exit_minus_one() {
+        // runas 1.2 UAC 取消：ExitStatus raw 0xFFFFFFFF → code() == Some(-1)
+        assert!(matches!(
+            classify_trigger_failure(Some(-1), None),
+            TriggerFailure::Cancelled
+        ));
+    }
+
+    #[test]
+    fn classify_failed_on_other_exit_codes() {
+        // 非零退出（提权进程 SCM/安装步骤错误）：failed 侧携带 detail 透出
+        assert!(matches!(
+            classify_trigger_failure(Some(1), Some("创建服务失败: 拒绝访问".into())),
+            TriggerFailure::Failed(_)
+        ));
+    }
+
+    // ---- wait_running_n（Task 10：StartService 后等 RUNNING，注入轮询可测）----
+
+    #[test]
+    fn wait_running_times_out_with_scm_error_in_message() {
+        let mut polls = || Err(1078u32); // 模拟 SCM 错误码
+        let r = wait_running_n(&mut polls, 2, std::time::Duration::ZERO);
+        assert!(r.is_err_and(|e| e.contains("1078")));
+    }
+
+    #[test]
+    fn wait_running_ok_when_state_reaches_running() {
+        let mut polls = || Ok(4u32); // SERVICE_RUNNING
+        assert!(wait_running_n(&mut polls, 3, std::time::Duration::ZERO).is_ok());
     }
 }

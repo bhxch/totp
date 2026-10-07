@@ -226,7 +226,7 @@ fn wrap_dek(payload: &[u8], store: &mut dyn ElevationStore) -> (ErrCode, Vec<u8>
         Ok(c) => c,
         Err(e) => {
             dek.zeroize();
-            eprintln!("[elevation-service] DPAPI protect 失败: {e}");
+            crate::elevation_log::elog("service", &format!("DPAPI protect 失败: {e}"));
             return (ErrCode::Internal, Vec::new());
         }
     };
@@ -259,7 +259,7 @@ fn unwrap_dek(store: &mut dyn ElevationStore) -> (ErrCode, Vec<u8>) {
     let mut plain = match crate::platform_security::dpapi_unprotect_bytes(&cipher, None) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("[elevation-service] DPAPI unprotect 失败: {e}");
+            crate::elevation_log::elog("service", &format!("DPAPI unprotect 失败: {e}"));
             return (ErrCode::Internal, Vec::new());
         }
     };
@@ -870,6 +870,9 @@ fn create_pipe_instance(sddl_str: &str, first: bool) -> Result<HANDLE, ServiceEr
 /// Running → 连接循环 → StopPending → Stopped。scm=false 时状态上报为 no-op
 /// （非 SCM 直跑调试路径，见 run_service）
 fn service_run(scm: bool) -> Result<(), ServiceError> {
+    // Task 10 诊断锚点：服务循环启动即落盘一行（SCM 上下文 stderr 不可见；后续
+    // 被安全软件击杀/映像加载失败则日志止于此行，断尾本身即定位线索）
+    crate::elevation_log::elog("service", &format!("started, pid={}", std::process::id()));
     use windows::core::PCWSTR;
     use windows::Win32::System::Threading::{CreateEventW, SetEvent};
     use windows_service::service::{ServiceControl, ServiceControlAccept, ServiceExitCode};
@@ -907,11 +910,12 @@ fn service_run(scm: bool) -> Result<(), ServiceError> {
         ServiceExitCode::NO_ERROR,
     )?;
     // 管道 DACL 收窄（R6-M2）：读 HKLM CallerSid 构造发起用户 SDDL；缺失/非法回退
-    // AU 兜底（保底可用）并 console 留痕（不 abort——装好即用优于拒绝服务）
+    // AU 兜底（保底可用）并落盘留痕（不 abort——装好即用优于拒绝服务）
     let caller_sid = read_caller_sid().filter(|s| is_plausible_sid_string(s));
     if caller_sid.is_none() {
-        eprintln!(
-            "[elevation-service] HKLM CallerSid 缺失或非法，管道 DACL 回退 Authenticated Users 兜底"
+        crate::elevation_log::elog(
+            "service",
+            "HKLM CallerSid 缺失或非法，管道 DACL 回退 Authenticated Users 兜底",
         );
     }
     let pipe = match create_pipe_instance(&pipe_sddl_for(caller_sid.as_deref()), true) {
@@ -992,7 +996,7 @@ fn serve_loop(pipe: HANDLE, stop_event: HANDLE) {
     let pipe_event = match unsafe { CreateEventW(None, true, false, PCWSTR::null()) } {
         Ok(h) => h,
         Err(e) => {
-            eprintln!("[elevation-service] CreateEventW(pipe) 失败: {e}");
+            crate::elevation_log::elog("service", &format!("CreateEventW(pipe) 失败: {e}"));
             return;
         }
     };
@@ -1023,7 +1027,10 @@ fn serve_loop(pipe: HANDLE, stop_event: HANDLE) {
                 } else {
                     // 停止事件先行：待决连接随进程退出收尾（句柄由 OS 关闭）
                     if waited.0 != (WAIT_OBJECT_0.0 + 1) {
-                        eprintln!("[elevation-service] WaitForMultipleObjects 异常: {waited:?}");
+                        crate::elevation_log::elog(
+                            "service",
+                            &format!("WaitForMultipleObjects 异常: {waited:?}"),
+                        );
                     }
                     stopping = true;
                 }
@@ -1031,7 +1038,7 @@ fn serve_loop(pipe: HANDLE, stop_event: HANDLE) {
             // Create 与 Connect 间隙已有客户端连入
             Err(e) if e.code() == HRESULT::from_win32(ERROR_PIPE_CONNECTED.0) => connected = true,
             Err(e) => {
-                eprintln!("[elevation-service] ConnectNamedPipe 失败: {e}");
+                crate::elevation_log::elog("service", &format!("ConnectNamedPipe 失败: {e}"));
                 break;
             }
         }
@@ -1069,7 +1076,7 @@ pub fn run_service() -> Result<(), ServiceError> {
 /// SCM 服务主函数（define_windows_service! 接线目标）
 fn service_main(_args: Vec<OsString>) {
     if let Err(e) = service_run(true) {
-        eprintln!("[elevation-service] {e}");
+        crate::elevation_log::elog("service", &e.to_string());
     }
 }
 

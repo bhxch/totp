@@ -24,6 +24,11 @@ mod elevation_service;
 // ABE 提权安装/卸载（plan p6 §0.2）：UAC 单命令装服务+ProgramData 副本+HKLM 绑定
 #[cfg(windows)]
 mod elevation_install;
+// ABE 安装/服务诊断日志（Task 10）：elog = stderr + %ProgramData%\TotpTools\service
+// 落盘薄层——GUI 子系统与 SCM 上下文 stderr 不可见，落盘是提权链路唯一可诊断面。
+// 仅提权链路（全 cfg(windows)）消费，非 Windows 无消费方，模块整体门控防 dead_code
+#[cfg(windows)]
+mod elevation_log;
 // ABE 提权服务应用侧客户端（plan p6 §T4）：管道打开/帧收发/Status/Unwrap/Remove。
 // 纯 Windows 提权链路，cfg(windows) 门控（Global Constraints）
 #[cfg(windows)]
@@ -807,7 +812,7 @@ pub fn run() {
     #[cfg(windows)]
     if args.iter().any(|a| a == "--elevation-service") {
         if let Err(e) = elevation_service::run_service() {
-            eprintln!("[elevation-service] {e}");
+            crate::elevation_log::elog("service", &e.to_string());
             std::process::exit(1);
         }
         return;
@@ -825,7 +830,7 @@ pub fn run() {
             elevation_install::run_uninstall()
         };
         if let Err(e) = result {
-            eprintln!("[elevation-install] {e}");
+            crate::elevation_log::elog("install", &e.to_string());
             std::process::exit(1);
         }
         return;

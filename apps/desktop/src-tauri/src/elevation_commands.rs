@@ -261,8 +261,11 @@ mod win {
         }
     }
 
-    /// bind 主体：UAC 安装 → 轮询服务可达。UAC 结果以提权进程退出码为准（错误 stderr
-    /// 不可见于 GUI 子系统，安装结果以 Status 复核为准——见 trigger_install 注释）
+    /// bind 主体：UAC 安装 → 轮询服务可达。UAC 结果以提权进程退出码为准（错误经
+    /// elog 落盘 + stderr 不可见于 GUI 子系统，安装结果以 Status 复核为准——见
+    /// trigger_install 注释）。Err(String) 恒为 Task 10 前缀协议三态之一：
+    /// cancelled:/failed:（trigger_install，恒 Err 不入轮询）/ notready:（安装命令
+    /// 成功但 bind 轮询超时——前端据此分流「重试」与「联系支持附日志」）
     pub(super) fn bind_and_wait() -> Result<serde_json::Value, String> {
         elevation_install::trigger_install().map_err(|e| e.to_string())?;
         // UAC 成功 ≠ 服务立即可达（CreateService→StartService 异步落位）：轮询至
@@ -275,7 +278,7 @@ mod win {
                 Err(err) => {
                     if Instant::now() >= deadline {
                         return Err(format!(
-                            "安装命令已完成，但服务未在 {:?} 内可达: {err}",
+                            "notready:安装命令已完成，但服务未在 {:?} 内可达: {err}",
                             BIND_POLL_BUDGET
                         ));
                     }
