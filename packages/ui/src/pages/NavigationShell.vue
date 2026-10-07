@@ -116,6 +116,8 @@ const pageProps = computed<Partial<PagePropsByName>>(() => {
 .nav-shell { display: flex; height: 100dvh; overflow: hidden; }
 .nav-shell--narrow { flex-direction: column; height: auto; overflow: visible; }
 .nav-shell__main { flex: 1; min-width: 0; overflow-y: auto; }
+/* 窄屏走文档流整页滚动：残留 overflow-y 会让 sticky 挂到永不滚动的容器，冻结失效 */
+.nav-shell--narrow .nav-shell__main { overflow: visible; }
 .nav-shell__rail-action { border: none; background: transparent; cursor: pointer; font: inherit;
   font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-on-surface-variant); padding: 8px 4px; border-radius: 8px;
   min-height: 48px; transition: background-color .15s; }
