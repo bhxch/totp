@@ -64,10 +64,12 @@ const titleLine = computed(() => {
   return props.entry.label
 })
 
-/** 跑马灯仅在标题溢出可视宽时启用（未溢出无动画，不建合成层）。checkOverflow 三触发路径：
- *  onMounted（首帧）+ watch(issuer/label, flush:'post'，改名/换宿主数据后重测) + ResizeObserver
- *  （宿主面板/窗口宽度变化）。jsdom 无布局（scrollWidth/clientWidth 恒 0）也无 ResizeObserver，
- *  后者 try/catch 跳过；组件测试经 mock 元素尺寸 + setProps 走 watch 路径验证 */
+/** 跑马灯仅在标题溢出可视宽时启用（未溢出无动画，不建合成层）。checkOverflow 四触发路径：
+ *  onMounted（首帧）+ document.fonts.ready（R3-M7：字体加载只变 scrollWidth，ResizeObserver
+ *  感知不到，就绪后防御性重测；缺 fonts API 的环境守卫跳过）+ watch(issuer/label, flush:'post'，
+ *  改名/换宿主数据后重测) + ResizeObserver（宿主面板/窗口宽度变化）。jsdom 无布局
+ *  （scrollWidth/clientWidth 恒 0）也无 ResizeObserver，后者 try/catch 跳过；组件测试经
+ *  mock 元素尺寸 + setProps 走 watch 路径验证 */
 const titleEl = ref<HTMLElement | null>(null)
 const overflowing = ref(false)
 /** 溢出时实测可视宽（clientWidth）注入 CSS 变量供 keyframes 终点用：
@@ -81,6 +83,9 @@ function checkOverflow(): void {
 let resizeObserver: ResizeObserver | null = null
 onMounted(() => {
   checkOverflow()
+  // R3-M7：字体后加载（webfont/系统字体替换）会把 scrollWidth 从回退字体宽度拉开，
+  // 只变 scrollWidth 不触发 ResizeObserver——ready 后重测一次；卸载后 titleEl=null 走 no-op
+  document.fonts?.ready?.then(() => { if (titleEl.value !== null) checkOverflow() })
   try {
     resizeObserver = new ResizeObserver(checkOverflow)
     resizeObserver.observe(titleEl.value!)
@@ -145,14 +150,13 @@ function onContextMenu(e: MouseEvent): void {
     <div class="meta">
       <!-- P3：上行=服务商/名称合并单行（超长跑马灯）；下行=大号验证码 + QR 钮 -->
       <div class="title-line">
-        <span
+        <!-- R3-M8：★ 在裁切容器层（title-text 外），长名跑马灯滚动循环中置顶指示不再随文本滚出视野 -->
+        <span v-if="entry.pinned" class="pin" :title="t('otpListItem.pinnedTitle')">★</span><span
           ref="titleEl"
           class="title-text"
           :class="{ marquee: overflowing }"
           :style="overflowing ? { '--marquee-viewport': `${viewportWidth}px` } : undefined"
-        >
-          <span v-if="entry.pinned" class="pin" :title="t('otpListItem.pinnedTitle')">★</span>{{ titleLine }}
-        </span>
+        >{{ titleLine }}</span>
       </div>
       <div class="code-line">
         <!-- aria-live(F7 无障碍闭环):揭示/打回时 .code 文本动态变化且从不获得焦点,读屏用户
@@ -186,15 +190,17 @@ function onContextMenu(e: MouseEvent): void {
 .icon-svg { width: 22px; height: 22px; fill: currentColor; }
 .icon-img { width: 100%; height: 100%; object-fit: cover; }
 .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-/* P3：上行标题裁切容器；title-text inline-block 使 transform 跑马灯生效且 shrink-to-fit
-   宽度跟随容器（溢出时 clientWidth=可视宽、scrollWidth=全文宽，checkOverflow 据此判定） */
-.title-line { overflow: hidden; white-space: nowrap; }
+/* P3：上行标题裁切容器；R3-M8 起 ★ 与 title-text 并列为其 flex 子项（★ 恒固定不参与跑马灯），
+   title-text inline-block 使 transform 跑马灯生效且 shrink-to-fit 宽度跟随容器（溢出时
+   clientWidth=可视宽、scrollWidth=全文宽，checkOverflow 据此判定） */
+.title-line { display: flex; overflow: hidden; white-space: nowrap; }
 .title-text { display: inline-block; font-weight: 600; }
 /* P3：超长跑马灯（约 8s/循环）；终点经 --marquee-viewport 注入实测可视宽（checkOverflow 写入，
    未溢出无变量），160px 为变量缺失保底；仅 overflowing 时启用，未溢出无动画 */
 .title-text.marquee { animation: marquee 8s infinite; }
 @keyframes marquee { 0%,15% { transform: translateX(0) } 50%,65% { transform: translateX(calc(-100% + var(--marquee-viewport, 160px))) } 100% { transform: translateX(0) } }
-.pin { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-medium); margin-right: 4px; }
+/* ★ 置顶指示（R3-M8：位于裁切容器层，flex 子项不被 translateX 带走）；4px 间距对齐原内嵌形态 */
+.pin { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-medium); margin-right: 4px; flex: none; }
 /* P3：下行=大号验证码 + QR 钮 */
 .code-line { display: flex; align-items: center; gap: 8px; }
 .code { font-family: system-ui, sans-serif; font-weight: 700; font-variant-numeric: tabular-nums; font-size: var(--md-sys-typescale-code-large); letter-spacing: 1px; }

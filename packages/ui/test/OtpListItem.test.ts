@@ -156,11 +156,14 @@ describe('OtpListItem 标题行（Aegis 两行布局上行：issuer/label 合并
     expect(mountItem({ issuer: '' }).find('.title-text').text()).toBe('me@ex.com')
   })
 
-  it('pin ★ 渲染在标题行内（title-text 内，先星标后标题）', () => {
+  it('R3-M8：pin ★ 渲染在裁切容器层（title-line 直下、title-text 外），跑马灯滚动不带走置顶指示', () => {
     const w = mountItem({ pinned: true })
-    const title = w.find('.title-text')
-    expect(title.find('.pin').exists()).toBe(true)
-    expect(title.text()).toContain('★')
+    const line = w.find('.title-line')
+    // 结构断言：★ 是 title-line 的直接子节点（裁切容器外=不参与 title-text 的 translateX 循环）
+    expect(line.find('.pin').exists()).toBe(true)
+    expect(line.find('.title-text .pin').exists()).toBe(false)
+    expect(line.text()).toContain('★')
+    expect(w.find('.title-text').text()).toBe('GitHub/me@ex.com') // 文本不含 ★
   })
 
   it('标题未溢出无 marquee；溢出（scrollWidth > clientWidth）加 marquee class（jsdom 无布局，mock 元素尺寸 + setProps 触发 watch 验证）', async () => {
@@ -181,6 +184,26 @@ describe('OtpListItem 标题行（Aegis 两行布局上行：issuer/label 合并
     Object.defineProperty(el, 'clientWidth', { value: 240, configurable: true })
     await w.setProps({ entry: { ...entry, label: 'renamed@ex.com' } })
     expect(w.find('.title-text').attributes('style')).toMatch(/--marquee-viewport:\s*240px/)
+  })
+
+  it('R3-M7：document.fonts.ready 后防御性重测溢出（字体加载只变 scrollWidth，ResizeObserver 感知不到）', async () => {
+    // 固定 fonts stub（jsdom 环境差异防御）：ready 已 resolve，onMounted 挂的 then 回调同步链可达
+    const saved = Object.getOwnPropertyDescriptor(document, 'fonts')
+    Object.defineProperty(document, 'fonts', { value: { ready: Promise.resolve() }, configurable: true })
+    try {
+      const w = mountItem()
+      expect(w.find('.title-text').classes()).not.toContain('marquee') // 首帧（回退字体宽度）未溢出
+      const el = w.find('.title-text').element as HTMLElement
+      // 模拟字体加载完成：scrollWidth 被真实字体拉开（仅 scrollWidth 变化，无任何 observer 触发）
+      Object.defineProperty(el, 'scrollWidth', { value: 500, configurable: true })
+      Object.defineProperty(el, 'clientWidth', { value: 160, configurable: true })
+      await (document as Document & { fonts: { ready: Promise<unknown> } }).fonts.ready
+      await w.vm.$nextTick()
+      expect(w.find('.title-text').classes()).toContain('marquee')
+      w.unmount()
+    } finally {
+      if (saved) Object.defineProperty(document, 'fonts', saved)
+    }
   })
 })
 
