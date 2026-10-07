@@ -1,15 +1,33 @@
 /* 自动生成:pnpm --filter @totp/ui theme — 勿手改
- * base 恒载:typescale :root 块 + 无 [data-color] 限定的 light/dark/auto 块,色值=默认种子 blue(未加载 palettes 时的兜底色)。
+ * base 恒载:typescale/shape/state-layer :root 块 + 无 [data-color] 限定的 light/dark/auto 块,色值=默认种子 blue(未加载 palettes 时的兜底色)。
  * 特异度:本文件 (0,1,0) 兜底,tokens-palettes.css (0,2,0) 恒胜。 */
 
 :root {
+  --md-sys-typescale-headline-small:24px;
+  --md-sys-typescale-title-large:22px;
   --md-sys-typescale-title-medium:16px;
+  --md-sys-typescale-title-small:14px;
   --md-sys-typescale-body-large:16px;
   --md-sys-typescale-body-medium:14px;
   --md-sys-typescale-body-small:12px;
+  --md-sys-typescale-label-large:14px;
   --md-sys-typescale-label-medium:12px;
   --md-sys-typescale-label-small:11px;
   --md-sys-typescale-code-large:18px; /* 项目自定义档：验证码/密文等宽 */
+}
+
+:root {
+  --md-sys-shape-corner-extra-small:4px;
+  --md-sys-shape-corner-small:8px;
+  --md-sys-shape-corner-medium:12px;
+  --md-sys-shape-corner-large:16px;
+  --md-sys-shape-corner-extra-large:28px;
+  --md-sys-shape-corner-full:9999px;
+}
+
+:root {
+  --md-sys-state-layer-hover:8%;
+  --md-sys-state-layer-pressed:12%;
 }
 
 [data-mode="light"] { color-scheme: light }
@@ -37,6 +55,8 @@
   --md-sys-color-on-error:#ffffff;
   --md-sys-color-error-container:#ffdad6;
   --md-sys-color-on-error-container:#410002;
+  --md-sys-color-background:#fefbff;
+  --md-sys-color-on-background:#1b1b1f;
   --md-sys-color-surface:#fefbff;
   --md-sys-color-on-surface:#1b1b1f;
   --md-sys-color-surface-variant:#e1e2ec;
@@ -76,6 +96,8 @@
   --md-sys-color-on-error:#ffffff;
   --md-sys-color-error-container:#ffdad6;
   --md-sys-color-on-error-container:#410002;
+  --md-sys-color-background:#fefbff;
+  --md-sys-color-on-background:#1b1b1f;
   --md-sys-color-surface:#fefbff;
   --md-sys-color-on-surface:#1b1b1f;
   --md-sys-color-surface-variant:#e1e2ec;
@@ -115,6 +137,8 @@
   --md-sys-color-on-error:#690005;
   --md-sys-color-error-container:#93000a;
   --md-sys-color-on-error-container:#ffb4ab;
+  --md-sys-color-background:#1b1b1f;
+  --md-sys-color-on-background:#e4e2e6;
   --md-sys-color-surface:#1b1b1f;
   --md-sys-color-on-surface:#e4e2e6;
   --md-sys-color-surface-variant:#45464f;
@@ -154,6 +178,8 @@
   --md-sys-color-on-error:#690005;
   --md-sys-color-error-container:#93000a;
   --md-sys-color-on-error-container:#ffb4ab;
+  --md-sys-color-background:#1b1b1f;
+  --md-sys-color-on-background:#e4e2e6;
   --md-sys-color-surface:#1b1b1f;
   --md-sys-color-on-surface:#e4e2e6;
   --md-sys-color-surface-variant:#45464f;
