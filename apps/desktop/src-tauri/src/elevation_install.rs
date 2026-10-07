@@ -413,9 +413,7 @@ pub fn run_uninstall() -> Result<(), InstallError> {
 
 /// 非提权应用侧入口：runas 拉起自身 `--elevation-install`（UAC），阻塞至提权进程退出，
 /// 以其退出码为结果（提权进程错误经 stderr 输出，GUI 子系统下通常不可见——安装结果
-/// 由调用方（Task 4 abe_bind）经管道 Status 复核）
-/// Task 4 客户端（abe_bind）接线前无消费方，单项豁免（同 ErrCode::from_u16 先例）
-#[allow(dead_code)]
+/// 由调用方（abe_bind）经管道 Status 复核）
 pub fn trigger_install() -> Result<(), InstallError> {
     let exe =
         std::env::current_exe().map_err(|e| InstallError(format!("获取自身路径失败: {e}")))?;

@@ -14,8 +14,7 @@ mod cli;
 mod cloud_http;
 // ABE 提权服务帧协议（plan p6 §0.1）：管道名/marker/消息类型/错误码与帧编解码单点定义。
 // 纯逻辑无 IO，但属提权链路（Global Constraints：服务/提权代码全部 cfg(windows) 门控，
-// Linux clippy CI 门禁），消费方（elevation_service/client）均为 Windows 专属。
-// ErrCode::from_u16 尚无服务侧消费（Task 4 客户端解析 Resp 用），单项 allow 见该函数处
+// Linux clippy CI 门禁），消费方（elevation_service/client）均为 Windows 专属
 #[cfg(windows)]
 mod elevation_proto;
 // ABE 提权服务主体（plan p6 §0.1/§0.2）：LocalSystem 服务循环（命名管道+调用者验证+
@@ -25,6 +24,14 @@ mod elevation_service;
 // ABE 提权安装/卸载（plan p6 §0.2）：UAC 单命令装服务+ProgramData 副本+HKLM 绑定
 #[cfg(windows)]
 mod elevation_install;
+// ABE 提权服务应用侧客户端（plan p6 §T4）：管道打开/帧收发/Status/Unwrap/Remove。
+// 纯 Windows 提权链路，cfg(windows) 门控（Global Constraints）
+#[cfg(windows)]
+mod elevation_client;
+// ABE 提权 Tauri 命令层（plan p6 §T4）：abe_status/abe_bind/abe_remove。全平台编译
+// （generate_handler! 宏不支持条目级 cfg，注册无条件；Windows 真实现内部走
+// elevation_client/install，非 Windows supported:false 桩——见模块头注释）
+mod elevation_commands;
 // 对话框授权登记（F4）与备份/导入文件命令（dirToken 遏制 + 扩展名白名单）
 mod dialog_grants;
 mod lock_events;
@@ -930,7 +937,10 @@ pub fn run() {
             mcp_server::mcp_approval_response,
             mcp_server::mcp_respond,
             mcp_server::mcp_revoke_approvals,
-            cloud_http::cloud_http_fetch
+            cloud_http::cloud_http_fetch,
+            elevation_commands::abe_status,
+            elevation_commands::abe_bind,
+            elevation_commands::abe_remove
         ])
         // build+run（回调形态）：RunEvent::Exit 时注销系统锁屏监听（plan16 T15）；
         // 正常运行路径行为与直接 .run(context) 完全一致

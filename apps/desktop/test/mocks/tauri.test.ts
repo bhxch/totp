@@ -64,8 +64,8 @@ describe('invoke 分发', () => {
     expect(tauriMock.invoke).toHaveBeenCalledWith('clipboard_clear_if_staged') // vi.fn 断言面同样可用
   })
 
-  it('命令清单覆盖盘点面（31 命令 + mini DEK 槽三命令 + mini pin 两命令，共 36 个）', async () => {
-    expect(INVOKE_COMMANDS).toHaveLength(36)
+  it('命令清单覆盖盘点面（36 个 + P6 T4 ABE 三命令，共 39 个）', async () => {
+    expect(INVOKE_COMMANDS).toHaveLength(39)
     for (const cmd of [
       'stage_clipboard_write', 'clipboard_clear_if_staged', 'take_stashed_dek', 'stash_dek', 'clear_stashed_dek',
       'set_mini_dek', 'peek_mini_dek', 'clear_mini_dek', 'mini_pin_get', 'mini_pin_set',
@@ -77,6 +77,7 @@ describe('invoke 分发', () => {
       'mcp_get_config', 'mcp_set_config', 'mcp_regenerate_token', 'mcp_revoke_approvals',
       'mcp_approval_response', 'mcp_respond',
       'devtools_get_config', 'devtools_set_config', 'release_policy_get', 'release_policy_set',
+      'abe_status', 'abe_bind', 'abe_remove',
     ]) {
       expect(INVOKE_COMMANDS).toContain(cmd)
     }

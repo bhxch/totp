@@ -59,9 +59,7 @@ pub enum ErrCode {
 
 impl ErrCode {
     /// 线格式 → 枚举；未知值返回 None（客户端拒绝静默错读，展示 Internal 兜底由调用方决定）。
-    /// 服务端（elevation_service）只产码不读码，本项由 Task 4 客户端（Resp 解析）消费，
-    /// 接线前的 dead_code 在此单项豁免（模块级 allow 已随 Task 2 接线移除）
-    #[allow(dead_code)]
+    /// 服务端（elevation_service）只产码不读码；本项由客户端（elevation_client）解析 Resp 消费
     pub fn from_u16(v: u16) -> Option<Self> {
         match v {
             0 => Some(Self::Ok),

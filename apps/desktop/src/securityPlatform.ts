@@ -15,6 +15,7 @@
  * best-effort:失败仅告警——Rust 端旧格式 32B 兜底仍可解锁,下次成功解锁重试。
  */
 import { computed, type ComputedRef } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 import type { DpapiUnlockOps, SecurityPlatform, VueStore } from '@totp/ui'
 // host 工厂经 '@totp/ui/host' 子出口导入(理由同 host/index.ts 头注释:宿主 mock 拦截点唯一)
 import { createSecurityOpsFromStore } from '@totp/ui/host'
@@ -38,11 +39,40 @@ export interface SecurityPlatformDeps {
 
 /** platform 工厂与迁移共用的就绪断言收敛至 storeAccess（未就绪统一中文报错） */
 
+// ---------- ABE 服务宿主通道（P6 §0.3/T4） ----------
+
+/** ABE 服务状态（Rust abe_status 返回，serde camelCase）：matchesCaller=false 时
+ *  boundPath/version 恒 undefined——失配者收到的是连接级错误 Resp 拿不到 Status JSON，
+ *  版本/绑定路径信息仅匹配者可见（服务侧审查裁定，前端失配态展示「需要重新绑定」即可） */
+export interface AbeStatus {
+  installed: boolean
+  matchesCaller: boolean
+  boundPath?: string
+  version?: string
+}
+
+/** ABE 操作结果（remove）：ok=false 时 message 附服务侧原因 */
+export interface AbeResult {
+  ok: boolean
+  message?: string
+}
+
+/** ABE 服务宿主操作集（plan §0.3；T5 于 @totp/ui 定义 SecurityPlatform 挂载点后接线，
+ *  T6 SecurityCard 消费；desktop 宿主实现=Rust abe_* 命令 invoke 包装） */
+export interface AbeOps {
+  supported: boolean
+  status(): Promise<AbeStatus | null>
+  bind(): Promise<boolean>
+  remove(): Promise<AbeResult>
+}
+
 export interface DesktopSecurityPlatform {
   /** 安全平台（computed：store 未就绪 null，SecurityCard 整卡不渲染） */
   platform: ComputedRef<SecurityPlatform | null>
   /** OS 自动解锁通道（SecurityCard「启用/移除」与 LockScreen「挂载静默解锁」共用同一对象） */
   dpapi: DpapiUnlockOps
+  /** ABE 服务通道（supported=false 不渲染不调用；T5 接线 SecurityCard :abe） */
+  abe: AbeOps
   /** F3 迁移：历史 wrappedDekD(无应用附加熵的旧格式)在下一次成功解锁后重包为 v2 应用熵绑定格式 */
   migrateDekWrapToEntropyBound(): Promise<void>
 }
@@ -106,5 +136,40 @@ export function createSecurityPlatform(deps: SecurityPlatformDeps): DesktopSecur
     })
   })
 
-  return { platform: securityPlatform, dpapi: dpapiOps, migrateDekWrapToEntropyBound }
+  // ABE 服务通道（P6 §0.3）：supported 按 UA 判定（与 lockPrefs/naming 同源 flags）——
+  // abe_* 命令虽全平台注册（非 Windows supported:false 桩），前端短路可省无效 IPC；
+  // 失败一律收敛 null/false/{ok:false}（UAC 取消、服务不可达均非异常路径，不打断 UI）
+  const abeSupported = deps.flags.isWin
+  const abeOps: AbeOps = {
+    supported: abeSupported,
+    async status() {
+      if (!abeSupported) return null
+      try {
+        return (await invoke<AbeStatus>('abe_status')) ?? null
+      } catch (e) {
+        console.warn('[desktop] abe_status 查询失败', e)
+        return null
+      }
+    },
+    async bind() {
+      if (!abeSupported) return false
+      try {
+        await invoke('abe_bind')
+        return true
+      } catch (e) {
+        console.warn('[desktop] abe_bind 失败（UAC 取消或安装未达可用态）', e)
+        return false
+      }
+    },
+    async remove() {
+      if (!abeSupported) return { ok: false, message: '当前平台不支持 ABE 服务' }
+      try {
+        return (await invoke<AbeResult>('abe_remove')) ?? { ok: false }
+      } catch (e) {
+        return { ok: false, message: String(e) }
+      }
+    },
+  }
+
+  return { platform: securityPlatform, dpapi: dpapiOps, abe: abeOps, migrateDekWrapToEntropyBound }
 }

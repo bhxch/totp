@@ -193,6 +193,63 @@ describe('dpapi（OS 自动解锁通道）', () => {
   })
 })
 
+describe('abeOps（ABE 服务宿主通道，P6 T4）', () => {
+  it('supported 按 UA（win=true/linux=false）；非 Windows 三操作短路不打 invoke，兜底返回', async () => {
+    const { f } = makeFactory(UA_LINUX)
+    expect(f.abe.supported).toBe(false)
+    expect(await f.abe.status()).toBeNull()
+    expect(await f.abe.bind()).toBe(false)
+    expect(await f.abe.remove()).toEqual({ ok: false, message: expect.any(String) })
+    expect(tauriMock.calls()).toHaveLength(0) // invoke 零触达
+  })
+
+  it('status：invoke 结果透传；异常/空返回收敛 null（管道不可达非异常路径）', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { f } = makeFactory()
+    expect(f.abe.supported).toBe(true)
+    tauriMock.onReturn('abe_status', {
+      installed: true,
+      matchesCaller: true,
+      boundPath: 'C:\\x\\TotpTools.exe',
+      version: '1.2.3',
+    })
+    expect(await f.abe.status()).toEqual({
+      installed: true,
+      matchesCaller: true,
+      boundPath: 'C:\\x\\TotpTools.exe',
+      version: '1.2.3',
+    })
+    // 服务不可达（Rust 不会 reject，防御兜底）
+    tauriMock.on('abe_status', () => { throw new Error('pipe gone') })
+    expect(await f.abe.status()).toBeNull()
+    tauriMock.onReturn('abe_status', null)
+    expect(await f.abe.status()).toBeNull()
+    warnSpy.mockRestore()
+  })
+
+  it('bind：成功 true；UAC 取消/安装未达可用态（invoke Err）传播为 false 不抛', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { f } = makeFactory()
+    tauriMock.onReturn('abe_bind', { ok: true })
+    expect(await f.abe.bind()).toBe(true)
+    tauriMock.on('abe_bind', () => { throw new Error('UAC canceled') })
+    expect(await f.abe.bind()).toBe(false)
+    warnSpy.mockRestore()
+  })
+
+  it('remove：{ok} 透传；invoke 异常 → {ok:false,message}', async () => {
+    const { f } = makeFactory()
+    tauriMock.onReturn('abe_remove', { ok: true })
+    expect(await f.abe.remove()).toEqual({ ok: true })
+    tauriMock.onReturn('abe_remove', { ok: false, message: '本进程未通过服务验证（应用已更新或未绑定），删除被拒' })
+    expect(await f.abe.remove()).toMatchObject({ ok: false })
+    tauriMock.on('abe_remove', () => { throw new Error('ipc broken') })
+    const r = await f.abe.remove()
+    expect(r.ok).toBe(false)
+    expect(r.message).toContain('ipc broken')
+  })
+})
+
 describe('migrateDekWrapToEntropyBound（F3 幂等/best-effort）', () => {
   const LEGACY = Buffer.from('legacy-32-bytes-aaaaaaaaaaaaaaaa').toString('base64')
   const V2 = Buffer.concat([new TextEncoder().encode('TOTPDEK1'), new Uint8Array(32).fill(1)]).toString('base64')
