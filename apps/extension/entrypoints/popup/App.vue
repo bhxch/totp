@@ -373,7 +373,8 @@ function cancelAutoClose(): void {
 
 <style>
 body { font-family: system-ui, sans-serif; margin: 0; padding: 8px; }
-main { display: flex; flex-direction: column; gap: 4px; }
+/* R5-M6：body padding 8px = sticky 冻结条两侧缝隙宽，面板 .frozen 负 margin 补偿取同值 */
+main { display: flex; flex-direction: column; gap: 4px; --frozen-bleed: 8px; }
 header { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 8px; }
 .header-ops { display: flex; align-items: center; gap: 6px; }
 h1 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }

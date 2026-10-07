@@ -96,8 +96,12 @@ const emptyDisplay = computed(() => {
 
 <style scoped>
 /* 冻结容器：sticky 规则与背景同 CodesPage .frozen（z-index 5 < TagFilterRow 说明气泡 10）；
-   column+gap 隔开搜索行与筛选行 */
-.frozen { position: sticky; top: 0; z-index: 5; background: var(--md-sys-color-surface); display: flex; flex-direction: column; gap: 8px; }
+   column+gap 隔开搜索行与筛选行。R5-M6 缝隙补偿：sticky 贴滚动视口顶时背景只盖自身盒，
+   列表内容可从宿主 padding（popup body 8px / mini 6px / CodesPage 卡片 16px）两侧缝隙穿过——
+   负 margin 拉通 + 等量 padding 内缩（宿主经 --frozen-bleed 按各自 padding 设值，默认 0 不动），
+   内容布局不变、背景延伸覆盖缝隙 */
+.frozen { position: sticky; top: 0; z-index: 5; background: var(--md-sys-color-surface); display: flex; flex-direction: column; gap: 8px;
+  margin-inline: calc(-1 * var(--frozen-bleed, 0px)); padding-inline: var(--frozen-bleed, 0px); }
 /* 两态空态文案（同 popup .empty） */
 .empty { text-align: center; opacity: .6; padding: 32px 0; }
 </style>
