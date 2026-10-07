@@ -586,6 +586,17 @@
     "noDek": "当前无可用 DEK（需先解锁）",
     "osEnabled": "{label}已启用",
     "osRemoved": "{label}已移除",
+    "abeTitle": "应用绑定解锁（服务）",
+    "abeInstall": "安装服务",
+    "abeInstalling": "安装中…",
+    "abeRebind": "重新绑定",
+    "abeRemove": "移除",
+    "abeRemoveConfirm": "确认移除",
+    "abeMismatch": "应用已更新或路径已变，需要重新绑定",
+    "abeBoundLine": "版本 {version} · 绑定 {path}",
+    "abeBindFailed": "安装未完成（已取消或服务未就绪），可重试",
+    "abeBound": "应用绑定解锁已启用",
+    "abeRemoved": "应用绑定解锁已移除",
     "cancel": "取消"
   },
   "mcpServer": {

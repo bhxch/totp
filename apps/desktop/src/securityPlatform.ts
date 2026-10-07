@@ -133,6 +133,16 @@ export function createSecurityPlatform(deps: SecurityPlatformDeps): DesktopSecur
         return { ok: false, message: String(e) }
       }
     },
+    // security.json abe 标记源落盘/移除（store 源 op；T6 UI 编排 bind→addSource→刷新 status、
+    // 移除 removeSource→remove）。密文在服务侧 HKLM，源仅标记存在（plan p6 §0.3 刻意收窄泄露面）
+    async addSource() {
+      const s = requireStore(deps.getStore)
+      await s.addAbeSourceOp()
+    },
+    async removeSource() {
+      const s = requireStore(deps.getStore)
+      await s.removeAbeSourceOp()
+    },
   }
 
   const securityPlatform = computed<SecurityPlatform | null>(() => {

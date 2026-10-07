@@ -12,7 +12,8 @@
 use serde::Serialize;
 
 /// abe_status 返回（前端契约 §T4；serde camelCase 对齐 TS AbeStatus：
-/// { supported, installed, matchesCaller, boundPath?, version? }）
+/// { installed, matchesCaller, boundPath?, version? }——supported 由 AbeOps.supported 表达，
+/// 不在状态体重复，TS 侧显隐判定亦只认 AbeOps.supported）
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AbeStatusResult {

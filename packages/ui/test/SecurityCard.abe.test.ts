@@ -1,0 +1,162 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import { computed, ref } from 'vue'
+import SecurityCard from '../src/components/SecurityCard.vue'
+import { createTestI18n } from './helpers/i18n'
+import type { AbeOps, AbeResult, AbeStatus, SecurityOps, SecurityPlatform } from '../src/components/securityPlatform'
+
+function makeSecurity(over: Partial<SecurityOps> = {}): SecurityOps {
+  return {
+    locked: ref(false),
+    hasEncryption: computed(() => true),
+    enableEncryption: vi.fn().mockResolvedValue(undefined),
+    disableEncryption: vi.fn().mockResolvedValue(undefined),
+    changePassphrase: vi.fn().mockResolvedValue(undefined),
+    kdfProfile: computed(() => 'balanced'),
+    passwordChangedAt: computed(() => null),
+    ...over,
+  }
+}
+
+function makePlatform(over: Partial<SecurityPlatform> = {}): SecurityPlatform {
+  return {
+    security: makeSecurity(),
+    clipboardClearEnabled: computed(() => true),
+    setClipboardClear: vi.fn().mockResolvedValue(undefined),
+    ...over,
+  }
+}
+
+/** ABE 提权服务通道 mock（默认 supported+未安装：status→null；bind 成功；源 op 空实现对 spy 断言用） */
+function makeAbe(over: Partial<AbeOps> = {}): AbeOps {
+  return {
+    supported: true,
+    status: vi.fn().mockResolvedValue(null),
+    bind: vi.fn().mockResolvedValue(true),
+    remove: vi.fn().mockResolvedValue({ ok: true } as AbeResult),
+    addSource: vi.fn().mockResolvedValue(undefined),
+    removeSource: vi.fn().mockResolvedValue(undefined),
+    ...over,
+  }
+}
+
+/** 已安装且调用者匹配的服务状态（desktop 副本路径 → 尾段展示 service\TotpTools.exe） */
+const matchedStatus: AbeStatus = {
+  installed: true,
+  matchesCaller: true,
+  boundPath: 'C:\\ProgramData\\TotpTools\\service\\TotpTools.exe',
+  version: '1.2.3',
+}
+
+function mountCard(abe: AbeOps | null, platform?: SecurityPlatform) {
+  return mount(SecurityCard, {
+    global: { plugins: [createTestI18n()] },
+    props: { platform: platform ?? makePlatform(), abe },
+  })
+}
+
+describe('SecurityCard ABE 区块（plan p6 §0.3 三态）', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('supported=false 不渲染区块也不调 status；abe 为 null（宿主未提供）同样不渲染', async () => {
+    const unsupported = makeAbe({ supported: false })
+    const w = mountCard(unsupported)
+    await flushPromises()
+    expect(w.find('.abe-install').exists()).toBe(false)
+    expect(w.find('.remove-abe').exists()).toBe(false)
+    expect(w.find('.abe-rebind').exists()).toBe(false)
+    expect(w.text()).not.toContain('应用绑定解锁')
+    expect(unsupported.status).not.toHaveBeenCalled()
+
+    const w2 = mountCard(null)
+    await flushPromises()
+    expect(w2.find('.abe-install').exists()).toBe(false)
+    expect(w2.text()).not.toContain('应用绑定解锁')
+  })
+
+  it('未安装（status→null 含查询失败）：渲染标题+安装按钮，无移除/重绑', async () => {
+    const w = mountCard(makeAbe())
+    await vi.waitFor(() => expect(w.find('button.abe-install').exists()).toBe(true))
+    expect(w.text()).toContain('应用绑定解锁（服务）')
+    expect(w.text()).toContain('安装服务')
+    expect(w.find('button.remove-abe').exists()).toBe(false)
+    expect(w.find('button.abe-rebind').exists()).toBe(false)
+  })
+
+  it('已安装且调用者匹配：状态行含版本与绑定路径尾段（service\\TotpTools.exe，不泄漏全路径）+移除按钮', async () => {
+    const w = mountCard(makeAbe({ status: vi.fn().mockResolvedValue(matchedStatus) }))
+    await vi.waitFor(() => expect(w.find('button.remove-abe').exists()).toBe(true))
+    expect(w.text()).toContain('版本 1.2.3 · 绑定 service\\TotpTools.exe')
+    expect(w.text()).not.toContain('C:\\ProgramData')
+    expect(w.find('button.abe-install').exists()).toBe(false)
+    expect(w.find('button.abe-rebind').exists()).toBe(false)
+  })
+
+  it('已安装但调用者失配：渲染失配提示+重新绑定按钮，无安装/移除', async () => {
+    const w = mountCard(makeAbe({ status: vi.fn().mockResolvedValue({ installed: true, matchesCaller: false }) }))
+    await vi.waitFor(() => expect(w.find('button.abe-rebind').exists()).toBe(true))
+    expect(w.text()).toContain('应用已更新或路径已变，需要重新绑定')
+    expect(w.find('button.abe-install').exists()).toBe(false)
+    expect(w.find('button.remove-abe').exists()).toBe(false)
+  })
+
+  it('绑定调用序列：点击安装 → abe.bind → addSource → status 刷新（共 2 次）→ 成功提示', async () => {
+    const abe = makeAbe()
+    const w = mountCard(abe)
+    await vi.waitFor(() => expect(w.find('button.abe-install').exists()).toBe(true))
+    await w.find('button.abe-install').trigger('click')
+    await vi.waitFor(() => expect(abe.addSource).toHaveBeenCalledTimes(1))
+    expect(abe.bind).toHaveBeenCalledTimes(1)
+    expect(abe.status).toHaveBeenCalledTimes(2) // 挂载 1 次 + 绑定成功刷新 1 次
+    await vi.waitFor(() => expect(w.text()).toContain('应用绑定解锁已启用'))
+  })
+
+  it('bind 返回 false（UAC 取消/超时）：不调 addSource，保持未安装态并给内联提示', async () => {
+    const abe = makeAbe({ bind: vi.fn().mockResolvedValue(false) })
+    const w = mountCard(abe)
+    await vi.waitFor(() => expect(w.find('button.abe-install').exists()).toBe(true))
+    await w.find('button.abe-install').trigger('click')
+    await vi.waitFor(() => expect(abe.bind).toHaveBeenCalledTimes(1))
+    await flushPromises()
+    expect(abe.addSource).not.toHaveBeenCalled()
+    expect(abe.status).toHaveBeenCalledTimes(1) // 未刷新状态
+    expect(w.find('button.abe-install').exists()).toBe(true)
+    expect(w.text()).toContain('安装未完成')
+  })
+
+  it('失配态点击重新绑定：走同一绑定序列（bind→addSource→刷新）', async () => {
+    const abe = makeAbe({ status: vi.fn().mockResolvedValue({ installed: true, matchesCaller: false }) })
+    const w = mountCard(abe)
+    await vi.waitFor(() => expect(w.find('button.abe-rebind').exists()).toBe(true))
+    await w.find('button.abe-rebind').trigger('click')
+    await vi.waitFor(() => expect(abe.addSource).toHaveBeenCalledTimes(1))
+    expect(abe.bind).toHaveBeenCalledTimes(1)
+    expect(abe.status).toHaveBeenCalledTimes(2)
+  })
+
+  it('移除两击确认：首击仅进入确认态（文案变「确认移除」），再击执行 removeSource→remove', async () => {
+    const abe = makeAbe({ status: vi.fn().mockResolvedValue(matchedStatus) })
+    const w = mountCard(abe)
+    const btn = () => w.find('button.remove-abe')
+    await vi.waitFor(() => expect(btn().exists()).toBe(true))
+    await btn().trigger('click')
+    expect(abe.removeSource).not.toHaveBeenCalled()
+    expect(abe.remove).not.toHaveBeenCalled()
+    expect(btn().text()).toBe('确认移除')
+    await btn().trigger('click')
+    await vi.waitFor(() => expect(abe.remove).toHaveBeenCalledTimes(1))
+    expect(abe.removeSource).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(w.text()).toContain('应用绑定解锁已移除'))
+    w.unmount() // 卸载兜底清确认态 3s 定时器
+  })
+
+  it('prop 直传缺省回落 platform.abe 挂载点（desktop 工厂注入路径）', async () => {
+    const abe = makeAbe()
+    const w = mount(SecurityCard, {
+      global: { plugins: [createTestI18n()] },
+      props: { platform: makePlatform({ abe }) },
+    })
+    await vi.waitFor(() => expect(w.find('button.abe-install').exists()).toBe(true))
+    expect(abe.status).toHaveBeenCalledTimes(1)
+  })
+})

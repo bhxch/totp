@@ -586,6 +586,17 @@
     "noDek": "No DEK available (unlock first)",
     "osEnabled": "{label} enabled",
     "osRemoved": "{label} removed",
+    "abeTitle": "App-bound unlock (service)",
+    "abeInstall": "Install service",
+    "abeInstalling": "Installing…",
+    "abeRebind": "Rebind",
+    "abeRemove": "Remove",
+    "abeRemoveConfirm": "Confirm removal",
+    "abeMismatch": "App updated or path changed — rebinding required",
+    "abeBoundLine": "Version {version} · bound to {path}",
+    "abeBindFailed": "Install was not completed (cancelled or service not ready); you can retry",
+    "abeBound": "App-bound unlock enabled",
+    "abeRemoved": "App-bound unlock removed",
     "cancel": "Cancel"
   },
   "mcpServer": {

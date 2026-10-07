@@ -58,13 +58,20 @@ export interface AbeResult {
   message?: string
 }
 
-/** ABE 提权服务宿主操作集（plan p6 §0.3；desktop 宿主实现=Rust abe_* 命令 invoke 包装，
- *  extension 无此能力 → 不注入；SecurityCard 仅 supported=true 渲染） */
+/** ABE 提权服务宿主操作集（plan p6 §0.3；desktop 宿主实现=Rust abe_* 命令 invoke 包装 +
+ *  store 源 op 包装，extension 无此能力 → 不注入；SecurityCard 仅 supported=true 渲染） */
 export interface AbeOps {
   supported: boolean
   status(): Promise<AbeStatus | null>
   bind(): Promise<boolean>
   remove(): Promise<AbeResult>
+  /** 绑定成功后 security.json abe 标记源落盘（宿主包装 store addAbeSourceOp；T6 UI 编排
+   *  bind→addSource→刷新 status）。无载荷——密文由服务侧重包裹存 HKLM，源仅标记存在
+   *  （对照 dpapi add 携带 wrappedDekD 载荷的差异是刻意收窄泄露面） */
+  addSource(): Promise<void>
+  /** 移除 security.json abe 标记源（宿主包装 store removeAbeSourceOp；core 守卫：移除后
+   *  无任何解锁方式时抛错）。T6 移除序列 removeSource→remove：先清标记再删服务侧密文 */
+  removeSource(): Promise<void>
 }
 
 /** 加密状态与操作（宿主从 store 闭包绑定；desktop/options 各自组装） */

@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { KdfProfile } from '@totp/core'
 import { useAsyncMessage } from '../composables/useAsyncMessage'
-import type { AbeOps, LockPrefs, SecurityPlatform } from './securityPlatform'
+import type { AbeOps, AbeStatus, LockPrefs, SecurityPlatform } from './securityPlatform'
 import MdButton from './md/MdButton.vue'
 import MdCheckbox from './md/MdCheckbox.vue'
 import MdSelect from './md/MdSelect.vue'
@@ -53,6 +53,107 @@ const passkeySources = computed(() => passkeyOps.value?.sources.value ?? [])
 const dpapiOps = computed(() => props.platform?.dpapi ?? null)
 const dpapiSource = computed(() => dpapiOps.value?.source.value ?? null)
 
+// ---- ABE 提权服务区块（plan p6 §0.3 三态：未安装 / 已安装匹配 / 已安装失配）----
+
+/** ABE 通道取值（T6 审查裁定）：直传 prop 优先，null=未提供（回落 platform.abe 挂载点——
+ *  desktop 宿主经工厂 overrides 注入）。supported 一律以 AbeOps.supported（UA 静态 flags.isWin）
+ *  为准——status() 返回的运行时字段不参与显隐判定；false/未提供整块不渲染 */
+const abe = computed<AbeOps | null>(() => {
+  const ops = props.abe ?? props.platform?.abe ?? null
+  return ops && ops.supported ? ops : null
+})
+/** 服务状态快照（挂载时 status() 一次 + bind/remove 成功后刷新；null=未拉到/查询失败 → 按未安装渲染） */
+const abeStatus = ref<AbeStatus | null>(null)
+/** ABE 绑定/移除进行中（bind 走 UAC 提权、desktop 侧轮询服务可达可长达 10s+；独立于卡片全局
+ *  busy——UAC 弹窗等待期间不动 else 分支的口令输入禁用态，仅锁 ABE 区自身防重复点击） */
+const abeBusy = ref(false)
+/** bind 返回 false（UAC 取消/超时）时的内联提示（保持当前三态，取消属正常路径不走错误通道） */
+const abeHint = ref('')
+/** 移除两击确认（TagManagerDialog/CodesPage askRemove 同款）：首击进入确认态 3s 超时复位，再击执行 */
+const abeConfirmRemove = ref(false)
+let abeConfirmTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 服务状态刷新（bind/remove 成功后重拉；失败按未安装渲染——服务侧刚装好/刚删净的瞬时不可达
+ *  不应把区块卡死在旧态） */
+async function refreshAbeStatus(): Promise<void> {
+  const ops = abe.value
+  if (!ops) return
+  try {
+    abeStatus.value = await ops.status()
+  } catch {
+    abeStatus.value = null
+  }
+}
+
+/** 绑定流程（安装与失配重绑共用）：bind()（UAC 安装+服务可达复核）→ abe 标记源落盘 → 刷新状态。
+ *  bind false（UAC 取消/超时）保持当前态给内联提示；addSource 失败（锁定代数中止等）走错误消息通道 */
+async function onAbeBind(): Promise<void> {
+  const ops = abe.value
+  if (!ops || abeBusy.value) return
+  abeBusy.value = true
+  abeHint.value = ''
+  try {
+    if (!(await ops.bind())) {
+      abeHint.value = t('securityCard.abeBindFailed')
+      return
+    }
+    await ops.addSource()
+    await refreshAbeStatus()
+    msg.value = t('securityCard.abeBound')
+    msgKind.value = 'ok'
+  } catch (e) {
+    fail(e)
+  } finally {
+    abeBusy.value = false
+  }
+}
+
+/** 两击移除：首击武装确认态（3s 超时复位），再击执行 removeSource（清 security.json 标记，先清源
+ *  再删服务侧密文防孤儿标记）→ abe.remove()（管道删 HKLM WrappedDek）→ 刷新状态 */
+async function onAbeRemove(): Promise<void> {
+  const ops = abe.value
+  if (!ops || abeBusy.value) return
+  if (!abeConfirmRemove.value) {
+    abeConfirmRemove.value = true
+    if (abeConfirmTimer) clearTimeout(abeConfirmTimer)
+    abeConfirmTimer = setTimeout(() => { abeConfirmRemove.value = false }, 3000)
+    return
+  }
+  abeConfirmRemove.value = false
+  if (abeConfirmTimer) { clearTimeout(abeConfirmTimer); abeConfirmTimer = null }
+  abeBusy.value = true
+  try {
+    await ops.removeSource()
+    await ops.remove()
+    await refreshAbeStatus()
+    msg.value = t('securityCard.abeRemoved')
+    msgKind.value = 'ok'
+  } catch (e) {
+    fail(e)
+  } finally {
+    abeBusy.value = false
+  }
+}
+
+onBeforeUnmount(() => {
+  if (abeConfirmTimer) clearTimeout(abeConfirmTimer)
+  abeConfirmTimer = null
+})
+
+/** 绑定路径尾段展示（实现裁定：取「末段目录+文件名」——服务副本恒为
+ *  %ProgramData%\TotpTools\service\TotpTools.exe，两段足以辨识且不在 UI 泄漏全路径；
+ *  单段路径回退文件名本身） */
+function abePathTail(p: string): string {
+  const parts = p.split(/[\\/]+/).filter(Boolean)
+  return parts.length >= 2 ? `${parts[parts.length - 2]}\\${parts[parts.length - 1]}` : (parts[0] ?? '')
+}
+/** 状态行文案（版本+绑定尾段；字段缺失以 — 占位——正常匹配态两者恒在，见 AbeStatus 契约注释） */
+const abeBoundLine = computed(() => {
+  const st = abeStatus.value
+  if (!st) return ''
+  return t('securityCard.abeBoundLine', { version: st.version ?? '—', path: st.boundPath ? abePathTail(st.boundPath) : '—' })
+})
+
 /** I54：检测本端 KEK 来源仅 password（无 Passkey/DPAPI 备用）→ 跨设备必须用同一口令 */
 const kekOnlyPassword = computed(() => {
   if (!hasEnc.value) return false
@@ -96,6 +197,9 @@ onMounted(() => {
       .catch(() => { prfCap.value = false })
   }
   const lp = props.platform?.lockPrefs
+  // ABE 服务状态一次性拉取（bind/remove 成功后经 refreshAbeStatus 重拉；null=未拉到按未安装渲染）。
+  // 置于 lockPrefs 缺省 early-return 之前——ABE 宿主可以不注入 lockPrefs
+  void refreshAbeStatus()
   if (!lp) return
   Promise.resolve(lp.get())
     .then((p) => { lockPrefsState.value = { ...p } })
@@ -253,8 +357,9 @@ async function onDelayChange(value: string): Promise<void> {
       </template>
       <!-- 已启用且解锁：解锁方式 + 换口令 + 关闭加密 -->
       <template v-else-if="!isLocked">
-        <!-- 解锁方式（prf：宿主提供 passkey ops 才渲染，不支持时仅提示；dpapi：仅 desktop 宿主提供时渲染） -->
-        <div v-if="passkeyOps || dpapiOps" class="unlock-methods">
+        <!-- 解锁方式（prf：宿主提供 passkey ops 才渲染，不支持时仅提示；dpapi：仅 desktop 宿主提供时渲染；
+             abe：仅 supported=true 的宿主渲染，三态见下方区块） -->
+        <div v-if="passkeyOps || dpapiOps || abe" class="unlock-methods">
           <h3>{{ t('securityCard.unlockMethodsTitle') }}</h3>
           <template v-if="passkeyOps">
             <p v-if="prfCap === false" class="hint">{{ t('securityCard.prfUnsupported', { prf: prfLabel }) }}</p>
@@ -281,6 +386,28 @@ async function onDelayChange(value: string): Promise<void> {
             </div>
             <div v-else class="actions">
               <MdButton variant="tonal" class="enable-dpapi" :disabled="busy" @click="onEnableDpapi">{{ t('securityCard.enableOs', { label: dpapiOps.label }) }}</MdButton>
+            </div>
+          </template>
+          <!-- ABE 提权服务区块（plan p6 §0.3；abe 为 null/supported=false 整块不渲染——computed 已滤）。
+               三态按键判定：abeStatus null（未拉到/查询失败）按未安装渲染 -->
+          <template v-if="abe">
+            <!-- 未安装：安装服务（busy 防重复点击；bind=UAC 一次完成安装+绑定） -->
+            <div v-if="!abeStatus?.installed" class="dpapi-row">
+              <span class="method">{{ t('securityCard.abeTitle') }}</span>
+              <MdButton variant="tonal" class="abe-install" :disabled="busy || abeBusy" @click="onAbeBind">{{ abeBusy ? t('securityCard.abeInstalling') : t('securityCard.abeInstall') }}</MdButton>
+              <span v-if="abeHint" class="method-hint">{{ abeHint }}</span>
+            </div>
+            <!-- 已安装且调用者匹配：状态行（版本+绑定路径尾段）+ 两击移除 -->
+            <div v-else-if="abeStatus.matchesCaller" class="dpapi-row">
+              <span class="method">{{ t('securityCard.abeTitle') }}</span>
+              <span class="method-hint">{{ abeBoundLine }}</span>
+              <MdButton variant="text" danger class="remove-abe" :disabled="busy || abeBusy" @click="onAbeRemove">{{ abeConfirmRemove ? t('securityCard.abeRemoveConfirm') : t('securityCard.abeRemove') }}</MdButton>
+            </div>
+            <!-- 已安装但调用者失配（应用更新/目录迁移）：提示+重新绑定（=安装流程） -->
+            <div v-else class="dpapi-row">
+              <span class="method">{{ t('securityCard.abeTitle') }}</span>
+              <span class="method-hint">{{ t('securityCard.abeMismatch') }}</span>
+              <MdButton variant="tonal" class="abe-rebind" :disabled="busy || abeBusy" @click="onAbeBind">{{ t('securityCard.abeRebind') }}</MdButton>
             </div>
           </template>
         </div>
