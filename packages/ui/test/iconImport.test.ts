@@ -130,6 +130,28 @@ describe('importIconPackZip', () => {
     expect(icons.icons['readme.txt']).toBeUndefined()
   })
 
+  it('R4-M2 含限侧边界：单图恰好 200KB（=maxBytes）成功导入而非 skipped', async () => {
+    const icons = createIconStore(createMemoryStorage())
+    await icons.init()
+    const zip = zipSync({ 'edge.png': new Uint8Array(200 * 1024) })
+    const result = await importIconPackZip(zip, icons, { name: '测试包' })
+    expect(result.skippedLarge).toBe(0)
+    expect(result.imported).toBe(1)
+    expect(icons.resolve({ kind: 'stored', id: 'edge' })).toBe(toDataUrl(new Uint8Array(200 * 1024)))
+  })
+
+  it('R4-M2 含限侧边界：解压产出恰好 64MiB（=总量预算）成功而非整体拒绝', async () => {
+    const icons = createIconStore(createMemoryStorage())
+    await icons.init()
+    // 两个 32MiB 零字节 png：单成员 ≤ maxBytes（调大到预算值），累计 totalOut 恰好等于预算——
+    // 预算判定为 `>`（严格大于），等于不触发拒绝；零字节 deflate 后输入极小，走输入门无虞
+    const half = 32 * 1024 * 1024
+    const zip = zipSync({ 'a.png': new Uint8Array(half), 'b.png': new Uint8Array(half) })
+    const result = await importIconPackZip(zip, icons, { name: '测试包' }, { maxBytes: 64 * 1024 * 1024 })
+    expect(result.imported).toBe(2)
+    expect(icons.resolve({ kind: 'stored', id: 'a' })).toBe(toDataUrl(new Uint8Array(half)))
+  }, 120_000)
+
   it('I60+I63：同名（normalize 后）按字典序后者覆盖前者；overwritten 而非 skipped', async () => {
     const icons = createIconStore(createMemoryStorage())
     await icons.init()
