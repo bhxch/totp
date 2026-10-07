@@ -9,7 +9,7 @@
  *   回退，notifications.onClicked 只认 totp-pending-add → tabs.create 打开 popup.html；
  *   多条 → 通知条数引导导入页（不写 pending）；0 条/格式不识别 → 透传或通用引导通知；
  * - 右键点击 qr-decode-image：fetch（含 data: URL 同链路）→arrayBuffer→解码成功→pending 信封
- *   kind=uri + 成功通知；fetch 拒绝/解码失败→「图中未识别」通知；
+ *   kind=uri + 带 id 可点击通知（M4 复用 totp-pending-add 通道）；fetch 拒绝/解码失败→「图中未识别」通知；
  * - 消息协议：schedule-clipboard-clear（delayMs 缺省/非 number→30s 兜底）、sync-push（1s 合并
  *   窗口防抖）、sync-pull（立即）、未知 type 忽略；
  * - alarm clipboard-clear 到点→ensureOffscreenDocument+sendMessage+ack 结算（1s 超时重试，
@@ -222,7 +222,7 @@ describe('右键菜单 otpauth-add（B1-4）', () => {
 })
 
 describe('右键菜单 qr-decode-image（B1-5）', () => {
-  it('fetch 成功 + 解码出 otpauth：写 pendingOtpauth + 成功通知', async () => {
+  it('fetch 成功 + 解码出 otpauth：写 pendingOtpauth + 带 id 可点击通知（M4 复用 totp-pending-add 通道）', async () => {
     decodeImageBytesToUri.mockResolvedValue(VALID_URI)
     const fetchMock = vi.fn(async () => ({ arrayBuffer: async () => new ArrayBuffer(4) }))
     vi.stubGlobal('fetch', fetchMock)
@@ -234,7 +234,25 @@ describe('右键菜单 qr-decode-image（B1-5）', () => {
     expect(fetchMock).toHaveBeenCalledWith('https://example.com/qr.png')
     expect(decodeImageBytesToUri).toHaveBeenCalledWith(expect.any(Uint8Array))
     expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'uri', text: VALID_URI })
-    expect(shim.notifications.created[0]).toMatchObject({ message: '已识别验证码二维码，点扩展图标查看并保存' })
+    expect(shim.notifications.created[0]).toMatchObject({
+      id: 'totp-pending-add',
+      type: 'basic',
+      message: '已识别验证码二维码，点击完成添加',
+    })
+  })
+
+  it('QR 成功通知可点击回退（M4）：点击 totp-pending-add → tabs.create 打开 popup.html 消费 kind=uri pending', async () => {
+    decodeImageBytesToUri.mockResolvedValue(VALID_URI)
+    vi.stubGlobal('fetch', vi.fn(async () => ({ arrayBuffer: async () => new ArrayBuffer(4) })))
+    await loadBackground()
+
+    clickMenu({ menuItemId: 'qr-decode-image', srcUrl: 'https://example.com/qr.png' })
+    await flush()
+    shim.emitNotificationClick('totp-pending-add')
+
+    expect(shim.tabs.create).toHaveBeenCalledTimes(1)
+    expect(shim.tabs.create).toHaveBeenCalledWith({ url: 'chrome-extension://test-id/popup.html' })
+    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'uri', text: VALID_URI })
   })
 
   it('data: URL 图片（内嵌 base64）：fetch 走同一链路（MV3 SW fetch 支持 data: scheme），解码成功写 kind=uri 信封', async () => {

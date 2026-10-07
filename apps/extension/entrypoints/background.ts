@@ -83,7 +83,7 @@ export default defineBackground(() => {
   // C11：右键菜单在 SW 每次启动时注册，幂等：create 同 id 会抛错（lastError），吞掉即视为成功。
   // 原 onInstalled 注册在浏览器 SW 已被本扩展事件唤醒的场景下不触发，导致菜单偶发缺失。
   ext!.contextMenus.create(
-    { id: OTPAUTH_MENU_ID, title: '将选中的 otpauth 链接添加为条目', contexts: ['selection'] },
+    { id: OTPAUTH_MENU_ID, title: '将选中的验证码内容添加为条目', contexts: ['selection'] },
     () => void ext!.runtime.lastError,
   )
   ext!.contextMenus.create(
@@ -113,7 +113,17 @@ export default defineBackground(() => {
       }
       // P5：写盘升级为 pending 信封（kind=uri），popup 消费端按 kind 分派
       await ext!.storage.local.set({ [PENDING_OTPAUTH_KEY]: encodePending({ v: 1, kind: 'uri', text: uri }) })
-      notify('已识别验证码二维码，点扩展图标查看并保存')
+      // M4：成功也发带 id 通知（复用 totp-pending-add 通道）——Firefox 等无 openPopup 宿主
+      // 点击通知经 notifications.onClicked 打开 popup.html 消费 pending（kind=uri 信封链路同）；
+      // Chromium 通知常驻可点，作 openPopup 缺席时的兜底入口。失败路径仍普通 notify（无 pending 可消费）
+      void ext!.notifications
+        .create(PENDING_NOTIFY_ID, {
+          type: 'basic',
+          iconUrl: '/icon/128.png',
+          title: 'TOTP 验证码工具',
+          message: '已识别验证码二维码，点击完成添加',
+        })
+        .catch(() => {})
       return
     }
     // P4 打开主界面：tabs.create 建新标签页直达 options#/codes；create 失败（浏览器侧极少）吞掉
