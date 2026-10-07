@@ -1,7 +1,7 @@
 # UI 紧凑化批次 + 安装服务诊断设计
 
 日期：2026-10-08
-状态：已报批（设计经两轮确认；MD3 数值经官网 browser-use 实测核实，方法与坑见 memory `md3-spec-lookup`）
+状态：已报批（设计经两轮确认；MD3 数值经官网 browser-use 实测核实，方法与坑见 memory `md3-spec-lookup`；§2.8–§2.12 为 2026-10-08 三路子代理全量 MD3 合规审查增补）
 覆盖需求：悬浮框自适应、安装服务总是失败、pin 后边框黑线消失、miniapp 搜索/tab 过大、窗口调窄布局劣化（含 sticky 失效与按钮挤压）、倒计时进度条等长、排版紧凑化与单页条目数、QuickCodesPanel contextMenu 失效
 
 ## 0. 背景与根因（探索实证）
@@ -43,7 +43,9 @@
 | Icon 按钮 | XS/small 可达性目标 ≥48×48dp | compact 28px 视觉 + ≥32px 命中区，deviation 已标注 |
 | Density 体系 | 0/-1/-2/-3 档，每档 4dp；默认不启用须 opt-in；density 不缩字号；Do=扫描对比型列表 | compact 档的实现语义；mini/popup 属用户 opt-in 小窗 + 验证码列表属"扫描对比"场景 |
 
-**Deviation 清单**（有意偏离，均因 320×420 瞬态小窗或窄窗场景）：compact 搜索框 40px（低于 -3 档底线 44px）、compact chips/按钮 28px 视觉（低于 48dp 触控目标，保留 ≥32px 命中区）、trailing 右 padding 16px（非 24dp）、头像 36px（MD3 avatar 40dp，维持现状不放大）。
+**Deviation 清单**（有意偏离，均因 320×420 瞬态小窗或窄窗场景）：compact 搜索框 40px（低于 -3 档底线 44px）、compact chips/按钮 28px 视觉（低于 48dp 触控目标，保留 ≥32px 命中区）、trailing 右 padding 16px（非 24dp）、头像 36px（MD3 avatar 40dp，维持现状不放大）、mini/popup 条目行高 48px 档（低于列表最小档 56dp，opt-in 小窗下取触控目标下限）。
+
+**2026-10-08 全量合规审查增补**（三路子代理：md 基础组件 / 页面+弹窗 / 三端宿主+主题层，对照本节基准逐项核对）发现不符合项约 40 处，修复设计见 §2.8–§2.11（本批 Phase 1 实施）与 §2.12（Phase 2 记录）。审查同时确认的合规面：颜色 100% 走语义 token 零硬编码、状态层 8%/12% 在已实现处全部正确、MdNavigationRail 零不符合、间距基本落在 4dp 网格、焦点环与 Esc/焦点归还等 a11y 行为完成度高。
 
 ## 2. 改动设计
 
@@ -72,7 +74,7 @@
 - **进度条等长兜底**：`.otp-item` 加 `width: 100%`。
 - **卡片瘦身**：`.codes-card` 改用 MdCard 现成 `compact` 档（padding 16→8px）；`.codes-card` gap 8→4px。
 - 头像 36px 垂直居中不变。验证码字号 18px 不变（可读性优先）。
-- 效果预估：CodesPage 行高 81→~54px；760×560 主窗可见条目 4→约 6 条。
+- 效果预估：CodesPage 行高 81→收敛至 **56px 档**（MD3 列表最小档[核]）；760×560 主窗可见条目 4→约 6 条。
 - **真机复验项**：三端进度条逐行等长（若仍复现不等长，按 systematic-debugging 另查，不臆修）。
 
 ### 2.5 mini/popup compact 档（MD3 density 语义）
@@ -89,7 +91,7 @@
 | mini titlebar | 34px | 30px | 信息密度杠杆 |
 
 - 字号缩放全部走标准 type 角色（body-medium/body-small/label-medium），不在 density 语义内缩放文字，与官方"密度不缩字号"规则解耦。
-- mini 头部区 136→~104px、条目行 62→~50px；420px 高窗口可见 4.7→约 6 行。
+- mini 头部区 136→~104px、条目行 62→收敛至 **48px 档**（触控目标下限，deviation 已标注）；420px 高窗口可见 4.7→约 6 行。
 
 ### 2.6 QuickCodesPanel contextMenu 默认值（`QuickCodesPanel.vue`）
 
@@ -106,20 +108,79 @@
 5. **文档**：`docs/e2e/2026-10-07-abe-service-checklist.md` 追加 ESET 排除步骤与日志查看方法（当日勘误惯例）。
 6. 不动：服务安装位置、DACL 策略、10s 轮询预算（有日志实证后再议）。
 
+### 2.8 主题层 token 体系补齐（`packages/ui/src/theme/`）【审查增补·P1】
+
+1. **断链修复（实锤）**：`MiniApp.vue:269` 引用的 `--md-sys-color-background` 全仓库未定义（恒回退 `#fff`，且被 mini.html:6 写死的 `#1c1b1f` dark 底色以更高特异度永久压制，注释宣称的"CSS 装载后接管主题色"不成立）。修复：generate.mjs 补齐 `--md-sys-color-background` / `--md-sys-color-on-background` 两个 role（全部 palette × light/dark × amoled）；删除 mini.html 写死值，首帧防闪内联改用 token 的 dark surface 值。
+2. **type 档补齐**：现仅 7 档，补 `label-large` 14px / `title-small` 14px / `headline-small` 24px / `title-large` 22px。其中 `title-small` 已被 `CloudCard.vue:773`、`MergePreviewDialog.vue:74` 悬空引用（静默回退继承 16px），补档即修复；`MdDialog` headline、按钮 label 等硬编码/错引随之收口（见 §2.10）。
+3. **shape token 系新增**：`--md-sys-shape-corner-{extra-small:4/small:8/medium:12/large:16/extra-large:28/full}`；不在标尺上的 6px 圆角（MiniApp `.tb-btn`、`.copy-error`、`McpConsentDialog .consent-ident`）改 8px。
+4. **state-layer token 新增**：`--md-sys-state-layer-hover`(8%) / `--md-sys-state-layer-pressed`(12%)；本批新增/触及的代码一律引用 token，存量约 20 处字面量的全量替换列 Phase 2。
+
+### 2.9 触控目标 48dp 统一机制【审查增补·P0 簇】
+
+全库命中区=可视尺寸，无一实现 48dp 目标。统一机制：**可视尺寸保持 MD3 规格，命中区经伪元素外扩**（`::after{content:'';position:absolute;inset:-4px}` 级）：
+
+| 对象 | 可视 | 命中 |
+|------|------|------|
+| MdButton / MdIconButton / MdSegmentedButton | 40px（不变） | 48×48 |
+| MdChip | 32px（不变） | ≥44×48 |
+| MdSwitch | track 52×32（不变） | ≥48 高 |
+| MdCheckbox | 盒 18px（不变） | 盒/无 label 行 ≥44×48 |
+| CodesPage `.ctx-item` | 36px→**48px**（MD3 menu item） | 48 |
+| TagFilterRow `.mode-toggle`（CodesPage） | 恢复 40px（现被覆写 32px） | 48 |
+| MiniApp `.tb-btn` | 28→40px | ≥44 |
+| NavigationShell `.nav-shell__rail-action` | ~34→min-height 48 | 48 |
+| IconPickerDialog `.chip-remove`（~14px）/`.picker-chip`（~22px）、IconPackImportDialog `.quick-chip`（~22px）、EntryForm `.recommend-item`（~24px） | 视觉适度放大 | ≥40 命中（弹窗内密集控件，deviation 记录） |
+| SettingsPage `.theme-dot` | 30px 保留 | ≥44 命中 |
+
+mini/popup compact 端按 §2.5 裁定执行（28px 视觉 + ≥32px 命中），不适用本表。
+
+### 2.10 组件级尺寸与角色修正【审查增补】
+
+- **MdTextField / MdSelect 触发框**：实际 ~47px → **定高 56px**[核]（input 显式 `line-height: 24px`，padding 同步归 4dp 网格）；聚焦指示条改伪元素叠加（消除 1px 布局位移）；补 hover 8% 状态层；`dense` 档 40px 供 §2.5 compact。
+- **MdSelect**：option 高 40→48px、字号 body-medium→body-large；弹层 min-width 120→112、padding 6px 0→8px 0、容器 surface-container-high→surface-container。
+- **MdMenu**：容器 padding 8px 0（item 高 48 由消费方 `.ctx-item` 落实）。
+- **MdTabs**：56→**64px**（主级导航用法[基线 primary 64dp]）；指示条改 ~30px 圆角短条居中贴底；icon 20→24px。
+- **MdDialog**：headline 20px 硬编码→`headline-small` token（24px）；补 `min-width: 280px`；actions 区 margin-top 16→24；headline 下距 12→16；scrim 55%→**32%**（M3 scrim 标准）。
+- **ToastHost**：radius 100px→**4px**（snackbar extra-small）、`min-height: 48px`；error 变体保留 error-container 配色，加注释裁定为自定义语义变体（错误感知由 `role=alert` 承担）。
+- **MdCard**：outlined 描边 `outline`→**`outline-variant`**（M3 语义；§2.2 的滚动分隔诉求由冻结条底边线承担）；卡头标题 body-medium→**title-medium**。
+- **OtpListItem**：序号列 `opacity:.55`→`on-surface-variant`；行补 `:active` 12% pressed 态。
+- **LockScreen**：标题 title-medium→**headline-small**（整页首屏主标题）；hint opacity→`on-surface-variant`；emoji 🙈/👁→SVG `visibility`/`visibility_off`；口令显隐钮视觉贴入 field 右缘（trailing slot 机制列 Phase 2）。
+- **EntryForm**：gap 6→8、fieldset radius 6→8、rule-error label-small→body-small、base32-hint tertiary→on-surface-variant、hover 16%→8%（补 `:active` 12%）、保存/取消行迁 MdDialog `#actions` 槽（消除双套按钮排布）。
+- **IconPickerDialog / IconPackImportDialog**：hover 12%→8%（补 `:active` 12%）；`picker-cell-label` 10px→`label-small` token（10px 低于最小档 11px）。
+- **SettingsPage**：`.dots` gap 10→8；theme-dot hover `scale(1.1)`→状态层 8%。
+
+### 2.11 宿主级修正【审查增补】
+
+- **MiniApp**：background 断链随 §2.8 修复；`.tb-btn`/`.copy-error` radius 6→8（shape token）；titlebar padding 归 4dp 网格。
+- **首帧防闪**：`apps/desktop/index.html`、`apps/extension/entrypoints/popup/index.html` 补 dark 底色内联（对齐 mini.html 模式，值取 token dark surface，消除深色白闪一帧）。
+- **CodesPage**：FAB `right/bottom: 24px`→16px（M3 FAB 边距）。
+- **扩展 options**：深链加载失败 `loadError` 加 error-container/on-error-container 底色。
+
+### 2.12 Phase 2 记录（本批不实施，防止批次膨胀）
+
+state-layer/elevation 存量字面量全量 token 替换；MdMenu/MdSelect 弹层共享样式抽取；IconPicker/IconPackImport chips 收口 MdChip（需 removable 能力）；空态样式抽公共组件（CodesPage/TagManagerDialog/QuickCodesPanel 三处不一）；托盘菜单硬编码中文→i18n（Rust 侧重建链路）；文本字符图标体系统一（∧/∨/▣/⠿/＋→SVG path 注册表）；MdSelect `aria-activedescendant`、MdDialog `aria-labelledby`；MdCheckbox label body-large 取舍；`QrSheetDialog` max-width 920px 拼版特例裁定注释；MdCard elevated 阴影双层；MdTextField/MdSelect supporting-text hint 能力。
+
 ## 3. 测试
 
 - **单测更新**：TagFilterRow 气泡结构；OtpListItem 移除 QR 后结构/进度条 width:100%/无 ops 渲染断言调整；MdTextField dense、MdChip compact；QuickCodesPanel compact 透传与 contextMenu 默认值；elevation 错误分类纯函数、日志写入、RUNNING 等待（Windows 侧 mock）。
+- **合规增补单测**：token 存在性断言（background/on-background、label-large/title-small/headline-small/title-large、shape 系、state-layer 系经构建产物可查）；MdTextField/MdSelect 定高 56 与 option 48；MdDialog headline token/scrim 32%/min-width 280；ToastHost 4px/48px；MdCard outlined 描边 token；触控命中伪元素类存在性；LockScreen/EntryForm 类与角色断言。
 - **覆盖率**：不低于 CI gate 现状（68.19/47.35）。
-- **真机清单**（docs/e2e 新增或并入现有）：三端宽/窄窗冻结与黑线核对、mini/popup 紧凑档与右键菜单、进度条等长、ESET 排除后服务安装全链路（安装→绑定→换口令→卸载）。
+- **真机清单**（docs/e2e 新增或并入现有）：三端宽/窄窗冻结与黑线核对、mini/popup 紧凑档与右键菜单、进度条等长、深浅色双模式下 mini 底色跟随主题（断链修复验证）、弹窗 headline/scrim 观感、ESET 排除后服务安装全链路（安装→绑定→换口令→卸载）。
 
-## 4. 提交划分（原子）
+## 4. 提交划分（原子，Phase 1 = §2.1–§2.11）
 
 1. `fix(ui)` 悬浮框自适应（TagFilterRow）
 2. `fix(ui)` 冻结区分隔线+描边保留（CodesPage/QuickCodesPanel）
 3. `fix(ui)` 窄窗 sticky 恢复（NavigationShell）
-4. `refactor(ui)` QR 按钮移除+ops 窄窗隐藏+行紧凑+进度条兜底（OtpListItem/CodesPage）
+4. `refactor(ui)` QR 按钮移除+ops 窄窗隐藏+行紧凑 56px 档+进度条兜底（OtpListItem/CodesPage）
 5. `feat(ui)` mini/popup compact 档（MdTextField dense/MdChip compact/QuickCodesPanel/MiniApp/popup）
 6. `fix(ui)` contextMenu 默认值（可并入 5）
 7. `feat(desktop)` 安装/服务日志+错误分类+RUNNING 等待（Rust）
 8. `fix(ui)` SecurityCard 分类文案+i18n（可与 7 合并为一笔 feat）
-9. `docs(e2e)` 真机清单勘误
+9. `feat(ui)` token 体系补齐+MiniApp background 断链修复（generate.mjs/tokens.css/MiniApp/mini.html）
+10. `fix(ui)` 触控目标 48dp 统一机制（md 六组件+§2.9 自绘控件清单）
+11. `fix(ui)` 组件尺寸与角色修正（TextField/Select/Menu/Tabs/Dialog/Toast/Card/OtpListItem）
+12. `fix(ui)` 页面与宿主合规修正（LockScreen/EntryForm/SettingsPage/IconPicker 系/首帧防闪/FAB/options）
+13. `docs(e2e)` 真机清单勘误
+
+Phase 2（§2.12）另立批次，不进本批 plan。
