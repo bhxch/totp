@@ -238,9 +238,11 @@ function select(item: Item) {
 /* 全量网格：列数由 measure 写入 CSS 变量（回退 5 与初始 colCount 一致），行高写实对齐 JS CELL_H 常量（92+4 gap=96） */
 .picker-grid--all { position: absolute; left: 0; right: 0; grid-template-columns: repeat(var(--picker-cols, 5), minmax(0, 1fr)); }
 .picker-cell { display: grid; place-items: center; gap: 2px; width: 100%; padding: 6px 2px; border: none; border-radius: 8px; background: transparent; color: var(--md-sys-color-on-surface-variant); cursor: pointer; }
-.picker-cell:hover { background: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent); color: var(--md-sys-color-on-surface); }
+/* 状态层走 token（hover 8% / pressed 12%，MD3 状态层口径） */
+.picker-cell:hover { background: color-mix(in srgb, var(--md-sys-color-primary) var(--md-sys-state-layer-hover), transparent); color: var(--md-sys-color-on-surface); }
+.picker-cell:active { background: color-mix(in srgb, var(--md-sys-color-primary) var(--md-sys-state-layer-pressed), transparent); }
 .picker-cell svg { width: 24px; height: 24px; fill: currentColor; }
 .picker-cell img { width: 24px; height: 24px; object-fit: contain; }
 .picker-cell--labeled { grid-template-rows: 24px 1fr; height: 92px; }
-.picker-cell-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; line-height: 1.2; }
+.picker-cell-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--md-sys-typescale-label-small); line-height: 1.2; }
 </style>

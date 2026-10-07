@@ -229,6 +229,6 @@ const cloudPlatform = createOptionsCloudPlatform({
 body { font-family: system-ui, sans-serif; margin: 0; }
 </style>
 <style scoped>
-.error { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); padding: 16px; }
+.error { color: var(--md-sys-color-on-error-container); background: var(--md-sys-color-error-container); font-size: var(--md-sys-typescale-body-small); padding: 8px 16px; border-radius: var(--md-sys-shape-corner-small); }
 .migrate-note { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-small); padding: 8px 16px; }
 </style>

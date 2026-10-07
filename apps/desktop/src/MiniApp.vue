@@ -268,7 +268,7 @@ body { font-family: system-ui, sans-serif; margin: 0; }
 .tb-btn:hover { background: var(--md-sys-color-surface-container-highest, rgba(0, 0, 0, .08)); }
 .tb-btn.active { color: var(--md-sys-color-primary); }
 .empty { text-align: center; opacity: .6; padding: 32px 0; font-size: var(--md-sys-typescale-body-medium); }
-.copy-error { text-align: center; color: var(--md-sys-color-error); background: var(--md-sys-color-error-container); border-radius: 6px; padding: 8px 0; font-size: var(--md-sys-typescale-body-small); }
+.copy-error { text-align: center; color: var(--md-sys-color-error); background: var(--md-sys-color-error-container); border-radius: var(--md-sys-shape-corner-small); padding: 8px 0; font-size: var(--md-sys-typescale-body-small); }
 /* CSS 装载后接管精确主题色：mini.html 内联底色只保首帧（防加载期白屏），html data-mode 随 useTheme 切换 */
 html { background: var(--md-sys-color-background, #fff); }
 </style>

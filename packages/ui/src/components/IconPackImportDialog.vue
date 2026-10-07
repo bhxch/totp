@@ -57,13 +57,13 @@ const canConfirm = computed(() => trimmed.value !== '' && !props.busy)
       </div>
     </div>
     <p v-if="error" class="error">{{ error }}</p>
-    <div class="actions">
+    <template #actions>
       <!-- 取消始终可点：busy 期间的逃生通道（审查 Important；防重复导入由确认键 canConfirm 守卫） -->
       <MdButton variant="text" @click="emit('close')">{{ t('entryForm.cancel') }}</MdButton>
       <MdButton variant="filled" :disabled="!canConfirm" @click="emit('confirm', trimmed)">
         {{ t('entryForm.iconPackImportConfirm') }}
       </MdButton>
-    </div>
+    </template>
   </MdDialog>
 </template>
 
@@ -76,5 +76,4 @@ const canConfirm = computed(() => trimmed.value !== '' && !props.busy)
 .quick-chip::after { content: ''; position: absolute; inset: -6px; border-radius: inherit; }
 .quick-chip:hover { background: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent); }
 .error { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); }
-.actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 </style>

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { applyImport, dedupeWithinFile, getBuiltinIcons, planImport, type BuiltinIcon, type OtpEntry, type Tag } from '@totp/core'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toParsedEntry } from '../clipboardImport'
 import BatchPastePanel from './BatchPastePanel.vue'
 import EntryForm from './EntryForm.vue'
 import type { EntryFormData } from './entryForm'
+import MdButton from './md/MdButton.vue'
 import MdDialog from './md/MdDialog.vue'
 import MdSegmentedButton from './md/MdSegmentedButton.vue'
 import type { IconStore } from '../iconStore'
@@ -58,13 +59,22 @@ const TAB_OPTIONS = [
   { value: 'manual', label: t('entryFormDialog.tabManual') },
   { value: 'paste', label: t('entryFormDialog.tabPaste') },
 ]
+
+/** 动作区迁 MdDialog `#actions` 槽（spec §2.11，消除双套按钮排布）：保存钮经 ref 调 EntryForm
+ *  暴露的 submit（校验 + emit save 行为不变），取消钮直发 close（原 cancel→close 链路等价）。
+ *  按钮文案沿 EntryForm isNew 口径：预填哑值 uuid（URI 导入）按新建显示「添加」 */
+const entryFormRef = ref<InstanceType<typeof EntryForm> | null>(null)
+const saveLabel = computed(() => (props.editing?.uuid ? t('entryForm.save') : t('entryForm.add')))
+function submitEntryForm(): void {
+  entryFormRef.value?.submit()
+}
 </script>
 
 <template>
   <MdDialog :open="open" :headline="editing ? t('entryFormDialog.headlineEdit') : t('entryFormDialog.headlineNew')" @close="emit('close')">
     <MdSegmentedButton v-model="tab" :options="TAB_OPTIONS" :aria-label="t('entryFormDialog.tabsAria')" class="entry-tabs" />
     <EntryForm
-      v-if="tab === 'manual'"
+      v-if="tab === 'manual'" ref="entryFormRef"
       :key="editing?.uuid ?? 'new'"
       :initial="editing"
       :tags="tags"
@@ -77,6 +87,11 @@ const TAB_OPTIONS = [
       @batch-imported="(count) => emit('batch-added', count)"
     />
     <BatchPastePanel v-else :store="store" @added="(count) => emit('batch-added', count)" />
+    <!-- 动作区仅手动填写 Tab 需要（粘贴 Tab 自带解析/入库按钮）；EntryForm 卸载期保存钮不渲染 -->
+    <template v-if="tab === 'manual'" #actions>
+      <MdButton variant="text" @click="emit('close')">{{ t('entryForm.cancel') }}</MdButton>
+      <MdButton @click="submitEntryForm">{{ saveLabel }}</MdButton>
+    </template>
   </MdDialog>
 </template>
 

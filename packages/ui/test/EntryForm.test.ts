@@ -368,7 +368,7 @@ describe('EntryForm 图标推荐与选择', () => {
     await vi.waitFor(() => expect(dialog.find('input').exists()).toBe(true))
     expect((dialog.find('input').element as HTMLInputElement).value).toBe('MyPack')
     expect(Object.keys(store.icons)).toHaveLength(0)
-    await dialog.find('.actions button:last-child').trigger('click')
+    await dialog.find('.md-dialog__actions button:last-child').trigger('click')
     await vi.waitFor(() => expect(w.find('.pack-message').text()).toBe('已导入 1 个图标（跳过 0 个）'))
     expect(store.icons['github']).toMatch(/^data:image\/png;base64,/)
     // 确认成功后对话框关闭
@@ -392,14 +392,13 @@ describe('EntryForm 图标推荐与选择', () => {
 })
 
 describe('EntryForm 预填哑值 uuid（URI 导入）边界', () => {
-  it('uuid 为空串的预填对象按新建处理：提交按钮显示「添加」', () => {
-    const w = mount(EntryForm, { global: { plugins: [createTestI18n()] }, props: { initial: { ...entry, uuid: '' }, tags: [] } })
-    expect(w.find('button[type="submit"]').text()).toBe('添加')
-  })
-
-  it('uuid 非空的编辑对象提交按钮显示「保存」', () => {
-    const w = mount(EntryForm, { global: { plugins: [createTestI18n()] }, props: { initial: entry, tags: [] } })
-    expect(w.find('button[type="submit"]').text()).toBe('保存')
+  // 保存/取消按钮迁宿主 MdDialog #actions 槽（spec §2.11）：按钮文案「添加/保存」断言随迁
+  // EntryFormDialog.test.ts；此处断言组件级口径（isNew 经 defineExpose 暴露，宿主文案与提交分支同源）
+  it('uuid 为空串的预填对象按新建处理（isNew=true），非空按编辑（isNew=false）', () => {
+    const wNew = mount(EntryForm, { global: { plugins: [createTestI18n()] }, props: { initial: { ...entry, uuid: '' }, tags: [] } })
+    expect((wNew.vm as unknown as { isNew: boolean }).isNew).toBe(true)
+    const wEdit = mount(EntryForm, { global: { plugins: [createTestI18n()] }, props: { initial: entry, tags: [] } })
+    expect((wEdit.vm as unknown as { isNew: boolean }).isNew).toBe(false)
   })
 
   it('预填对象拉取图标不以空串为存储键（?? 对 falsy 空串不兜底的回归）', async () => {

@@ -50,6 +50,6 @@ const emit = defineEmits<{ resolve: ['deny' | 'once' | 'trust']; allow: []; clos
 <style scoped>
 .consent-row { font-size: var(--md-sys-typescale-body-medium); margin: 0 0 6px; }
 .consent-ident { font-family: ui-monospace, monospace; font-size: var(--md-sys-typescale-body-small);
-  background: var(--md-sys-color-surface-container-highest); padding: 2px 6px; border-radius: 6px; word-break: break-all; }
+  background: var(--md-sys-color-surface-container-highest); padding: 2px 6px; border-radius: var(--md-sys-shape-corner-small); word-break: break-all; }
 .consent-hint { font-size: var(--md-sys-typescale-body-small); opacity: .65; margin: 8px 0 0; }
 </style>

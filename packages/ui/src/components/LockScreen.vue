@@ -2,6 +2,7 @@
 import { base64ToBytes, unlockWithPrf } from '@totp/core'
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { LOCK_ICONS } from './lockIcons'
 import type { AbeOps, DpapiUnlockOps } from './securityPlatform'
 import { getPrfOutput, prfSupported } from '../prf'
 import type { VueStore } from '../store'
@@ -165,10 +166,16 @@ async function onPasskeyUnlock(): Promise<void> {
           autocomplete="current-password" :disabled="busy"
         />
         <MdIconButton
+          class="pw-toggle"
           :title="showPassword ? t('lock.hidePassphrase') : t('lock.showPassphrase')"
           :aria-label="showPassword ? t('lock.hidePassphrase') : t('lock.showPassphrase')"
           @click="showPassword = !showPassword"
-        >{{ showPassword ? '🙈' : '👁' }}</MdIconButton>
+        >
+          <!-- Material Icons 24px 标准 path（navIcons 同源方式），密文态显示 visibility、明文态显示 visibility_off -->
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true">
+            <path :d="showPassword ? LOCK_ICONS.visibilityOff : LOCK_ICONS.visibility" />
+          </svg>
+        </MdIconButton>
       </div>
       <MdButton class="unlock" type="submit" :disabled="busy">{{ t('lock.unlock') }}</MdButton>
     </form>
@@ -198,11 +205,15 @@ async function onPasskeyUnlock(): Promise<void> {
 
 <style scoped>
 .lockscreen { display: flex; flex-direction: column; gap: 8px; padding: 32px 16px; max-width: 360px; margin: 0 auto; }
-h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; text-align: center; }
-.hint { font-size: var(--md-sys-typescale-body-medium); opacity: .65; margin: 0; text-align: center; }
+h2 { font-size: var(--md-sys-typescale-headline-small); margin: 0; text-align: center; }
+.hint { font-size: var(--md-sys-typescale-body-medium); color: var(--md-sys-color-on-surface-variant); margin: 0; text-align: center; }
 .unlock-form { display: flex; flex-direction: column; gap: 8px; }
 .pw-row { display: flex; gap: 4px; align-items: center; }
 .pw-row .grow { flex: 1; }
+/* 显隐钮视觉贴入口令输入行右缘（MdTextField 无 trailing slot，Phase 2 项）：负 margin 叠入
+ * field 右缘，输入文本经 box padding-right 让位（48px = 钮宽 40 + 右缘留白 8），不遮挡输入 */
+.pw-row .grow :deep(.md-text-field__box) { padding-right: 48px; }
+.pw-toggle { margin-left: -44px; }
 .unlock { width: 100%; }
 .err { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-medium); }
 </style>

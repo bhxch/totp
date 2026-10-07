@@ -75,7 +75,7 @@ watch(
     else if (old === 'steam' || old === 'yandex') form.digits = 6
   },
 )
-// isNew：预填对象（URI 导入）uuid 为哑值空串，须按新建处理（按钮「添加」而非「保存」）
+// isNew：预填对象（URI 导入）uuid 为哑值空串，须按新建处理（宿主 dialog 动作区按钮「添加」而非「保存」，口径与本组件提交分支一致）
 const isNew = !props.initial || !props.initial.uuid
 /** secret 遮蔽：默认 password，点右侧按钮明文查看 */
 const showSecret = ref(false)
@@ -445,6 +445,11 @@ function submit() {
     ...(form.type === 'hotp' ? { counter: form.counter } : {}),
   })
 }
+
+/** 保存/取消按钮迁宿主 MdDialog `#actions` 槽（spec §2.11，消除双套按钮排布）后，
+ *  宿主经模板 ref 调 submit()（校验 + emit save 行为不变，表单内回车原生 submit 路径保留）；
+ *  isNew 供宿主定按钮文案（添加/保存，与提交分支同口径）。cancel emit 契约保留 */
+defineExpose({ submit, isNew })
 </script>
 
 <template>
@@ -581,27 +586,23 @@ function submit() {
       <MdButton variant="text" class="add-rule" @click="form.matchRules.push({ strategy: 'baseDomain', pattern: '' })">{{ t('entryForm.addRule') }}</MdButton>
     </fieldset>
     <div v-if="error" class="error">{{ error }}</div>
-    <div class="row">
-      <MdButton type="submit">{{ isNew ? t('entryForm.add') : t('entryForm.save') }}</MdButton>
-      <MdButton variant="text" @click="emit('cancel')">{{ t('entryForm.cancel') }}</MdButton>
-    </div>
   </form>
 </template>
 
 <style scoped>
-.entry-form { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: 8px; }
+.entry-form { display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: 8px; }
 /* 仅存的原生控件（file input）保留隐藏样式；输入/按钮/下拉由 md 组件自带样式 */
 .secret-row { display: flex; gap: 6px; align-items: center; }
 .secret-row .secret-field { flex: 1; }
 .secret-toggle { white-space: nowrap; }
-.base32-hint { font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-tertiary); margin: 0; }
+.base32-hint { font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-on-surface-variant); margin: 0; }
 /* invalid 类在 MdTextField 根 div 上，经 :deep 传到输入框底边 */
 .entry-form .secret-field.invalid :deep(.md-text-field__box) { border-bottom-color: var(--md-sys-color-error); }
 .advanced-row { display: flex; gap: 8px; flex-wrap: wrap; font-size: var(--md-sys-typescale-body-small); align-items: flex-start; }
 .advanced-row .algorithm { flex: 1; min-width: 110px; } /* MdSelect 根随行内 flex 伸展（弹窗窄宽语境触发端 100%） */
 .advanced-row .digits, .advanced-row .period, .advanced-row .counter, .advanced-row .pin { flex: 1; min-width: 80px; }
 .steam-hint { font-size: var(--md-sys-typescale-label-small); opacity: .65; margin: 0; width: 100%; }
-fieldset { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 6px; display: flex; gap: 10px; flex-wrap: wrap; }
+fieldset { border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--md-sys-shape-corner-small); display: flex; gap: 8px; flex-wrap: wrap; }
 .tag-check { font-size: var(--md-sys-typescale-body-medium); }
 .new-tag-row { display: flex; gap: 6px; width: 100%; }
 .new-tag { flex: 1; }
@@ -609,12 +610,14 @@ fieldset { border: 1px solid var(--md-sys-color-outline-variant); border-radius:
 .rule-strategy { flex: none; width: 128px; } /* MdSelect 根定宽，触发端 100% 填充 */
 .rule-row .rule-pattern { flex: 1; }
 .rule-row .rule-pattern.invalid :deep(.md-text-field__box) { border-bottom-color: var(--md-sys-color-error); }
-.rule-error { font-size: var(--md-sys-typescale-label-small); color: var(--md-sys-color-error); flex-basis: 100%; }
+.rule-error { font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-error); flex-basis: 100%; }
 .icon-recommend { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); padding: 4px 8px; background: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent); border-radius: 6px; }
 .icon-recommend .recommend-item { display: grid; place-items: center; padding: 6px 8px; border: none; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; position: relative; }
 /* 命中层:inset -4px 在 padding 6px 8px 基础上再扩(20px 图标钮达标) */
 .icon-recommend .recommend-item::after { content: ''; position: absolute; inset: -4px; border-radius: inherit; }
-.icon-recommend .recommend-item:hover { background: color-mix(in srgb, var(--md-sys-color-primary) 16%, transparent); }
+/* 状态层走 token（hover 8% / pressed 12%，MD3 状态层口径） */
+.icon-recommend .recommend-item:hover { background: color-mix(in srgb, var(--md-sys-color-primary) var(--md-sys-state-layer-hover), transparent); }
+.icon-recommend .recommend-item:active { background: color-mix(in srgb, var(--md-sys-color-primary) var(--md-sys-state-layer-pressed), transparent); }
 .icon-preview { width: 20px; height: 20px; fill: currentColor; flex: none; }
 .icon-current-img { width: 20px; height: 20px; object-fit: contain; flex: none; }
 .icon-picker summary { cursor: pointer; font-weight: 600; }
@@ -626,5 +629,4 @@ fieldset { border: 1px solid var(--md-sys-color-outline-variant); border-radius:
 .visually-hidden { display: none; }
 .pack-message { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-small); }
 .error { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); }
-.row { display: flex; gap: 8px; }
 </style>

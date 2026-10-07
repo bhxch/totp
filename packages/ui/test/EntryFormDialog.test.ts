@@ -78,11 +78,37 @@ describe('EntryFormDialog', () => {
     expect(w.text()).toContain('base32')
   })
 
-  it('EntryForm 取消 → emit close', async () => {
+  it('保存/取消按钮迁 #actions 槽：取消在弹窗动作区，取消 → emit close', async () => {
     const w = mountDialog({ editing: entry })
-    const cancel = w.findAll('form.entry-form button').find((b) => b.text() === '取消')!
+    const actions = w.find('.md-dialog__actions')
+    expect(actions.exists()).toBe(true)
+    expect(actions.text()).toContain('保存')
+    const cancel = actions.findAll('button').find((b) => b.text() === '取消')!
     await cancel.trigger('click')
     expect(w.emitted('close')).toHaveLength(1)
+  })
+
+  it('新建态动作区保存钮显「添加」（含预填哑值 uuid 按 isNew 口径）', () => {
+    const w = mountDialog()
+    expect(w.find('.md-dialog__actions').text()).toContain('添加')
+    const wPrefill = mountDialog({ editing: { ...entry, uuid: '' } })
+    expect(wPrefill.find('.md-dialog__actions').text()).toContain('添加')
+  })
+
+  it('动作区保存钮点击经 EntryForm.submit：合法表单 emit save', async () => {
+    const w = mountDialog()
+    await w.find('input[placeholder="服务名（如 GitHub）"]').setValue('MyApp')
+    await w.find('input[placeholder="密钥 base32"]').setValue('JBSWY3DPEHPK3PXP')
+    await w.findAll('.md-dialog__actions button').find((b) => b.text() === '添加')!.trigger('click')
+    expect(w.emitted('save')![0]![0]).toMatchObject({ issuer: 'MyApp', secret: 'JBSWY3DPEHPK3PXP' })
+  })
+
+  it('动作区保存钮点击仍走校验：非法 secret 阻止提交', async () => {
+    const w = mountDialog()
+    await w.find('input[placeholder="密钥 base32"]').setValue('AB01')
+    await w.findAll('.md-dialog__actions button').find((b) => b.text() === '添加')!.trigger('click')
+    expect(w.emitted('save')).toBeUndefined()
+    expect(w.text()).toContain('base32')
   })
 
   it('createTag 透传 EntryForm：内联建 tag 回车创建后自动勾选（CodesPage 接 store.addTagOp）', async () => {
@@ -113,9 +139,12 @@ describe('EntryFormDialog', () => {
     const w = mountDialog()
     expect(w.find('form.entry-form').exists()).toBe(true)
     expect(w.find('.batch-paste').exists()).toBe(false)
+    // 手动 Tab 才渲染 #actions 动作区（粘贴 Tab 自带解析/入库按钮）
+    expect(w.find('.md-dialog__actions').exists()).toBe(true)
     await pasteTab(w).trigger('click')
     expect(w.find('form.entry-form').exists()).toBe(false)
     expect(w.find('.batch-paste').exists()).toBe(true)
+    expect(w.find('.md-dialog__actions').exists()).toBe(false)
     // 切回手动：EntryForm 重建（:key 现状保持），粘贴面板卸载即重置
     await w.findAll('.md-seg__item').find((b) => b.text() === '手动填写')!.trigger('click')
     expect(w.find('form.entry-form').exists()).toBe(true)

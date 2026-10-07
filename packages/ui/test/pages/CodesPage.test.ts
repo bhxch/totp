@@ -290,7 +290,8 @@ describe('CodesPage FAB 新建入口', () => {
     expect(w.find('.md-dialog').exists()).toBe(true)
     expect(w.find('.md-dialog__headline').text()).toBe('新建条目')
     expect(w.find('form.entry-form').exists()).toBe(true)
-    const cancel = w.findAll('form.entry-form button').find((b) => b.text() === '取消')!
+    // 保存/取消按钮迁 MdDialog #actions 槽（spec §2.11）：取消钮不再属 form.entry-form
+    const cancel = w.findAll('.md-dialog__actions button').find((b) => b.text() === '取消')!
     await cancel.trigger('click')
     expect(w.find('.md-dialog').exists()).toBe(false)
   })

@@ -38,17 +38,17 @@ describe('IconPackImportDialog', () => {
   it('空名禁用确认；确认 emit trim 后的名字', async () => {
     const w = mountDialog()
     await w.find('input').setValue('   ')
-    expect(w.find('.actions button:last-child').attributes('disabled')).toBeDefined()
+    expect(w.find('.md-dialog__actions button:last-child').attributes('disabled')).toBeDefined()
     await w.find('input').setValue('  Aegis Icons  ')
-    await w.find('.actions button:last-child').trigger('click')
+    await w.find('.md-dialog__actions button:last-child').trigger('click')
     expect(w.emitted('confirm')![0]).toEqual(['Aegis Icons'])
   })
 
   it('busy 时确认禁用、取消可用且错误透出', async () => {
     const w = mountDialog({ busy: true, error: 'boom' })
-    expect(w.find('.actions button:last-child').attributes('disabled')).toBeDefined()
+    expect(w.find('.md-dialog__actions button:last-child').attributes('disabled')).toBeDefined()
     // busy 时取消是逃生通道，必须始终可点（审查 Important：不得 :disabled="busy"）
-    const cancel = w.find('.actions button:first-child')
+    const cancel = w.find('.md-dialog__actions button:first-child')
     expect(cancel.attributes('disabled')).toBeUndefined()
     await cancel.trigger('click')
     expect(w.emitted('close')).toHaveLength(1)

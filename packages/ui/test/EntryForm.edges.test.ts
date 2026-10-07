@@ -137,8 +137,8 @@ describe('EntryForm 图标包导入异常路径', () => {
     await w.find('input.pack-file').trigger('change')
     // 选 zip 只开命名对话框（异步读取完成后打开），确认才触发导入；解压抛非 Error 值 → 对话框内 String 兜底
     const dialog = w.findComponent({ name: 'IconPackImportDialog' })
-    await vi.waitFor(() => expect(dialog.find('.actions button:last-child').exists()).toBe(true))
-    await dialog.find('.actions button:last-child').trigger('click')
+    await vi.waitFor(() => expect(dialog.find('.md-dialog__actions button:last-child').exists()).toBe(true))
+    await dialog.find('.md-dialog__actions button:last-child').trigger('click')
     await vi.waitFor(() => expect(dialog.find('.error').text()).toBe('boom-string'))
     expect(w.find('.icon-picker .error').exists()).toBe(false)
     spy.mockRestore()
