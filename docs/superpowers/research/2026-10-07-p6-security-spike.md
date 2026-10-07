@@ -1,6 +1,8 @@
 # P6 Windows 安全架构 spike 调研报告（2026-10-07）
 
 > **报批结论（2026-10-07，用户已确认）：采纳本报告建议——P6 缩减为仅实施 CryptProtectMemory 内存加密（§Q4，约 1–2 人日，方案见报告正文）；DPAPI NG 迁移、MSIX 打包、便携版 AppContainer 三项均放弃，报告存档备查（MSIX 若未来决定上 Microsoft Store 再依 §Q2 立项）。**
+>
+> **后续改批（2026-10-07，同日）：P6 实际立项已超出上述报批结论——CryptProtectMemory 之外，ABE 应用绑定加密服务（LocalSystem 管道服务 + 调用者验证 + DEK 包裹）经再次报批后全量实施，设计正本见 docs/superpowers/plans/ 下 P6 实施计划 §0。本报告的调研事实（DPAPI NG 形态、makeappx 可行性、CryptProtectMemory 性能）仍为有效依据，但"缩减为仅 CryptProtectMemory"的结论已被取代，特此批注防误读（审查项 R7-REC）。**
 
 对应 spec：docs/superpowers/specs/2026-10-06-seven-features-design.md §6.1 四问题。
 方法：Microsoft Learn 权威文档 + tauri/WebView2Feedback issue + 本地 Rust 探针（`E:\tmp\cc\totp-spike`，windows crate 0.61，与仓库同版本）。

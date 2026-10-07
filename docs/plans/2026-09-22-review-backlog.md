@@ -160,3 +160,13 @@ B18/B19 为测试基建与稳健性。
 | # | 项 | 说明 | 建议 | 出处 |
 |---|---|---|---|---|
 | B24 | release_tick is_visible 疑似误判不可见 | release_tick 的 `is_visible().unwrap_or(false)` 疑似把可见窗口误判为不可见，致释放策略销毁档提前触发——2026-10-06 Task 9 诊断第 1 轮意外复现；详见 docs/e2e/2026-10-06-miniapp-sorting-cloud-checklist.md 附录一 | 排查：release_tick 临时留痕对比 is_visible 与真实可见性 | apps/desktop/src-tauri/src/lib.rs release_tick |
+
+# 双批次七路审查遗留（2026-10-07，范围 276d3b0..d89f519）
+
+来源：2026-10-07 双批次代码审查（docs/review/2026-10-07-dual-batch-code-review-findings.md）。1C+13I 当批修复完毕，以下为裁定不在当批落地的遗留项。
+
+## 安全加固类（另立 round）
+
+| # | 项 | 说明 | 建议 | 出处 |
+|---|---|---|---|---|
+| B25 | ABE Authenticode 签名校验（R6-I2 根本方案） | 调用者验证的独占句柄+双读比较已当批落地（压缩 TOCTOU 窗口），但便携版形态下"运行中进程经文件替换绕过哈希验证"的根修是签名链锚点校验；plan 已预留 `SignerSubject` 接口。涉及签名体系现状（当前自签），需先定签名分发方案 | 另立安全 round：自签证书进安装器/CI + 服务端 WinVerifyTrust 校验调用者映像签名链 | apps/desktop/src-tauri/src/elevation_service.rs verify_client_process（预留 SignerSubject 处） |
