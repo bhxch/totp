@@ -906,12 +906,11 @@ mod tests {
     #[test]
     fn expected_service_copy_path_is_programdata_dir_plus_constant_name() {
         let expected = expected_service_copy_path().expect("测试环境应有 PROGRAMDATA");
-        assert_eq!(
+        assert!(
             expected
                 .to_string_lossy()
                 .to_lowercase()
                 .ends_with(r"totptools\service\totptools.exe"),
-            true,
             "规范副本路径收尾: {expected:?}"
         );
         // 与安装编排同源：copy_self_to 落点即该路径
