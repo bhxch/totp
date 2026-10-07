@@ -543,8 +543,13 @@ fn ensure_window(app: &AppHandle, label: &str) -> bool {
         // 事件（dragstart 后 dragover/drop 零触发，SendInput 变体独立复现），管理页拖拽排序真机
         // 无效。禁用该 handler 是前端 HTML5 拖放 API 在 Windows 可用的必要条件（tauri 2.11.5
         // webview_window.rs 官方注释明示 "required to use HTML5 drag and drop APIs on the
-        // frontend on Windows"）。应用无 Tauri 原生 drag-drop 事件依赖已核实（onDragDropEvent/
-        // drag-drop 全仓源码零匹配，文件拖入导入走对话框），禁用无副作用。mini 无排序交互面不加。
+        // frontend on Windows"）。后续实证（9540a7b）修订此注释：禁用后 WebView2 对页面自发起
+        // 的 HTML5 DnD 仍立即 abort，拖拽排序已改 pointer 长按方案（唯一拖拽路径）；保留禁用
+        // 的理由 = 管理页粘贴区的外部文件投放（HTML5 drop 事件）在 Windows 可用，且避免 wry
+        // 默认 IDropTarget 回归。禁用的副作用——外部文件落入未 preventDefault 区域会触发
+        // WebView2 默认导航（跳 file:// 替换 SPA、丢解锁会话）——由前端两窗口入口全局
+        // dragover/drop preventDefault 兜底（apps/desktop/src/dragDropGuard.ts，R2-I1）。mini
+        // 无排序交互面未加禁用（默认 handler 在位），前端兜底双窗一致挂载。
         .disable_drag_drop_handler()
         .build(),
         "mini" => tauri::WebviewWindowBuilder::new(
