@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import { tauriMock } from '../test/mocks/tauri'
+import { useToast } from '@totp/ui'
 import App from './App.vue'
 import McpConsentDialog from './McpConsentDialog.vue'
 
@@ -150,5 +151,39 @@ describe('B1.4 卸载清算', () => {
     }
     expect(tauriMock.calls('mcp_respond')).toHaveLength(1) // dispose → 未决回 result:false
     expect(tauriMock.calls('mcp_respond')[0]?.args).toMatchObject({ id: 5, ok: true, result: false, error: null })
+  })
+})
+
+describe('R3-I1 复制反馈上移宿主（onCopy 按写入结果 toast）', () => {
+  function drainToasts() {
+    const { toasts, dismiss } = useToast()
+    for (const t of [...toasts.value]) dismiss(t.key)
+  }
+  afterEach(drainToasts)
+
+  it('emit copy → stage 成功 → success toast；stage 失败 → error toast（无成功 toast）', async () => {
+    const wrapper = await mountApp()
+    const shell = wrapper.findComponent(NavStub)
+    // 默认 handler 未注册 → invoke resolve null → stage 成功
+    shell.vm.$emit('copy', '123456')
+    await flushPromises()
+    expect(useToast().toasts.value.map((t) => t.kind)).toContain('success')
+
+    drainToasts()
+    tauriMock.on('stage_clipboard_write', () => { throw new Error('clipboard busy') })
+    shell.vm.$emit('copy', '123456')
+    await flushPromises()
+    const kinds = useToast().toasts.value.map((t) => t.kind)
+    expect(kinds).toContain('error')
+    expect(kinds).not.toContain('success')
+  })
+
+  it('mcpPlatform.copyText → stage 失败 → error toast 兜底（不静默）', async () => {
+    const wrapper = await mountApp()
+    const shell = wrapper.findComponent(NavStub)
+    tauriMock.on('stage_clipboard_write', () => { throw new Error('clipboard busy') })
+    await (shell.props('mcpPlatform') as { copyText(v: string): Promise<void> }).copyText('token')
+    await flushPromises()
+    expect(useToast().toasts.value.map((t) => t.kind)).toContain('error')
   })
 })

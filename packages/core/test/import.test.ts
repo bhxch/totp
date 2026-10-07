@@ -112,6 +112,50 @@ describe('importUriBatch', () => {
     expect(r.entries[0]!.type).toBe('totp')
     expect(r.failures).toHaveLength(0)
   })
+
+  it('R4-I1：data JSON 带 account_name → label 用显式值，URI path 账户段不覆盖', () => {
+    const sharedSecret = btoa(String.fromCharCode(...new Uint8Array(20).fill(0xff)))
+    const steamData = encodeURIComponent(JSON.stringify({
+      shared_secret: sharedSecret,
+      serial_number: '12345678901',
+      steamid: '76561190000000000',
+      account_name: 'winauth-account',
+    }))
+    const r = importUriBatch(
+      `otpauth://totp/Steam:uripath?secret=JBSWY3DPEHPK3PXP&deviceid=d&data=${steamData}`,
+    )
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries[0]!.label).toBe('winauth-account')
+  })
+
+  it('R4-I1：URI path 无账户段（裸 Steam 本名）→ label 回退 importSteamGuard 兜底（steamid）', () => {
+    const sharedSecret = btoa(String.fromCharCode(...new Uint8Array(20).fill(0xff)))
+    const steamData = encodeURIComponent(JSON.stringify({
+      shared_secret: sharedSecret,
+      serial_number: '12345678901',
+      steamid: '76561190000000000',
+    }))
+    const r = importUriBatch(
+      `otpauth://totp/Steam?secret=JBSWY3DPEHPK3PXP&deviceid=d&data=${steamData}`,
+    )
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries[0]!.label).toBe('76561190000000000')
+  })
+
+  it('R4-I1：URI path 含非法百分号序列 → label 通道按空处理，条目照常重建', () => {
+    const sharedSecret = btoa(String.fromCharCode(...new Uint8Array(20).fill(0xff)))
+    const steamData = encodeURIComponent(JSON.stringify({
+      shared_secret: sharedSecret,
+      serial_number: '12345678901',
+      steamid: '76561190000000000',
+    }))
+    const r = importUriBatch(
+      `otpauth://totp/Steam:%zz?secret=JBSWY3DPEHPK3PXP&deviceid=d&data=${steamData}`,
+    )
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries).toHaveLength(1)
+    expect(r.entries[0]).toMatchObject({ type: 'steam', label: '76561190000000000' })
+  })
 })
 
 describe('extractGenericRows', () => {
