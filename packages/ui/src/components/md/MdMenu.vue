@@ -102,7 +102,7 @@ onBeforeUnmount(() => {
   <div v-if="open" ref="rootRef" class="md-menu" role="menu" :style="`left: ${pos.left}px; top: ${pos.top}px;`"><slot /></div>
 </template>
 <style scoped>
-.md-menu { position: fixed; z-index: 1100; min-width: 120px; padding: 6px 0; border-radius: 4px; /* M3 menu=extra-small 4dp(审查 X9) */
-  background: var(--md-sys-color-surface-container-high);
+.md-menu { position: fixed; z-index: 1100; min-width: 112px; padding: 8px 0; border-radius: 4px; /* M3 menu=extra-small 4dp(审查 X9)；min-width 112/上下 8dp 对齐 M3 menu 容器 */
+  background: var(--md-sys-color-surface-container);
   box-shadow: inset 0 0 0 1px var(--md-sys-color-outline-variant), 0 2px 8px var(--md-sys-color-shadow); }
 </style>

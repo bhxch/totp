@@ -40,11 +40,22 @@ const inputAttrs = computed(() => {
 </template>
 <style scoped>
 .md-text-field { display: flex; flex-direction: column; gap: 4px; font: inherit; }
-.md-text-field__box { position: relative; display: block; background: var(--md-sys-color-surface-container-highest);
-  border-radius: 4px 4px 0 0; border-bottom: 1px solid var(--md-sys-color-on-surface-variant); transition: border-color .15s; }
-.md-text-field__box:focus-within { border-bottom: 2px solid var(--md-sys-color-primary); }
+/* filled 容器 56dp（M3 官网核实）：用 min-height 而非 height——dense 块的 min-height:40px
+ * 同特异性后序天然覆写生效（Task 7 dense 与 56 基线并存，Task 7 复审裁定） */
+.md-text-field__box { position: relative; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center;
+  min-height: 56px; padding: 0 16px; background: var(--field-bg, var(--md-sys-color-surface-container-highest));
+  border-radius: 4px 4px 0 0; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
+/* hover state layer：混入 filled 底色而非 transparent（brief 字面 color-mix transparent 会整体替换
+ * background 丢失 filled 底色；8% on-surface 混入底色与 state layer 叠加等价） */
+.md-text-field__box:hover:not(:focus-within) { --field-bg: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-hover), var(--md-sys-color-surface-container-highest)); }
+/* active indicator 绝对定位叠于底边框（bottom:-1px 盖住 1px border），聚焦 scaleX 展开；
+ * 取代原「1px→2px border」写法，消除聚焦时 1px 布局位移 */
+.md-text-field__box::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+  background: var(--md-sys-color-primary); transform: scaleX(0); transition: transform .12s; }
+.md-text-field__box:focus-within::after { transform: scaleX(1); }
+.md-text-field__box:focus-within { border-bottom-color: transparent; }
 .md-text-field--error .md-text-field__box { border-bottom-color: var(--md-sys-color-error); }
-.md-text-field--error .md-text-field__box:focus-within { border-bottom: 2px solid var(--md-sys-color-error); }
+.md-text-field--error .md-text-field__box::after { background: var(--md-sys-color-error); }
 .md-text-field--disabled { opacity: .38; cursor: default; }
 .md-text-field--disabled .md-text-field__input { cursor: default; }
 .md-text-field__label { position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
@@ -54,13 +65,18 @@ const inputAttrs = computed(() => {
 .md-text-field__box:focus-within .md-text-field__label { color: var(--md-sys-color-primary); }
 .md-text-field--error .md-text-field__box:focus-within .md-text-field__label,
 .md-text-field--error .md-text-field__label { color: var(--md-sys-color-error); }
+/* padding 迁入 box（0 16px），input 仅占内容行；行高固定 24 保 56px 内垂直节奏 */
 .md-text-field__input { width: 100%; box-sizing: border-box; border: none; outline: none; background: transparent;
-  padding: 22px 16px 6px; font: inherit; font-size: var(--md-sys-typescale-body-large); color: var(--md-sys-color-on-surface); }
+  padding: 0; font: inherit; font-size: var(--md-sys-typescale-body-large); line-height: 24px; color: var(--md-sys-color-on-surface); }
 .md-text-field__input::placeholder { color: var(--md-sys-color-on-surface-variant); }
 .md-text-field__error { margin: 0; padding: 0 16px; font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-error); }
-.md-text-field__textarea { resize: vertical; min-height: 72px; line-height: 1.5; }
+/* multiline：box 只给水平 padding，textarea 首行自留浮动 label 空间（原顶部 22px 由 input padding 承担） */
+.md-text-field__textarea { resize: vertical; min-height: 72px; line-height: 1.5; padding-top: 24px; }
 /* dense 档（spec §2.5 compact，mini/popup 快速窗）：40px 高 + body-medium 槽位。
- * 自带 min-height 覆写不依赖 56px 基线（Task 8 引入基线时保留本覆写块并存） */
+ * min-height:40 后序覆写 56 基线；padding 覆写 box 的 0 16px（input padding 已归零，本块零改动生效） */
 .md-text-field__box--dense { min-height: 40px; padding: 10px 12px 4px; }
+.md-text-field__box--dense .md-text-field__label { left: 12px; } /* dense 水平 padding 12px，label 同步内缩（Task 7 挂账的 4px 错位） */
+.md-text-field__box--dense .md-text-field__label--floated,
+.md-text-field__box--dense:focus-within .md-text-field__label { top: 2px; } /* 40px 槽位内 label top:8px 会压 input 行，上提保间距 */
 .md-text-field__box--dense .md-text-field__input { font-size: var(--md-sys-typescale-body-medium); line-height: 20px; }
 </style>

@@ -150,30 +150,38 @@ onBeforeUnmount(() => {
   </div>
 </template>
 <style scoped>
-/* 触发端与 MdTextField 同款：filled 底 + 底边框 + 悬浮 label；差异仅在右侧箭头与只读（按钮不可输入） */
+/* 触发端与 MdTextField 同款：filled 底 + 底边框 + 悬浮 label；差异仅在右侧箭头与只读（按钮不可输入）。
+ * 同构采用相同 56dp min-height + ::after 指示条方案（Task 8；与 MdTextField 样式复制不抽共享，Phase 2 项） */
 .md-select { display: flex; flex-direction: column; font: inherit; }
 .md-select--disabled { opacity: .38; cursor: default; }
-.md-select__box { position: relative; background: var(--md-sys-color-surface-container-highest);
-  border-radius: 4px 4px 0 0; border-bottom: 1px solid var(--md-sys-color-on-surface-variant); transition: border-color .15s; }
-.md-select__box:focus-within { border-bottom: 2px solid var(--md-sys-color-primary); }
+/* 56dp（M3 官网核实）；无 dense 档，min-height 即定高下限 */
+.md-select__box { position: relative; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center;
+  min-height: 56px; background: var(--select-bg, var(--md-sys-color-surface-container-highest));
+  border-radius: 4px 4px 0 0; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
+.md-select__box:hover:not(:focus-within) { --select-bg: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-hover), var(--md-sys-color-surface-container-highest)); }
+.md-select__box::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+  background: var(--md-sys-color-primary); transform: scaleX(0); transition: transform .12s; }
+.md-select__box:focus-within::after { transform: scaleX(1); }
+.md-select__box:focus-within { border-bottom-color: transparent; }
 .md-select__label { position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
   font-size: var(--md-sys-typescale-body-large); color: var(--md-sys-color-on-surface-variant); pointer-events: none; transition: all .15s; }
 .md-select__label--floated,
 .md-select__box:focus-within .md-select__label { top: 8px; transform: none; font-size: var(--md-sys-typescale-body-small); }
 .md-select__box:focus-within .md-select__label { color: var(--md-sys-color-primary); }
+/* padding 迁入 box（0 16px，箭头随右 padding 16），trigger 仅占内容行 */
 .md-select__trigger { width: 100%; box-sizing: border-box; border: none; outline: none; background: transparent;
-  padding: 22px 12px 6px 16px; font: inherit; font-size: var(--md-sys-typescale-body-large); color: var(--md-sys-color-on-surface);
+  padding: 0; font: inherit; font-size: var(--md-sys-typescale-body-large); line-height: 24px; color: var(--md-sys-color-on-surface);
   display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; cursor: pointer; }
 .md-select--disabled .md-select__trigger { cursor: default; }
 .md-select__trigger:focus-visible { outline: 3px solid var(--md-sys-color-primary); outline-offset: 2px; }
 .md-select__value { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .md-select__arrow { flex: none; color: var(--md-sys-color-on-surface-variant); }
-/* 弹层与 MdMenu 同源外观：fixed + surface-container-high + outline-variant 内描边 */
-.md-select__menu { position: fixed; z-index: 1100; min-width: 120px; max-height: 280px; overflow: auto; padding: 6px 0;
-  border-radius: 4px; background: var(--md-sys-color-surface-container-high);
+/* 弹层与 MdMenu 同源外观：fixed + surface-container + outline-variant 内描边（M3 menu 容器色） */
+.md-select__menu { position: fixed; z-index: 1100; min-width: 112px; max-height: 280px; overflow: auto; padding: 8px 0;
+  border-radius: 4px; background: var(--md-sys-color-surface-container);
   box-shadow: inset 0 0 0 1px var(--md-sys-color-outline-variant), 0 2px 8px var(--md-sys-color-shadow); }
-.md-select__option { height: 40px; display: flex; align-items: center; padding: 0 16px; cursor: pointer;
-  font-size: var(--md-sys-typescale-body-medium); color: var(--md-sys-color-on-surface); }
+.md-select__option { height: 48px; display: flex; align-items: center; padding: 0 16px; cursor: pointer;
+  font-size: var(--md-sys-typescale-body-large); color: var(--md-sys-color-on-surface); }
 .md-select__option--active { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
 /* 鼠标 hover 同 8% state layer（批 4 抽查修正：此前仅键盘 active 有高亮） */
 .md-select__option:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }

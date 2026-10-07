@@ -67,13 +67,17 @@ const errorToasts = computed(() => toasts.value.filter((t) => t.kind === 'error'
   max-width: min(560px, calc(100vw - 32px));
   background: var(--md-sys-color-inverse-surface);
   color: var(--md-sys-color-inverse-on-surface);
-  border-radius: 100px;
+  border-radius: var(--md-sys-shape-corner-extra-small); /* M3 snackbar=extra-small 4dp（原 pill 100px） */
+  min-height: 48px; /* M3 snackbar 48dp */
+  display: flex;
+  align-items: center;
   padding: 10px 16px;
   font-size: var(--md-sys-typescale-body-medium);
   box-shadow: 0 2px 6px var(--md-sys-color-shadow);
   cursor: pointer;
   user-select: none;
 }
+/* 自定义 error-container 变体（spec §2.10 裁定；错误感知由 role=alert 承担） */
 .toast--error {
   background: var(--md-sys-color-error-container);
   color: var(--md-sys-color-on-error-container);
