@@ -15,6 +15,16 @@ describe('iconRegistry', () => {
     // 多连续分隔符（空白/点/连字符/下划线混排）折叠为空
     expect(normalizeIssuer('Git--Hub__..X  Y')).toBe('githubxy')
   })
+  it('R4-C1 normalizeIssuer 剔除 Windows 文件名危险字符与控制字符（产出兼作存储 id）', () => {
+    // zip 内不可信文件名场景：`\ / : * ? " < > |` 全部剔除，不产生 ADS/子目录逃逸的存储 id
+    expect(normalizeIssuer('a:b*c?d')).toBe('abcd')
+    expect(normalizeIssuer('x\\y/z')).toBe('xyz')
+    expect(normalizeIssuer('p"q<r>s|t')).toBe('pqrst')
+    // 控制字符（C0 + DEL）剔除
+    expect(normalizeIssuer('a\u0000b\u001fc')).toBe('abc')
+    // 危险字符剔除后与正常名收敛到同一 id（与既有分隔符折叠语义一致）
+    expect(normalizeIssuer('github:official')).toBe(normalizeIssuer('github official'))
+  })
   it('推荐：精确/别名/大小写命中排第一，未命中返回空', () => {
     expect(suggestIcons('GitHub')[0]!.id).toBe('github')
     expect(suggestIcons('github.com')[0]!.id).toBe('github') // 别名 githubcom

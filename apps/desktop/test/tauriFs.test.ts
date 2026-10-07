@@ -163,4 +163,111 @@ describe('plugin-fs 抛错向上传播（宿主兜底行为：保存失败可见
     const adapter = await createTauriFs()
     await expect(adapter.delete('vault')).rejects.toThrow('fs down')
   })
+
+  it('legacy 回退查找的 exists 抛错 → 按无旧文件处理返回 null（不放大故障）', async () => {
+    // 主路径 exists 正常（false），仅 legacy（含冒号路径）exists 抛错
+    tauriMock.fs.exists.mockImplementation(async (p: unknown) => {
+      if (String(p) === 'urlcache:x.json') throw new Error('EINVAL')
+      return false
+    })
+    const adapter = await createTauriFs()
+    await expect(adapter.get('urlcache:x')).resolves.toBeNull()
+  })
+})
+
+describe('R4-C1 键名→文件名映射与存量兼容（有状态盘面）', () => {
+  /** 有状态盘面：exists/readTextFile/writeTextFile/rename/remove 全部落到内存 Map，验证真实文件名形态 */
+  function installStatefulFs(): Map<string, string> {
+    const files = new Map<string, string>()
+    tauriMock.fs.exists.mockImplementation(async (p: unknown) => files.has(String(p)))
+    tauriMock.fs.readTextFile.mockImplementation(async (p: unknown) => {
+      const c = files.get(String(p))
+      if (c === undefined) throw new Error(`ENOENT: ${String(p)}`)
+      return c
+    })
+    tauriMock.fs.writeTextFile.mockImplementation(async (p: unknown, c: unknown) => {
+      files.set(String(p), String(c))
+    })
+    tauriMock.fs.rename.mockImplementation(async (o: unknown, n: unknown) => {
+      const c = files.get(String(o))
+      if (c === undefined) throw new Error(`ENOENT: ${String(o)}`)
+      files.delete(String(o))
+      files.set(String(n), c)
+    })
+    tauriMock.fs.remove.mockImplementation(async (p: unknown) => {
+      files.delete(String(p))
+    })
+    return files
+  }
+
+  it('set/get/delete 走 encodeURIComponent 易名：含冒号键不再产生冒号文件名', async () => {
+    const files = installStatefulFs()
+    const adapter = await createTauriFs()
+    await adapter.set('icon:github', 'data:image/png;base64,AA')
+    expect(files.has('icon%3Agithub.json')).toBe(true)
+    expect(files.has('icon:github.json')).toBe(false)
+    expect(await adapter.get('icon:github')).toBe('data:image/png;base64,AA')
+
+    // zip 内不可信文件名的路径分隔符同样被编码，不产生子目录（encodeURIComponent 不转义 *，非路径字符无害）
+    await adapter.set('icon:a/b\\c*d', 'v')
+    expect(files.has('icon%3Aa%2Fb%5Cc*d.json')).toBe(true)
+    expect([...files.keys()].some((k) => k.includes('/'))).toBe(false)
+
+    await adapter.delete('icon:github')
+    expect(files.has('icon%3Agithub.json')).toBe(false)
+    expect(await adapter.get('icon:github')).toBeNull()
+  })
+
+  it('纯字母数字键文件名不变：settings 合并与 vault 原子写形态不受映射影响', async () => {
+    const files = installStatefulFs()
+    const adapter = await createTauriFs()
+    await adapter.set('vault', '{"v":1}')
+    expect(files.has('vault.json')).toBe(true)
+    expect(files.has('vault.json.tmp')).toBe(false) // rename 后无 tmp 残留
+    expect(await adapter.get('vault')).toBe('{"v":1}')
+  })
+
+  it('存量兼容：映射名未命中回退读旧原名文件，并顺带迁移为映射名（旧名删除）', async () => {
+    const files = installStatefulFs()
+    files.set('urlcache:logo.json', 'legacy-data') // 升级前版本写的原名（含冒号）文件
+    const adapter = await createTauriFs()
+    expect(await adapter.get('urlcache:logo')).toBe('legacy-data')
+    expect(files.get('urlcache%3Alogo.json')).toBe('legacy-data') // 迁移生效
+    expect(files.has('urlcache:logo.json')).toBe(false)
+    expect(await adapter.get('urlcache:logo')).toBe('legacy-data') // 再次读取走映射名
+  })
+
+  it('存量迁移写失败不放大为读失败：返回已读内容，旧文件保留待下次重试', async () => {
+    const files = installStatefulFs()
+    files.set('urlcache:logo.json', 'legacy-data')
+    tauriMock.fs.rename.mockRejectedValueOnce(new Error('EINVAL'))
+    const adapter = await createTauriFs()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(await adapter.get('urlcache:logo')).toBe('legacy-data')
+      expect(files.has('urlcache:logo.json')).toBe(true) // 旧文件保留
+      expect(files.has('urlcache%3Alogo.json')).toBe(false)
+      expect(warn).toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('delete 对映射名与旧原名文件双清理，防止 get 回退把已删值读回来', async () => {
+    const files = installStatefulFs()
+    files.set('urlcache:logo.json', 'legacy-data') // 未迁移的旧文件
+    const adapter = await createTauriFs()
+    await adapter.delete('urlcache:logo')
+    expect(files.has('urlcache:logo.json')).toBe(false)
+    expect(await adapter.get('urlcache:logo')).toBeNull()
+  })
+
+  it('键不含特殊字符（映射名=原名）不做 legacy 二次查找；未命中返回 null', async () => {
+    installStatefulFs()
+    const adapter = await createTauriFs()
+    await adapter.set('icons', 'v')
+    expect(await adapter.get('icons')).toBe('v')
+    expect(await adapter.get('missing')).toBeNull()
+    expect(await adapter.get('urlcache:none')).toBeNull()
+  })
 })

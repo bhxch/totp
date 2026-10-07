@@ -33,9 +33,16 @@ export function registerIcons(icons: ReadonlyArray<BuiltinIcon>): void {
   for (const icon of icons) ICONS[icon.id] = icon
 }
 
-/** 小写并去除空白/点/连字符/下划线，用于发行方匹配 */
+/**
+ * 小写并去除空白/点/连字符/下划线，用于发行方匹配；R4-C1：同时剔除 Windows 文件名
+ * 危险字符（`\ / : * ? " < > |`）与控制字符——产出值兼作图标包 stored id / 注册表键
+ * （iconImport.ts），桌面端会以其为存储键成分并经 tauriFs 映射为文件名，源头清洗
+ * 避免 ADS/子目录逃逸；调用面仅 suggestIcons 运行时匹配（两侧同函数归一，无持久化
+ * 匹配键）与本清洗点，不破坏既有条目 id 匹配。
+ */
 export function normalizeIssuer(name: string): string {
-  return name.toLowerCase().replace(/[\s._-]+/g, '')
+  // eslint-disable-next-line no-control-regex -- 刻意清除 C0 控制字符与 DEL
+  return name.toLowerCase().replace(/[/\\:*?"<>|\u0000-\u001f\u007f]/g, '').replace(/[\s._-]+/g, '')
 }
 
 function levenshtein(a: string, b: string): number {

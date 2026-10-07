@@ -99,9 +99,36 @@ export function createIconStore(adapter: StorageAdapter): IconStore {
       }
       // 值类型设防：legacy 值非字符串（手改存储/历史脏数据）跳过，不写新键也不入索引
       const ids = Object.keys(legacyMap).filter((id) => typeof legacyMap[id] === 'string')
-      for (const id of ids) await adapter.set(`${ICON_DATA_PREFIX}${id}`, legacyMap[id] as string)
-      await adapter.set(INDEX_KEY, JSON.stringify(ids))
-      await adapter.delete('icons')
+      // R4-C1：并行拆写 + per-key 容错（allSettled）——单键 set 失败只记 console.error 继续，
+      // 绝不放大为 init 抛错（desktopShell 主 try 会把 init 失败转成整屏 loadError）；
+      // 部分失败时旧键保留（迁移幂等，下次启动自动重试），成功键先入内存保证本会话可用
+      const results = await Promise.allSettled(
+        ids.map((id) => adapter.set(`${ICON_DATA_PREFIX}${id}`, legacyMap[id] as string)),
+      )
+      const okIds: string[] = []
+      ids.forEach((id, i) => {
+        const r = results[i]!
+        if (r.status === 'fulfilled') okIds.push(id)
+        else console.error(`[iconStore] 迁移 icon:${id} 失败（旧键保留，下次启动重试）`, r.reason)
+      })
+      if (okIds.length === ids.length) {
+        // R4-M2 混合状态合并：旧 icons 键与 iconindex 并存（迁移中断/旧备份恢复）时索引取
+        // 既有索引 ∪ legacy ids——覆盖写会把已迁移键挤出索引（数据键成孤儿、图标静默丢失）
+        let existing: string[] = []
+        const rawExisting = await adapter.get(INDEX_KEY)
+        if (rawExisting !== null) {
+          try {
+            const parsed: unknown = JSON.parse(rawExisting)
+            if (Array.isArray(parsed)) existing = parsed.filter((x): x is string => typeof x === 'string')
+          } catch {
+            existing = [] // 损坏索引按空处理（数据键仍在，下次 put 写索引恢复可见性）
+          }
+        }
+        await adapter.set(INDEX_KEY, JSON.stringify([...new Set([...ids, ...existing])]))
+        await adapter.delete('icons')
+      } else {
+        for (const id of okIds) icons[id] = legacyMap[id] as string
+      }
     }
     const rawIndex = await adapter.get(INDEX_KEY)
     if (rawIndex !== null) {
