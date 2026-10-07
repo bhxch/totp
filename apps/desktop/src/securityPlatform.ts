@@ -16,7 +16,9 @@
  */
 import { computed, type ComputedRef } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import type { DpapiUnlockOps, SecurityPlatform, VueStore } from '@totp/ui'
+// AbeStatus/AbeResult/AbeOps 正本在 @totp/ui（T5 起，防两处类型漂移——Rust abe_status 返回体
+// camelCase 字段与 ui AbeStatus 对齐，单测 abe_status_result_serializes_camel_case 守护）
+import type { AbeOps, AbeResult, AbeStatus, DpapiUnlockOps, SecurityPlatform, VueStore } from '@totp/ui'
 // host 工厂经 '@totp/ui/host' 子出口导入(理由同 host/index.ts 头注释:宿主 mock 拦截点唯一)
 import { createSecurityOpsFromStore } from '@totp/ui/host'
 import { lockPrefsUnsupportedKeys } from './lockPrefs'
@@ -39,32 +41,7 @@ export interface SecurityPlatformDeps {
 
 /** platform 工厂与迁移共用的就绪断言收敛至 storeAccess（未就绪统一中文报错） */
 
-// ---------- ABE 服务宿主通道（P6 §0.3/T4） ----------
-
-/** ABE 服务状态（Rust abe_status 返回，serde camelCase）：matchesCaller=false 时
- *  boundPath/version 恒 undefined——失配者收到的是连接级错误 Resp 拿不到 Status JSON，
- *  版本/绑定路径信息仅匹配者可见（服务侧审查裁定，前端失配态展示「需要重新绑定」即可） */
-export interface AbeStatus {
-  installed: boolean
-  matchesCaller: boolean
-  boundPath?: string
-  version?: string
-}
-
-/** ABE 操作结果（remove）：ok=false 时 message 附服务侧原因 */
-export interface AbeResult {
-  ok: boolean
-  message?: string
-}
-
-/** ABE 服务宿主操作集（plan §0.3；T5 于 @totp/ui 定义 SecurityPlatform 挂载点后接线，
- *  T6 SecurityCard 消费；desktop 宿主实现=Rust abe_* 命令 invoke 包装） */
-export interface AbeOps {
-  supported: boolean
-  status(): Promise<AbeStatus | null>
-  bind(): Promise<boolean>
-  remove(): Promise<AbeResult>
-}
+// ---------- ABE 服务宿主通道类型（P6 §0.3/T4；AbeStatus/AbeResult/AbeOps 正本在 @totp/ui，实现见 createSecurityPlatform 内 abeOps） ----------
 
 export interface DesktopSecurityPlatform {
   /** 安全平台（computed：store 未就绪 null，SecurityCard 整卡不渲染） */
@@ -123,19 +100,6 @@ export function createSecurityPlatform(deps: SecurityPlatformDeps): DesktopSecur
     }
   }
 
-  const securityPlatform = computed<SecurityPlatform | null>(() => {
-    const s = deps.getStore()
-    if (!s) return null
-    return createSecurityOpsFromStore(s, {
-      dpapi: dpapiOps,
-      unlockNaming: deps.naming(),
-      // 审查 I10：desktop 无会话级 DEK 存储 → lockOnRestart 全平台无实现支撑（重启必锁）；
-      // 系统锁屏事件源仅 Windows（lock_events WTS），非 Windows 追加声明 lockOnSystemLock——
-      // SecurityCard 按 unsupported 隐藏对应开关防无效设置
-      lockPrefsUnsupported: lockPrefsUnsupportedKeys(deps.ua),
-    })
-  })
-
   // ABE 服务通道（P6 §0.3）：supported 按 UA 判定（与 lockPrefs/naming 同源 flags）——
   // abe_* 命令虽全平台注册（非 Windows supported:false 桩），前端短路可省无效 IPC；
   // 失败一律收敛 null/false/{ok:false}（UAC 取消、服务不可达均非异常路径，不打断 UI）
@@ -170,6 +134,20 @@ export function createSecurityPlatform(deps: SecurityPlatformDeps): DesktopSecur
       }
     },
   }
+
+  const securityPlatform = computed<SecurityPlatform | null>(() => {
+    const s = deps.getStore()
+    if (!s) return null
+    return createSecurityOpsFromStore(s, {
+      dpapi: dpapiOps,
+      abe: abeOps,
+      unlockNaming: deps.naming(),
+      // 审查 I10：desktop 无会话级 DEK 存储 → lockOnRestart 全平台无实现支撑（重启必锁）；
+      // 系统锁屏事件源仅 Windows（lock_events WTS），非 Windows 追加声明 lockOnSystemLock——
+      // SecurityCard 按 unsupported 隐藏对应开关防无效设置
+      lockPrefsUnsupported: lockPrefsUnsupportedKeys(deps.ua),
+    })
+  })
 
   return { platform: securityPlatform, dpapi: dpapiOps, abe: abeOps, migrateDekWrapToEntropyBound }
 }

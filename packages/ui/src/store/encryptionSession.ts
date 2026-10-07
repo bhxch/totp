@@ -1,7 +1,7 @@
 import {
   SECRET_BAG_KEY, SECURITY_KEY, SECURITY_PENDING_KEY, VAULT_KEY, addPrfSource, bytesToBase64,
   changeVaultPassphrase, createVault, decryptVaultWithDek, encryptVaultWithDek, isEncryptedVault,
-  isSecuritySettings, kekSourcesOf, removeKekSource, setupVaultEncryption, unlockVaultEncryption, withDpapiSource,
+  isSecuritySettings, kekSourcesOf, removeKekSource, setupVaultEncryption, unlockVaultEncryption, withAbeSource, withDpapiSource,
   type EncryptedVault, type KdfProfile, type KekSource, type SecuritySettings, type StorageAdapter, type Vault,
 } from '@totp/core'
 import { computed, ref, type Ref } from 'vue'
@@ -242,6 +242,18 @@ export function createEncryptionSession(deps: EncryptionSessionDeps) {
     return mutateSecurityOp(false, (s) => removeKekSource(s, 'dpapi'))
   }
 
+  /** 绑定 ABE 提权服务解锁来源（恒单份标记源，无 DEK 参与——密文由服务侧重包裹存 HKLM，
+   *  security.json 只记录来源存在，故守卫止步 security；绑定动作由 Task 6 UI 在 abe.bind()
+   *  成功后编排调用） */
+  function addAbeSourceOp(): Promise<void> {
+    return mutateSecurityOp(false, (s) => withAbeSource(s))
+  }
+
+  /** 移除 ABE 解锁来源（core 守卫：移除后无任何来源时抛「至少保留一种解锁方式」） */
+  function removeAbeSourceOp(): Promise<void> {
+    return mutateSecurityOp(false, (s) => removeKekSource(s, 'abe'))
+  }
+
   /** 启用加密：以当前内存 vault 明文建 KEK/wrap DEK → 写 security + 密文 vault → 本窗口缓存 DEK。
    *  经 commit 队列执行：Argon2 派生耗时数百 ms，期间的并发写 op 必须排队，
    *  否则会以 enable 前的旧快照落盘覆盖新写（真实竞态）。
@@ -468,8 +480,16 @@ export function createEncryptionSession(deps: EncryptionSessionDeps) {
     return src ? { wrappedDekD: src.wrappedDekD } : null
   })
 
+  /** 已绑定的 ABE 提权服务解锁来源视图（至多一个标记源，无载荷——密文在服务 HKLM；null=未启用。
+   *  锁定态仍可见——Task 7 LockScreen 静默解锁判定用；abe 源存在与否即「已启用 ABE」（plan p6 §0.3） */
+  const abeSource = computed(() => {
+    const s = security.value
+    if (!s) return null
+    return kekSourcesOf(s).some((x) => x.kind === 'abe') ? { kind: 'abe' as const } : null
+  })
+
   return {
-    security, locked, hasEncryption, backupSecret, prfSources, dpapiSource,
+    security, locked, hasEncryption, backupSecret, prfSources, dpapiSource, abeSource,
     /** F1+F7：主层 commit/saveVaultToAdapter 每次落盘 await 后读取代数复查 */
     get generation() {
       return lockGeneration
@@ -481,6 +501,7 @@ export function createEncryptionSession(deps: EncryptionSessionDeps) {
     enableEncryption, disableEncryption, changePassphrase,
     unlock, unlockWithDek, applyDekAndUnlock,
     addPrfSourceOp, removePrfSourceOp, addDpapiSourceOp, removeDpapiSourceOp,
+    addAbeSourceOp, removeAbeSourceOp,
   }
 }
 

@@ -41,6 +41,32 @@ export interface DpapiUnlockOps {
   remove(): Promise<void>
 }
 
+/** ABE 提权服务状态（Rust abe_status 返回体四字段，serde camelCase；desktop 宿主经 invoke 包装透传）：
+ *  matchesCaller=false 时 boundPath/version 恒 undefined——失配者收到的是连接级错误 Resp 拿不到
+ *  Status JSON，版本/绑定路径信息仅匹配者可见（服务侧审查裁定，前端失配态展示「需要重新绑定」即可）。
+ *  注：Rust AbeStatusResult 另含 supported 字段，本层经 AbeOps.supported 表达，不在状态体重复 */
+export interface AbeStatus {
+  installed: boolean
+  matchesCaller: boolean
+  boundPath?: string
+  version?: string
+}
+
+/** ABE 操作结果（remove）：ok=false 时 message 附服务侧原因 */
+export interface AbeResult {
+  ok: boolean
+  message?: string
+}
+
+/** ABE 提权服务宿主操作集（plan p6 §0.3；desktop 宿主实现=Rust abe_* 命令 invoke 包装，
+ *  extension 无此能力 → 不注入；SecurityCard 仅 supported=true 渲染） */
+export interface AbeOps {
+  supported: boolean
+  status(): Promise<AbeStatus | null>
+  bind(): Promise<boolean>
+  remove(): Promise<AbeResult>
+}
+
 /** 加密状态与操作（宿主从 store 闭包绑定；desktop/options 各自组装） */
 export interface SecurityOps {
   /** 是否处于锁定态（真值时卡片只提示，解锁入口由主 LockScreen 承担） */
@@ -72,6 +98,8 @@ export interface SecurityPlatform {
   security: SecurityOps | null
   /** [可选] OS 自动解锁（Windows=DPAPI / macOS=Keychain / Linux=Secret Service）；仅 desktop 提供，未提供时 SecurityCard/LockScreen 隐藏该能力（extension 无） */
   dpapi?: DpapiUnlockOps
+  /** [可选] ABE 提权服务解锁通道（plan p6 §0.3）；仅 desktop 提供，supported=false 不渲染不调用（extension 无） */
+  abe?: AbeOps
   /** 解锁方式按端命名（宿主注入；缺省 Passkey，osAutoLabel null=该端无原生自动解锁） */
   unlockNaming?: { prfLabel: string; osAutoLabel: string | null }
   /** 复制后 30s 自动清空剪贴板开关（当前值） */

@@ -8,7 +8,7 @@ import { createVueStore } from '../src/store'
 const EXPECTED_KEYS = [
   'vault', 'settings', 'initStore', 'registerStorageSync', 'commit', 'commitSettings',
   'locked', 'hasEncryption', 'unlock', 'lock', 'enableEncryption', 'disableEncryption', 'changePassphrase',
-  'securitySettings', 'prfSources', 'dpapiSource',
+  'securitySettings', 'prfSources', 'dpapiSource', 'abeSource',
   'backupSecret', 'bagStored', 'credsCache',
   'mergeConflicts', 'conflictCount',
   'sealWithDek', 'unsealWithDek',
@@ -17,12 +17,13 @@ const EXPECTED_KEYS = [
   'saveSourceCredOp', 'removeSourceCredOp', 'migrateLegacySecrets',
   'getCurrentDek',
   'unlockWithDek', 'addPrfSourceOp', 'removePrfSourceOp', 'addDpapiSourceOp', 'removeDpapiSourceOp',
+  'addAbeSourceOp', 'removeAbeSourceOp',
   'addEntryOp', 'updateEntryOp', 'removeEntryOp', 'removeEntriesOp', 'addTagOp', 'renameTagOp', 'removeTagOp', 'reorderOp', 'replaceAllOp',
 ].sort()
 
 /** 只读/缓存视图成员（computed 或 ref，读 .value）；store.ts:55-58 注释：类型须为非 undefined 的
  *  Ref/ComputedRef——宿主 SecurityPlatform 等接口要求非 undefined */
-const VIEW_KEYS = ['locked', 'hasEncryption', 'prfSources', 'dpapiSource', 'backupSecret', 'bagStored', 'conflictCount', 'securitySettings']
+const VIEW_KEYS = ['locked', 'hasEncryption', 'prfSources', 'dpapiSource', 'abeSource', 'backupSecret', 'bagStored', 'conflictCount', 'securitySettings']
 /** reactive/ref 数据成员（非函数，供组件渲染/直接读写） */
 const DATA_KEYS = ['vault', 'settings', 'credsCache', 'mergeConflicts']
 

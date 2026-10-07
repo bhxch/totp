@@ -1,6 +1,6 @@
 import { computed } from 'vue'
 import { randomBytes } from '@totp/core'
-import type { DpapiUnlockOps, LockPrefs, SecurityPlatform } from '../components/securityPlatform'
+import type { AbeOps, DpapiUnlockOps, LockPrefs, SecurityPlatform } from '../components/securityPlatform'
 import type { VueStore } from '../store'
 // WebAuthn 交互原语经包名自引用导入(Node/TS 支持包名自引用):宿主测试对 '@totp/ui' 的
 // vi.mock 是唯一拦截点(securityPlatform.test 以桩替换 createPrfCredential/prfSupported——
@@ -13,17 +13,19 @@ import { createPrfCredential, prfSupported } from '@totp/ui'
  * 同型成员(内置)= security 8 成员(locked/hasEncryption/enableEncryption/disableEncryption/
  * changePassphrase/kdfProfile/passwordChangedAt/passkey{sources,prfSupported,add,remove},
  * 两端逐字)+ clipboardClearEnabled/setClipboardClear + lockPrefs 三字段整读整写。
- * 注入差异(全部可选,4 键):
- * - dpapi / unlockNaming:desktop 独有(OS 自动解锁通道与按端命名);
+ * 注入差异(全部可选,5 键):
+ * - dpapi / unlockNaming / abe:desktop 独有(OS 自动解锁通道、按端命名与 ABE 提权服务通道);
  * - popup:extension 独有(popup「已复制」关窗延迟,desktop 无 popup 不渲染该输入);
  * - lockPrefsUnsupported:ext=['lockOnRestart'](D2 裁定置灰+角标,不再隐藏;
  *   lockOnSystemLock 仍隐藏)/ desktop=lockPrefsUnsupportedKeys(ua)(系统锁事件源仅 Windows)。
- * overrides 键数 4 ≪ 同型成员 11 → 该工厂可抽。
+ * overrides 键数 5 ≪ 同型成员 11 → 该工厂可抽。
  */
 
 export interface SecurityOpsOverrides {
   /** OS 自动解锁通道(desktop 独有):SecurityCard「启用/移除」与 LockScreen「挂载静默解锁」共用同一对象 */
   dpapi?: DpapiUnlockOps
+  /** ABE 提权服务通道(desktop 独有,plan p6 §0.3):supported=false 不渲染不调用 */
+  abe?: AbeOps
   /** 解锁方式按端命名(desktop 独有):调用时求值——保持 locale 响应式(unlockNaming 时序约束) */
   unlockNaming?: { prfLabel: string; osAutoLabel: string | null }
   /** popup 关窗延迟通道(extension 独有):提供时 SecurityCard 渲染延迟输入;
@@ -74,6 +76,7 @@ export function createSecurityOpsFromStore(store: VueStore, overrides: SecurityO
       },
     },
     ...(o.dpapi ? { dpapi: o.dpapi } : {}),
+    ...(o.abe ? { abe: o.abe } : {}),
     ...(o.unlockNaming ? { unlockNaming: o.unlockNaming } : {}),
     clipboardClearEnabled: computed(() => store.settings.clipboardClearEnabled),
     async setClipboardClear(v) {

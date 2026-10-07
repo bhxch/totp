@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { KdfProfile } from '@totp/core'
 import { useAsyncMessage } from '../composables/useAsyncMessage'
-import type { LockPrefs, SecurityPlatform } from './securityPlatform'
+import type { AbeOps, LockPrefs, SecurityPlatform } from './securityPlatform'
 import MdButton from './md/MdButton.vue'
 import MdCheckbox from './md/MdCheckbox.vue'
 import MdSelect from './md/MdSelect.vue'
@@ -15,6 +15,9 @@ const { t } = useI18n()
 const props = defineProps<{
   /** 安全平台能力；null 时整卡不渲染（popup 不受影响） */
   platform: SecurityPlatform | null
+  /** [可选] ABE 提权服务通道（plan p6 §0.3/T5 仅接口层）：缺省回落 platform.abe 挂载点
+   *  （desktop 宿主经工厂注入）；supported=false 或未提供时不渲染该区（Task 6 消费渲染） */
+  abe?: AbeOps | null
 }>()
 
 const password = ref('')

@@ -419,6 +419,8 @@ export function createVueStore(
     prfSources: encryption.prfSources,
     /** 已绑定 dpapi 来源（wrappedDekD） */
     dpapiSource: encryption.dpapiSource,
+    /** 已绑定 abe 提权服务来源（标记源；plan p6 T5） */
+    abeSource: encryption.abeSource,
     /** 会话备份口令只读视图（随保管区密文落盘；锁定清空、解锁自动装载） */
     backupSecret: encryption.backupSecret,
     /** 保管区是否已存备份口令（bag.backupPassword 非空；与 backupSecret 组合出三态：未设置/会话内已启用/已存入保管区） */
@@ -449,6 +451,7 @@ export function createVueStore(
     unlockWithDek: encryption.unlockWithDek,
     addPrfSourceOp: encryption.addPrfSourceOp, removePrfSourceOp: encryption.removePrfSourceOp,
     addDpapiSourceOp: encryption.addDpapiSourceOp, removeDpapiSourceOp: encryption.removeDpapiSourceOp,
+    addAbeSourceOp: encryption.addAbeSourceOp, removeAbeSourceOp: encryption.removeAbeSourceOp,
     addEntryOp: (entry: OtpEntry) => commit((v) => addEntry(v, entry)),
     updateEntryOp: (uuid: string, patch: Partial<Omit<OtpEntry, 'uuid'>>) => commit((v) => updateEntry(v, uuid, patch)),
     removeEntryOp: (uuid: string) => commit((v) => removeEntry(v, uuid)),
