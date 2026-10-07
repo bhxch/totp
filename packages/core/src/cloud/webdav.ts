@@ -54,7 +54,11 @@ export function createWebdavBackend(cred: WebdavCred): CloudBackend {
   return {
     id: 'webdav',
     async put(path, data) {
-      await ensureDavDir(resolveDirPath(cred))
+      // R2-M2：建目录来源改由 path 参数派生（与 cred 解耦）。此前恒 ensureDavDir(resolveDirPath(cred))，
+      // 与「所有调用方 path 由同一 cred 派生」的现状等价，但未来传入非 cred 派生 path 时 MKCOL
+      // 不覆盖其父目录；无 '/'（根目录对象）跳过建目录（dir='' 直返）
+      const slash = path.lastIndexOf('/')
+      await ensureDavDir(slash === -1 ? '' : path.slice(0, slash))
       const res = await cloudFetch(LABEL, urlOf(path), {
         method: 'PUT',
         headers: { Authorization: auth },

@@ -168,6 +168,19 @@ describe('WebDAV 后端', () => {
     await rootBackend.put(PATH, new Uint8Array([1]))
     expect(rootMock.mock.calls.every((c) => c[1]!.method === 'PUT')).toBe(true)
   })
+
+  it('R2-M2：建目录由 path 参数派生——非 cred 派生 path 传入时 MKCOL 覆盖其父目录', async () => {
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => new Response(null, { status: 201 }))
+    vi.stubGlobal('fetch', fetchMock)
+    // cred 自带默认目录 default，但 put 传入 custom 派生 path：MKCOL 须按 path 而非 cred
+    const backend = createWebdavBackend({ backend: 'webdav', serverUrl: DAV, username: 'user', password: 'pass', objectPath: 'default/x.totpbackup' })
+    await backend.put('custom/sub/vault.totpbackup', new Uint8Array([1]))
+    const mkcols = fetchMock.mock.calls.filter((c) => c[1]!.method === 'MKCOL').map((c) => String(c[0]))
+    expect(mkcols).toEqual([`${DAV}/custom`, `${DAV}/custom/sub`])
+    const last = fetchMock.mock.calls.at(-1)!
+    expect(last[1]!.method).toBe('PUT')
+    expect(String(last[0])).toBe(`${DAV}/custom/sub/vault.totpbackup`)
+  })
 })
 
 describe('Gist 后端', () => {
