@@ -61,15 +61,61 @@ describe('TagFilterRow', () => {
     w.unmount()
   })
 
+  it('R3-M6：气泡开启时按钮 aria-describedby 关联气泡 id（关闭时不声明）', async () => {
+    const w = mount(TagFilterRow, { global: { plugins: [createTestI18n()] }, props: { tags, selectedIds: ['t1', 't2'], mode: 'any' } })
+    const btn = w.find('button.mode-toggle')
+    expect(btn.attributes('aria-describedby')).toBeUndefined()
+    await btn.trigger('click')
+    const pop = w.find('.mode-pop')
+    expect(pop.exists()).toBe(true)
+    expect(btn.attributes('aria-describedby')).toBe(pop.attributes('id'))
+  })
+
+  it('R3-I2：切换标签选择致选中 <2（按钮转 disabled）→ 说明气泡收起，禁用态不挂泡', async () => {
+    const w = mount(TagFilterRow, { global: { plugins: [createTestI18n()] }, props: { tags, selectedIds: ['t1', 't2'], mode: 'any' } })
+    await w.find('button.mode-toggle').trigger('click')
+    expect(w.find('.mode-pop').exists()).toBe(true)
+    // 点掉一个标签（宿主回写 selectedIds）：modeDisabled 成立的同时气泡必须收起
+    await w.setProps({ selectedIds: ['t1'] })
+    expect(w.find('button.mode-toggle').classes()).toContain('mode-toggle--disabled')
+    expect(w.find('.mode-pop').exists()).toBe(false)
+  })
+
   it('manageable prop：默认 true 显示管理钮并 emit open-manage；false 隐藏', async () => {
     const w = mount(TagFilterRow, { global: { plugins: [createTestI18n()] }, props: { tags, selectedIds: [], mode: 'any' } })
     const btn = w.find('button.manage-btn')
     expect(btn.exists()).toBe(true)
-    expect(btn.attributes('title')).toBeTruthy() // 悬浮提示
     await btn.trigger('click')
     expect(w.emitted('open-manage')).toHaveLength(1)
     const w2 = mount(TagFilterRow, { global: { plugins: [createTestI18n()] }, props: { tags, selectedIds: [], mode: 'any', manageable: false } })
     expect(w2.find('button.manage-btn').exists()).toBe(false)
+    expect(w2.find('button.mode-toggle').exists()).toBe(true)
+  })
+
+  it('R3-M5：管理标签钮提示为自绘 tooltip 气泡（pointerenter/focus 显示、leave/blur/点击收起），不再用原生 :title', async () => {
+    const w = mount(TagFilterRow, { global: { plugins: [createTestI18n()] }, props: { tags, selectedIds: [], mode: 'any' } })
+    const btn = w.find('button.manage-btn')
+    expect(btn.attributes('title')).toBeUndefined() // 原生 :title 已移除（触屏不可用）
+    expect(w.find('.manage-pop').exists()).toBe(false)
+    // hover 显示 + aria-describedby 关联
+    await btn.trigger('pointerenter')
+    const pop = w.find('.manage-pop')
+    expect(pop.exists()).toBe(true)
+    expect(pop.attributes('role')).toBe('tooltip')
+    expect(btn.attributes('aria-describedby')).toBe(pop.attributes('id'))
+    // 移开收起；聚焦同样显示（键盘可达）
+    await btn.trigger('pointerleave')
+    expect(w.find('.manage-pop').exists()).toBe(false)
+    await btn.trigger('focus')
+    expect(w.find('.manage-pop').exists()).toBe(true)
+    await btn.trigger('blur')
+    expect(w.find('.manage-pop').exists()).toBe(false)
+    // 点击（open-manage）：打开管理弹层的同时收起 tooltip，注意力移交对话框
+    await btn.trigger('pointerenter')
+    expect(w.find('.manage-pop').exists()).toBe(true)
+    await btn.trigger('click')
+    expect(w.find('.manage-pop').exists()).toBe(false)
+    expect(w.emitted('open-manage')).toHaveLength(1)
   })
 
   it('空 tags：chips 段（「全部」+ tag chips）不渲染；mode 钮（<2 天然禁用）与管理钮仍渲染（管理入口是创建首个标签的途径）', () => {
