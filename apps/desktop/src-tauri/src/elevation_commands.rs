@@ -134,7 +134,9 @@ fn abe_wrap_impl(window_label: &str, dek: &mut Vec<u8>) -> Result<(), String> {
         match <[u8; 32]>::try_from(dek.as_slice()) {
             // wrap_dek 双层 Result（外层=管道/传输错，内层=服务侧裁定）：外层映射 String，
             // 内层原样透出——语义与原 `map_err(?` 早退版一致，但不再提前 return 跳过清零
-            Ok(arr) => crate::elevation_client::wrap_dek(&arr).map_err(|e| e.to_string()).and_then(|inner| inner),
+            Ok(arr) => crate::elevation_client::wrap_dek(&arr)
+                .map_err(|e| e.to_string())
+                .and_then(|inner| inner),
             Err(_) => Err(format!("DEK 长度非 32B: {}B", dek.len())),
         }
     });
