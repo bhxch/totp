@@ -67,6 +67,10 @@ reqwest = { version = "0.13", default-features = false, features = [
 # reqwest rustls-no-provider 的进程级 CryptoProvider：ring（预生成汇编，无 cmake/NASM 外部依赖）；
 # std+tls12 与 reqwest 内部 hyper-rustls(http1,tls12) 对齐（老 WebDAV 服务器多停在 TLS1.2）
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+# DEK 与明文密钥内存清零（Global Constraints：DEK 缓冲用后即清）。必须放主依赖段：
+# elevation_commands.rs 是 Tauri 命令层（generate_handler 不支持条目级 cfg，Linux 需编译运行时桩），
+# 其 use zeroize::Zeroize 在 Linux clippy 下解析；放 cfg(windows) 段会 E0432（CI run 37631405475 实证）
+zeroize = "1"
 
 [dev-dependencies]
 # plan17：mcp_auth_middleware 的 oneshot 直测（审查 I-6）需要 tower::ServiceExt（util feature，
@@ -107,8 +111,6 @@ windows = { version = "0.61", features = [
 windows-service = "0.8"
 # 调用者验证：SHA256(client exe 文件)（plan p6 §0.1；rs 调用方传入比对值，验证纯函数不落 IO）
 sha2 = "0.10"
-# DEK 与明文密钥内存清零（Global Constraints：DEK 缓冲用后即清）
-zeroize = "1"
 # UAC 单命令提权（plan p6 §0.2）：trigger_install 以 runas 拉起自身 --elevation-install
 runas = "1.2"
 
