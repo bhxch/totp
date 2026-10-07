@@ -71,6 +71,47 @@ describe('importUriBatch', () => {
     // parseOtpUri decodeURIComponent 后 label=user#x（'#' 不再被当 fragment 截断）
     expect(r.entries[0]!.label).toBe('user#x')
   })
+
+  it('R4-I1：WinAuth Steam 行（totp scheme + deviceid+data 双特征）重建 steam 条目而非普通 TOTP', () => {
+    // WinAuth ToUrl（WinAuthAuthenticator.cs:728-729）：data=UrlEncode(SteamGuard JSON)，
+    // SteamData 即 Steam AddAuthenticator response + steamid（shared_secret/serial_number/steamid）
+    const sharedSecret = btoa(String.fromCharCode(...new Uint8Array(20).fill(0xff)))
+    const steamData = encodeURIComponent(JSON.stringify({
+      shared_secret: sharedSecret,
+      serial_number: '12345678901',
+      steamid: '76561190000000000',
+      steamguard_scheme: '2',
+    }))
+    const r = importUriBatch(
+      `otpauth://totp/Steam:steamuser?secret=JBSWY3DPEHPK3PXP&digits=5&issuer=Steam&deviceid=android%3Aabcd1234&data=${steamData}`,
+    )
+    expect(r.failures).toHaveLength(0)
+    expect(r.entries).toHaveLength(1)
+    expect(r.entries[0]).toMatchObject({
+      type: 'steam',
+      issuer: 'Steam',
+      label: 'steamuser', // data JSON 无 account_name → URI path 账户段补齐
+      secret: '7'.repeat(32), // 20 字节全 0xFF → RFC4648 编码（非 URI 的伪 secret）
+      digits: 5,
+      note: '12345678901',
+    })
+  })
+
+  it('R4-I1：Steam data 参数损坏 → failures 行级错误，绝不产出错误 TOTP 条目', () => {
+    const badData = encodeURIComponent(JSON.stringify({ shared_secret: 'not-base64!!' }))
+    const r = importUriBatch(
+      `otpauth://totp/Steam:u?secret=JBSWY3DPEHPK3PXP&deviceid=d&data=${badData}`,
+    )
+    expect(r.entries).toHaveLength(0)
+    expect(r.failures).toEqual([{ index: 0, message: 'shared_secret 不是合法 base64' }])
+  })
+
+  it('R4-I1：issuer 为 Steam 但无 deviceid+data 特征的行维持普通 totp 解析现状', () => {
+    const r = importUriBatch('otpauth://totp/Steam:u?secret=JBSWY3DPEHPK3PXP&issuer=Steam')
+    expect(r.entries).toHaveLength(1)
+    expect(r.entries[0]!.type).toBe('totp')
+    expect(r.failures).toHaveLength(0)
+  })
 })
 
 describe('extractGenericRows', () => {
