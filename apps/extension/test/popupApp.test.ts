@@ -739,6 +739,40 @@ describe('popup pending 信封分派（P5 Task 2：kind=uri|pasted；上方裸 U
     expect(wrapper.find('entry-form-stub').exists()).toBe(true)
     expect(wrapper.find('.error').exists()).toBe(false)
   })
+
+  it('运行中收到新信封（R5-M4）：storage.onChanged 触发消费 → 预填确认态，读取即清除', async () => {
+    shim = installChromeShim()
+    const wrapper = await mountTracked()
+    expect(wrapper.find('entry-form-stub').exists()).toBe(false)
+
+    const fresh = encodePending({ v: 1, kind: 'uri', text: 'otpauth://totp/Acme:dev?secret=JBSWY3DPEHPK3PXP' })
+    shim.local.data['pendingOtpauth'] = fresh
+    shim.emit({ pendingOtpauth: { newValue: fresh } }, 'local')
+    await flushPromises()
+
+    expect(wrapper.find('entry-form-stub').exists()).toBe(true)
+    const initial = wrapper.findComponent({ name: 'EntryForm' }).props('initial') as { issuer?: string } | null
+    expect(initial).toMatchObject({ issuer: 'Acme' })
+    expect(shim.local.data['pendingOtpauth']).toBeUndefined()
+    expect(shim.local.calls.remove).toBe(1)
+  })
+
+  it('onChanged 防重入（R5-M4）：remove 自写回声读到空信封 no-op；非 pending 键变更不触发读盘', async () => {
+    shim = installChromeShim()
+    const wrapper = await mountTracked()
+
+    // 消费触发的 remove 自写回声（仅 oldValue 无 newValue）：listener 触发但读到空信封 no-op
+    shim.emit({ pendingOtpauth: { oldValue: 'x' } }, 'local')
+    await flushPromises()
+    expect(wrapper.find('entry-form-stub').exists()).toBe(false)
+    expect(wrapper.find('.error').exists()).toBe(false)
+    const getsAfterEcho = shim.local.calls.get
+
+    // 非 pending 键的 local 变更：listener 直接短路，不读盘
+    shim.emit({ vault: { newValue: 'y' } }, 'local')
+    await flushPromises()
+    expect(shim.local.calls.get).toBe(getsAfterEcho)
+  })
 })
 
 describe('popup 复制行为补齐（B3-15/16：HOTP 递增、清剪贴板三重门控）', () => {

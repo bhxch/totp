@@ -86,6 +86,14 @@ onMounted(async () => {
   }
   // 协议回调（?uri=）/右键菜单（pendingOtpauth）导入预填，不阻塞后续标签页 URL 读取
   void consumePendingOtpauth()
+  // R5-M4：popup 已开时再次右键 → 新信封经 onChanged 到达，运行中同样消费（此前仅 onMounted
+  // 消费一次，信封滞留到下次打开才被看到）。防重入由 consumeStoragePending 读空即返回天然保证
+  try {
+    ext!.storage.onChanged.addListener((changes, area) => {
+      if (area !== 'local' || !changes[PENDING_OTPAUTH_KEY]) return
+      void consumeStoragePending()
+    })
+  } catch { /* 扩展上下文不可用（如纯浏览器调试）忽略 */ }
   try {
     const [tab] = await ext!.tabs.query({ active: true, currentWindow: true })
     if (tab?.url?.startsWith('http')) tabUrl.value = tab.url
@@ -169,24 +177,10 @@ function applyOtpauthPrefill(uri: string): string | null {
 }
 
 /**
- * 后台导入入口：popup URL 带 ?uri=（Firefox ext+otpauth 协议回调）或 local `pendingOtpauth`
- * （Chrome 右键菜单写入，读取即清除）→ 按信封 kind 分派：uri→URI 预填、pasted→parsePastedText
- * 复解单条进确认态；旧版裸 otpauth URI（decodePending null 且非空，兼容规则见 pendingOtpauth.ts）
- * 与非法值均走 URI 预填路径，报错提示
+ * 信封分派（uri 预填 / pasted 复解 / 过期提示共用尾部）：?uri= 协议回调与 storage 信封两入口
+ * 汇聚于此。decode 失败 → 旧裸 URI 兼容（形状规则见 pendingOtpauth.ts）
  */
-async function consumePendingOtpauth(): Promise<void> {
-  let raw = ''
-  try {
-    raw = new URLSearchParams(window.location.search).get('uri')?.trim() ?? ''
-  } catch { /* 无 location 场景忽略 */ }
-  if (!raw) {
-    try {
-      const got = await ext!.storage.local.get(PENDING_OTPAUTH_KEY)
-      raw = typeof got[PENDING_OTPAUTH_KEY] === 'string' ? got[PENDING_OTPAUTH_KEY].trim() : ''
-      if (raw) await ext!.storage.local.remove(PENDING_OTPAUTH_KEY)
-    } catch { /* 扩展上下文不可用（如纯浏览器调试）忽略 */ }
-  }
-  if (!raw) return
+async function dispatchPendingRaw(raw: string): Promise<void> {
   // P5 信封分派（Global Constraints）：JSON 解析失败/形状不符 → 旧版裸 URI 兼容
   const envelope = decodePending(raw)
   // R5-I3：带 ts 信封超过 PENDING_TTL_MS → 信封已在读取时删除（raw 路径先 remove），提示重试；
@@ -216,6 +210,38 @@ async function consumePendingOtpauth(): Promise<void> {
   importError.value = parsed.entries.length === 0
     ? t('popup.importNone')
     : t('popup.batchImportHint', { count: parsed.entries.length })
+}
+
+/**
+ * 从 storage 读 pending 信封并消费（读取即清除）；无信封即 no-op——天然防重入（消费后即删，
+ * 消费触发的 remove 自写回声 / 重复 onChanged 读到空直接返回）。R5-M4：popup 已开时再次右键
+ * 的信封也由此消费（onChanged 触发）。理论上 get 与 remove 交错可双读同一 raw，消费动作
+ * （预填重挂同内容表单）幂等无害，不做加锁
+ */
+async function consumeStoragePending(): Promise<void> {
+  let raw = ''
+  try {
+    const got = await ext!.storage.local.get(PENDING_OTPAUTH_KEY)
+    raw = typeof got[PENDING_OTPAUTH_KEY] === 'string' ? got[PENDING_OTPAUTH_KEY].trim() : ''
+    if (raw) await ext!.storage.local.remove(PENDING_OTPAUTH_KEY)
+  } catch { /* 扩展上下文不可用（如纯浏览器调试）忽略 */ }
+  if (raw) await dispatchPendingRaw(raw)
+}
+
+/**
+ * 后台导入 mount 入口：popup URL 带 ?uri=（Firefox ext+otpauth 协议回调）或 local
+ * `pendingOtpauth`（Chrome 右键菜单写入）→ 分派预填；?uri= 优先（协议回调即时性最高）
+ */
+async function consumePendingOtpauth(): Promise<void> {
+  let raw = ''
+  try {
+    raw = new URLSearchParams(window.location.search).get('uri')?.trim() ?? ''
+  } catch { /* 无 location 场景忽略 */ }
+  if (raw) {
+    await dispatchPendingRaw(raw)
+    return
+  }
+  await consumeStoragePending()
 }
 
 function closeForm() {
