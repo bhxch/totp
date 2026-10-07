@@ -36,6 +36,7 @@
 
 - [ ] mini titlebar 收起/置顶按钮：视觉 32px、命中区约 40px（::after 扩展），触控/点击无 miss
 - [ ] popup 条目行右缘操作按钮与 OtpListItem compact 档按钮：命中区不小于视觉区，相邻按钮不误触（命中带重叠时 topmost 胜出为预期）
+- [ ] EntryForm 标签勾选列（纵排 checkbox）快速连点两行间隙，确认不误触发相邻行
 - [ ] 触屏设备（或有触屏的机器）抽查：codes 卡片 FAB、标签 chips、TagFilterRow mode-toggle 命中正常
 
 ## ABE 安装服务全链路（Windows 真机）

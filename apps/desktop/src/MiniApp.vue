@@ -259,7 +259,7 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
 body { font-family: system-ui, sans-serif; margin: 0; }
 /* R5-M6：.mini padding 6px = sticky 冻结条两侧缝隙宽，面板 .frozen 负 margin 补偿取同值 */
 .mini { display: flex; flex-direction: column; gap: 2px; padding: 6px; --frozen-bleed: 6px; }
-.titlebar { display: flex; align-items: center; gap: 2px; height: 30px; padding: 0 4px 0 10px; user-select: none; }
+.titlebar { display: flex; align-items: center; gap: 2px; height: 30px; padding: 0 8px; user-select: none; }
 .title-drag { flex: 1; font-size: var(--md-sys-typescale-body-small); opacity: .6; }
 /* 32px 视觉（spec §2.5 titlebar 30px 紧凑档）；Task 2 曾为 40px 视觉，与 30px titlebar 溢出收敛 */
 .tb-btn { border: none; background: transparent; cursor: pointer; width: 32px; height: 32px; border-radius: var(--md-sys-shape-corner-small); color: inherit; font-size: 12px; line-height: 1; position: relative; }

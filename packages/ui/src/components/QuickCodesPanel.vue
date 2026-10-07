@@ -108,7 +108,8 @@ const emptyDisplay = computed(() => {
   margin-inline: calc(-1 * var(--frozen-bleed, 0px)); padding-inline: var(--frozen-bleed, 0px); }
 /* 两态空态文案（同 popup .empty） */
 .empty { text-align: center; opacity: .6; padding: 32px 0; }
-/* compact 档（spec §2.5）：面板纵向 gap 与冻结区行间距 8→6px */
+/* compact 档（spec §2.5）：冻结区行间距 8→6px（根级 gap 对 block 流无效，仅 frozen gap 生效；
+ * 根 .quick-codes-panel 非 flex/grid，声明 gap 无布局效果，此值仅文档化意图） */
 .quick-codes-panel--compact { gap: 6px; }
 .quick-codes-panel--compact .frozen { gap: 6px; }
 </style>

@@ -119,8 +119,9 @@ function openManage() {
 .tag-filter-row--compact .mode-toggle { width: 28px; height: 28px; }
 .tag-filter-row--compact .mode-toggle::after { inset: -2px; }
 .mode-wrap { position: relative; display: inline-flex; }
-/* 模式钮紧凑化与 chips 同档（MdIconButton 默认 40px）；禁用语义靠 disabled prop，颜色降级补一层 */
-.mode-toggle { width: 32px; height: 32px; font-size: 18px; line-height: 1; }
+/* 模式钮沿用 MdIconButton 默认 40px 视觉（spec §2.9：::after inset -4px → 48dp 命中达标；
+ * 此前 CodesPage 场景曾覆写 32px 裁掉标准档，终审恢复 MD3 40dp）；禁用语义靠 disabled prop，颜色降级补一层 */
+.mode-toggle { font-size: 18px; line-height: 1; }
 .mode-toggle--disabled { opacity: .4; }
 /* 说明气泡：锚定按钮下方；点击外部即折叠（pointerdown capture） */
 .mode-pop {

@@ -561,7 +561,7 @@ h2 { margin: 0; font-size: var(--md-sys-typescale-title-medium); }
 /* 冻结容器（P3）：搜索行+标签筛选行 sticky 挂滚动祖先（NavigationShell 内容区），列表滚动时保持可见。
    背景与页面同色（卡片内不突兀）；TagFilterRow 说明气泡（.mode-pop absolute z-index 10）高于本层
    z-index 5，且本层无 overflow 裁剪，气泡正常浮出。R5-M6：负 margin+padding 自补偿盖住卡片
-   padding（16px，见 .page --frozen-bleed）两侧缝隙，列表内容不再从冻结条两侧穿过 */
+   padding（8px，见 .page --frozen-bleed）两侧缝隙，列表内容不再从冻结条两侧穿过 */
 .frozen { position: sticky; top: 0; z-index: 5; background: var(--md-sys-color-surface); padding-bottom: 4px;
   border-bottom: 1px solid var(--md-sys-color-outline-variant);
   margin-inline: calc(-1 * var(--frozen-bleed, 0px) + 1px); /* 收 1px 保卡片描边 */
