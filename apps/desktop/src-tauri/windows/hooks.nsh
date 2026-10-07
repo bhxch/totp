@@ -28,7 +28,10 @@
   Pop $R0
   ; ProgramData 服务副本目录（%ProgramData%\TotpTools\service，不存在静默成功）
   RMDir /r "$COMMONPROGRAMDATA\TotpTools\service"
-  ; HKLM 绑定记录键（BoundPath/BoundSha256/WrappedDek/ServiceVersion，不存在静默成功）
+  ; 父目录收尾（R6-M4）：仅删空目录、非 /r——若仍有内容说明存在意外残留（含 service
+  ; 为 junction 时 RMDir /r 跟随行为的不确定面），保守不递归删，留真机清单观察
+  RMDir "$COMMONPROGRAMDATA\TotpTools"
+  ; HKLM 绑定记录键（BoundPath/BoundSha256/WrappedDek/ServiceVersion/CallerSid，不存在静默成功）
   DeleteRegKey HKLM "SOFTWARE\TotpTools\Elevation"
 !macroend
 

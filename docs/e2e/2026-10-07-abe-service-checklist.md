@@ -51,6 +51,7 @@ icacls "%ProgramData%\TotpTools\service"
 - [ ] NSIS setup 卸载（系统「应用和功能」）→ 卸载完成后：服务不存在（`sc query` 报 1060）、`%ProgramData%\TotpTools` 副本目录已删、HKLM `SOFTWARE\TotpTools\Elevation` 键已删
 - [ ] **观察项（currentUser 模式）**：常规卸载器非提权（RequestExecutionLevel user），若上述特权清理未生效（权限不足被 nsExec 静默吞掉），以管理员身份运行卸载器复验钩子本身语法/逻辑正确，并记录实际行为（残留时手动 `sc delete` + 删目录收尾）；主清理通道为提权 `--elevation-uninstall`（`"安装目录\TOTP Tools.exe" --elevation-uninstall` + UAC）→ 逐项复验同上三点
 - [ ] 卸载/清理后重装流程可完整重走（安装→启用→自动解）
+- [ ] **R6-M4**：卸载完成后 `%ProgramData%\TotpTools` 父目录已删（hooks.nsh 补 `RMDir` 非递归，仅删空目录）；**观察项**：service 子目录若为 junction，卸载侧 `RMDir /r` 的跟随行为与安装侧 §7 记录对齐记录（父目录非空残留时手动清理并留档结论）
 
 ## 6. 目录抢占用例（T3 C-1 修复验证：OWNER_RIGHTS 抑制）
 
