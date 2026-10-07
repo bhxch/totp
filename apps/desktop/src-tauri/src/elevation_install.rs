@@ -1,6 +1,7 @@
 //! ABE 提权安装/卸载（plan p6 §0.2）：`--elevation-install`/`--elevation-uninstall` 由
 //! runas 提权拉起（UAC 一次完成安装+绑定），执行完即退出、无 UI。安装流程：算自身路径+
-//! SHA256 → 建/收紧副本目录 ACL（SDDL `D:P(A;;FA;;;SY)(A;;FA;;;BA)`）→ 复制自身 →
+//! SHA256 → 建/收紧副本目录 ACL（SDDL 含 OWNER_RIGHTS ACE 抑制所有者隐式 WRITE_DAC，
+//! 见 DIR_SDDL 注释的抢占威胁）→ 复制自身 →
 //! decide_service_action（纯函数）→ CreateService/ChangeServiceConfig → 写 HKLM 绑定三值
 //! （BoundPath/BoundSha256/ServiceVersion）→ 启动服务。
 //!
@@ -42,9 +43,15 @@ const SERVICE_DIR_SEGMENTS: &str = r"TotpTools\service";
 /// 副本文件名恒定（升级换二进制不改 ImagePath 语义；便携源 exe 名可能不同）
 const COPY_EXE_NAME: &str = "TotpTools.exe";
 
-/// 副本目录 DACL（§0.2）：拒绝继承（P）；SYSTEM/Administrators 完全——移除 Users 写，
-/// 防 SYSTEM 服务运行用户可写路径的二进制（本地提权面）
-const DIR_SDDL: &str = "D:P(A;;FA;;;SY)(A;;FA;;;BA)";
+/// 副本目录 DACL（§0.2 + 审查 C-1）：拒绝继承（P）；SYSTEM/Administrators 完全——
+/// 移除 Users 写，防 SYSTEM 服务运行用户可写路径的二进制（本地提权面）。
+/// OWNER_RIGHTS ACE（OW）必须有：其**存在本身**即抑制 NTFS「对象所有者恒隐式持有
+/// WRITE_DAC」规则（只留 RC 供所有者查询）。威胁动机（目录抢占）：%ProgramData% 默认
+/// 允许 Users 建目录，攻击者可在安装前预建 `TotpTools\service`（或 junction）抢得所有者
+/// 身份，create_dir_all 静默成功；若无 OW ACE，tighten_dir_acl 只换 DACL 不换所有者，
+/// 抢占者仍可重开 DACL 自授 Full → 替换副本 exe → SYSTEM 执行任意代码。勿当冗余删除
+/// （守护测试 dir_sddl_suppresses_owner_implicit_write_dac 锁形）。
+const DIR_SDDL: &str = "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;RC;;;OW)";
 
 /// 服务 ImagePath 的启动参数（服务分支入口，与 lib.rs 分派字面量一致）
 const SERVICE_LAUNCH_ARG: &str = "--elevation-service";
@@ -121,7 +128,10 @@ pub fn decide_service_action(
     ServiceAction::Change
 }
 
-/// ImagePath 形态归一化（比对用）：去首尾引号/空白 + 小写（与服务侧归一化同源语义）
+/// ImagePath 形态归一化（比对用）：去首尾引号/空白 + 小写（与服务侧归一化同源语义）。
+/// 已知脆弱（Minor，Fix round 1 留档）：对 `"path" args` 尾参形态只能剥首引号（尾引号
+/// 不在串端）；此类形态不落入精确相等分支，靠 decide_service_action 的副本目录前缀
+/// 容差兜底，判定仍正确
 fn normalize_image_path(path: &str) -> String {
     path.trim().trim_matches('"').trim().to_lowercase()
 }
@@ -426,6 +436,26 @@ mod tests {
 
     // 副本目录形态（测试用字面量，不依赖真实 %PROGRAMDATA%）
     const WANT: &str = r"C:\ProgramData\TotpTools\service\TotpTools.exe";
+
+    // ---- DIR_SDDL 形状守护（审查 C-1）----
+
+    #[test]
+    fn dir_sddl_suppresses_owner_implicit_write_dac() {
+        // P 标志阻断继承：防 %ProgramData%（Users 可写）的 ACE 经继承渗入
+        assert!(DIR_SDDL.starts_with("D:P("), "拒绝继承标记不可丢");
+        // OWNER_RIGHTS(OW) READ_CONTROL ACE 是 C-1 修复的核心：其存在本身抑制 NTFS
+        // 「所有者恒隐式持有 WRITE_DAC」——目录抢占（squat）场景下换 DACL 不换所有者
+        // 也不再能重开 DACL。威胁模型见 DIR_SDDL 注释；缺此 ACE 即回退到可提权形态
+        assert!(
+            DIR_SDDL.contains("(A;;RC;;;OW)"),
+            "OWNER_RIGHTS ACE 不可删（目录抢占威胁，见 DIR_SDDL 注释）"
+        );
+        assert!(DIR_SDDL.contains("(A;;FA;;;SY)"), "SYSTEM 完全控制不可丢");
+        assert!(
+            DIR_SDDL.contains("(A;;FA;;;BA)"),
+            "Administrators 完全控制不可丢（重装/重绑仍需经提权管理员写 DACL 与放副本）"
+        );
+    }
 
     // ---- decide_service_action 四例（brief 清单）----
 
