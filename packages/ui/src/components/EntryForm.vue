@@ -586,6 +586,12 @@ defineExpose({ submit, isNew })
       <MdButton variant="text" class="add-rule" @click="form.matchRules.push({ strategy: 'baseDomain', pattern: '' })">{{ t('entryForm.addRule') }}</MdButton>
     </fieldset>
     <div v-if="error" class="error">{{ error }}</div>
+    <!-- I1（审查）：保存/取消钮迁宿主动作区后表单内无默认提交钮，真实浏览器回车隐式提交失效——
+         保留 display:none 的默认提交钮恢复（仍是合法 default button；aria-hidden 免读屏重复，
+         jsdom 测试直发 submit 事件不受影响）。文本沿 isNew 口径，无障碍树不可见故仅语义占位 -->
+    <button type="submit" class="visually-hidden" aria-hidden="true" tabindex="-1">
+      {{ isNew ? t('entryForm.add') : t('entryForm.save') }}
+    </button>
   </form>
 </template>
 
@@ -611,8 +617,8 @@ fieldset { border: 1px solid var(--md-sys-color-outline-variant); border-radius:
 .rule-row .rule-pattern { flex: 1; }
 .rule-row .rule-pattern.invalid :deep(.md-text-field__box) { border-bottom-color: var(--md-sys-color-error); }
 .rule-error { font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-error); flex-basis: 100%; }
-.icon-recommend { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); padding: 4px 8px; background: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent); border-radius: 6px; }
-.icon-recommend .recommend-item { display: grid; place-items: center; padding: 6px 8px; border: none; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; position: relative; }
+.icon-recommend { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); padding: 4px 8px; background: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent); border-radius: var(--md-sys-shape-corner-small); }
+.icon-recommend .recommend-item { display: grid; place-items: center; padding: 6px 8px; border: none; border-radius: var(--md-sys-shape-corner-small); background: transparent; color: inherit; cursor: pointer; position: relative; }
 /* 命中层:inset -4px 在 padding 6px 8px 基础上再扩(20px 图标钮达标) */
 .icon-recommend .recommend-item::after { content: ''; position: absolute; inset: -4px; border-radius: inherit; }
 /* 状态层走 token（hover 8% / pressed 12%，MD3 状态层口径） */

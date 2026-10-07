@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { getBuiltinIcons, parsePastedText, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
-import { createIconStore, EntryForm, fullIconsReady, LockScreen, MdCheckbox, MdIconButton, NAV_ICONS, normalizeExtOtpauth, parseUriToEntryData, PersistErrorBanner, prefillFromParsed, QuickCodesPanel, resolvePopupVisible, sortEntries, ToastHost, useOtpCodes, useTheme, useToast, type EntryFormData } from '@totp/ui'
+import { createIconStore, EntryForm, fullIconsReady, LockScreen, MdButton, MdCheckbox, MdIconButton, NAV_ICONS, normalizeExtOtpauth, parseUriToEntryData, PersistErrorBanner, prefillFromParsed, QuickCodesPanel, resolvePopupVisible, sortEntries, ToastHost, useOtpCodes, useTheme, useToast, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { decodePending, isPendingExpired, PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
@@ -250,6 +250,16 @@ function closeForm() {
   importError.value = ''
 }
 
+// ---------- 快捷新增动作区（审查 C1）：EntryForm 保存/取消钮已迁 MdDialog #actions 槽，popup 为
+//  其无 dialog 直接挂载形态在本宿主补建动作区——保存经 ref 调 EntryForm expose 的 submit
+//  （校验 + emit save → onSave 行为不变），取消走既有 closeForm。不往 popup 塞 MdDialog -->
+const entryFormRef = ref<InstanceType<typeof EntryForm> | null>(null)
+/** 保存钮文案与 EntryForm isNew 同口径：预填 uuid 恒为哑值（空串/缺省）→「添加」 */
+const formActionLabel = computed(() => (prefill.value?.uuid ? t('entryForm.save') : t('entryForm.add')))
+function submitEntryForm(): void {
+  entryFormRef.value?.submit()
+}
+
 async function onSave(data: EntryFormData) {
   // URI 导入预填：表单内未改 type 时携带 URI 中的 algorithm/digits/period/counter
   const carried = prefill.value?.type === data.type ? prefill.value : null
@@ -349,8 +359,13 @@ function cancelAutoClose(): void {
     <div v-if="importError" class="error">{{ importError }}</div>
 
     <!-- 快捷新增确认态：仅 pending 预填入口（?uri= 协议回调 / 后台 pendingOtpauth），无 Tab 纯手动。
-         :key 预填重挂载机制、onSave 新建分支、cancel=closeForm 语义不变 -->
-    <EntryForm v-if="creating" :key="prefill ? `prefill-${formKey}` : 'new'" :initial="prefill" :tags="vault.tags" :create-tag="addTagOp" :icons="entryIcons" :icon-store="icons" @save="onSave" @cancel="closeForm" />
+         :key 预填重挂载机制、onSave 新建分支语义不变；保存/取消钮由本宿主动作区承担（EntryForm
+         body 按钮已迁 MdDialog #actions 槽，本形态无 dialog 在此补建），保存=ref.submit、取消=closeForm -->
+    <EntryForm v-if="creating" ref="entryFormRef" :key="prefill ? `prefill-${formKey}` : 'new'" :initial="prefill" :tags="vault.tags" :create-tag="addTagOp" :icons="entryIcons" :icon-store="icons" @save="onSave" @cancel="closeForm" />
+    <div v-if="creating" class="form-actions">
+      <MdButton variant="text" @click="closeForm">{{ t('entryForm.cancel') }}</MdButton>
+      <MdButton @click="submitEntryForm">{{ formActionLabel }}</MdButton>
+    </div>
 
     <!-- P4 Task 3：搜索行 + 标签行 + 列表区整体换装 QuickCodesPanel（冻结筛选行 + 纯取码列表 +
          两态空文案，行内 QR/管理入口恒关）。过滤编排（四级回退/URL 站点）与复制/自动关窗通道留宿主 -->
@@ -383,4 +398,5 @@ h1 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .filter-row { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-small); padding: 0 4px; }
 .hint { opacity: .6; }
 .hint-row { padding: 0 4px; }
+.form-actions { display: flex; justify-content: flex-end; gap: 8px; }
 </style>

@@ -401,6 +401,14 @@ describe('EntryForm 预填哑值 uuid（URI 导入）边界', () => {
     expect((wEdit.vm as unknown as { isNew: boolean }).isNew).toBe(false)
   })
 
+  // I1（审查）：表单内保留 display:none 默认提交钮——保存钮迁宿主动作区后恢复真实浏览器回车隐式提交
+  it('表单内保留隐藏默认提交钮（type=submit，视觉隐藏）', () => {
+    const w = mount(EntryForm, { global: { plugins: [createTestI18n()] }, props: { initial: entry, tags: [] } })
+    const hidden = w.find('form.entry-form button[type="submit"]')
+    expect(hidden.exists()).toBe(true)
+    expect(hidden.classes()).toContain('visually-hidden')
+  })
+
   it('预填对象拉取图标不以空串为存储键（?? 对 falsy 空串不兜底的回归）', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, blob: async () => new Blob(['png-bytes'], { type: 'image/png' }) })))
     try {

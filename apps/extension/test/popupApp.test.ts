@@ -651,6 +651,51 @@ describe('popup otpauth 导入入口（B3-13：?uri= 优先、pendingOtpauth 读
   })
 })
 
+describe('popup 快捷新增动作区（C1 回归：EntryForm 保存/取消钮迁宿主动作区后，popup 直接挂载形态补建）', () => {
+  afterEach(() => {
+    unmountActive()
+    withUriQuery(null)
+    shim?.restore()
+  })
+
+  it('动作区渲染保存/取消钮：预填哑值 uuid 显「添加」（isNew 同口径）', async () => {
+    withUriQuery(VALID_URI)
+    const wrapper = await mountTracked()
+
+    expect(wrapper.find('entry-form-stub').exists()).toBe(true)
+    const actions = wrapper.find('.form-actions')
+    expect(actions.exists()).toBe(true)
+    expect(actions.text()).toContain('添加')
+    expect(actions.text()).toContain('取消')
+  })
+
+  it('取消 → closeForm：表单与动作区一并收起', async () => {
+    withUriQuery(VALID_URI)
+    const wrapper = await mountTracked()
+
+    const cancel = wrapper.findAll('.form-actions button').find((b) => b.text() === '取消')!
+    await cancel.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('entry-form-stub').exists()).toBe(false)
+    expect(wrapper.find('.form-actions').exists()).toBe(false)
+  })
+
+  it('保存 → EntryForm emit save → onSave 落库关表单（stub 桥接宿主真实 onSave 链）', async () => {
+    shim = installChromeShim({ local: { pendingOtpauth: VALID_URI } })
+    const wrapper = await mountTracked()
+
+    expect(wrapper.find('entry-form-stub').exists()).toBe(true)
+    // EntryForm 为桩：ref.submit 不可达，直发 save 模拟 ref.submit 后的 emit（onSave→落库→关表单为宿主真实链）
+    wrapper.findComponent({ name: 'EntryForm' }).vm.$emit('save', {
+      type: 'totp', issuer: 'GitHub', label: '', secret: 'JBSWY3DPEHPK3PXP',
+      algorithm: 'SHA1', digits: 6, period: 30, note: '', tagIds: [], matchRules: [],
+    })
+    await flushPromises()
+    expect(addEntryOp).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('.form-actions').exists()).toBe(false)
+  })
+})
+
 describe('popup pending 信封分派（P5 Task 2：kind=uri|pasted；上方裸 URI 用例即旧格式兼容回归）', () => {
   // SteamGuard 明文 JSON 夹具（口径同 core importPaste.test：20 字节 shared_secret = Steam 真实长度）
   const SHARED_SECRET_FF_B64 = btoa(String.fromCharCode(...new Uint8Array(20).fill(0xff)))
@@ -689,7 +734,7 @@ describe('popup pending 信封分派（P5 Task 2：kind=uri|pasted；上方裸 U
     expect(wrapper.find('entry-form-stub').exists()).toBe(true)
     const initial = wrapper.findComponent({ name: 'EntryForm' }).props('initial') as Record<string, unknown> | null
     expect(initial).toMatchObject({ type: 'steam', issuer: 'Steam', digits: 5, note: '12345678901' })
-    // 哑值预填（uuid 空串）按新建处理：EntryForm isNew 语义（按钮「添加」），保存时宿主覆盖
+    // 哑值预填（uuid 空串）按新建处理：popup 动作区保存钮显「添加」（isNew 口径），保存时宿主覆盖
     expect(initial?.uuid).toBe('')
     expect(wrapper.find('.error').exists()).toBe(false)
     expect(shim.local.data['pendingOtpauth']).toBeUndefined()
