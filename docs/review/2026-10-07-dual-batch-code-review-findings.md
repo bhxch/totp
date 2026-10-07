@@ -1,7 +1,8 @@
 # 双批次代码审查问题清单（七路子代理审查）
 
 - 日期：2026-10-07
-- 类型：代码审查发现清单 + 修复跟踪（活文档）
+- 类型：代码审查发现清单 + 修复跟踪（当批修复已完成，本文档转为存档；遗留项见 §11 与 backlog B25）
+- **修复结论（2026-10-07 当日）**：1 Critical + 13 Important + 全部 Minor + Recommendations 已当批修复完毕（41 commits，`d809a76..bed3739`），详见 §11 修复波次记录。唯一遗留：R6-I2 根本方案（Authenticode 签名校验）登记 backlog B25 另立 round。
 - 审查范围：
   - 批 1 `docs/superpowers/specs/2026-10-06-miniapp-sorting-cloud-fixes-design.md` → 代码 `0f7d731..9540a7b`（miniapp / 排序 / 云备份）
   - 批 2 `docs/superpowers/specs/2026-10-06-seven-features-design.md`（P1–P6）→ 代码 `276d3b0..7d378b2`
@@ -26,21 +27,21 @@
 
 | 编号 | 级别 | 域 | 一句话 | 状态 |
 |---|---|---|---|---|
-| R4-C1 | Critical | P2 存储 | per-icon 键含冒号 → 桌面端 NTFS ADS 流/升级白屏风险（未真机验证） | 待修 |
-| R6-I1 | Important | P6 服务端 | 副本 exe 复制后无完整性复核，预开共享句柄可注入 SYSTEM 服务（LPE 面） | 待修 |
-| R6-I2 | Important | P6 服务端 | 调用者哈希校验文件替换 TOCTOU，便携版可冒充调用者取 DEK | 待修 |
-| R7-I2 | Important | P6 应用侧 | 换口令后 rewrap 联动死代码，ABE UI 假"已启用" | 待修 |
-| R4-I1 | Important | P2 解析 | WinAuth 导出 txt 的 Steam 条目被静默导入为普通 TOTP，验证码必错 | 待修 |
-| R2-I1 | Important | 批1 桌面 | 禁用 drag-drop handler 后 WebView2 默认投放导航可替换 SPA（丢解锁会话） | 待修 |
-| R5-I1 | Important | P4 popup | URL 过滤滤空时空态显示"暂无条目"误导（旧行为是 noMatch） | 待修 |
-| R3-I1 | Important | P3 反馈 | desktop 复制失败出现"已复制"toast + 失败横幅矛盾双反馈 | 待修 |
-| R3-I2 | Important | P1 气泡 | 说明气泡缺"切换标签"关闭条件，禁用态可挂泡 | 待修 |
-| R5-I2 | Important | P5 分流 | 多条分流通知不可点击、引导不闭环 | 待修 |
-| R5-I3 | Important | P5 信封 | pending 信封无过期/清理，明文 secret 无限期留存 | 待修 |
-| R4-I2 | Important | P2 存储 | 批量写实为串行逐键 await（spec"单事务"静默降级） | 待修 |
-| R4-I3 | Important | P2 存储 | putMany 中途失败内存-盘面不一致 | 待修 |
-| R1-I1 | Important | 批1 桌面 | mini-ready 门控可被二次触发绕过（重建在途判定洞） | 待修 |
-| （M 级明细见各审查面小节，共约 40 条） | | | | |
+| R4-C1 | Critical | P2 存储 | per-icon 键含冒号 → 桌面端 NTFS ADS 流/升级白屏风险（未真机验证） | 已修 d809a76 |
+| R6-I1 | Important | P6 服务端 | 副本 exe 复制后无完整性复核，预开共享句柄可注入 SYSTEM 服务（LPE 面） | 已修 433eb12 |
+| R6-I2 | Important | P6 服务端 | 调用者哈希校验文件替换 TOCTOU，便携版可冒充调用者取 DEK | 已修 e8b9b3d（窗口压缩档；根本方案签名校验 → backlog B25） |
+| R7-I2 | Important | P6 应用侧 | 换口令后 rewrap 联动死代码，ABE UI 假"已启用" | 已修 cccdb23 |
+| R4-I1 | Important | P2 解析 | WinAuth 导出 txt 的 Steam 条目被静默导入为普通 TOTP，验证码必错 | 已修 22b2d30 |
+| R2-I1 | Important | 批1 桌面 | 禁用 drag-drop handler 后 WebView2 默认投放导航可替换 SPA（丢解锁会话） | 已修 c72b0c3 |
+| R5-I1 | Important | P4 popup | URL 过滤滤空时空态显示"暂无条目"误导（旧行为是 noMatch） | 已修 3b13d07 |
+| R3-I1 | Important | P3 反馈 | desktop 复制失败出现"已复制"toast + 失败横幅矛盾双反馈 | 已修 02e8a0d |
+| R3-I2 | Important | P1 气泡 | 说明气泡缺"切换标签"关闭条件，禁用态可挂泡 | 已修 eb13d9e |
+| R5-I2 | Important | P5 分流 | 多条分流通知不可点击、引导不闭环 | 已修 b28cdbd |
+| R5-I3 | Important | P5 信封 | pending 信封无过期/清理，明文 secret 无限期留存 | 已修 eb31c13 |
+| R4-I2 | Important | P2 存储 | 批量写实为串行逐键 await（spec"单事务"静默降级） | 已修 5d16899 |
+| R4-I3 | Important | P2 存储 | putMany 中途失败内存-盘面不一致 | 已修 5d16899 |
+| R1-I1 | Important | 批1 桌面 | mini-ready 门控可被二次触发绕过（重建在途判定洞） | 已修 c24bea6 |
+| （M 级明细见各审查面小节与 §11，共约 40 条，全部当批修复或裁定留档） | | | | |
 
 ## 2. R4 —— P2 导入增强（iconStore / 上限放宽 / WinAuth 文本）
 
@@ -205,3 +206,96 @@
 - 批1：主窗任意区域拖入文件不导航（R2-I1）。
 - P6：副本启动前哈希复核断言（R6-I1 修复验证）；卸载侧 RMDir junction 观察（R6-M4）；换口令后 ABE 区块显示与锁屏行为（R7-I2 配套）；便携版形态下运行中文件替换场景说明（R6-I2 文档化）。
 - P4/P5：真机走查以 3d48282 新菜单标题为准（旧清单标题已过时）；data: URL 可行性结论回填清单。
+
+## 11. 修复波次记录（2026-10-07 当批完成）
+
+五个修复波次（W1–W5）串行执行（同仓库 git 串行约束），合计 41 commits（`d809a76..bed3739`）。每波完成后跑根 `pnpm test` + `pnpm typecheck`；涉及 Rust 的波次另跑 `cargo test` + `cargo clippy --all-targets` + `cargo fmt --check`。
+
+### 波次与修复项 → commit 映射
+
+**W1 P2 存储层+解析（6 commits，修复后 core 1106+2skip / ui 1258 / extension 309 / desktop 381 全绿）**
+
+| 项 | commit | 实际做法 |
+|---|---|---|
+| R4-C1 | d809a76 | tauriFs 键名→`encodeURIComponent(key).json` 映射（纯字母数字键名不变，settings 等存量文件零影响）；get 两级查找命中旧原名文件即读并迁移，delete 双清理防复活；legacy 查找容错不放大启动失败；normalizeIssuer 剔除 Windows 危险字符与控制字符；init 迁移 allSettled per-key 容错（全成才写索引、与既有 iconindex 取并集）；真机清单 docs/e2e/2026-10-07-p2-import-checklist.md 建档并登记 §4 |
+| R4-I1 | 22b2d30 | uriBatch 按 query 同时含 deviceid+data 识别 WinAuth Steam 行，data 走 importSteamGuard 重建 steam 条目；data 损坏归 failures 行级错误（uriBatch 层无 suspect 通道，不产出错误 TOTP 即达标） |
+| R4-I2+I3 | 5d16899 | persistKeys 改 Promise.all 单轮并行（覆盖全部写路径）；putMany/removeMany/removePack 入口快照、失败回滚内存（新增删除/覆盖还原）+ 抛出；3 个失败注入用例 |
+| R4-M1 | fb31400 | sniffSteamGuard 与 steamGuard 字段归一兼容 number（asText 转 string） |
+| R4-M2 | 42503a2 | 单图恰 200KB、解压产出恰 64MiB 含限侧成功用例（预算判定为严格大于） |
+| R4-M4+M5 | d89f519 | bytesToDataUrl 按 0x8000 分块拼接；README 措辞收窄"官方导出器只写 URI 行，# 注释行为导入侧容错" |
+| R4-M3 | 5b3b95d | WinAuth 格式对照调研落库 docs/superpowers/research/2026-10-07-winauth-text-format-research.md（补录性质） |
+
+**W2 P6 服务端（8 commits，cargo test 218 全绿、clippy 0、fmt 过）**
+
+| 项 | commit | 实际做法 |
+|---|---|---|
+| R6-I1 | 433eb12 | install_plan 插 VerifyCopy 步（CopySelf 后、ApplyService 前——最早检测点）：重读副本 SHA256 比对 + 无写共享独占打开一次；三条中止路径单测 |
+| R6-I2 | e8b9b3d | verify_client_process 改无写共享打开 + 两次独立读哈希比较（窗口压缩档）；README 不防清单补便携版残余面；根本方案（Authenticode）→ backlog B25 |
+| R6-M1 | 20924ab | 服务端读帧共享客户端 3s deadline（PeekNamedPipe 轮询），写响应重叠 WriteFile+事件+CancelIoEx；超时断开继续服务循环 |
+| R6-M2 | 9e77d32 | 安装时进程令牌取发起用户 SID 写 HKLM CallerSid（合法性校验防注入），服务优先 `(A;;GRGW;;;SID)`、缺省回退 AU；OTS 提权绑定提权账户的已知限制登记 README |
+| R6-M3 | 302a826 | 客户端 GetNamedPipeServerProcessId → 取证链（自服务端提取共享，含双读哈希）→ validate_server_image 纯函数比对规范副本路径+绑定哈希；HKLM 无绑定=Unavailable、失配=Protocol |
+| R6-M4 | 1047093 | hooks.nsh 补 `RMDir $COMMONPROGRAMDATA\TotpTools`（非 /r 仅删空目录）；清单补卸载侧观察项 |
+| R6-M5 | 5a8d5ff | proto 层 try_encode_frame→Result，服务端 resp_frame 失败清零附加数据回 Internal 兜底帧；客户端保留 fail-fast（should_panic 锁形） |
+| 跟进 | e58cbde | clippy 字面量布尔警告消解 |
+
+**W3 P6 应用侧（5 commits，ui 1261 / desktop 383 全绿、cargo 219）**
+
+| 项 | commit | 实际做法 |
+|---|---|---|
+| R7-I2 | cccdb23 | changePassphrase 轮换前记 hadAbe；restoreAbeAfterRotation——服务在线（matchesCaller）→ 新 DEK 重 Wrap + addAbeSourceOp 恢复标记源，离线/任一步失败 → removeAbeCiphertext 清 HKLM 降级退出（保持"标记源与 HKLM 密文成对"不变量）；AbeOps 增必填 source ComputedRef；SecurityCard 已启用判定改 `matchesCaller && abeSource`（源缺失落重绑引导，新键 abeSourceMissing）；联动测试改 simulateRealRotation 按真实 core 语义（清非口令源）；真机清单补 §12 走查项 |
+| R7-M2+M5 | 12640b5 | onAbeRemove 消费 remove() 结果（失败走错误通道+刷新状态）；onAbeBind wrap 失败 return 前补 refreshAbeStatus |
+| R7-M3 | 3a8e121 | abe_wrap_impl 改 &mut 入参 + 表达式求值消除门控/长度两处 `?` 早退，出口统一 zeroize；拒绝路径清零断言测试 |
+| R7-M4 | 07b3954 | mock 清单补 abe_unwrap，核对时发现 cloud_http_fetch 同类漂移一并补齐（40→42） |
+| R7-M6 | 2fe0402 | 补"unwrap 成功但 unlockWithDek 失败 → catch 回退 dpapi"行为级用例 |
+
+**W4 UX 回归+快捷新增（8 commits，extension 320 / desktop 386 全绿、Chrome 构建过、i18n 797=797）**
+
+| 项 | commit | 实际做法 |
+|---|---|---|
+| R2-I1+M6 | c72b0c3 | 新增 dragDropGuard.ts 全局 dragover/drop preventDefault，main.ts 与 mini.ts 入口最早期挂载（paste 事件与元素级 drop 幂等无冲突）；lib.rs 注释更新为 9540a7b 后事实；3 单测 |
+| R5-I1 | 3b13d07 | popup 宿主按 URL 过滤激活态动态传 empty-text（滤空→noMatch，关闭→empty 引导）；面板契约不动 |
+| R5-I2+M3 | b28cdbd | 多条分流 notifications.create('totp-batch-import') + onClicked 直达 options.html#/codes；openPopup reject 兜底发通知；notifyClickable 单点收敛 |
+| R5-I3+M1 | eb31c13 | encodePending 自动盖章 ts，isPendingExpired（TTL 10 分钟），过期提示 popup.pendingExpired 并删除；无 ts 旧信封容忍（升级兼容）；popup.importNone/batchImportHint/pendingExpired 入键表，硬编码中文改 t() |
+| R5-M2 | 724f35c | Firefox 回退补 ?pending=1；popup 以该参数判别标签页形态跳过自动关窗武装 |
+| R5-M4 | b47848c | 消费链拆 dispatchPendingRaw + consumeStoragePending（读盘即清天然防重入）；popup 运行中经 storage.onChanged 消费新信封；3 用例（含自写回声短路） |
+| R5-M6 | 53c0f02 | .frozen 加 --frozen-bleed 负 margin+等量 padding 自补偿；popup 8px / mini 6px / CodesPage 16px 宿主分别设置 |
+| 配套 | f725c6f | chromeShim ChangeDict 补 oldValue 类型 |
+
+**W5 UI 细节+批1（12 commits，ui 1276 / desktop 388 全绿、cargo 220、clippy 0、fmt 过、i18n 800=800）**
+
+| 项 | commit | 实际做法 |
+|---|---|---|
+| R3-I1 | 02e8a0d | copyToClipboard 改返回 Promise<boolean>；desktop App.vue 按结果 toast 成功/失败（新增 desktop.copied 键），删除 copyFailed 横幅；mini 失败横幅迁 error toast；options 宿主同口径；右键复制同口径；MCP 卡复制失败补 error toast 兜底 |
+| R3-I2+M5+M6 | eb13d9e | watch 选中数 <2 收起气泡；管理钮提示迁自绘 tooltip 气泡（组件库无 MdTooltip，采用组件内已有气泡形态，hover/focus/触屏三路）；气泡 useId + aria-describedby 关联 |
+| R3-M3 | c06e21f | 两复制入口补 code==='INVALID' 守卫（不 emit、HOTP 不递增、error toast 新键 copyInvalid） |
+| R3-M7+M8 | d64a377 | document.fonts?.ready 防御性重测；★ 提升为 .title-line flex 直接子节点 |
+| R3-M9 | 985ce93 | ToastHost 分双常驻 live region：success role=status/polite、error role=alert/assertive |
+| R1-I1+M4+M6 | c24bea6 | MINI_REBUILD_INFLIGHT AtomicBool + mini_toggle_action 纯函数状态机（Hide/KeepHidden/RepositionOnly/Show）；二次触发只 Reposition 不 show；状态机单测；waiter show 失败补 eprintln |
+| R1-M2+M3 | e2d6f57 | hideMini 改 close() 复用 CloseRequested 记忆链；mini_pin_set 写盘成功才 store 缓存；前端 invoke 成功才提交 ref（非乐观翻转，语义等效无闪烁） |
+| R1-REC1 | adf87fa | 拆 mini-drag.json capability（windows:[mini]）单独持有 start-dragging |
+| R2-M2 | cfc915d | put 建目录改由 path 参数派生（lastIndexOf('/')，无 '/' 跳过）；补非 cred 派生用例 |
+| R2-M3+M4 | c56919a | 归一+截断下沉 cloudSyncShared.errorDigest 双通道单点；keepIgnoreWarn 在 state!=='ok' 时不渲染 |
+| R2-M5 | bed3739 | 把手 touch-action:none；新增 edgeAutoScroll.ts（rAF 匀速滚动状态机：24px 边缘带、6 模块单测） |
+| 附带 | dd1f7ef | elevation_commands 既有 rustfmt 漂移折行 |
+
+### 裁定不动/转档项
+
+| 项 | 处置 |
+|---|---|
+| R6-I2 根本方案（Authenticode 签名校验） | backlog B25（需签名分发方案决策，另立安全 round） |
+| R1-M5（spec §2.2 监听覆盖面表述偏差） | 计划措辞问题，实现无缺陷，不动（§8 勘误 7） |
+| R3-M4（气泡"再点"语义偏差） | 实现更优，保留，勘误 §8.2 |
+| R5-M5（面板 props 契约分叉） | 实现契约为准，勘误 §8.1 |
+| R3-M4/R2 注释等文档勘误 | 已集中本文档 §8 与当日文档（5b3b95d） |
+
+### 最终验证（W5 完成后末态）
+
+- `pnpm test`：根 vitest 15 通过；core 1107 通过 / 2 skipped；ui 1276 通过；extension 320 通过；desktop 388 通过——全绿
+- `pnpm typecheck`：四包全过
+- `cargo test`：220 通过 / 0 失败；`cargo clippy --all-targets` 0 警告；`cargo fmt --check` 通过
+- `check:i18n`：zh=800 en=800
+- extension Chrome 构建（W4 波内）成功
+
+### 遗留真机验证项（自动化不可达，清单已建档待执行）
+
+P2 导入（含 ADS/特殊字符 id 场景）、批1 主窗拖入文件不导航、P6 哈希复核断言/换口令 ABE 走查/卸载 junction 观察、P4/P5 双浏览器快捷新增全链路——分别见 docs/e2e/ 四份当日清单（P2 为新建，其余为既有清单增补条目）。
