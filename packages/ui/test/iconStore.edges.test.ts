@@ -100,3 +100,92 @@ describe('iconStore notfound 与 iconView 命中分支', () => {
     expect(r2).toEqual({ ok: false, kind: 'other', message: 'io-failure' })
   })
 })
+
+describe('R4-I3 批量写失败回滚（mock adapter 部分失败 → 内存回滚、状态不变）', () => {
+  /** 有状态底座 + 拒绝指定数据键写入/删除的 adapter：base 可注入（与外层共享盘面），failSet/failDelete 触发 EINVAL */
+  function failingAdapter(opts: { failSet?: string; failDelete?: string; base?: ReturnType<typeof createMemoryStorage> }) {
+    const base = opts.base ?? createMemoryStorage()
+    return {
+      base,
+      adapter: {
+        get: (k: string) => base.get(k),
+        delete: vi.fn(async (k: string) => {
+          if (k === opts.failDelete) throw new Error('EINVAL: invalid path')
+          await base.delete(k)
+        }),
+        set: vi.fn(async (k: string, v: string) => {
+          if (k === opts.failSet) throw new Error('EINVAL: invalid path')
+          await base.set(k, v)
+        }),
+      },
+    }
+  }
+
+  it('putMany 部分失败：新增键从内存移除、覆盖键还原旧值，索引不写、错误向上传播', async () => {
+    const { base, adapter } = failingAdapter({ failSet: 'icon:new1' })
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const s = createIconStore(adapter)
+    await s.init()
+    await s.put('exist', 'OLD') // 覆盖键先就位（base.iconindex=['exist']）
+
+    try {
+      await expect(s.putMany({ exist: 'NEW', new1: 'A', new2: 'B' })).rejects.toThrow('EINVAL')
+      expect(err).toHaveBeenCalledWith(expect.stringContaining('putMany'), expect.any(Error))
+      expect(s.icons['exist']).toBe('OLD') // 覆盖键还原（不提前生效）
+      expect(s.icons['new1']).toBeUndefined() // 新增键不成幽灵
+      expect(s.icons['new2']).toBeUndefined()
+      // 索引未写：iconindex 不含 new1/new2（new2 的盘面孤儿键对 init 无害）
+      expect(JSON.parse((await base.get('iconindex'))!)).toEqual(['exist'])
+    } finally {
+      err.mockRestore()
+    }
+
+    // 故障消失后重写收敛（盘面最终一致）
+    adapter.set.mockImplementation(async (k: string, v: string) => { await base.set(k, v) })
+    await s.putMany({ new1: 'A' })
+    expect(s.icons['new1']).toBe('A')
+    expect(JSON.parse((await base.get('iconindex'))!)).toEqual(['exist', 'new1'])
+  })
+
+  it('removeMany 失败：内存删除回滚，盘面无变化（部分成功残留的孤儿键由 init 的 null 过滤兜底）', async () => {
+    const base = createMemoryStorage()
+    const s = createIconStore(base)
+    await s.init()
+    await s.putMany({ a: 'A', b: 'B' })
+    const { adapter } = failingAdapter({ failDelete: 'icon:a', base }) // 并行写语义下以「a 拒绝」注入失败
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const s2 = createIconStore(adapter)
+    await s2.init()
+    try {
+      await expect(s2.removeMany(['a', 'b'])).rejects.toThrow('EINVAL')
+      expect(err).toHaveBeenCalledWith(expect.stringContaining('removeMany'), expect.any(Error))
+      expect(s2.icons['a']).toBe('A') // 内存回滚
+      expect(s2.icons['b']).toBe('B')
+      expect(await base.get('icon:a')).toBe('A') // 失败键盘面未删
+    } finally {
+      err.mockRestore()
+    }
+  })
+
+  it('removePack 失败：icons 与 packs 条目整体回滚，不出现半删态', async () => {
+    const base = createMemoryStorage()
+    const s = createIconStore(base)
+    await s.init()
+    await s.putMany({ x: 'X', y: 'Y' })
+    await s.upsertPack('testpack', { name: '测试包', iconIds: ['x', 'y'] })
+    const { adapter } = failingAdapter({ failDelete: 'icon:y', base })
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const s2 = createIconStore(adapter)
+    await s2.init()
+    try {
+      await expect(s2.removePack('testpack')).rejects.toThrow('EINVAL')
+      expect(err).toHaveBeenCalledWith(expect.stringContaining('removePack'), expect.any(Error))
+      expect(s2.icons['x']).toBe('X')
+      expect(s2.icons['y']).toBe('Y')
+      expect(s2.packs['testpack']).toEqual({ name: '测试包', iconIds: ['x', 'y'] }) // 注册表条目还原
+      expect(await base.get('iconpacks')).not.toBeNull() // 盘面注册表未动
+    } finally {
+      err.mockRestore()
+    }
+  })
+})

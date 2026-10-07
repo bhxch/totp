@@ -72,13 +72,17 @@ export function createIconStore(adapter: StorageAdapter): IconStore {
     await adapter.set(PACKS_KEY, JSON.stringify(packs))
   }
 
-  /** 只负责数据键写入/删除；索引由调用方在集合变化时显式重写（先数据后索引顺序不变，崩溃窗口孤儿键对 init 无害） */
+  /** 只负责数据键写入/删除；索引由调用方在集合变化时显式重写（先数据后索引顺序不变，崩溃窗口孤儿键对 init 无害）。
+   *  R4-I2：单轮 Promise.all 并行（扩展端每次 set/delete 是一次 IPC 往返，for-await 串行把 2000 图标
+   *  放大为 2000 次往返；chrome.storage.local 并发写安全，同键以最后写为准且调用方不传重复键）。
+   *  R4-I3 失败语义：任一失败原样抛出首个拒绝原因，由调用方回滚内存后向用户传播。 */
   async function persistKeys(changed: Array<{ id: string; value: string | null }>): Promise<void> {
-    for (const { id, value } of changed) {
-      const key = `${ICON_DATA_PREFIX}${id}`
-      if (value === null) await adapter.delete(key)
-      else await adapter.set(key, value)
-    }
+    await Promise.all(
+      changed.map(({ id, value }) => {
+        const key = `${ICON_DATA_PREFIX}${id}`
+        return value === null ? adapter.delete(key) : adapter.set(key, value)
+      }),
+    )
   }
 
   async function init(): Promise<void> {
@@ -165,10 +169,23 @@ export function createIconStore(adapter: StorageAdapter): IconStore {
   }
 
   async function putMany(entries: Record<string, string>): Promise<void> {
-    const known = new Set(Object.keys(icons))
+    // R4-I3：入口快照涉及键旧值（undefined=本次新增）——persistKeys 抛错时回滚内存，
+    // 消除「内存已更新、盘面未写」的不一致窗口（新增键不成幽灵，覆盖键不提前生效）
+    const ids = Object.keys(entries)
+    const prev = new Map(ids.map((id) => [id, icons[id]]))
     Object.assign(icons, entries)
-    await persistKeys(Object.keys(entries).map((id) => ({ id, value: entries[id]! })))
-    if (Object.keys(entries).some((id) => !known.has(id))) await adapter.set(INDEX_KEY, JSON.stringify(Object.keys(icons)))
+    try {
+      await persistKeys(ids.map((id) => ({ id, value: entries[id]! })))
+    } catch (e) {
+      for (const id of ids) {
+        const old = prev.get(id)
+        if (old === undefined) delete icons[id]
+        else icons[id] = old
+      }
+      console.error('[iconStore] putMany 落盘失败，内存已回滚', e)
+      throw e
+    }
+    if (ids.some((id) => prev.get(id) === undefined)) await adapter.set(INDEX_KEY, JSON.stringify(Object.keys(icons)))
   }
 
   async function remove(id: string): Promise<void> {
@@ -180,13 +197,19 @@ export function createIconStore(adapter: StorageAdapter): IconStore {
   }
 
   async function removeMany(ids: string[]): Promise<void> {
-    let removed = false
-    for (const id of ids) {
-      if (id in icons) removed = true
-      delete icons[id]
-      await adapter.delete(`${ICON_DATA_PREFIX}${id}`)
+    // R4-I3：入口快照存在键（仅这些触发索引重写）——盘面删除失败时回滚内存删除，
+    // 与 putMany 对称：内存与盘面口径一致，不出现「内存已删、盘面仍在」的假象
+    const prev = new Map<string, string>()
+    for (const id of ids) if (id in icons) prev.set(id, icons[id]!)
+    for (const id of ids) delete icons[id]
+    try {
+      await persistKeys(ids.map((id) => ({ id, value: null })))
+    } catch (e) {
+      for (const [id, v] of prev) icons[id] = v
+      console.error('[iconStore] removeMany 落盘失败，内存已回滚', e)
+      throw e
     }
-    if (removed) await adapter.set(INDEX_KEY, JSON.stringify(Object.keys(icons)))
+    if (prev.size > 0) await adapter.set(INDEX_KEY, JSON.stringify(Object.keys(icons)))
   }
 
   async function upsertPack(normKey: string, info: IconPackInfo): Promise<void> {
@@ -197,15 +220,22 @@ export function createIconStore(adapter: StorageAdapter): IconStore {
   async function removePack(normKey: string): Promise<void> {
     const info = packs[normKey]
     if (!info) return
-    let removed = false
-    for (const id of info.iconIds) {
-      if (id in icons) removed = true
-      delete icons[id]
-      await adapter.delete(`${ICON_DATA_PREFIX}${id}`)
-    }
+    // R4-I3：与 removeMany 同构的失败回滚——数据键删除/索引/注册表落盘任一失败时，
+    // 内存（icons + packs 条目）整体回滚到入口快照，注册表与图标不出现半删态
+    const prevIcons = new Map<string, string>()
+    for (const id of info.iconIds) if (id in icons) prevIcons.set(id, icons[id]!)
+    for (const id of info.iconIds) delete icons[id]
     delete packs[normKey]
-    if (removed) await adapter.set(INDEX_KEY, JSON.stringify(Object.keys(icons)))
-    await persistPacks()
+    try {
+      await persistKeys(info.iconIds.map((id) => ({ id, value: null })))
+      if (prevIcons.size > 0) await adapter.set(INDEX_KEY, JSON.stringify(Object.keys(icons)))
+      await persistPacks()
+    } catch (e) {
+      for (const [id, v] of prevIcons) icons[id] = v
+      packs[normKey] = info
+      console.error('[iconStore] removePack 落盘失败，内存已回滚', e)
+      throw e
+    }
   }
 
   function resolve(ref: IconRef | undefined): string | undefined {
