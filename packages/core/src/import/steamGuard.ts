@@ -34,14 +34,17 @@ export function importSteamGuard(text: string): ImportResult {
   if (bytes.length !== 20) {
     return { entries: [], failures: [{ index: 0, message: 'shared_secret 解码后须为 20 字节（Steam 固定长度）' }] }
   }
-  const label =
-    typeof obj.account_name === 'string' && obj.account_name
-      ? obj.account_name
-      : typeof obj.steamid === 'string' && obj.steamid
-        ? obj.steamid
-        : 'Steam'
-  const note = [obj.serial_number, obj.device_id, obj.revocation_code]
-    .filter((v): v is string => typeof v === 'string' && v !== '')
+  // R4-M1：官方宽松解析对 serial_number/device_id/steamid 的数字形态同样接受
+  // （AddSteamAuthenticator.cs:497-511/541-563，getInt/getOptLong），数字归一为 string——
+  // label 回退与 note 拼接不再漏掉数字型字段（sniff 层 registry.sniffSteamGuard 同口径放行）
+  const asText = (v: unknown): string | undefined => {
+    if (typeof v === 'string' && v !== '') return v
+    if (typeof v === 'number' && Number.isFinite(v)) return String(v)
+    return undefined
+  }
+  const label = asText(obj.account_name) ?? asText(obj.steamid) ?? 'Steam'
+  const note = [asText(obj.serial_number), asText(obj.device_id), asText(obj.revocation_code)]
+    .filter((v): v is string => v !== undefined)
     .join(' / ')
   const entry: ParsedEntry = {
     type: 'steam',

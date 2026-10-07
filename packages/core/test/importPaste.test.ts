@@ -121,6 +121,22 @@ describe('steamGuard：SteamGuard/SDA 明文 JSON 粘贴', () => {
     expect(r.entries[0]!.note).toContain('android:1234abcd-5678')
   })
 
+  it('R4-M1：官方宽松解析——serial_number/steamid 数字形态命中 sniff、label 回退与 note 均生效', () => {
+    // 官方 AddSteamAuthenticator 对 serial_number/device_id/steamid 数字同样接受（string|number 双收）
+    const numeric = JSON.stringify({
+      shared_secret: SHARED_SECRET_FF_B64,
+      serial_number: 12345678901,
+      steamid: 76561190000000000, // steamid64 量级；该值可被 float64 精确表示，String() 无损
+    })
+    expect(sniffFormat(numeric)).toBe('steamGuard') // 旧口径（仅 string serial）漏判为 generic
+    const r = parsePastedText(numeric)
+    if (!('entries' in r)) throw new Error('expected entries')
+    expect(r.entries).toHaveLength(1)
+    expect(r.entries[0]!.type).toBe('steam')
+    expect(r.entries[0]!.label).toBe('76561190000000000') // 无 account_name → 数字 steamid 转 string 回退
+    expect(r.entries[0]!.note).toBe('12345678901') // 数字 serial 转 string 入 note
+  })
+
   it('缺 shared_secret / 非 JSON → 引导而非抛异常（嗅探不命中走 unsupported，直解走 failures）', () => {
     // 嗅探不命中（无 shared_secret → generic 兜底；非 JSON → null）→ parsePastedText 引导文案，不抛异常
     expect(parsePastedText(JSON.stringify({ serial_number: '123' }))).toEqual({ unsupported: expect.stringContaining('导入页') })

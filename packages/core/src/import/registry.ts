@@ -134,9 +134,12 @@ function sniffFoxauth(obj: Record<string, unknown>): boolean {
 }
 
 // ---------- steamGuard：SteamGuard/SDA 明文 JSON（shared_secret 必含；serial_number/device_id 至少其一） ----------
+// R4-M1：官方宽松解析对 serial_number/device_id 的数字形态同样接受（AddSteamAuthenticator.cs
+// L497-511/L541-563 string|number 双收），本谓词同口径放行数字；解析层 steamGuard.asText 归一为 string
 function sniffSteamGuard(obj: Record<string, unknown>): boolean {
   if (typeof obj.shared_secret !== 'string' || !obj.shared_secret) return false
-  return typeof obj.serial_number === 'string' || typeof obj.device_id === 'string'
+  const idish = (v: unknown): boolean => typeof v === 'string' || typeof v === 'number'
+  return idish(obj.serial_number) || idish(obj.device_id)
 }
 
 // JSON 数组（andOTP 明文导出）且存在条目 type/algorithm/label/secret 均字符串（AndOtpImporter.java）
