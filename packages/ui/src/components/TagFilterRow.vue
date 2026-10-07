@@ -118,10 +118,12 @@ function openManage() {
 /* 说明气泡：锚定按钮下方；点击外部即折叠（pointerdown capture） */
 .mode-pop {
   position: absolute; top: calc(100% + 4px); left: 0; z-index: 10;
-  max-width: 240px; padding: 6px 10px; border-radius: 8px;
+  width: max-content;
+  max-width: min(360px, calc(100vw - 16px));
+  padding: 6px 10px; border-radius: var(--md-sys-shape-corner-small);
   background: var(--md-sys-color-inverse-surface); color: var(--md-sys-color-inverse-on-surface);
   font-size: var(--md-sys-typescale-body-small); white-space: normal;
-  box-shadow: 0 2px 8px rgb(0 0 0 / .25);
+  box-shadow: 0 2px 8px var(--md-sys-color-shadow);
 }
 /* 管理标签 tooltip（R3-M5）：行尾按钮气泡右对齐防溢出视口 */
 .manage-wrap { position: relative; display: inline-flex; }
