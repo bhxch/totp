@@ -1,4 +1,4 @@
-//! ABE 提权 Tauri 命令层（plan p6 §T4）：abe_status / abe_bind / abe_remove。
+//! ABE 提权 Tauri 命令层（plan p6 §T4）：abe_status / abe_bind / abe_remove / abe_unwrap。
 //!
 //! 本模块全平台编译：`generate_handler!` 宏不支持条目级 cfg，注册须无条件（审查裁定
 //! 拆 cfg 包装层的样板远贵于 3 个桩）；Windows 真实现经 [`crate::elevation_client`] /
@@ -49,6 +49,16 @@ pub fn abe_remove() -> serde_json::Value {
     abe_remove_impl()
 }
 
+/// abe_unwrap（plan p6 §0.3/T7 锁屏静默解锁）：服务侧 Unwrap 代理返回明文 DEK（32B）。
+/// 返回选型：Vec<u8> 经 serde 序列化为 JSON number 数组（Tauri invoke 默认 JSON 通道），
+/// 32B 规模开销可忽略且 JS 侧 `new Uint8Array(arr)` 直构，不用 base64 省一次编解码往返；
+/// DEK 在 JS 侧 unlockWithDek 注入会话后无密文残留（core 侧 zeroize 责任）。
+/// 错误以 Err(String) 折叠外传——锁屏回退语义下 TS 侧仅 console.warn 留痕并回退 dpapi
+#[tauri::command(async)]
+pub fn abe_unwrap() -> Result<Vec<u8>, String> {
+    abe_unwrap_impl()
+}
+
 // ---------- 实现分派（cfg 内联，保持命令签名单点） ----------
 
 #[cfg(windows)]
@@ -80,6 +90,24 @@ fn abe_remove_impl() -> serde_json::Value {
 fn abe_remove_impl() -> serde_json::Value {
     // 经同一折叠通道产出桩（{ok:false,message}），保持 Linux CI 下该纯函数有非测试消费方
     remove_result_to_json(Err("当前平台不支持 ABE 服务".to_string()))
+}
+
+#[cfg(windows)]
+fn abe_unwrap_impl() -> Result<Vec<u8>, String> {
+    unwrap_outcome(crate::elevation_client::unwrap_dek())
+}
+
+#[cfg(not(windows))]
+fn abe_unwrap_impl() -> Result<Vec<u8>, String> {
+    Err("当前平台不支持 ABE 服务".into())
+}
+
+/// unwrap 结果 → 前端载荷（§0.3/T7；Windows-only 纯函数化，单测覆盖成功与错误分型折叠）：
+/// Ok(DEK) → 字节向量；四分型错误（Unavailable/CallerRejected/NoWrappedDek/Other）经
+/// Display 折叠为 String——锁屏回退语义不区分失败原因，仅留痕
+#[cfg(windows)]
+fn unwrap_outcome(result: Result<[u8; 32], crate::elevation_client::UnwrapError>) -> Result<Vec<u8>, String> {
+    result.map(|dek| dek.to_vec()).map_err(|e| e.to_string())
 }
 
 /// 非 Windows 统一桩形态
@@ -260,6 +288,33 @@ mod tests {
         );
     }
 
+    // ---- abe_unwrap 折叠（§0.3/T7，全分型）----
+
+    #[cfg(windows)]
+    #[test]
+    fn unwrap_outcome_folding() {
+        use crate::elevation_client::UnwrapError;
+
+        // 成功：32B DEK → 字节向量（invoke JSON number 数组载荷）
+        let dek = [7u8; 32];
+        assert_eq!(unwrap_outcome(Ok(dek)), Ok(dek.to_vec()));
+
+        // 回退主路径分型（预期失败，文案仅 warn 留痕）
+        assert_eq!(
+            unwrap_outcome(Err(UnwrapError::Unavailable)),
+            Err("ABE 服务不可达（未安装或未运行）".into())
+        );
+        assert_eq!(
+            unwrap_outcome(Err(UnwrapError::CallerRejected)),
+            Err("ABE 服务拒绝当前调用者".into())
+        );
+        assert_eq!(
+            unwrap_outcome(Err(UnwrapError::NoWrappedDek)),
+            Err("ABE 服务无已绑定密文".into())
+        );
+        assert_eq!(unwrap_outcome(Err(UnwrapError::Other("x".into()))), Err("x".into()));
+    }
+
     // ---- 命令返回形状守护（serde camelCase 对齐 TS AbeStatus/AbeResult）----
 
     #[test]
@@ -295,5 +350,6 @@ mod tests {
             abe_remove_impl(),
             serde_json::json!({ "ok": false, "message": "当前平台不支持 ABE 服务" })
         );
+        assert_eq!(abe_unwrap_impl().unwrap_err(), "当前平台不支持 ABE 服务");
     }
 }

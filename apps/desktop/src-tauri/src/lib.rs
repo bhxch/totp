@@ -940,7 +940,8 @@ pub fn run() {
             cloud_http::cloud_http_fetch,
             elevation_commands::abe_status,
             elevation_commands::abe_bind,
-            elevation_commands::abe_remove
+            elevation_commands::abe_remove,
+            elevation_commands::abe_unwrap
         ])
         // build+run（回调形态）：RunEvent::Exit 时注销系统锁屏监听（plan16 T15）；
         // 正常运行路径行为与直接 .run(context) 完全一致

@@ -72,6 +72,10 @@ export interface AbeOps {
   /** 移除 security.json abe 标记源（宿主包装 store removeAbeSourceOp；core 守卫：移除后
    *  无任何解锁方式时抛错）。T6 移除序列 removeSource→remove：先清标记再删服务侧密文 */
   removeSource(): Promise<void>
+  /** 锁屏静默解锁（plan p6 §0.3/T7）：服务侧 Unwrap 返回明文 DEK。任何失败（服务未装/
+   *  调用者失配被拒/管道不可达）折叠为 null——LockScreen 无声回退 dpapi 通道，失败细节
+   *  仅宿主 console.warn 留痕；supported=false 宿主短路返回 null */
+  unwrap(): Promise<Uint8Array | null>
 }
 
 /** 加密状态与操作（宿主从 store 闭包绑定；desktop/options 各自组装） */

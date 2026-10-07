@@ -143,6 +143,19 @@ export function createSecurityPlatform(deps: SecurityPlatformDeps): DesktopSecur
       const s = requireStore(deps.getStore)
       await s.removeAbeSourceOp()
     },
+    // 锁屏静默解锁（§0.3/T7）：abe_unwrap（服务 Unwrap 代理）→ DEK 字节。任何失败
+    // （未装/失配被拒/管道不可达——Rust 侧已折叠为 Err(String)）一律收敛 null 供
+    // LockScreen 无声回退 dpapi；失败细节 warn 留痕不弹 UI
+    async unwrap() {
+      if (!abeSupported) return null
+      try {
+        const dek = await invoke<number[]>('abe_unwrap')
+        return new Uint8Array(dek)
+      } catch (e) {
+        console.warn('[desktop] abe_unwrap 失败（服务未装/失配/不可达），锁屏将回退 OS 通道', e)
+        return null
+      }
+    },
   }
 
   const securityPlatform = computed<SecurityPlatform | null>(() => {

@@ -27,7 +27,8 @@ function makePlatform(over: Partial<SecurityPlatform> = {}): SecurityPlatform {
   }
 }
 
-/** ABE 提权服务通道 mock（默认 supported+未安装：status→null；bind 成功；源 op 空实现对 spy 断言用） */
+/** ABE 提权服务通道 mock（默认 supported+未安装：status→null；bind 成功；源 op 空实现对 spy 断言用；
+ *  unwrap 为 T7 锁屏通道，SecurityCard 不消费——桩为 null 回退语义即可） */
 function makeAbe(over: Partial<AbeOps> = {}): AbeOps {
   return {
     supported: true,
@@ -36,6 +37,7 @@ function makeAbe(over: Partial<AbeOps> = {}): AbeOps {
     remove: vi.fn().mockResolvedValue({ ok: true } as AbeResult),
     addSource: vi.fn().mockResolvedValue(undefined),
     removeSource: vi.fn().mockResolvedValue(undefined),
+    unwrap: vi.fn().mockResolvedValue(null),
     ...over,
   }
 }

@@ -57,6 +57,8 @@ const uaFlags = desktopUaFlags(ua)
 const unlockNaming = () => unlockNamingFor(uaFlags, tr)
 const securityFactory = createSecurityPlatform({ getStore, tr, naming: unlockNaming, flags: uaFlags, ua })
 const dpapiOps = securityFactory.dpapi
+// ABE 通道直传 LockScreen（§0.3/T7 静默解锁 abe 优先 dpapi 回退；与 SecurityCard :abe 共用同一对象）
+const abeOps = securityFactory.abe
 const securityPlatform = securityFactory.platform
 const migrateDekWrapToEntropyBound = securityFactory.migrateDekWrapToEntropyBound
 // 旧数据迁移编排（双汇合点：壳层 initStore 后 + LockScreen @unlocked）抽至 desktopShell.ts
@@ -111,7 +113,7 @@ const railActions = [{ get label() { return tr('desktop.hideToTray') }, onClick:
   <PersistErrorBanner :show="persistFailed" :text="tr('app.persistError')" />
   <div v-if="loadError && !store" class="error">{{ tr('desktop.loadFailed', { message: loadError }) }}</div>
   <!-- 解锁成功回调补跑迁移（plan16 T14，幂等）：口令/PRF 解锁各路径在 LockScreen 内 emit unlocked -->
-  <LockScreen v-else-if="store && locked" :store="store" :dpapi="dpapiOps" @unlocked="runLegacyMigrations" />
+  <LockScreen v-else-if="store && locked" :store="store" :dpapi="dpapiOps" :abe="abeOps" @unlocked="runLegacyMigrations" />
   <NavigationShell v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :cloud-platform="cloudPlatform" :icons="icons" :schemes-api="schemesApi" :rail-actions="railActions" :mcp-platform="mcpPlatform" :devtools-platform="devtoolsPlatform" :release-platform="releasePlatform" @copy="copyToClipboard" />
   <!-- MCP 首连审批/工具确认独立于上方 v-if 链：锁定态也要能弹（plan17 T10）；t 走壳层 tr（desktop 无 useI18n 注入） -->
   <!-- 关闭（Esc/遮罩/工具 Deny）按通道分流 deny：首连回执进 60s 冷却，工具确认回 result:false（逐次即焚）——

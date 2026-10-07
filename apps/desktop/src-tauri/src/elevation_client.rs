@@ -93,6 +93,20 @@ pub enum UnwrapError {
     Other(String),
 }
 
+impl fmt::Display for UnwrapError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            // Unavailable/CallerRejected 是锁屏回退主路径（预期），文案仅 warn 留痕用
+            Self::Unavailable => write!(f, "ABE 服务不可达（未安装或未运行）"),
+            Self::CallerRejected => write!(f, "ABE 服务拒绝当前调用者"),
+            Self::NoWrappedDek => write!(f, "ABE 服务无已绑定密文"),
+            Self::Other(m) => write!(f, "{m}"),
+        }
+    }
+}
+
+impl std::error::Error for UnwrapError {}
+
 /// 请求→响应往返可测核心：writer 全量发出请求帧；reader 按流语义读响应（填 buf 返回
 /// 实际字节数，0=EOF）。契约：① 头 4B 解 declared，超 MAX_FRAME_LEN 即拒（不分配/不读体）；
 /// ② Resp 帧体恒以 u16 LE errcode 开头，附加数据随后
@@ -351,8 +365,7 @@ pub fn status() -> Result<StatusReply, ClientError> {
 }
 
 /// 服务端 Unwrap 代理：明文 DEK 32B。中间缓冲用后即清（Global Constraints）。
-/// Task 7 锁屏静默解锁接线前无调用方，单项豁免（同 trigger_install 先例）
-#[allow(dead_code)]
+/// 消费方：elevation_commands::abe_unwrap（T7 锁屏静默解锁）
 pub fn unwrap_dek() -> Result<[u8; 32], UnwrapError> {
     let (code, extra) = call_service(MsgType::Unwrap, &[]).map_err(|e| match e {
         ClientError::Unavailable(_) => UnwrapError::Unavailable,
