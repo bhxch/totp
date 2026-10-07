@@ -26,7 +26,8 @@
 import { vi } from 'vitest'
 
 export type Store = Record<string, unknown>
-export type ChangeDict = Record<string, { newValue?: unknown }>
+/** 真实 changes 形状：新增/修改带 newValue，删除仅 oldValue（R5-M4 自写回声用例依赖） */
+export type ChangeDict = Record<string, { newValue?: unknown; oldValue?: unknown }>
 export type OnChangedListener = (changes: ChangeDict, areaName: string) => void
 export type IdleState = 'active' | 'idle' | 'locked'
 export type MessageListener = (
