@@ -23,7 +23,8 @@ use windows_service::service::ServiceState;
 use zeroize::Zeroize;
 
 use crate::elevation_proto::{
-    decode_frame, encode_frame, ErrCode, MsgType, DEK_MARKER, MAX_FRAME_LEN, PIPE_NAME,
+    decode_frame, try_encode_frame, ErrCode, MsgType, ProtoError, DEK_MARKER, MAX_FRAME_LEN,
+    PIPE_NAME,
 };
 
 /// 服务名（§0.1，windows-service 注册；Task 3 安装/卸载与 NSIS 钩子共用同一字面量）
@@ -284,12 +285,14 @@ fn status_json(store: &mut dyn ElevationStore) -> (ErrCode, Vec<u8>) {
 }
 
 /// 构造 Resp 帧：契约（Task 1 审查裁定）——全部 Resp 帧恒以 u16 LE errcode 前缀开头
-/// （ok=0），JSON/DEK 为附加数据；客户端按此解析
-fn resp_frame(code: ErrCode, extra: &[u8]) -> Vec<u8> {
+/// （ok=0），JSON/DEK 为附加数据；客户端按此解析。R6-M5：编码走 Result 变体——附加
+/// 数据大小受输入影响（Status JSON 随 HKLM 绑定值增长），超限返回 Err 由调用方回兜底
+/// 错误帧，不在 SYSTEM 进程内 panic
+fn resp_frame(code: ErrCode, extra: &[u8]) -> Result<Vec<u8>, ProtoError> {
     let mut payload = Vec::with_capacity(2 + extra.len());
     payload.extend_from_slice(&code.to_u16().to_le_bytes());
     payload.extend_from_slice(extra);
-    encode_frame(MsgType::Resp, &payload)
+    try_encode_frame(MsgType::Resp, &payload)
 }
 
 // ---------- 单连接处理（IO 薄壳，单测不覆盖） ----------
@@ -338,7 +341,18 @@ fn pipe_server_once(pipe: HANDLE) {
         }
     };
     let (code, mut extra) = handle_payload(msg, payload, &mut store);
-    let mut resp = resp_frame(code, &extra);
+    // R6-M5：编码失败（附加数据超限，如异常巨大的 Status JSON）不再 panic——回恒可
+    // 编码的 Internal 兜底帧（errcode 2B）后断开。DEK 附加数据恒 32B 不会走到此分支，
+    // 但失败路径同样先清零（Global Constants 纪律）
+    let mut resp = match resp_frame(code, &extra) {
+        Ok(f) => f,
+        Err(_) => {
+            extra.zeroize();
+            respond(pipe, ErrCode::Internal, deadline);
+            frame.zeroize();
+            return;
+        }
+    };
     // 写响应同样过 deadline（R6-M1）：客户端连接后不读时 CancelIo 收尾断开，
     // SYSTEM 服务线程不悬挂
     write_all_with_deadline(pipe, &resp, deadline);
@@ -479,9 +493,12 @@ fn write_all_with_deadline(pipe: HANDLE, buf: &[u8], deadline: Instant) -> bool 
     written == buf.len()
 }
 
-/// 写一条错误响应（验证失败/坏请求路径；写失败静默——对端可能已断开）
+/// 写一条错误响应（验证失败/坏请求路径；写失败静默——对端可能已断开）。
+/// 空 extra 的错误响应恒在帧长限内（len=3），expect 兜底不可达；可超限路径
+/// （Status/DEK 附加数据）在 pipe_server_once 的 resp 分支处理（R6-M5）
 fn respond(pipe: HANDLE, code: ErrCode, deadline: Instant) {
-    let _ = write_all_with_deadline(pipe, &resp_frame(code, &[]), deadline);
+    let frame = resp_frame(code, &[]).expect("空附加数据 Resp 帧超限（不可达）");
+    let _ = write_all_with_deadline(pipe, &frame, deadline);
 }
 
 // ---------- 调用者身份取证（IO 薄壳） ----------
@@ -1276,7 +1293,7 @@ mod tests {
     // Resp 帧契约（Task 1 审查裁定）：恒以 u16 LE errcode 前缀开头，JSON/DEK 为附加数据
     #[test]
     fn resp_frames_always_lead_with_u16_errcode() {
-        let frame = resp_frame(ErrCode::NoWrappedDek, b"extra-data");
+        let frame = resp_frame(ErrCode::NoWrappedDek, b"extra-data").unwrap();
         let (msg, payload) = decode_frame(&frame).unwrap();
         assert_eq!(msg, MsgType::Resp);
         assert_eq!(
@@ -1285,9 +1302,22 @@ mod tests {
         );
         assert_eq!(&payload[2..], b"extra-data");
         // Status JSON 同样带前缀
-        let status = resp_frame(ErrCode::Ok, b"{}");
+        let status = resp_frame(ErrCode::Ok, b"{}").unwrap();
         let (_, payload) = decode_frame(&status).unwrap();
         assert_eq!(&payload[..2], &0_u16.to_le_bytes());
+    }
+
+    // R6-M5：resp_frame 超限返回 Err 不 panic（SYSTEM 服务崩溃面封堵）
+    #[test]
+    fn resp_frame_returns_err_on_oversized_extra() {
+        assert_eq!(
+            resp_frame(ErrCode::Ok, &[0u8; MAX_FRAME_LEN]),
+            Err(ProtoError::TooLarge {
+                declared: 3 + MAX_FRAME_LEN // u16 errcode 2B + msg_type 1B + payload
+            })
+        );
+        // 正常附加数据仍 Ok
+        assert!(resp_frame(ErrCode::Ok, b"{}").is_ok());
     }
 
     // Wrap→Unwrap 真实 DPAPI 往返（模块本身仅 Windows 编译；标注表明依赖真机

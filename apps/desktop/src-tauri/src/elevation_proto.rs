@@ -103,19 +103,26 @@ pub enum ProtoError {
 }
 
 /// 编码一帧：`u32 LE len ‖ u8 msg_type ‖ payload`（len = 1 + payload.len()）。
-/// 载荷超 [`MAX_FRAME_LEN`] 时 panic——载荷均为本应用自产的固定形态（32B DEK/小 JSON），
-/// 超限属编程错误，fail-fast 优于静默截断。
+/// 载荷超 [`MAX_FRAME_LEN`] 时 panic——客户端载荷恒受控（32B DEK/空载荷，调用方先行
+/// 校验），超限属编程错误，fail-fast 优于静默截断。服务端响应路径禁用本形态：
+/// SYSTEM 服务进程内 panic 即崩服务（R6-M5），须走 [`try_encode_frame`]
 pub fn encode_frame(msg: MsgType, payload: &[u8]) -> Vec<u8> {
+    try_encode_frame(msg, payload).expect("frame too large")
+}
+
+/// 编码一帧的 Result 变体（R6-M5）：载荷超限返回 [`ProtoError::TooLarge`] 不 panic——
+/// 服务端响应路径（elevation_service::resp_frame）专用：响应附加数据大小受输入影响
+/// （Status JSON 随 HKLM 绑定值增长），超限须回错误帧/断开连接而非崩掉服务
+pub fn try_encode_frame(msg: MsgType, payload: &[u8]) -> Result<Vec<u8>, ProtoError> {
     let len = 1 + payload.len();
-    assert!(
-        len <= MAX_FRAME_LEN,
-        "frame too large: {len} > {MAX_FRAME_LEN}"
-    );
+    if len > MAX_FRAME_LEN {
+        return Err(ProtoError::TooLarge { declared: len });
+    }
     let mut out = Vec::with_capacity(4 + len);
     out.extend_from_slice(&(len as u32).to_le_bytes());
     out.push(msg as u8);
     out.extend_from_slice(payload);
-    out
+    Ok(out)
 }
 
 /// 解码一帧：返回 `(msg_type, payload)`，payload 为输入缓冲内切片（零拷贝）。
@@ -242,6 +249,27 @@ mod tests {
     }
 
     // ---- 超长 ----
+
+    #[test]
+    fn try_encode_frame_returns_err_on_oversized_payload_not_panic() {
+        // R6-M5：Result 变体超限返回 Err，不 panic（服务端响应路径防 SYSTEM 崩溃）
+        let payload = [0u8; MAX_FRAME_LEN]; // len = 1 + MAX > MAX，恰超 1B
+        assert_eq!(
+            try_encode_frame(MsgType::Status, &payload),
+            Err(ProtoError::TooLarge {
+                declared: MAX_FRAME_LEN + 1
+            })
+        );
+        // 恰在限内（len = 1 + (MAX-1) = MAX）仍 Ok
+        assert!(try_encode_frame(MsgType::Status, &[0u8; MAX_FRAME_LEN - 1]).is_ok());
+    }
+
+    #[test]
+    #[should_panic]
+    fn encode_frame_keeps_fail_fast_on_oversized_payload() {
+        // 客户端侧保留 assert 语义（载荷恒受控）；锁形防误改为静默截断
+        encode_frame(MsgType::Status, &[0u8; MAX_FRAME_LEN]);
+    }
 
     #[test]
     fn oversized_declared_len_rejected() {
