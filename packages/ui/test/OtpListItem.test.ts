@@ -172,6 +172,16 @@ describe('OtpListItem 标题行（Aegis 两行布局上行：issuer/label 合并
     await w.setProps({ entry: { ...entry, label: 'renamed@ex.com' } }) // 触发 watch(flush post) 重测溢出
     expect(w.find('.title-text').classes()).toContain('marquee')
   })
+
+  it('溢出时注入 --marquee-viewport=实测 clientWidth（keyframes 终点自适应可视宽）；未溢出不注入（保底 160px 生效）', async () => {
+    const w = mountItem()
+    expect(w.find('.title-text').attributes('style')).toBeUndefined() // 未溢出：无内联变量
+    const el = w.find('.title-text').element as HTMLElement
+    Object.defineProperty(el, 'scrollWidth', { value: 500, configurable: true })
+    Object.defineProperty(el, 'clientWidth', { value: 240, configurable: true })
+    await w.setProps({ entry: { ...entry, label: 'renamed@ex.com' } })
+    expect(w.find('.title-text').attributes('style')).toMatch(/--marquee-viewport:\s*240px/)
+  })
 })
 
 describe('OtpListItem 序号 / 倒计时紧急色 / 揭示醒目色（④A 三宿主共享）', () => {

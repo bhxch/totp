@@ -19,6 +19,23 @@ describe('iconStore per-icon 键布局与迁移', () => {
     expect(icons2.icons['github']).toBe('data:image/png;base64,AA')
   })
 
+  it('legacy 值非字符串（脏数据/手改存储）：跳过不落新键、不入索引，合法键照常迁移', async () => {
+    const adapter = createMemoryStorage()
+    await adapter.set('icons', JSON.stringify({
+      github: 'data:image/png;base64,AA',
+      badnum: 42 as unknown as string,
+      badobj: { nested: true } as unknown as string,
+    }))
+    const icons = createIconStore(adapter)
+    await icons.init()
+    expect(icons.icons['github']).toBe('data:image/png;base64,AA')
+    expect(icons.icons['badnum']).toBeUndefined()
+    expect(icons.icons['badobj']).toBeUndefined()
+    expect(JSON.parse((await adapter.get('iconindex'))!)).toEqual(['github'])
+    expect(await adapter.get('icon:badnum')).toBeNull()
+    expect(await adapter.get('icon:badobj')).toBeNull()
+  })
+
   it('put/remove 落盘形态：数据键独立写，索引仅集合变化时写', async () => {
     const adapter = createMemoryStorage()
     const icons = createIconStore(adapter)

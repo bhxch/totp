@@ -97,8 +97,9 @@ export function createIconStore(adapter: StorageAdapter): IconStore {
       } catch {
         legacyMap = {} // 损坏按空处理，不阻断启动
       }
-      const ids = Object.keys(legacyMap)
-      for (const id of ids) await adapter.set(`${ICON_DATA_PREFIX}${id}`, legacyMap[id]!)
+      // 值类型设防：legacy 值非字符串（手改存储/历史脏数据）跳过，不写新键也不入索引
+      const ids = Object.keys(legacyMap).filter((id) => typeof legacyMap[id] === 'string')
+      for (const id of ids) await adapter.set(`${ICON_DATA_PREFIX}${id}`, legacyMap[id] as string)
       await adapter.set(INDEX_KEY, JSON.stringify(ids))
       await adapter.delete('icons')
     }

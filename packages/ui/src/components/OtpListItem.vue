@@ -70,9 +70,13 @@ const titleLine = computed(() => {
  *  后者 try/catch 跳过；组件测试经 mock 元素尺寸 + setProps 走 watch 路径验证 */
 const titleEl = ref<HTMLElement | null>(null)
 const overflowing = ref(false)
+/** 溢出时实测可视宽（clientWidth）注入 CSS 变量供 keyframes 终点用：
+ *  硬编码 160px 在宽行滚不足（终点露字）、窄行过头，实测值随宿主宽度自适应 */
+const viewportWidth = ref(0)
 function checkOverflow(): void {
   const el = titleEl.value
   overflowing.value = el !== null && el.scrollWidth > el.clientWidth
+  viewportWidth.value = overflowing.value && el !== null ? el.clientWidth : 0
 }
 let resizeObserver: ResizeObserver | null = null
 onMounted(() => {
@@ -141,7 +145,12 @@ function onContextMenu(e: MouseEvent): void {
     <div class="meta">
       <!-- P3：上行=服务商/名称合并单行（超长跑马灯）；下行=大号验证码 + QR 钮 -->
       <div class="title-line">
-        <span ref="titleEl" class="title-text" :class="{ marquee: overflowing }">
+        <span
+          ref="titleEl"
+          class="title-text"
+          :class="{ marquee: overflowing }"
+          :style="overflowing ? { '--marquee-viewport': `${viewportWidth}px` } : undefined"
+        >
           <span v-if="entry.pinned" class="pin" :title="t('otpListItem.pinnedTitle')">★</span>{{ titleLine }}
         </span>
       </div>
@@ -181,9 +190,10 @@ function onContextMenu(e: MouseEvent): void {
    宽度跟随容器（溢出时 clientWidth=可视宽、scrollWidth=全文宽，checkOverflow 据此判定） */
 .title-line { overflow: hidden; white-space: nowrap; }
 .title-text { display: inline-block; font-weight: 600; }
-/* P3：超长跑马灯（约 8s/循环，160px≈可视宽）；仅 overflowing 时启用，未溢出无动画 */
+/* P3：超长跑马灯（约 8s/循环）；终点经 --marquee-viewport 注入实测可视宽（checkOverflow 写入，
+   未溢出无变量），160px 为变量缺失保底；仅 overflowing 时启用，未溢出无动画 */
 .title-text.marquee { animation: marquee 8s infinite; }
-@keyframes marquee { 0%,15% { transform: translateX(0) } 50%,65% { transform: translateX(calc(-100% + 160px)) } 100% { transform: translateX(0) } }
+@keyframes marquee { 0%,15% { transform: translateX(0) } 50%,65% { transform: translateX(calc(-100% + var(--marquee-viewport, 160px))) } 100% { transform: translateX(0) } }
 .pin { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-medium); margin-right: 4px; }
 /* P3：下行=大号验证码 + QR 钮 */
 .code-line { display: flex; align-items: center; gap: 8px; }
