@@ -315,10 +315,13 @@ function cancelAutoClose(): void {
 
     <!-- P4 Task 3：搜索行 + 标签行 + 列表区整体换装 QuickCodesPanel（冻结筛选行 + 纯取码列表 +
          两态空文案，行内 QR/管理入口恒关）。过滤编排（四级回退/URL 站点）与复制/自动关窗通道留宿主 -->
+    <!-- R5-I1：空态两态判定在面板内只看 query/标签选中，不感知 URL 过滤——URL 过滤激活时
+         「全空」实为站点无匹配，emptyText 换 noMatch 文案防「暂无条目，点击右上角录入」误导
+         （右上角按钮语义是打开主界面而非添加）；过滤关闭回退引导文案（旧行为不变） -->
     <QuickCodesPanel
       v-model:query="query"
       :codes="codes" :icons="icons" :loading="!loaded" :entries="visible"
-      :empty-text="t('popup.empty')" :no-match-text="t('popup.noMatch')"
+      :empty-text="filterOn && tabUrl ? t('popup.noMatch') : t('popup.empty')" :no-match-text="t('popup.noMatch')"
       tag-row :tags="vault.tags"
       v-model:selected-tag-ids="selectedTagIds"
       :tag-mode="tagMode" @update:tag-mode="setTagMode"

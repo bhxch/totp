@@ -210,6 +210,7 @@ describe('popup QuickCodesPanel 装配（P4 Task 3）', () => {
     vault.entries.length = 0
     vault.tags.length = 0
     settings.tagFilterMode = 'all'
+    settings.urlFilterEnabled = false // R5-I1 用例翻转过该开关，复位防跨用例泄漏
   })
 
   it('面板承载搜索/标签行/列表：tagRow/tags/tagMode/loading/entries 透传，query 双向，tag 行贯通', async () => {
@@ -247,6 +248,29 @@ describe('popup QuickCodesPanel 装配（P4 Task 3）', () => {
 
     expect(settings.tagFilterMode).toBe('any')
     expect(commitSettings).toHaveBeenCalled()
+  })
+
+  it('URL 过滤空态语义（R5-I1）：过滤开+站点无匹配 → emptyText 切 noMatch 文案；过滤关/无站点回退引导文案', async () => {
+    // 有标签页 URL（http 前缀门槛同宿主过滤判定），库空、无 query、无标签选中——面板内部
+    // 两态判定（只看 query/标签）会显示 emptyText，宿主须按 URL 过滤激活态改传 noMatch 文案
+    shim = installChromeShim({ tabUrls: ['https://example.com/page'] })
+    settings.urlFilterEnabled = true
+    let wrapper = await mountTracked()
+    expect(wrapper.findComponent({ name: 'QuickCodesPanel' }).props('emptyText')).toBe('无匹配结果')
+    unmountActive()
+
+    // 过滤关：回退「暂无条目」引导文案（旧行为）
+    settings.urlFilterEnabled = false
+    wrapper = await mountTracked()
+    expect(wrapper.findComponent({ name: 'QuickCodesPanel' }).props('emptyText')).toBe('暂无条目，点击右上角「打开主界面」录入。')
+    unmountActive()
+
+    // 开关开着但读不到标签页 URL（新标签页等）：urlFilterActive=false 无过滤事实，仍是引导文案
+    shim.restore()
+    shim = installChromeShim({ tabUrls: [] })
+    settings.urlFilterEnabled = true
+    wrapper = await mountTracked()
+    expect(wrapper.findComponent({ name: 'QuickCodesPanel' }).props('emptyText')).toBe('暂无条目，点击右上角「打开主界面」录入。')
   })
 })
 
