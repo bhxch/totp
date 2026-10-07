@@ -1,24 +1,42 @@
 <script setup lang="ts">
 /** 全局 toast 渲染端（P3 item-layout toast 设计）：无 props，直读 useToast 模块级单例
  *  toasts——宿主任意组件 useToast().show() 入队即在此响应式渲染。根组件挂载（三宿主
- *  App.vue 模板根级），固定底部居中悬浮。点击单条即 dismiss。 */
+ *  App.vue 模板根级），固定底部居中悬浮。点击单条即 dismiss。
+ *  R3-M9：按 kind 分流双 live region——error 走 role=alert + aria-live=assertive 强播报
+ *  （复制失败等须立即感知），success 保持 polite。双容器均为常驻空节点：live region 动态
+ *  插拔/动态改 aria-live 属性对读屏器行为不一致，预先存在的分区最稳。混合时序下 error 组
+ *  渲染在后但 assertive 播报优先（打断 polite），符合「失败需立即感知」语义。 */
+import { computed } from 'vue'
 import { useToast } from '../composables/useToast'
 
 const { toasts, dismiss } = useToast()
+const politeToasts = computed(() => toasts.value.filter((t) => t.kind !== 'error'))
+const errorToasts = computed(() => toasts.value.filter((t) => t.kind === 'error'))
 </script>
 
 <template>
-  <!-- role=status + aria-live=polite：toast 非紧急打断，读屏礼貌播报新增内容；
-       空态也常驻容器（live region 反复插拔会丢播报），无 toast 项时零尺寸不遮挡 -->
-  <div class="toast-host" role="status" aria-live="polite">
-    <div
-      v-for="t in toasts"
-      :key="t.key"
-      class="toast"
-      :class="{ 'toast--error': t.kind === 'error' }"
-      @click="dismiss(t.key)"
-    >
-      {{ t.message }}
+  <div class="toast-host">
+    <!-- success：role=status + aria-live=polite，非紧急打断礼貌播报 -->
+    <div class="toast-group" role="status" aria-live="polite">
+      <div
+        v-for="t in politeToasts"
+        :key="t.key"
+        class="toast"
+        @click="dismiss(t.key)"
+      >
+        {{ t.message }}
+      </div>
+    </div>
+    <!-- error：role=alert + aria-live=assertive，强播报 -->
+    <div class="toast-group" role="alert" aria-live="assertive">
+      <div
+        v-for="t in errorToasts"
+        :key="t.key"
+        class="toast toast--error"
+        @click="dismiss(t.key)"
+      >
+        {{ t.message }}
+      </div>
     </div>
   </div>
 </template>
@@ -37,6 +55,12 @@ const { toasts, dismiss } = useToast()
   z-index: 1200;
   /* 容器不挡点击（多列纵向居中非全宽）；单条 toast 自身恢复接收 */
   pointer-events: none;
+}
+.toast-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
 }
 .toast {
   pointer-events: auto;
