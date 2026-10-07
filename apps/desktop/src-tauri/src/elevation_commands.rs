@@ -60,11 +60,12 @@ pub async fn abe_bind(window: tauri::WebviewWindow) -> Result<serde_json::Value,
 /// 则 HKLM 永无密文、锁屏 abe.unwrap 恒 NoWrappedDek。DEK 入口命令与 abe_unwrap（DEK 出口）
 /// 同标准：主窗口门控 + spawn_blocking（DEK 管道 IO 阻塞段，T4 审查 ⚠️）。入参形态与
 /// abe_unwrap 返回对称：JSON number 数组（Vec<u8> serde 通道），32B 校验在实现层先行
-/// （非 32B 直接拒，不发起管道往返）；DEK 缓冲处理完 zeroize（成功失败路径同清）
+/// （非 32B 直接拒，不发起管道往返）；DEK 缓冲处理完 zeroize（成功失败路径同清——含门控
+/// 拒绝路径，R7-M3：&mut 入参 + 出口统一清零，不再有提前 return 跳过清零的分支）
 #[tauri::command]
-pub async fn abe_wrap(window: tauri::WebviewWindow, dek: Vec<u8>) -> Result<(), String> {
+pub async fn abe_wrap(window: tauri::WebviewWindow, mut dek: Vec<u8>) -> Result<(), String> {
     let label = window.label().to_string();
-    tauri::async_runtime::spawn_blocking(move || abe_wrap_impl(&label, dek))
+    tauri::async_runtime::spawn_blocking(move || abe_wrap_impl(&label, &mut dek))
         .await
         .map_err(|e| format!("abe_wrap 后台任务异常: {e}"))?
 }
@@ -125,12 +126,18 @@ fn abe_bind_impl(_window_label: &str) -> Result<serde_json::Value, String> {
 }
 
 #[cfg(windows)]
-fn abe_wrap_impl(window_label: &str, mut dek: Vec<u8>) -> Result<(), String> {
-    crate::platform_security::ensure_main_window_label(window_label)?;
-    let result = match <[u8; 32]>::try_from(dek.as_slice()) {
-        Ok(arr) => crate::elevation_client::wrap_dek(&arr).map_err(|e| e.to_string())?,
-        Err(_) => Err(format!("DEK 长度非 32B: {}B", dek.len())),
-    };
+fn abe_wrap_impl(window_label: &str, dek: &mut Vec<u8>) -> Result<(), String> {
+    // 门控先行（mini + 非 32B 也报门控错，次序同历史行为）；&mut 入参 + 出口统一清零：
+    // 成功/长度拒绝/门控拒绝任何路径返回前堆缓冲均已清（R7-M3——原实现在门控 ? 提前
+    // return 时跳过 zeroize，与「成功失败路径同清」注释不符）
+    let result = crate::platform_security::ensure_main_window_label(window_label).and_then(|()| {
+        match <[u8; 32]>::try_from(dek.as_slice()) {
+            // wrap_dek 双层 Result（外层=管道/传输错，内层=服务侧裁定）：外层映射 String，
+            // 内层原样透出——语义与原 `map_err(?` 早退版一致，但不再提前 return 跳过清零
+            Ok(arr) => crate::elevation_client::wrap_dek(&arr).map_err(|e| e.to_string()).and_then(|inner| inner),
+            Err(_) => Err(format!("DEK 长度非 32B: {}B", dek.len())),
+        }
+    });
     // 明文 DEK 处理完即清（Global Constraints；成功失败路径同清）
     dek.zeroize();
     result
@@ -138,7 +145,7 @@ fn abe_wrap_impl(window_label: &str, mut dek: Vec<u8>) -> Result<(), String> {
 
 /// 非 Windows：平台不支持即无 DEK 可入，不门控直接桩（与 abe_unwrap 非 Windows 形态一致）
 #[cfg(not(windows))]
-fn abe_wrap_impl(_window_label: &str, _dek: Vec<u8>) -> Result<(), String> {
+fn abe_wrap_impl(_window_label: &str, _dek: &mut Vec<u8>) -> Result<(), String> {
     Err("当前平台不支持 ABE 服务".into())
 }
 
@@ -426,7 +433,7 @@ mod tests {
     #[test]
     fn abe_wrap_impl_gates_mini_window() {
         assert_eq!(
-            abe_wrap_impl("mini", vec![0u8; 32]).unwrap_err(),
+            abe_wrap_impl("mini", &mut vec![0u8; 32]).unwrap_err(),
             "仅主窗口可调用此命令"
         );
     }
@@ -435,9 +442,24 @@ mod tests {
     #[test]
     fn abe_wrap_impl_rejects_non_32b_after_gate() {
         // 主窗口放行至长度校验（非 32B 在实现层先拒，不发起管道往返——错误非门控文案）
-        let err = abe_wrap_impl("main", vec![0u8; 31]).unwrap_err();
+        let err = abe_wrap_impl("main", &mut vec![0u8; 31]).unwrap_err();
         assert!(err.contains("32B"), "实际: {err}");
         assert_ne!(err, "仅主窗口可调用此命令");
+    }
+
+    // ---- abe_wrap 清零（R7-M3）：门控拒绝/长度拒绝路径与成功路径同清（&mut 入参令清零可断言）----
+
+    #[cfg(windows)]
+    #[test]
+    fn abe_wrap_impl_zeroizes_dek_on_rejected_paths() {
+        // 门控拒绝（原缺陷路径：? 提前 return 跳过 zeroize）
+        let mut dek = vec![7u8; 32];
+        let _ = abe_wrap_impl("mini", &mut dek);
+        assert!(dek.iter().all(|&b| b == 0), "门控拒绝路径未清零");
+        // 长度拒绝（主窗口放行后非 32B 被拒）
+        let mut short = vec![7u8; 31];
+        let _ = abe_wrap_impl("main", &mut short);
+        assert!(short.iter().all(|&b| b == 0), "长度拒绝路径未清零");
     }
 
     // ---- 命令层 async 通道守护（T4 审查 ⚠️ 收敛）：命令经 spawn_blocking 返回与同步
@@ -491,7 +513,7 @@ mod tests {
             serde_json::json!({ "ok": false, "message": "当前平台不支持 ABE 服务" })
         );
         assert_eq!(
-            abe_wrap_impl("main", vec![0u8; 32]).unwrap_err(),
+            abe_wrap_impl("main", &mut vec![0u8; 32]).unwrap_err(),
             "当前平台不支持 ABE 服务"
         );
         assert_eq!(
