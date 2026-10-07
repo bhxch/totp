@@ -155,7 +155,7 @@ describe('右键菜单 otpauth-add（B1-4）', () => {
     expect(shim.notifications.created).toHaveLength(0)
   })
 
-  it('多条（两行 otpauth URI）：不写 pending、不 openPopup，通知条数引导导入页批量添加', async () => {
+  it('多条（两行 otpauth URI）：不写 pending、不 openPopup，带 id 通知可点击（R5-I2）', async () => {
     const openPopup = vi.fn(() => Promise.resolve())
     await loadBackground({ openPopup })
 
@@ -163,9 +163,16 @@ describe('右键菜单 otpauth-add（B1-4）', () => {
     await flush()
 
     expect(shim.notifications.created).toHaveLength(1)
-    expect(shim.notifications.created[0]).toMatchObject({ message: '识别到 2 条，请打开主界面导入页完成批量添加' })
+    expect(shim.notifications.created[0]).toMatchObject({
+      id: 'totp-batch-import',
+      message: '识别到 2 条，点击通知打开主界面完成批量添加',
+    })
     expect(shim.local.data['pendingOtpauth']).toBeUndefined()
     expect(openPopup).not.toHaveBeenCalled()
+
+    // R5-I2：点击批量导入通知 → tabs.create 直达 options#/codes 导入页（对齐「打开主界面」菜单）
+    shim.emitNotificationClick('totp-batch-import')
+    expect(shim.tabs.create).toHaveBeenCalledWith({ url: 'chrome-extension://test-id/options.html#/codes' })
   })
 
   it('openPopup 返回 rejected Promise：catch 吞掉不产生 unhandled rejection', async () => {
@@ -174,6 +181,20 @@ describe('右键菜单 otpauth-add（B1-4）', () => {
     clickMenu({ menuItemId: 'otpauth-add', selectionText: VALID_URI })
     await flush()
     expect(openPopup).toHaveBeenCalledTimes(1) // 无 unhandled rejection 即通过（vitest 会将未处理拒绝计为错误）
+  })
+
+  it('openPopup reject 零反馈兜底（R5-M3）：pending 已写时补发 PENDING_NOTIFY_ID 通知', async () => {
+    const openPopup = vi.fn(() => Promise.reject(new Error('no user gesture')))
+    await loadBackground({ openPopup })
+    clickMenu({ menuItemId: 'otpauth-add', selectionText: VALID_URI })
+    await flush()
+
+    expect(decodePending(shim.local.data['pendingOtpauth'] as string)).toEqual({ v: 1, kind: 'pasted', text: VALID_URI })
+    expect(shim.notifications.created).toHaveLength(1)
+    expect(shim.notifications.created[0]).toMatchObject({
+      id: 'totp-pending-add',
+      message: '已识别待添加内容，点击完成添加',
+    })
   })
 
   it('Firefox 回退（canOpenPopup false）：写入照常不调 openPopup，发带 id 通知引导', async () => {

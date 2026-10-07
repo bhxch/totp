@@ -21,6 +21,8 @@ const QR_IMAGE_MENU_ID = 'qr-decode-image'
 const OPEN_MAIN_MENU_ID = 'otp-open-main'
 /** Firefox 回退通知 id：notifications.onClicked 只认它（点击 → popup.html 标签页完成添加） */
 const PENDING_NOTIFY_ID = 'totp-pending-add'
+/** 批量导入通知 id（R5-I2）：多条分流可点击，onClicked 点击 → options#/codes 导入页 */
+const BATCH_IMPORT_NOTIFY_ID = 'totp-batch-import'
 
 /** 桌面通知单点（R16⑪ 三连收敛）：basic 通知样式恒同（图标/标题），仅 message 差异 */
 function notify(message: string): void {
@@ -28,6 +30,19 @@ function notify(message: string): void {
   // fire-and-forget 吞掉，与 background 其余通道「吞 rejection」口径对齐，防 unhandled rejection
   void ext!.notifications
     .create({
+      type: 'basic',
+      iconUrl: '/icon/128.png',
+      title: 'TOTP 验证码工具',
+      message,
+    })
+    .catch(() => {})
+}
+
+/** 带 id 可点击通知（R5-I2 收敛四处样板）：点击经 notifications.onClicked 按 id 直达对应页面；
+ * create 失败 fire-and-forget 吞掉（同 notify 口径） */
+function notifyClickable(id: string, message: string): void {
+  void ext!.notifications
+    .create(id, {
       type: 'basic',
       iconUrl: '/icon/128.png',
       title: 'TOTP 验证码工具',
@@ -116,14 +131,7 @@ export default defineBackground(() => {
       // M4：成功也发带 id 通知（复用 totp-pending-add 通道）——Firefox 等无 openPopup 宿主
       // 点击通知经 notifications.onClicked 打开 popup.html 消费 pending（kind=uri 信封链路同）；
       // Chromium 通知常驻可点，作 openPopup 缺席时的兜底入口。失败路径仍普通 notify（无 pending 可消费）
-      void ext!.notifications
-        .create(PENDING_NOTIFY_ID, {
-          type: 'basic',
-          iconUrl: '/icon/128.png',
-          title: 'TOTP 验证码工具',
-          message: '已识别验证码二维码，点击完成添加',
-        })
-        .catch(() => {})
+      notifyClickable(PENDING_NOTIFY_ID, '已识别验证码二维码，点击完成添加')
       return
     }
     // P4 打开主界面：tabs.create 建新标签页直达 options#/codes；create 失败（浏览器侧极少）吞掉
@@ -147,7 +155,10 @@ export default defineBackground(() => {
       return
     }
     if (parsed.entries.length > 1) {
-      notify(`识别到 ${parsed.entries.length} 条，请打开主界面导入页完成批量添加`)
+      // R5-I2：多条分流通知带 id 可点击——点击直达 options#/codes 导入页（对齐「打开主界面」
+      // 菜单行为）；旧 notify() 无 id 点击无动作、文案指路含糊（浏览器通知点击后自动消失，
+      // 无需手动 clear）
+      notifyClickable(BATCH_IMPORT_NOTIFY_ID, `识别到 ${parsed.entries.length} 条，点击通知打开主界面完成批量添加`)
       return
     }
     void ext!.storage.local
@@ -159,16 +170,13 @@ export default defineBackground(() => {
         try {
           if (canOpenPopup()) {
             const result = (ext!.action as { openPopup: () => unknown }).openPopup()
-            if (result instanceof Promise) void result.catch(() => {})
+            if (result instanceof Promise) {
+              // R5-M3：openPopup reject（无用户手势等）时 pending 已写但既无弹窗也无通知——
+              // 兜底发 PENDING_NOTIFY_ID 保住「点击完成添加」入口，信封不滞留成零反馈孤儿
+              void result.catch(() => notifyClickable(PENDING_NOTIFY_ID, '已识别待添加内容，点击完成添加'))
+            }
           } else {
-            void ext!.notifications
-              .create(PENDING_NOTIFY_ID, {
-                type: 'basic',
-                iconUrl: '/icon/128.png',
-                title: 'TOTP 验证码工具',
-                message: '已识别待添加内容，点击完成添加',
-              })
-              .catch(() => {})
+            notifyClickable(PENDING_NOTIFY_ID, '已识别待添加内容，点击完成添加')
           }
         } catch { /* API 不存在/调用失败：静默降级 */ }
       })
@@ -178,10 +186,16 @@ export default defineBackground(() => {
   // P5 Firefox 回退：无 openPopup 能力时选择分支写入 pending 后发 PENDING_NOTIFY_ID 通知；
   // 点击通知 → popup.html 作标签页打开，自动走 consumePendingOtpauth（ext+otpauth 协议回调
   // 先例同路径）。notify() 的默认通知无此 id，点击不动作。listener 挂在事件 target 上，
-  // SW 生命周期内天然单例（defineBackground 冷启动重复执行不重复派发）。
+  // SW 生命周期内天然单例（defineBackground 冷启动重复执行不重复派发），顶层注册满足 MV3
+  // SW 唤醒要求。R5-I2：批量导入通知点击 → options#/codes 导入页（通知点击后浏览器自动消失）
   ext!.notifications.onClicked.addListener((notificationId) => {
-    if (notificationId !== PENDING_NOTIFY_ID) return
-    void ext!.tabs.create({ url: ext!.runtime.getURL('popup.html') }).catch(() => {})
+    if (notificationId === PENDING_NOTIFY_ID) {
+      void ext!.tabs.create({ url: ext!.runtime.getURL('popup.html') }).catch(() => {})
+      return
+    }
+    if (notificationId === BATCH_IMPORT_NOTIFY_ID) {
+      void ext!.tabs.create({ url: ext!.runtime.getURL('options.html#/codes') }).catch(() => {})
+    }
   })
 
   // 页面端写路径成功后立即发 {type:'sync-push'}（popup 发完即可能销毁，页面端不做 debounce）：
