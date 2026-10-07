@@ -8,6 +8,7 @@ import { iconView, type IconStore } from '../iconStore'
 import { fullIconsReady } from '../fullIcons'
 import { searchEntries } from '../popupFilter'
 import { moveToIndex, moveWithinPartition, sortEntries } from '../entriesSort'
+import { createEdgeAutoScroll, findScrollHost, type ScrollHostLike } from '../edgeAutoScroll'
 import type { VueStore } from '../store'
 import EntryFormDialog from '../components/EntryFormDialog.vue'
 import TagFilterRow from '../components/TagFilterRow.vue'
@@ -276,6 +277,10 @@ const DRAG_THRESHOLD = 6
 let dragStartX = 0
 let dragStartY = 0
 let dragEngaged = false
+// R2-M5：长列表边缘自动滚动——拖拽中指针贴滚动容器上/下缘（24px 带）rAF 匀速滚动，
+// 离开边缘/drop 停。宿主 pointerdown 时从把手向上解析（无滚动祖先=面板不滚，恒 no-op）
+let dragScrollHost: ScrollHostLike | null = null
+const edgeAutoScroll = createEdgeAutoScroll(() => dragScrollHost)
 
 function onHandlePointerDown(e: PointerEvent, uuid: string) {
   if (!dragEnabled.value) return
@@ -283,6 +288,8 @@ function onHandlePointerDown(e: PointerEvent, uuid: string) {
   dragStartX = e.clientX
   dragStartY = e.clientY
   dragEngaged = false
+  // R2-M5：解析滚动宿主（溢出的 overflow-y 祖先，NavigationShell 内容区）；jsdom 无布局 null
+  dragScrollHost = findScrollHost(e.currentTarget as HTMLElement)
   // capture 失败（jsdom/旧环境无实现）降级为 window 监听，二者都注册以保证 pointermove/up 必达
   try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch { /* 降级 */ }
   window.addEventListener('pointermove', onDragPointerMove)
@@ -293,6 +300,8 @@ function onDragPointerMove(e: PointerEvent) {
   if (dragUuid === null) return
   if (!dragEngaged && Math.hypot(e.clientX - dragStartX, e.clientY - dragStartY) < DRAG_THRESHOLD) return
   dragEngaged = true
+  // R2-M5：先于落点判定更新边缘滚动（指针悬列表外但贴容器缘仍需滚动）
+  edgeAutoScroll.update(e.clientY)
   const rowEl = document.elementFromPoint(e.clientX, e.clientY)?.closest('.row')
   if (!rowEl) {
     dragOver.value = null
@@ -332,6 +341,8 @@ function clearDrag() {
   window.removeEventListener('pointermove', onDragPointerMove)
   window.removeEventListener('pointerup', onDragPointerUp)
   window.removeEventListener('pointercancel', onDragPointerCancel)
+  edgeAutoScroll.stop() // R2-M5：drop/cancel 停边缘滚动
+  dragScrollHost = null
   dragUuid = null
   dragEngaged = false
   dragOver.value = null
@@ -518,8 +529,10 @@ h2 { margin: 0; font-size: var(--md-sys-typescale-title-medium); }
 .chips-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .row { position: relative; display: flex; align-items: center; }
 .row :deep(.otp-item) { flex: 1; }
-/* ④C：行首把手/序号并列布局（slot 内容属本组件作用域）；把手仅无过滤时渲染 */
-.handle { cursor: grab; opacity: .6; margin-right: 2px; }
+/* ④C：行首把手/序号并列布局（slot 内容属本组件作用域）；把手仅无过滤时渲染。
+   R2-M5：touch-action:none 屏蔽触屏滚动手势抢事件（pointermove 被浏览器滚动打断成
+   pointercancel，拖拽不可用）——把手是唯一拖拽发起区，禁默认触摸行为不影响行滚动 */
+.handle { cursor: grab; opacity: .6; margin-right: 2px; touch-action: none; }
 .row .handle { display: none; }
 .row:hover .handle, .handle:active { display: inline; }
 /* 杂-I2（Task 13 修订）：hover 把手与序号并列出现、序号保持可见可点——原「hover 隐藏序号」
