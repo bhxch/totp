@@ -3,7 +3,7 @@
  * 取代逐文件手写 vi.hoisted + vi.mock（既有先例 backupService.test.ts 保留不动）。
  *
  * 覆盖面（与 src 实际 invoke/listen/fs/window 使用面一一对应，见盘点底稿 D 节）：
- * - invoke：全部 39 个 Rust 命令（INVOKE_COMMANDS），按命令名注册 handler/返回值；
+ * - invoke：全部 42 个 Rust 命令（INVOKE_COMMANDS），按命令名注册 handler/返回值；
  *   未注册的已知命令返回 null（与 Rust Option 返回一致）；清单外命令视为命令名笔误，抛错提示
  *   （on/onReturn/listen 注册侧同口径 fail-loud，emit 侧保持宽松）
  * - 事件：@tauri-apps/api/event listen 的 6 类事件（EVENTS）+ emitTo 定向派发记录
@@ -28,7 +28,7 @@ type Args = Record<string, unknown>
 type CommandHandler = (args: Args | undefined) => unknown
 type EventHandler = (e: { event: string; id: number; payload: unknown }) => void
 
-/** src 实际调用的全部 Rust 命令（盘点底稿 D 节 25 个 + App.vue 的 mcp_revoke_approvals 等 31 个 + mini pin 2 个 = 33 个起步，后续批次续增 MCP 配置/审批响应与 devtools/释放策略，P6 T4 续增 ABE 三命令现 39 个） */
+/** src 实际调用的全部 Rust 命令（盘点底稿 D 节 25 个 + App.vue 的 mcp_revoke_approvals 等 31 个 + mini pin 2 个 = 33 个起步，后续批次续增 MCP 配置/审批响应与 devtools/释放策略，P6 续增 ABE 命令与 cloud_http_fetch 现共 42 个，与 Rust generate_handler 注册面一致） */
 export const INVOKE_COMMANDS = [
   // 剪贴板暂存
   'stage_clipboard_write',
@@ -75,11 +75,17 @@ export const INVOKE_COMMANDS = [
   'devtools_set_config',
   'release_policy_get',
   'release_policy_set',
-  // ABE 服务（P6 T4：非 Windows 桩返回 supported:false，前端短路另有 UA 守卫；C1 终审续增 abe_wrap）
+  // 云备份出网（desktopShell ③ 注入 cloudFetch；cloudHttp.test.ts 自带 hoisted mock 不走本
+  // 工厂，登记于此仅为清单完整性——Rust 已注册且 src 实际调用，漏登会让走本 mock 的测试
+  // 触发云同步时误报「未知命令」）
+  'cloud_http_fetch',
+  // ABE 服务（P6 T4：非 Windows 桩返回 supported:false，前端短路另有 UA 守卫；C1 终审续增
+  // abe_wrap；T7 abe_unwrap——锁屏静默解锁 Unwrap 代理，R7-M4 补登记防清单外抛错）
   'abe_status',
   'abe_bind',
   'abe_wrap',
   'abe_remove',
+  'abe_unwrap',
 ] as const
 
 /** src 实际 listen 的事件（onFocusChanged 属 window API，见 window mock；mini-session 见 MiniApp 跟随主窗解锁联动） */
