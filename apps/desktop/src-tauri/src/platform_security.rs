@@ -6,7 +6,8 @@
 // 命令注册给 main/mini 两个窗口，Tauri capabilities 无法约束应用自有命令（仅约束插件权限），
 // 故在命令体内按窗口 label 收窄：mini 恒不执行导入/解锁/安全卡操作（锁定态迷你窗不可用），
 // 暴露面从两个 webview 收窄到主窗口。主窗口 webview 内的脚本仍可调用（该残余边界见各命令注释）。
-fn ensure_main_window_label(label: &str) -> Result<(), String> {
+// pub(crate)：abe_unwrap（T7 fix 1/5）等跨模块 DEK 出口命令复用同一门控，不复制实现
+pub(crate) fn ensure_main_window_label(label: &str) -> Result<(), String> {
     if label == "main" {
         Ok(())
     } else {

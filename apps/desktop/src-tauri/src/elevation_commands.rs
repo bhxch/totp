@@ -53,10 +53,13 @@ pub fn abe_remove() -> serde_json::Value {
 /// 返回选型：Vec<u8> 经 serde 序列化为 JSON number 数组（Tauri invoke 默认 JSON 通道），
 /// 32B 规模开销可忽略且 JS 侧 `new Uint8Array(arr)` 直构，不用 base64 省一次编解码往返；
 /// DEK 在 JS 侧 unlockWithDek 注入会话后无密文残留（core 侧 zeroize 责任）。
-/// 错误以 Err(String) 折叠外传——锁屏回退语义下 TS 侧仅 console.warn 留痕并回退 dpapi
+/// 错误以 Err(String) 折叠外传——锁屏回退语义下 TS 侧仅 console.warn 留痕并回退 dpapi。
+/// 主窗口门控（T7 fix 1/5）：DEK 出口命令与 dek_unprotect/os_auto_unprotect 同标准——
+/// 命令体内按窗口 label 收窄（Tauri v2 对应用自有 command 无按窗口 ACL 细分），mini
+/// webview 内脚本 invoke 恒 Err「仅主窗口可调用此命令」
 #[tauri::command(async)]
-pub fn abe_unwrap() -> Result<Vec<u8>, String> {
-    abe_unwrap_impl()
+pub fn abe_unwrap(window: tauri::WebviewWindow) -> Result<Vec<u8>, String> {
+    abe_unwrap_impl(window.label())
 }
 
 // ---------- 实现分派（cfg 内联，保持命令签名单点） ----------
@@ -93,20 +96,27 @@ fn abe_remove_impl() -> serde_json::Value {
 }
 
 #[cfg(windows)]
-fn abe_unwrap_impl() -> Result<Vec<u8>, String> {
+fn abe_unwrap_impl(window_label: &str) -> Result<Vec<u8>, String> {
+    crate::platform_security::ensure_main_window_label(window_label)?;
     unwrap_outcome(crate::elevation_client::unwrap_dek())
 }
 
+/// 非 Windows：平台不支持即无 DEK 可泄，不门控直接桩（与 decrypt_dpapi 非 Windows 形态一致）
 #[cfg(not(windows))]
-fn abe_unwrap_impl() -> Result<Vec<u8>, String> {
+fn abe_unwrap_impl(_window_label: &str) -> Result<Vec<u8>, String> {
     Err("当前平台不支持 ABE 服务".into())
 }
 
 /// unwrap 结果 → 前端载荷（§0.3/T7；Windows-only 纯函数化，单测覆盖成功与错误分型折叠）：
 /// Ok(DEK) → 字节向量；四分型错误（Unavailable/CallerRejected/NoWrappedDek/Other）经
-/// Display 折叠为 String——锁屏回退语义不区分失败原因，仅留痕
+/// Display 折叠为 String——锁屏回退语义不区分失败原因，仅留痕。
+/// dek.to_vec() 注记（fix 1/5 Minor）：[u8;32] 为 Copy，栈副本无法 zeroize——既定
+/// Vec<u8> serde 接口形态下接受该残余（明文本体的堆缓冲在 unwrap_dek/transact 内已
+/// 用后即清，残余面仅 32B 栈内存，随函数返回失效）
 #[cfg(windows)]
-fn unwrap_outcome(result: Result<[u8; 32], crate::elevation_client::UnwrapError>) -> Result<Vec<u8>, String> {
+fn unwrap_outcome(
+    result: Result<[u8; 32], crate::elevation_client::UnwrapError>,
+) -> Result<Vec<u8>, String> {
     result.map(|dek| dek.to_vec()).map_err(|e| e.to_string())
 }
 
@@ -312,7 +322,22 @@ mod tests {
             unwrap_outcome(Err(UnwrapError::NoWrappedDek)),
             Err("ABE 服务无已绑定密文".into())
         );
-        assert_eq!(unwrap_outcome(Err(UnwrapError::Other("x".into()))), Err("x".into()));
+        assert_eq!(
+            unwrap_outcome(Err(UnwrapError::Other("x".into()))),
+            Err("x".into())
+        );
+    }
+
+    // ---- abe_unwrap 主窗口门控（T7 fix 1/5；DEK 出口命令同标准）----
+
+    #[cfg(windows)]
+    #[test]
+    fn abe_unwrap_impl_gates_mini_window() {
+        // mini webview 内脚本 invoke：门控先行，不触达管道即拒（错误消息与 platform_security 同源）
+        assert_eq!(abe_unwrap_impl("mini").unwrap_err(), "仅主窗口可调用此命令");
+        // 主窗口 label 放行（至 unwrap 阶段因测试环境无服务管道而失败——非门控错误即达门控后方）
+        let err = abe_unwrap_impl("main").unwrap_err();
+        assert_ne!(err, "仅主窗口可调用此命令");
     }
 
     // ---- 命令返回形状守护（serde camelCase 对齐 TS AbeStatus/AbeResult）----
@@ -350,6 +375,9 @@ mod tests {
             abe_remove_impl(),
             serde_json::json!({ "ok": false, "message": "当前平台不支持 ABE 服务" })
         );
-        assert_eq!(abe_unwrap_impl().unwrap_err(), "当前平台不支持 ABE 服务");
+        assert_eq!(
+            abe_unwrap_impl("main").unwrap_err(),
+            "当前平台不支持 ABE 服务"
+        );
     }
 }
