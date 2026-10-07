@@ -71,7 +71,9 @@ const canConfirm = computed(() => trimmed.value !== '' && !props.busy)
 .override-hint { font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-tertiary); margin: 4px 0; }
 .quick-label { font-size: var(--md-sys-typescale-label-medium); opacity: 0.65; margin: 8px 0 4px; }
 .quick-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.quick-chip { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 999px; background: transparent; color: var(--md-sys-color-on-surface); padding: 2px 10px; font-size: var(--md-sys-typescale-body-small); cursor: pointer; }
+.quick-chip { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 999px; background: transparent; color: var(--md-sys-color-on-surface); padding: 2px 10px; font-size: var(--md-sys-typescale-body-small); cursor: pointer; position: relative; }
+/* 命中层:inset -6px 扩薄 chip 触达(视觉尺寸不变) */
+.quick-chip::after { content: ''; position: absolute; inset: -6px; border-radius: inherit; }
 .quick-chip:hover { background: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent); }
 .error { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); }
 .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }

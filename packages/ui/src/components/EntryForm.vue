@@ -611,7 +611,9 @@ fieldset { border: 1px solid var(--md-sys-color-outline-variant); border-radius:
 .rule-row .rule-pattern.invalid :deep(.md-text-field__box) { border-bottom-color: var(--md-sys-color-error); }
 .rule-error { font-size: var(--md-sys-typescale-label-small); color: var(--md-sys-color-error); flex-basis: 100%; }
 .icon-recommend { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); padding: 4px 8px; background: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent); border-radius: 6px; }
-.icon-recommend .recommend-item { display: grid; place-items: center; padding: 2px; border: none; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
+.icon-recommend .recommend-item { display: grid; place-items: center; padding: 6px 8px; border: none; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; position: relative; }
+/* 命中层:inset -4px 在 padding 6px 8px 基础上再扩(20px 图标钮达标) */
+.icon-recommend .recommend-item::after { content: ''; position: absolute; inset: -4px; border-radius: inherit; }
 .icon-recommend .recommend-item:hover { background: color-mix(in srgb, var(--md-sys-color-primary) 16%, transparent); }
 .icon-preview { width: 20px; height: 20px; fill: currentColor; flex: none; }
 .icon-current-img { width: 20px; height: 20px; object-fit: contain; flex: none; }

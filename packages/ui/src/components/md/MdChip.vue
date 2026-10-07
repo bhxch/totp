@@ -11,7 +11,9 @@ const emit = defineEmits<{ click: [event: MouseEvent] }>()
   font: inherit; font-size: var(--md-sys-typescale-body-medium); font-weight: 500; display: inline-flex; align-items: center; gap: 8px;
   transition: box-shadow .15s; position: relative; }
 .md-chip--selected { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); box-shadow: none; }
-.md-chip::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: transparent; transition: background-color .15s; }
+/* 命中层兼状态层(M3 状态层定义于触达区):inset -8px 使 32px 高 chip 达 MD3 48dp 触达目标
+ * (相邻 chip gap 8 时命中带重叠,MD3 允许);不得设 pointer-events:none——否则命中扩展失效 */
+.md-chip::after { content: ''; position: absolute; inset: -8px; border-radius: inherit; background: transparent; transition: background-color .15s; }
 .md-chip:not(:disabled):hover::after { background: color-mix(in srgb, currentColor 8%, transparent); }
 /* M3 状态层:pressed 12% / focus 12%(focus 同时保留 3px focus ring) */
 .md-chip:not(:disabled):active::after,

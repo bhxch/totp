@@ -10,7 +10,9 @@ const emit = defineEmits<{ click: [event: MouseEvent] }>()
   font: inherit; font-size: var(--md-sys-typescale-body-medium); font-weight: 500; display: inline-flex; align-items: center; gap: 8px;
   transition: box-shadow .15s; position: relative; }
 .md-btn:disabled { opacity: .38; cursor: default; }
-.md-btn::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: transparent; transition: background-color .15s; }
+/* 命中层兼状态层(M3 状态层定义于触达区):inset -4px 使 40px 视觉钮达 MD3 48dp 触达目标;
+ * 不得设 pointer-events:none——否则框外环带点击穿透,命中扩展失效 */
+.md-btn::after { content: ''; position: absolute; inset: -4px; border-radius: inherit; background: transparent; transition: background-color .15s; }
 .md-btn:not(:disabled):hover::after { background: color-mix(in srgb, currentColor 8%, transparent); }
 /* M3 状态层:pressed 12% / focus 12%(danger 的 currentColor=error 自动同色);focus 同时保留 3px focus ring */
 .md-btn:not(:disabled):active::after,

@@ -212,10 +212,13 @@ const hasGeneralItems = computed(() => true)
 .appearance-rows .row { min-height: 32px; }
 .row-label { font-size: var(--md-sys-typescale-body-medium); }
 .row-hint { display: block; font-size: var(--md-sys-typescale-body-small); opacity: .65; }
-.dots { display: flex; gap: 10px; flex-wrap: wrap; }
-.theme-dot { width: 30px; height: 30px; border-radius: 50%; border: none; cursor: pointer; padding: 0;
-  display: inline-flex; align-items: center; justify-content: center; transition: transform .15s; }
-.theme-dot:hover { transform: scale(1.1); }
+.dots { display: flex; gap: 8px; flex-wrap: wrap; }
+/* 命中层:inset -7px 使 30px 色点达 44px 触达;hover 由 scale(1.1) 改 8% 状态层(去位移抖动,叠 currentColor) */
+.theme-dot { width: 30px; height: 30px; border-radius: 50%; border: none; cursor: pointer; padding: 0; position: relative;
+  display: inline-flex; align-items: center; justify-content: center; }
+.theme-dot::after { content: ''; position: absolute; inset: -7px; border-radius: inherit;
+  background: transparent; transition: background-color .15s; }
+.theme-dot:hover::after { background: color-mix(in srgb, currentColor var(--md-sys-state-layer-hover), transparent); }
 .theme-dot--selected { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
 .theme-dot__check { color: #fff; font-size: var(--md-sys-typescale-body-medium); line-height: 1; text-shadow: 0 0 2px rgba(0, 0, 0, .6); }
 .theme-resolved { font-size: var(--md-sys-typescale-body-small); opacity: .65; margin: 0; }

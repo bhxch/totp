@@ -217,12 +217,14 @@ function select(item: Item) {
 <style scoped>
 .picker-search { margin-bottom: 4px; }
 .picker-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
-.picker-chip { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: 999px; background: transparent; color: var(--md-sys-color-on-surface-variant); padding: 2px 10px; font-size: var(--md-sys-typescale-body-small); cursor: pointer; }
+.picker-chip { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: 999px; background: transparent; color: var(--md-sys-color-on-surface-variant); padding: 2px 10px; font-size: var(--md-sys-typescale-body-small); cursor: pointer; position: relative; }
+/* 命中层:inset -6px 扩薄 chip 触达(视觉尺寸不变;相邻 chip 命中带重叠,MD3 允许) */
+.picker-chip::after { content: ''; position: absolute; inset: -6px; border-radius: inherit; }
 .picker-chip.active { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); border-color: transparent; }
 .chip-label { border: none; background: transparent; color: inherit; cursor: pointer; font: inherit; padding: 0; }
-.chip-remove { border: none; background: transparent; color: inherit; font: inherit; cursor: pointer; opacity: 0.6; padding: 0 2px; }
+.chip-remove { border: none; background: transparent; color: inherit; font: inherit; cursor: pointer; opacity: 0.6; padding: 0 2px; min-width: 40px; min-height: 40px; }
 .chip-remove:hover { opacity: 1; }
-.chip-remove-confirm, .chip-remove-cancel { border: none; background: transparent; color: inherit; font-size: var(--md-sys-typescale-label-small); cursor: pointer; padding: 0 2px; }
+.chip-remove-confirm, .chip-remove-cancel { border: none; background: transparent; color: inherit; font-size: var(--md-sys-typescale-label-small); cursor: pointer; padding: 0 2px; min-width: 40px; min-height: 40px; }
 .chip-remove-confirm { color: var(--md-sys-color-error); }
 .picker-loading, .picker-empty { font-size: var(--md-sys-typescale-body-small); opacity: 0.6; }
 .picker-retry { border: none; background: transparent; color: var(--md-sys-color-primary); cursor: pointer; font-size: var(--md-sys-typescale-body-small); }

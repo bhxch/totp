@@ -37,7 +37,9 @@ function onKeydown(e: KeyboardEvent) {
 .md-seg__item:last-child { border-radius: 0 100px 100px 0; }
 .md-seg__item:only-child { border-radius: 100px; }
 .md-seg__item + .md-seg__item { box-shadow: inset 1px 0 0 var(--md-sys-color-outline); }
-.md-seg__item::after { content: ''; position: absolute; inset: 0; pointer-events: none;
+/* 命中层兼状态层(M3 状态层定义于触达区):inset -4px 使 40px 段达 MD3 48dp 触达目标(相邻段命中带
+ * 重叠,MD3 允许);radius 跟随段圆端;不得设 pointer-events:none——否则命中扩展失效 */
+.md-seg__item::after { content: ''; position: absolute; inset: -4px; border-radius: inherit;
   background: transparent; transition: background-color .15s; }
 .md-seg__item:hover::after { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
 /* M3 状态层:pressed 12% / focus 12%(focus 同时保留 3px focus ring) */

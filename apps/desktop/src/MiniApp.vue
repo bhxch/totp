@@ -260,7 +260,9 @@ body { font-family: system-ui, sans-serif; margin: 0; }
 .mini { display: flex; flex-direction: column; gap: 2px; padding: 6px; --frozen-bleed: 6px; }
 .titlebar { display: flex; align-items: center; gap: 2px; height: 34px; padding: 0 4px 0 10px; user-select: none; }
 .title-drag { flex: 1; font-size: var(--md-sys-typescale-body-small); opacity: .6; }
-.tb-btn { border: none; background: transparent; cursor: pointer; width: 28px; height: 28px; border-radius: 6px; color: inherit; font-size: 12px; line-height: 1; }
+.tb-btn { border: none; background: transparent; cursor: pointer; width: 40px; height: 40px; border-radius: var(--md-sys-shape-corner-small); color: inherit; font-size: 12px; line-height: 1; position: relative; }
+/* 命中层:inset -2px 使 40px 钮达 44px 触达(标题栏紧凑语境不追 48) */
+.tb-btn::after { content: ''; position: absolute; inset: -2px; border-radius: inherit; }
 .tb-btn:hover { background: var(--md-sys-color-surface-container-highest, rgba(0, 0, 0, .08)); }
 .tb-btn.active { color: var(--md-sys-color-primary); }
 .empty { text-align: center; opacity: .6; padding: 32px 0; font-size: var(--md-sys-typescale-body-medium); }

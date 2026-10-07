@@ -40,4 +40,7 @@ function onChange(e: Event) {
   width: 5px; height: 10px; border-right: 2px solid var(--md-sys-color-on-primary);
   border-bottom: 2px solid var(--md-sys-color-on-primary); transform: rotate(45deg); }
 .md-checkbox__input:focus-visible + .md-checkbox__box { outline: 3px solid var(--md-sys-color-primary); outline-offset: 2px; }
+/* 命中层:inset -15px 使 18px 盒达 MD3 48dp 触达目标。盒上 ::before(状态层)/::after(勾选标)均被占用,
+ * 故挂根 label——无 label 文本时根=盒 18px(+30px=48);有 label 时根更大,命中只增不减 */
+.md-checkbox::after { content: ''; position: absolute; inset: -15px; }
 </style>

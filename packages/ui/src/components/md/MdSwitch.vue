@@ -37,6 +37,8 @@ function onChange(e: Event) {
 .md-switch:active .md-switch__track::before { background: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent); }
 .md-switch--checked:hover .md-switch__track::before { background: color-mix(in srgb, var(--md-sys-color-on-primary) 8%, transparent); }
 .md-switch--checked:active .md-switch__track::before { background: color-mix(in srgb, var(--md-sys-color-on-primary) 12%, transparent); }
+/* 命中层:inset -8px 使 32px 高轨道达 MD3 48dp 触达目标;透明无背景——状态层仍由 ::before 以轨道面近似叠加 */
+.md-switch__track::after { content: ''; position: absolute; inset: -8px; border-radius: inherit; }
 /* M3 拇指随状态缩放(审查挂账收口):未选中 16dp(on-surface-variant 描边+芯,border-box 含描边)、
  * 选中 24dp 实心(on-primary);150ms cubic(.2,0,0,1) 标准过渡。轨尺寸与状态层(X7)保持不动 */
 .md-switch__thumb { position: relative; box-sizing: border-box; width: 16px; height: 16px; border-radius: 50%;
