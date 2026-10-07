@@ -2,7 +2,6 @@
 import type { OtpEntry } from '@totp/core'
 import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import MdIconButton from './md/MdIconButton.vue'
 import { avatarStyleOf } from './avatarColor'
 import { CODE_PLACEHOLDER } from '../composables/useOtpCodes'
 
@@ -21,20 +20,19 @@ const props = withDefaults(defineProps<{
   icon?: { html?: string; src?: string }
   /** 宿主是否接了条目右键菜单（CodesPage/popup 已接，默认 true）；未接宿主（mini）传 false：不声明 aria-haspopup，右键恢复浏览器默认 */
   contextMenu?: boolean
-  /** 是否渲染行内 QR 按钮（默认 true）；未接 QR 面板的宿主（mini）传 false 移除死入口 */
-  showQr?: boolean
+  /** 紧凑档（MD3 48px 行高，QuickCodesPanel 快速窗用）；默认 56px 标准档 */
+  compact?: boolean
   /** 行首展示序号（1-based，宿主按当前排序传入）；缺省不渲染序号列。
    *  CodesPage 经 #lead slot 覆盖此区域为「拖拽把手/序号」hover 切换（④C） */
   index?: number
 }>(), {
-  // 注意：Boolean prop 有 Vue 运行时 casting（未传即 false），默认开启的两项必须显式给默认值
+  // 注意：Boolean prop 有 Vue 运行时 casting（未传即 false），默认开启的项必须显式给默认值
   contextMenu: true,
-  showQr: true,
+  compact: false,
 })
-const emit = defineEmits<{ copy: []; qr: []; context: [event: MouseEvent] }>()
+const emit = defineEmits<{ copy: []; context: [event: MouseEvent] }>()
 
 const hasContextMenu = computed(() => props.contextMenu !== false)
-const showQrButton = computed(() => props.showQr !== false)
 
 /** 验收条目3：6 位码默认打码；双击显示 8 秒后自动打回（spec §6 固定时长，不可配置） */
 const MASK_CODE = '••• •••'
@@ -129,6 +127,7 @@ function onContextMenu(e: MouseEvent): void {
        行内复制按钮已删（P3）：单击行（@click）即复制，copy emit 契约不变 -->
   <div
     class="otp-item"
+    :class="{ 'otp-item--compact': compact }"
     role="button"
     tabindex="0"
     :aria-haspopup="hasContextMenu ? 'menu' : undefined"
@@ -148,7 +147,7 @@ function onContextMenu(e: MouseEvent): void {
       <template v-else>{{ entry.issuer.slice(0, 1).toUpperCase() || '?' }}</template>
     </span>
     <div class="meta">
-      <!-- P3：上行=服务商/名称合并单行（超长跑马灯）；下行=大号验证码 + QR 钮 -->
+      <!-- P3：上行=服务商/名称合并单行（超长跑马灯）；下行=大号验证码（行内 QR 钮已删，入口归右键菜单） -->
       <div class="title-line">
         <!-- R3-M8：★ 在裁切容器层（title-text 外），长名跑马灯滚动循环中置顶指示不再随文本滚出视野 -->
         <span v-if="entry.pinned" class="pin" :title="t('otpListItem.pinnedTitle')">★</span><span
@@ -167,25 +166,27 @@ function onContextMenu(e: MouseEvent): void {
           :title="code === 'INVALID' ? t('otpListItem.invalidTitle', { message: error ?? '' }) : undefined"
           aria-live="polite"
         >{{ displayed }}</span>
-        <!-- M-3：内嵌按钮只 stop click 不够——快速双击按钮的 dblclick 会冒泡到根元素触发揭示
-             （QR 弹窗打开瞬间底层码明文），按钮层须一并 stop dblclick -->
-        <MdIconButton v-if="showQrButton" class="show-qr" :title="t('otpListItem.qrTitle')" :aria-label="t('otpListItem.qrTitle')" @click.stop="emit('qr')" @dblclick.stop>▣</MdIconButton>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* P3：position relative 供行顶进度条绝对定位；其余根样式（flex 行、hover、圆角）不变 */
-.otp-item { position: relative; display: flex; align-items: center; gap: 12px; padding: 10px 12px; cursor: pointer; border-radius: 8px; }
+/* P3：position relative 供行顶进度条绝对定位。MD3 紧凑化：行盒 56px 档（padding 6px 16px +
+   min-height 56px），width:100% 保证整行等宽（进度条等长兜底——宿主容器不再决定行宽） */
+.otp-item { position: relative; display: flex; align-items: center; gap: 12px; padding: 6px 16px; min-height: 56px; width: 100%; cursor: pointer; border-radius: 8px; }
 .otp-item:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
+/* pressed 态走 state-layer token（12%，同 MdIconButton pressed 口径） */
+.otp-item:active { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-pressed), transparent); }
+/* 紧凑档：快速窗（QuickCodesPanel）48px 行高 */
+.otp-item--compact { min-height: 48px; padding: 4px 12px; }
 /* P3：行顶进度条（替环形倒计时）。刻意无 transition（GPU 红线，见 progressPct 注释） */
 .progress-line { position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--md-sys-color-outline-variant); border-radius: 8px 8px 0 0; overflow: hidden; }
 .progress-fill { height: 100%; background: var(--md-sys-color-primary); }
 /* ④A：周期最后三分之一转 error 醒目色 */
 .progress-fill.urgent { background: var(--md-sys-color-error); }
-/* ④A：行首序号列（窄列定宽防跳字；tabular-nums 数字等宽） */
-.index { flex: none; min-width: 20px; text-align: center; font-variant-numeric: tabular-nums; font-size: var(--md-sys-typescale-body-small); opacity: .55; }
+/* ④A：行首序号列（窄列定宽防跳字；tabular-nums 数字等宽）；色收 on-surface-variant（去 opacity hack，次级文本 M3 语义色） */
+.index { flex: none; min-width: 20px; text-align: center; font-variant-numeric: tabular-nums; font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-on-surface-variant); }
 .avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); display: grid; place-items: center; font-weight: 600; flex: none; overflow: hidden; }
 .icon-svg { width: 22px; height: 22px; fill: currentColor; }
 .icon-img { width: 100%; height: 100%; object-fit: cover; }
@@ -201,11 +202,10 @@ function onContextMenu(e: MouseEvent): void {
 @keyframes marquee { 0%,15% { transform: translateX(0) } 50%,65% { transform: translateX(calc(-100% + var(--marquee-viewport, 160px))) } 100% { transform: translateX(0) } }
 /* ★ 置顶指示（R3-M8：位于裁切容器层，flex 子项不被 translateX 带走）；4px 间距对齐原内嵌形态 */
 .pin { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-medium); margin-right: 4px; flex: none; }
-/* P3：下行=大号验证码 + QR 钮 */
+/* P3：下行=大号验证码 */
 .code-line { display: flex; align-items: center; gap: 8px; }
-.code { font-family: system-ui, sans-serif; font-weight: 700; font-variant-numeric: tabular-nums; font-size: var(--md-sys-typescale-code-large); letter-spacing: 1px; }
+.code { font-family: system-ui, sans-serif; font-weight: 700; font-variant-numeric: tabular-nums; font-size: var(--md-sys-typescale-code-large); line-height: 24px; letter-spacing: 1px; }
 .code.invalid { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-medium); cursor: help; }
 /* ④A：揭示态验证码转主题主色醒目（与进度条紧急的错误红区分：主色=就绪可用，红=紧急） */
 .code.revealed { color: var(--md-sys-color-primary); }
-.show-qr { font-size: var(--md-sys-typescale-body-medium); }
 </style>

@@ -76,7 +76,7 @@ watch(
     if (ids.length > 0) selectedTagIds.value = ids.filter((id) => props.store.vault.tags.some((t) => t.id === id))
   },
 )
-/** qr：单条目 otpauth 二维码（行内按钮 / 右键菜单「显示二维码」共用） */
+/** qr：单条目 otpauth 二维码（右键菜单「显示二维码」触发；行内 QR 钮已删） */
 const qrEntry = ref<OtpEntry | null>(null)
 /** 标签管理弹层：chips「管理标签」触发（同时向宿主 emit open-tags 保留契约） */
 const tagsOpen = ref(false)
@@ -388,8 +388,9 @@ function openSheet() {
 
 <template>
   <section class="page">
-    <!-- 条目卡走 MdCard outlined(审查 F3:独立 .card 的 outline-variant/10px 与 M3 标尺双标) -->
-    <MdCard ref="editorHost" class="codes-card">
+    <!-- 条目卡走 MdCard outlined(审查 F3:独立 .card 的 outline-variant/10px 与 M3 标尺双标)；
+         MD3 紧凑化：padding compact 8px（.page --frozen-bleed 同步 8px，见下） -->
+    <MdCard ref="editorHost" class="codes-card" padding="compact">
       <div class="card-head">
         <h2>{{ t('codesPage.entryCount', { count: store.vault.entries.length }) }}</h2>
         <MdButton v-if="sorted.length > 0" data-test="select-mode" variant="text" @click="toggleSelectMode">
@@ -428,7 +429,6 @@ function openSheet() {
           :index="i + 1"
           v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 1 }"
           @copy="onCopy(e)"
-          @qr="qrEntry = e"
           @context="(ev) => onContextMenu(e, ev)"
         >
           <!-- ④C：行首序号列宿主形态——无过滤时拖拽把手与序号并列渲染（均可见），点击序号输入目标序号移动 -->
@@ -521,8 +521,8 @@ function openSheet() {
 </template>
 
 <style scoped>
-.page { padding: 16px; display: flex; flex-direction: column; gap: 12px; /* R5-M6：MdCard padding 16px = .frozen 两侧缝隙宽（见下） */ --frozen-bleed: 16px; }
-.codes-card { display: flex; flex-direction: column; gap: 8px; }
+.page { padding: 16px; display: flex; flex-direction: column; gap: 12px; /* R5-M6：MdCard padding compact 8px = .frozen 两侧缝隙宽（见下） */ --frozen-bleed: 8px; }
+.codes-card { display: flex; flex-direction: column; gap: 4px; }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .row-check { flex: none; margin-right: 4px; }
 h2 { margin: 0; font-size: var(--md-sys-typescale-title-medium); }
@@ -549,9 +549,15 @@ h2 { margin: 0; font-size: var(--md-sys-typescale-title-medium); }
 .row.drag-below { box-shadow: inset 0 -2px 0 var(--md-sys-color-primary); }
 .ops { display: flex; gap: 4px; opacity: 0; transition: opacity .15s; }
 .row:hover .ops, .ops:focus-within { opacity: 1; }
+/* MD3 紧凑化：ops 钮视觉 32px（40→32 收窄行尾占位）；命中层随根缩小为 32+8=40，
+   再外扩至 inset -8px 保 MD3 48dp 命中（32+16=48） */
+.ops :deep(.md-icon-btn) { width: 32px; height: 32px; }
+.ops :deep(.md-icon-btn::after) { inset: -8px; }
+/* 窄窗（<600px）：行尾 ops 隐藏（编辑/删除入口归右键菜单），还行宽给验证码 */
+@media (max-width: 599px) { .row .ops { display: none; } }
 .empty { text-align: center; opacity: .6; padding: 16px 0; }
-/* 新建 FAB：悬浮于页面右下 */
-.page-fab { position: fixed; right: 24px; bottom: 24px; }
+/* 新建 FAB：悬浮于页面右下（紧凑化 24→16px） */
+.page-fab { position: fixed; right: 16px; bottom: 16px; }
 /* 冻结容器（P3）：搜索行+标签筛选行 sticky 挂滚动祖先（NavigationShell 内容区），列表滚动时保持可见。
    背景与页面同色（卡片内不突兀）；TagFilterRow 说明气泡（.mode-pop absolute z-index 10）高于本层
    z-index 5，且本层无 overflow 裁剪，气泡正常浮出。R5-M6：负 margin+padding 自补偿盖住卡片

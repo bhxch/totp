@@ -50,7 +50,7 @@ describe('QuickCodesPanel 列表装配（OtpListItem 纯取码）', () => {
     expect(mountPanel().find('.otp-item').attributes('aria-haspopup')).toBeUndefined()
     expect(mountPanel({ contextMenu: true }).find('.otp-item').attributes('aria-haspopup')).toBe('menu')
   })
-  it('行内 QR 入口恒关闭：.show-qr 不渲染（纯取码面板裁定，两消费者 mini/精简 popup 均无 QR）', () => {
+  it('行内 QR 按钮已组件级移除：.show-qr 恒不渲染（QR 入口归宿主右键菜单，面板无死入口）', () => {
     expect(mountPanel().find('.show-qr').exists()).toBe(false)
   })
   it('icons 透传 OtpListItem icon（builtin entry.icon + icons null → svg 渲染）', () => {

@@ -38,7 +38,7 @@ const OtpListItemStub = defineComponent({
   props: {
     entry: { type: Object, required: true }, icon: { type: null, default: null },
     code: { type: String, default: '' }, remaining: { type: Number, default: 0 }, progress: { type: Number, default: 0 },
-    contextMenu: { type: Boolean, default: false }, showQr: { type: Boolean, default: false },
+    contextMenu: { type: Boolean, default: false },
   },
   emits: ['copy', 'dblclick'],
   template: `<div data-test="item" :data-code="code"><button data-test="copy" @click="$emit('copy')">{{ entry.issuer }}</button></div>`,

@@ -679,8 +679,7 @@
   "otpListItem": {
     "pinnedTitle": "Pinned",
     "invalid": "Invalid secret",
-    "invalidTitle": "Invalid secret: {message}",
-    "qrTitle": "Show QR code"
+    "invalidTitle": "Invalid secret: {message}"
   },
   "searchBar": {
     "searchLabel": "Search",

@@ -48,15 +48,7 @@ describe('OtpListItem avatar 多彩取色（批④ §5）', () => {
   })
 })
 
-describe('OtpListItem 右键菜单 / qr / INVALID（C16）', () => {
-  it('qr 按钮 emit qr，且不冒泡触发 copy', async () => {
-    const w = mount(OtpListItem, { global: { plugins: [createTestI18n()] }, props: { entry, ...base } })
-    await w.find('.show-qr').trigger('click')
-    expect(w.emitted('qr')).toHaveLength(1)
-    // @click.stop 已阻止冒泡，copy 不应被触发
-    expect(w.emitted('copy')).toBeUndefined()
-  })
-
+describe('OtpListItem 右键菜单 / INVALID（C16）', () => {
   it('@contextmenu.prevent 默认 + emit context 携带 MouseEvent', async () => {
     const w = mount(OtpListItem, { global: { plugins: [createTestI18n()] }, props: { entry, ...base } })
     await w.find('.otp-item').trigger('contextmenu', { clientX: 100, clientY: 200 })
@@ -89,11 +81,10 @@ describe('OtpListItem 右键菜单 / qr / INVALID（C16）', () => {
   })
 })
 
-describe('OtpListItem 宿主适配 prop（contextMenu/showQr，mini 等未接宿主传 false）', () => {
-  it('默认（未传）保留 aria-haspopup、QR 按钮与 context emit（Vue Boolean casting 下显式 withDefaults 兜底）', async () => {
+describe('OtpListItem 宿主适配 prop（contextMenu，mini 等未接宿主传 false）', () => {
+  it('默认（未传）保留 aria-haspopup 与 context emit（Vue Boolean casting 下显式 withDefaults 兜底）', async () => {
     const w = mount(OtpListItem, { global: { plugins: [createTestI18n()] }, props: { entry, ...base } })
     expect(w.find('.otp-item').attributes('aria-haspopup')).toBe('menu')
-    expect(w.find('.show-qr').exists()).toBe(true)
     await w.find('.otp-item').trigger('contextmenu', { clientX: 5, clientY: 6 })
     expect(w.emitted('context')).toHaveLength(1)
   })
@@ -104,16 +95,26 @@ describe('OtpListItem 宿主适配 prop（contextMenu/showQr，mini 等未接宿
     await w.find('.otp-item').trigger('contextmenu', { clientX: 5, clientY: 6 })
     expect(w.emitted('context')).toBeUndefined()
   })
+})
 
-  it('showQr=false（mini）：不渲染 QR 按钮；行内复制按钮已随两行布局删除（单击行复制由宿主承接）', () => {
-    const w = mount(OtpListItem, { global: { plugins: [createTestI18n()] }, props: { entry, ...base, showQr: false } })
-    expect(w.find('.show-qr').exists()).toBe(false)
-    expect(w.find('button.copy').exists()).toBe(false)
+describe('OtpListItem MD3 紧凑化（56px 档 + compact 变体）', () => {
+  const baseProps = () => ({ entry, ...base })
+
+  it('行盒按 MD3 56px 档收敛且整行等宽（进度条等长兜底）', () => {
+    const w = mount(OtpListItem, { global: { plugins: [createTestI18n()] }, props: baseProps() })
+    expect(w.find('.otp-item').attributes('style')).toBeUndefined() // 宽度由 CSS 保证
+    // width:100% / min-height:56px 是 CSS 断言，走构建产物检查
   })
 
-  it('默认（showQr 缺省 true）仍渲染 QR 按钮', () => {
-    const w = mount(OtpListItem, { global: { plugins: [createTestI18n()] }, props: { entry, ...base } })
-    expect(w.find('.show-qr').exists()).toBe(true)
+  it('行内 QR 按钮已组件级移除（QR 入口归右键菜单「显示二维码」承担）', () => {
+    const w = mount(OtpListItem, { global: { plugins: [createTestI18n()] }, props: baseProps() })
+    expect(w.find('.show-qr').exists()).toBe(false)
+    expect(w.emitted('qr')).toBeUndefined()
+  })
+
+  it('compact 档收紧行高（Task 7 生效前的占位断言）', () => {
+    const w = mount(OtpListItem, { global: { plugins: [createTestI18n()] }, props: { ...baseProps(), compact: true } })
+    expect(w.find('.otp-item').classes()).toContain('otp-item--compact')
   })
 })
 

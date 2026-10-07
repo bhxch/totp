@@ -679,8 +679,7 @@
   "otpListItem": {
     "pinnedTitle": "已置顶",
     "invalid": "密钥非法",
-    "invalidTitle": "密钥非法：{message}",
-    "qrTitle": "显示二维码"
+    "invalidTitle": "密钥非法：{message}"
   },
   "searchBar": {
     "searchLabel": "搜索",

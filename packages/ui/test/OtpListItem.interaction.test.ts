@@ -77,13 +77,4 @@ describe('OtpListItem 打码与复制', () => {
     const w = mountItem('INVALID')
     expect(w.find('.code.invalid').exists()).toBe(true)
   })
-
-  it('快速双击内嵌 QR 按钮不穿透触发根级揭示（M-3：QR 弹窗打开瞬间码保持打码；复制按钮已删，仅剩 QR 钮）', async () => {
-    const w = mountItem()
-    // dblclick 沿 DOM 冒泡到根 .otp-item 会触发揭示；按钮须在自身层 stop
-    await w.find('button.show-qr').trigger('dblclick')
-    expect(w.text()).toContain('••• •••')
-    expect(w.text()).not.toContain('123 456')
-    expect(w.text()).not.toContain('123456')
-  })
 })

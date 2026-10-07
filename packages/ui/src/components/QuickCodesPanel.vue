@@ -52,8 +52,8 @@ const emit = defineEmits<{
  *  与 CodesPage 恒渲染（零标签行留管理钮作创建首个标签的途径）刻意不同 */
 const showTagRow = computed(() => props.tagRow === true && (props.tags?.length ?? 0) > 0)
 
-/* 行内 QR 入口恒关闭（:show-qr 固定 false，controller 裁定）：面板两消费者 mini/精简 popup 均无
- * QR 面板，纯取码面板无 QR 入口——同 manageable 固定 false 的处理方式，不留 prop */
+/* 行内 QR 入口已组件级移除（OtpListItem 不再有 showQr/QR 钮，QR 归宿主右键菜单承担）：
+ * 同 manageable 固定 false 的处理方式，不留 prop */
 
 /** 两态空文案（对齐 popup empty/noMatch 语义）：全空（无 query 且无标签选中）→ emptyText；
  *  有过滤条件（query 或标签选中）而空 → noMatchText。loading 中一律不渲染空态 */
@@ -85,7 +85,6 @@ const emptyDisplay = computed(() => {
         v-for="(e, i) in entries" :key="e.uuid"
         :entry="e" :icon="iconView(e.icon, icons ?? undefined)"
         :index="showIndex ? i + 1 : undefined" :context-menu="contextMenu"
-        :show-qr="false"
         v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 1 }"
         @copy="emit('copy', e)" @dblclick="emit('dblclick', $event)"
       />
