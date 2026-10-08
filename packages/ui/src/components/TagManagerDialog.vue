@@ -7,6 +7,7 @@ import MdButton from './md/MdButton.vue'
 import MdDialog from './md/MdDialog.vue'
 import MdIconButton from './md/MdIconButton.vue'
 import MdTextField from './md/MdTextField.vue'
+import EmptyState from './EmptyState.vue'
 
 const { t } = useI18n()
 
@@ -90,7 +91,7 @@ onBeforeUnmount(() => {
           <MdIconButton v-else :title="t('tagManagerDialog.deleteTag', { name: tg.name })" :aria-label="t('tagManagerDialog.deleteTag', { name: tg.name })" @click="removeTag(tg)">{{ t('tagManagerDialog.delete') }}</MdIconButton>
         </template>
       </li>
-      <li v-if="store.vault.tags.length === 0" class="empty">{{ t('tagManagerDialog.empty') }}</li>
+      <li v-if="store.vault.tags.length === 0" class="empty-row"><EmptyState :text="t('tagManagerDialog.empty')" /></li>
     </ul>
   </MdDialog>
 </template>
@@ -102,5 +103,7 @@ onBeforeUnmount(() => {
 .tag-list li { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
 .tname { font-weight: 600; }
 .tcount { opacity: .6; font-size: var(--md-sys-typescale-body-small); flex: 1; }
-.empty { text-align: center; opacity: .6; padding: 8px 0; }
+/* 空态（原 .empty padding 8px 0 + opacity .6）：Task 6 收口 EmptyState；li 仅作 ul 内合法包裹，
+   抵消 .tag-list li 的 flex 布局与 4px padding，让 EmptyState 的 32px 0 独立生效 */
+.tag-list li.empty-row { display: block; padding: 0; }
 </style>

@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { emit, listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { filterByTags, type TagFilterMode } from '@totp/core'
-import { PersistErrorBanner, QuickCodesPanel, ToastHost, close, createIconStore, searchEntries, useOtpCodes, useTheme, useToast, type IconStore, type VueStore } from '@totp/ui'
+import { PersistErrorBanner, QuickCodesPanel, ToastHost, close, createIconStore, EmptyState, searchEntries, useOtpCodes, useTheme, useToast, type IconStore, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, shallowRef, watch } from 'vue'
 import { createTauriFs } from './tauriFs'
 import { bootDesktopStore, persistFailed, useDesktopI18n } from './desktopShell'
@@ -229,7 +229,7 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
     </header>
     <!-- R16⑤（评审 A2 方案 a）：落盘失败常驻告警，与主体并列不互斥 -->
     <PersistErrorBanner :show="persistFailed" :text="tr('app.persistError')" />
-    <div v-if="store && locked" class="empty">{{ tr('mini.lockedNote') }}</div>
+    <EmptyState v-if="store && locked" :text="tr('mini.lockedNote')" />
     <div v-else-if="loadFailed && !store" class="copy-error" role="alert">{{ tr('mini.loadFailed') }}</div>
     <!-- P4 Task 2：搜索行 + 列表区整体换装 QuickCodesPanel（冻结筛选行 + 纯取码列表 + 两态空文案，
          行内 QR 入口面板内恒关）。过滤编排（搜索→标签）与复制/自动隐藏通道留宿主。面板内
@@ -246,7 +246,7 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
       @copy="(e) => copy(e)" @dblclick="autoHide.onDblclick"
     />
     <!-- 兜底（沿旧空态语义）：boot 未完成（store 未置位）先显示全空文案，mini-ready 前窗口不可见 -->
-    <div v-else class="empty">{{ tr('mini.empty') }}</div>
+    <EmptyState v-else :text="tr('mini.empty')" />
     <!-- 双击揭示：面板把 OtpListItem 根元素 dblclick 显式上抛（declared emit，携带 MouseEvent），
          宿主接 autoHide.onDblclick 取消 500ms 自动隐藏（控制器内部递增揭示代次，使 await 期间
          在途的 copy 不再武装自动隐藏，审查 I-1） -->
@@ -269,7 +269,7 @@ body { font-family: system-ui, sans-serif; margin: 0; }
 .tb-btn::after { content: ''; position: absolute; inset: -4px; border-radius: inherit; }
 .tb-btn:hover { background: var(--md-sys-color-surface-container-highest, rgba(0, 0, 0, .08)); }
 .tb-btn.active { color: var(--md-sys-color-primary); }
-.empty { text-align: center; opacity: .6; padding: 32px 0; font-size: var(--md-sys-typescale-body-medium); }
+/* 空态（原 .empty）：Task 6 收口 EmptyState（32px 0 / body-medium / on-surface-variant） */
 .copy-error { text-align: center; color: var(--md-sys-color-error); background: var(--md-sys-color-error-container); border-radius: var(--md-sys-shape-corner-small); padding: 8px 0; font-size: var(--md-sys-typescale-body-small); }
 /* CSS 装载后接管精确主题色：mini.html 内联底色只保首帧（防加载期白屏），html data-mode 随 useTheme 切换 */
 html { background: var(--md-sys-color-background, #fff); }

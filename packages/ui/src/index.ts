@@ -18,6 +18,8 @@ export { prefillFromParsed } from './clipboardImport'
 export * from './popupFilter'
 // 全局 toast（P3 item-layout toast 设计）：useToast 模块级单例 + ToastHost 渲染端（三宿主根组件挂载）
 export * from './composables/useToast'
+// Task 6 统一空态（四处空态收口：padding 32px 0 / body-medium / on-surface-variant / 居中）
+export { default as EmptyState } from './components/EmptyState.vue'
 export { default as OtpListItem } from './components/OtpListItem.vue'
 export { default as PersistErrorBanner } from './components/PersistErrorBanner.vue'
 export { default as ToastHost } from './components/ToastHost.vue'

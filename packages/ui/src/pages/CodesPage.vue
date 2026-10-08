@@ -10,6 +10,7 @@ import { searchEntries } from '../popupFilter'
 import { moveToIndex, moveWithinPartition, sortEntries } from '../entriesSort'
 import { createEdgeAutoScroll, findScrollHost, type ScrollHostLike } from '../edgeAutoScroll'
 import { add, dragIndicator } from '../components/iconPaths'
+import EmptyState from '../components/EmptyState.vue'
 import type { VueStore } from '../store'
 import EntryFormDialog from '../components/EntryFormDialog.vue'
 import TagFilterRow from '../components/TagFilterRow.vue'
@@ -411,8 +412,8 @@ function openSheet() {
           />
         </div>
       </div>
-      <div v-if="sorted.length === 0" class="empty">{{ t('codesPage.empty') }}</div>
-      <div v-else-if="visible.length === 0" class="empty">{{ t('codesPage.noMatch') }}</div>
+      <EmptyState v-if="sorted.length === 0" :text="t('codesPage.empty')" />
+      <EmptyState v-else-if="visible.length === 0" :text="t('codesPage.noMatch')" />
       <div
         v-for="(e, i) in visible" :key="e.uuid" class="row" :data-uuid="e.uuid"
         :class="{ 'drag-enabled': dragEnabled, 'drag-above': dragOver?.uuid === e.uuid && dragOver.before, 'drag-below': dragOver?.uuid === e.uuid && !dragOver.before }"
@@ -558,7 +559,7 @@ h2 { margin: 0; font-size: var(--md-sys-typescale-title-medium); }
 .ops :deep(.md-icon-btn::after) { inset: -8px; }
 /* 窄窗（<600px）：行尾 ops 隐藏（编辑/删除入口归右键菜单），还行宽给验证码 */
 @media (max-width: 599px) { .row .ops { display: none; } }
-.empty { text-align: center; opacity: .6; padding: 16px 0; }
+/* 空态（原 .empty padding 16px 0 + opacity .6）：Task 6 收口 EmptyState（32px 0 / body-medium / on-surface-variant） */
 /* 新建 FAB：悬浮于页面右下（紧凑化 24→16px） */
 .page-fab { position: fixed; right: 16px; bottom: 16px; }
 /* 冻结容器（P3）：搜索行+标签筛选行 sticky 挂滚动祖先（NavigationShell 内容区），列表滚动时保持可见。

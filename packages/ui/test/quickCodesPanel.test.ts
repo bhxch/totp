@@ -111,19 +111,19 @@ describe('QuickCodesPanel loading 门控与两态空文案', () => {
   it('loading=true：不渲染列表与空态（冻结搜索行仍在）', () => {
     const w = mountPanel({ loading: true, emptyText: '没有条目', noMatchText: '无匹配' })
     expect(w.findAll('.otp-item')).toHaveLength(0)
-    expect(w.find('.empty').exists()).toBe(false)
+    expect(w.find('.empty-state').exists()).toBe(false)
     expect(w.find('.frozen .search-row').exists()).toBe(true)
   })
   it('entries 空 + 无 query + 无标签选中 → emptyText', () => {
     const w = mountPanel({ entries: [], emptyText: '没有条目', noMatchText: '无匹配' })
-    expect(w.find('.empty').text()).toBe('没有条目')
+    expect(w.find('.empty-state').text()).toBe('没有条目')
   })
   it('entries 空 + 有 query → noMatchText', () => {
     const w = mountPanel({ entries: [], query: 'zzz', emptyText: '没有条目', noMatchText: '无匹配' })
-    expect(w.find('.empty').text()).toBe('无匹配')
+    expect(w.find('.empty-state').text()).toBe('无匹配')
   })
   it('entries 空 + 有标签选中（tagRow）→ noMatchText', () => {
     const w = mountPanel({ entries: [], tagRow: true, tags, selectedTagIds: ['t1'], emptyText: '没有条目', noMatchText: '无匹配' })
-    expect(w.find('.empty').text()).toBe('无匹配')
+    expect(w.find('.empty-state').text()).toBe('无匹配')
   })
 })

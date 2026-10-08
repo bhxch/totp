@@ -17,6 +17,7 @@ import MdIconButton from './md/MdIconButton.vue'
 import MdSelect from './md/MdSelect.vue'
 import MdTextField from './md/MdTextField.vue'
 import { type EntryFormData, validateRegex, type RegexIssue } from './entryForm'
+import { close } from './iconPaths'
 
 const { t } = useI18n()
 
@@ -573,7 +574,8 @@ defineExpose({ submit, isNew })
           v-model="r.pattern" class="rule-pattern" :label="t('entryForm.patternLabel')" :placeholder="t('entryForm.patternPlaceholder')" :aria-label="t('entryForm.patternAria')"
           :class="{ invalid: r.strategy === 'regex' && r.pattern.trim() !== '' && validateRegex(r.pattern) !== null }"
         />
-        <MdIconButton class="rm-rule" :title="t('entryForm.deleteRule')" :aria-label="t('entryForm.deleteRule')" @click="form.matchRules.splice(i, 1)">✕</MdIconButton>
+        <!-- Task 5 挂账：rm-rule 的 ✕ 文本字符换 close SVG（16px，同 MiniApp 隐藏钮先例） -->
+        <MdIconButton class="rm-rule" :title="t('entryForm.deleteRule')" :aria-label="t('entryForm.deleteRule')" @click="form.matchRules.splice(i, 1)"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path :d="close.d" /></svg></MdIconButton>
         <!-- I51：regex 策略且 pattern 非空但非法 → 行内错误提示 -->
         <span
           v-if="r.strategy === 'regex' && r.pattern.trim() !== '' && validateRegex(r.pattern) !== null"

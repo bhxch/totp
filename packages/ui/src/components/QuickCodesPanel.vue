@@ -2,6 +2,7 @@
 import type { OtpEntry, Tag, TagFilterMode } from '@totp/core'
 import { computed } from 'vue'
 import { iconView, type IconStore } from '../iconStore'
+import EmptyState from './EmptyState.vue'
 import OtpListItem from './OtpListItem.vue'
 import SearchBar from './SearchBar.vue'
 import TagFilterRow from './TagFilterRow.vue'
@@ -92,7 +93,7 @@ const emptyDisplay = computed(() => {
         v-bind="codes.get(e.uuid) ?? { code: '------', remaining: 0, progress: 1 }"
         @copy="emit('copy', e)" @dblclick="emit('dblclick', $event)"
       />
-      <div v-if="emptyDisplay" class="empty">{{ emptyDisplay }}</div>
+      <EmptyState v-if="emptyDisplay" :text="emptyDisplay" />
     </template>
   </div>
 </template>
@@ -106,8 +107,8 @@ const emptyDisplay = computed(() => {
 .frozen { position: sticky; top: 0; z-index: 5; background: var(--md-sys-color-surface); display: flex; flex-direction: column; gap: 8px;
   border-bottom: 1px solid var(--md-sys-color-outline-variant);
   margin-inline: calc(-1 * var(--frozen-bleed, 0px)); padding-inline: var(--frozen-bleed, 0px); }
-/* 两态空态文案（同 popup .empty） */
-.empty { text-align: center; opacity: .6; padding: 32px 0; }
+/* 两态空态文案（原 .empty padding 32px 0 + opacity .6）：Task 6 收口 EmptyState（同 padding，
+   统一 body-medium / on-surface-variant） */
 /* compact 档（spec §2.5）：冻结区行间距 8→6px（根级 gap 对 block 流无效，仅 frozen gap 生效；
  * 根 .quick-codes-panel 非 flex/grid，声明 gap 无布局效果，此值仅文档化意图） */
 .quick-codes-panel--compact { gap: 6px; }
