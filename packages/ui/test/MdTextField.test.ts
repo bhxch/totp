@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import MdTextField from '../src/components/md/MdTextField.vue'
@@ -30,5 +32,26 @@ describe('MdTextField dense', () => {
   it('默认非 dense：不渲染紧凑类', () => {
     const w = mount(MdTextField, { props: { modelValue: '', label: '搜索' } })
     expect(w.find('.md-text-field__box').classes()).not.toContain('md-text-field__box--dense')
+  })
+})
+
+describe('MdTextField 浮动态内容行下移（浮动 label 与 input 行重叠回归修复）', () => {
+  it('有值或占位符时 box 挂 --floated（CSS 钩子），空值无占位不挂', () => {
+    const valued = mount(MdTextField, { props: { modelValue: 'abc', label: '搜索' } })
+    expect(valued.find('.md-text-field__box').classes()).toContain('md-text-field__box--floated')
+    const byPlaceholder = mount(MdTextField, { props: { modelValue: '', label: '搜索', placeholder: '输入…' } })
+    expect(byPlaceholder.find('.md-text-field__box').classes()).toContain('md-text-field__box--floated')
+    const empty = mount(MdTextField, { props: { modelValue: '', label: '搜索' } })
+    expect(empty.find('.md-text-field__box').classes()).not.toContain('md-text-field__box--floated')
+  })
+  it('multiline 挂 --multiline 且不挂 --floated：首行留白由 textarea 自身 pad 承担，box 不双重加顶距', () => {
+    const w = mount(MdTextField, { props: { modelValue: '', label: '备注', multiline: true } })
+    expect(w.find('.md-text-field__box').classes()).toContain('md-text-field__box--multiline')
+    expect(w.find('.md-text-field__box').classes()).not.toContain('md-text-field__box--floated')
+  })
+  it('源码断言：浮动态下移规则存在且排除 dense/multiline（jsdom 无布局，几何只能锁源码）', () => {
+    const src = readFileSync(join(__dirname, '../src/components/md/MdTextField.vue'), 'utf8')
+    expect(src).toMatch(/\.md-text-field__box--floated:not\(\.md-text-field__box--dense\):not\(\.md-text-field__box--multiline\),\s*\.md-text-field__box:focus-within:not\(\.md-text-field__box--dense\):not\(\.md-text-field__box--multiline\)\s*{[^}]*padding-top:\s*24px/)
+    expect(src).toMatch(/\.md-text-field__label--floated,[\s\S]{0,200}?line-height:\s*16px/)
   })
 })

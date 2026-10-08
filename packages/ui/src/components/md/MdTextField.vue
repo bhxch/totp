@@ -31,7 +31,9 @@ const inputAttrs = computed(() => {
 </script>
 <template>
   <div class="md-text-field" :class="[attrs.class, { 'md-text-field--error': !!error, 'md-text-field--disabled': isDisabled }]" :style="attrs.style">
-    <label class="md-text-field__box" :class="{ 'md-text-field__box--dense': dense }">
+    <!-- box--floated：浮动态下移内容行的 CSS 钩子。条件不含 multiline——textarea 变体的首行
+      空间由其自身 padding-top 承担（见 --multiline 排除规则），box 再加顶 pad 会双重留白 -->
+    <label class="md-text-field__box" :class="{ 'md-text-field__box--dense': dense, 'md-text-field__box--multiline': multiline, 'md-text-field__box--floated': !!modelValue || !!placeholder }">
       <span class="md-text-field__label" :class="{ 'md-text-field__label--floated': multiline || !!modelValue || !!placeholder }">{{ label }}</span>
       <input v-if="!multiline" v-bind="inputAttrs" class="md-text-field__input" :type="type" :value="modelValue" :placeholder="placeholder"
         :aria-label="ariaLabel" :aria-invalid="error ? 'true' : undefined" :aria-describedby="describedBy"
@@ -51,7 +53,7 @@ const inputAttrs = computed(() => {
  * 同特异性后序天然覆写生效（Task 7 dense 与 56 基线并存，Task 7 复审裁定） */
 .md-text-field__box { position: relative; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center;
   min-height: 56px; padding: 0 16px; background: var(--field-bg, var(--md-sys-color-surface-container-highest));
-  border-radius: 4px 4px 0 0; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
+  border-radius: 4px 4px 0 0; border-bottom: 1px solid var(--md-sys-color-outline-variant); transition: padding .15s; }
 /* hover state layer：混入 filled 底色而非 transparent（brief 字面 color-mix transparent 会整体替换
  * background 丢失 filled 底色；8% on-surface 混入底色与 state layer 叠加等价）；
  * 补 disabled 豁免（Task 3）：祖链 :not(--disabled) 限定，禁用态不再浮起 */
@@ -69,7 +71,13 @@ const inputAttrs = computed(() => {
 .md-text-field__label { position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
   font-size: var(--md-sys-typescale-body-large); color: var(--md-sys-color-on-surface-variant); pointer-events: none; transition: all .15s; }
 .md-text-field__label--floated,
-.md-text-field__box:focus-within .md-text-field__label { top: 8px; transform: none; font-size: var(--md-sys-typescale-body-small); }
+.md-text-field__box:focus-within .md-text-field__label { top: 8px; transform: none; font-size: var(--md-sys-typescale-body-small); line-height: 16px; }
+/* 浮动态（有值/占位/聚焦）内容行下移让位：浮动 label 顶带 y8..24（12px/16px 行高），56 槽居中行
+ * y16..40 与之叠 8px——ba6e6a1 迁 padding 丢顶部预留的真机回归（2026-10-09）。24px 顶 pad 使
+ * 行部落 y27.5..51.5，label 带下 3.5px、底缘上 3.5px。dense（40 槽自有 padding 套路）与 multiline
+ * （textarea 自带首行 pad）排除，两 :not 保与后序 dense 覆写块互不依赖声明顺序 */
+.md-text-field__box--floated:not(.md-text-field__box--dense):not(.md-text-field__box--multiline),
+.md-text-field__box:focus-within:not(.md-text-field__box--dense):not(.md-text-field__box--multiline) { padding-top: 24px; }
 /* dense 40px 槽：floated label 收缩至 label-small 并贴顶，input 下移——真机量测重叠 5px 的修正（40px 槽为本项目 opt-in deviation，M3 无 density 规范） */
 .md-text-field__box--dense .md-text-field__label--floated,
 .md-text-field__box--dense:focus-within .md-text-field__label { top: 2px; font-size: var(--md-sys-typescale-label-small); line-height: 1; }

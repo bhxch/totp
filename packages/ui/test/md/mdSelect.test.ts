@@ -317,4 +317,19 @@ describe('MdSelect', () => {
     expect(trigger.attributes('aria-activedescendant')).toBe(w.findAll('[role="option"]')[2]!.attributes('id'))
     w.unmount()
   })
+
+  it('㉒浮动态 box 挂 --floated（内容行下移 CSS 钩子，浮动 label 与值行重叠回归修复）', () => {
+    const valued = mount(MdSelect, { props: { label: '间隔', modelValue: 60, options: OPTIONS } })
+    expect(valued.find('.md-select__box').classes()).toContain('md-select__box--floated')
+    // 无选中值时关闭态不挂（label 居中、无内容行冲突）；聚焦态走 :focus-within CSS 分支不依赖类
+    const empty = mount(MdSelect, { props: { label: '间隔', modelValue: '', options: OPTIONS } })
+    expect(empty.find('.md-select__box').classes()).not.toContain('md-select__box--floated')
+  })
+
+  it('㉓box 水平 padding 0 16px 与浮动态顶 pad 24px（值文本/箭头内缩 + 内容行下移，jsdom 无样式，源码断言）', () => {
+    const src = readFileSync(join(__dirname, '../../src/components/md/MdSelect.vue'), 'utf8')
+    expect(src).toMatch(/\.md-select__box\s*{[^}]*padding:\s*0 16px/)
+    expect(src).toMatch(/\.md-select__box--floated,\s*\.md-select__box:focus-within\s*{[^}]*padding-top:\s*24px/)
+    expect(src).toMatch(/\.md-select__label--floated,[\s\S]{0,200}?line-height:\s*16px/)
+  })
 })
