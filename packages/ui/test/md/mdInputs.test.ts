@@ -210,6 +210,10 @@ describe('MdCheckbox', () => {
     await w.find('input[type=checkbox]').setValue(true)
     expect(w.emitted('update:modelValue')).toBeUndefined()
   })
+  it('label 行 min-height 48px（spec §2.2.6 根治项；jsdom 无样式，源码断言沿 tokens.test.ts 先例）', () => {
+    const src = readFileSync(join(__dirname, '../../src/components/md/MdCheckbox.vue'), 'utf8')
+    expect(src).toMatch(/\.md-checkbox__label\s*{[^}]*min-height:\s*48px/)
+  })
 })
 describe('MdSegmentedButton', () => {
   const options = [

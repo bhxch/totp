@@ -1,3 +1,8 @@
+<script lang="ts">
+// 模块级计数器:跨实例唯一(同 MdTextField errorIdCounter 先例)——同页多 MdSelect 时
+// aria-activedescendant 不得指向其他实例的同名 option id
+let optIdCounter = 0
+</script>
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 // 弹层共享基线（112/8px/surface-container/48px）单点在 menu-surface.css，与 MdMenu 弹层同源
@@ -14,6 +19,8 @@ const props = withDefaults(defineProps<{
   hint?: string
 }>(), { disabled: false, hint: '' })
 const emit = defineEmits<{ 'update:modelValue': [value: string | number] }>()
+/** option id 实例前缀（模块计数器递增段 + 序号）：aria-activedescendant 与 option id 同源 */
+const optIdBase = `md-select-opt-${++optIdCounter}-`
 
 const open = ref(false)
 const activeIdx = ref(-1)
@@ -140,7 +147,7 @@ onBeforeUnmount(() => {
         -1（无匹配选中项）与关闭态（option 已卸载）移除，避免指向不存在节点的悬空引用 -->
       <button ref="triggerRef" type="button" class="md-select__trigger" :disabled="disabled"
         aria-haspopup="listbox" :aria-expanded="open ? 'true' : 'false'" :aria-label="ariaLabel || undefined"
-        :aria-activedescendant="open && activeIdx >= 0 ? `md-select-opt-${activeIdx}` : undefined"
+        :aria-activedescendant="open && activeIdx >= 0 ? `${optIdBase}${activeIdx}` : undefined"
         @click="toggle" @keydown="onTriggerKeydown">
         <span class="md-select__value">{{ selectedLabel }}</span>
         <svg class="md-select__arrow" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
@@ -149,7 +156,7 @@ onBeforeUnmount(() => {
       </button>
     </div>
     <div v-if="open" ref="menuRef" class="md-select__menu md-menu-surface" role="listbox" :style="`left: ${pos.left}px; top: ${pos.top}px;`">
-      <div v-for="(o, i) in options" :key="o.value" :id="`md-select-opt-${i}`" class="md-select__option" role="option"
+      <div v-for="(o, i) in options" :key="o.value" :id="`${optIdBase}${i}`" class="md-select__option" role="option"
         :class="{ 'md-select__option--selected': o.value === modelValue, 'md-select__option--active': i === activeIdx }"
         :aria-selected="o.value === modelValue ? 'true' : 'false'"
         @click="select(o)">{{ o.label }}</div>

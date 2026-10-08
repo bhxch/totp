@@ -835,7 +835,8 @@ fn build_tray(app: &AppHandle<tauri::Wry>, locale: &str) -> tauri::Result<()> {
 
 /// tray-locale-changed 重建：拆旧托盘（remove_tray_by_id 取出 manager/resources 持引用，
 /// drop 末引用即拆系统图标）再按盘上新 locale 建新。菜单事件闭包状态沿用（见 build_tray
-/// 注释）；失败仅告警不中断（托盘保持旧文案，下次切换自然纠偏）
+/// 注释）；失败仅告警不中断——本函数为 remove-then-build，至此旧托盘已拆、新托盘未建，
+/// 系统托盘暂缺图标（非保持旧文案）；下次 locale 切换重建自愈
 fn rebuild_tray(app: &AppHandle<tauri::Wry>) {
     if let Some(old) = app.remove_tray_by_id(TRAY_ICON_ID) {
         drop(old);

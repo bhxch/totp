@@ -1,8 +1,15 @@
+<script lang="ts">
+// 模块级计数器:跨实例唯一(MdTextField errorIdCounter 先例)——弹窗叠加(EntryFormDialog→
+// IconPickerDialog)时重复 id 会令 aria-labelledby 误指文档首个同名节点
+let dialogIdCounter = 0
+</script>
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 const props = defineProps<{ open: boolean; headline?: string }>()
 const emit = defineEmits<{ close: [] }>()
+
+const headlineId = `md-dialog-title-${++dialogIdCounter}`
 
 const dialogRef = ref<HTMLElement | null>(null)
 let prevFocus: Element | null = null
@@ -70,8 +77,8 @@ onBeforeUnmount(() => {
 <template>
   <div v-if="open" class="md-dialog__scrim" @click="emit('close')">
     <div ref="dialogRef" class="md-dialog" role="dialog" aria-modal="true" tabindex="-1"
-      :aria-labelledby="headline ? 'md-dialog-title' : undefined" @click.stop="onDialogClick">
-      <h2 v-if="headline" id="md-dialog-title" class="md-dialog__headline">{{ headline }}</h2>
+      :aria-labelledby="headline ? headlineId : undefined" @click.stop="onDialogClick">
+      <h2 v-if="headline" :id="headlineId" class="md-dialog__headline">{{ headline }}</h2>
       <div class="md-dialog__body"><slot /></div>
       <div v-if="$slots.actions" class="md-dialog__actions"><slot name="actions" /></div>
     </div>

@@ -32,6 +32,7 @@ function toggle(id: string) {
 }
 
 // ---------- any/all 模式单击切换：逻辑符号 ∧(all)/∨(any)，点击即翻转并弹出说明气泡，点击外部折叠 ----------
+// ∧/∨ 保留文本字符系 Phase 2 spec §2.3 D1 裁定：Material 无标准逻辑符号图标，系统字体渲染即正确表达
 const MODE_SYMBOL: Record<TagFilterMode, string> = { all: '∧', any: '∨' }
 const modeDisabled = computed(() => props.disabled || props.selectedIds.length < 2)
 const modePopOpen = ref(false)

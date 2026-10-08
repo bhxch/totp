@@ -22,9 +22,20 @@ describe('MdDialog', () => {
     const noLabelled = noHeadline.find('.md-dialog').attributes('aria-labelledby')
     noHeadline.unmount()
     expect(role).toBe('dialog')
-    expect(labelled).toBe('md-dialog-title')
-    expect(headlineId).toBe('md-dialog-title')
+    expect(headlineId).toMatch(/^md-dialog-title-/) // 实例唯一 id（模块计数器），非硬编码共享值
+    expect(labelled).toBe(headlineId)
     expect(noLabelled).toBeUndefined()
+  })
+  it('两个 MdDialog 同开 headline id 不同（叠加弹窗 aria-labelledby 不误指，I-2）', () => {
+    const a = mount(MdDialog, { props: { open: true, headline: '编辑条目' }, attachTo: document.body })
+    const b = mount(MdDialog, { props: { open: true, headline: '选择图标' }, attachTo: document.body })
+    const idA = a.find('.md-dialog__headline').attributes('id')!
+    const idB = b.find('.md-dialog__headline').attributes('id')!
+    b.unmount()
+    a.unmount()
+    expect(idA).not.toBe(idB)
+    expect(a.find('.md-dialog').attributes('aria-labelledby')).toBe(idA)
+    expect(b.find('.md-dialog').attributes('aria-labelledby')).toBe(idB)
   })
   it('Esc 关闭;actions 内 data-md-close 点击关闭', async () => {
     const w = mount(MdDialog, { props: { open: true, headline: '确认' }, slots: { actions: '<button data-md-close>好</button>' }, attachTo: document.body })

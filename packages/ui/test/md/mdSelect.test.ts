@@ -269,24 +269,40 @@ describe('MdSelect', () => {
     // modelValue 不在 options → 开启高亮 -1：属性移除；方向键高亮后指向对应 option id
     const w = mount(MdSelect, { props: { label: '间隔', modelValue: '', options: OPTIONS }, attachTo: document.body })
     const trigger = w.find('button.md-select__trigger')
+    const optId = (i: number) => w.findAll('[role="option"]')[i]!.attributes('id')!
     expect(trigger.attributes('aria-activedescendant')).toBeUndefined() // 关闭态
     await trigger.trigger('keydown', { key: 'Enter' })
     expect(trigger.attributes('aria-activedescendant')).toBeUndefined() // 开启但高亮 -1 → 移除
     await trigger.trigger('keydown', { key: 'ArrowDown' }) // -1 起步落首项
-    expect(trigger.attributes('aria-activedescendant')).toBe('md-select-opt-0')
-    expect(w.findAll('[role="option"]')[0]!.attributes('id')).toBe('md-select-opt-0')
+    expect(optId(0)).toMatch(/^md-select-opt-\d+-0$/) // 实例唯一前缀 + 序号（多实例不串）
+    expect(trigger.attributes('aria-activedescendant')).toBe(optId(0))
     await trigger.trigger('keydown', { key: 'ArrowDown' })
-    expect(trigger.attributes('aria-activedescendant')).toBe('md-select-opt-1')
+    expect(trigger.attributes('aria-activedescendant')).toBe(optId(1))
     await trigger.trigger('keydown', { key: 'Escape' })
     expect(trigger.attributes('aria-activedescendant')).toBeUndefined() // 关闭后 option 卸载，引用随之移除
     w.unmount()
+  })
+
+  it('⑳a 两个 MdSelect option id 跨实例唯一（aria-activedescendant 不误指他实例，I-2）', async () => {
+    const a = mount(MdSelect, { props: { label: '间隔', modelValue: 60, options: OPTIONS }, attachTo: document.body })
+    const b = mount(MdSelect, { props: { label: '位数', modelValue: 6, options: OPTIONS }, attachTo: document.body })
+    await a.find('button.md-select__trigger').trigger('click') // 弹层开启后 option 才渲染
+    await b.find('button.md-select__trigger').trigger('click')
+    const idA = a.findAll('[role="option"]')[0]!.attributes('id')!
+    const idB = b.findAll('[role="option"]')[0]!.attributes('id')!
+    b.unmount()
+    a.unmount()
+    expect(idA).not.toBe(idB)
+    expect(idA).toMatch(/^md-select-opt-\d+-0$/)
+    expect(idB).toMatch(/^md-select-opt-\d+-0$/)
   })
 
   it('㉑开启高亮定位当前选中项时 aria-activedescendant 指向选中 option（Task 4）', async () => {
     const w = mount(MdSelect, { props: { label: '间隔', modelValue: 360, options: OPTIONS } })
     const trigger = w.find('button.md-select__trigger')
     await trigger.trigger('click')
-    expect(trigger.attributes('aria-activedescendant')).toBe('md-select-opt-2') // 高亮定位选中项 idx 2
+    // 高亮定位选中项 idx 2：引用与该 option id 同源
+    expect(trigger.attributes('aria-activedescendant')).toBe(w.findAll('[role="option"]')[2]!.attributes('id'))
     w.unmount()
   })
 })

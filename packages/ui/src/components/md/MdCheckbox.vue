@@ -22,6 +22,10 @@ function onChange(e: Event) {
 .md-checkbox { position: relative; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font: inherit;
   font-size: var(--md-sys-typescale-body-medium); color: var(--md-sys-color-on-surface); vertical-align: middle; }
 .md-checkbox--disabled { cursor: default; opacity: .38; }
+/* label 行 min-height 48px（spec §2.2.6 根治项落地）：box-sizing 保证 48 含 padding，
+ * flex item 上 min-height 生效、盒面随 align-items:center 垂直居中——视觉行高与命中区
+ * （根 ::after inset -15px）对齐；行高变化影响列表观感属预期（EntryForm 纵向标签列等） */
+.md-checkbox__label { box-sizing: border-box; min-height: 48px; }
 .md-checkbox__input { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .md-checkbox__box { position: relative; width: 18px; height: 18px; border-radius: 2px; box-sizing: border-box;
@@ -43,6 +47,6 @@ function onChange(e: Event) {
 /* 命中层:inset -15px 使 18px 盒达 MD3 48dp 触达目标。盒上 ::before(状态层)/::after(勾选标)均被占用,
  * 故挂根 label——无 label 文本时根=盒 18px(+30px=48);有 label 时根更大,命中只增不减。
  * 48dp 目标固有代价：纵向列表相邻命中带重叠，topmost 胜出（MD3 允许，同 Chip）；
- * label 行 min-height 48 为 Phase 2 根治项 */
+ * label 行 min-height 48 已落地（见 .md-checkbox__label 规则） */
 .md-checkbox::after { content: ''; position: absolute; inset: -15px; }
 </style>
