@@ -15,7 +15,7 @@
  * MCP 三段独立 try/catch 降级）、时序（回注先于 store.value 赋值、迁移先于 auto.start）逐字保持。
  */
 import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
+import { emit, listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { base64ToBytes, bytesToBase64, type StorageAdapter } from '@totp/core'
 import { createAppI18n, createIconStore, createVueStore, useTheme, type DevtoolsConfigDto, type DevtoolsPlatform, type IconStore, type McpConfigWithStatusDto, type McpPlatform, type ReleasePolicyDto, type ReleasePlatform, type VueStore } from '@totp/ui'
@@ -335,9 +335,23 @@ export function createDesktopShell(deps: DesktopShellDeps): DesktopShellControll
       //   DEK 入 mini 槽 + 通知 mini；闭包先声明 s 再 boot 以自引用当前实例，
       //   整体 try/catch（ui 层回调同步抛错会把已成功的解锁倒转为锁——initStore 恢复路径尤其如此）
       let s: VueStore | null = null
+      // Phase 2 Task 7 托盘 i18n：locale 持久化成功后差分上报 tray-locale-changed（Rust 拆旧
+      // 托盘按新 locale 重建菜单/tooltip）。挂在 onCommitted（enqueue 任务成功后统一回调）保证
+      // emit 时本次落盘已完成——Rust 收到事件读 settings.json 必为新值；首回调仅记基线不 emit
+      // （boot 期间提交不触发重建，托盘初建已按盘上 locale）。emit 失败仅降级（托盘保持旧文案）
+      let lastTrayLocale: string | null = null
       s = await bootDesktopStore(adapter, {
         windowId: 'main',
-        onCommitted: () => deps.auto.notifyChanged(),
+        onCommitted: () => {
+          deps.auto.notifyChanged()
+          const loc = s?.settings.locale
+          if (loc) {
+            if (lastTrayLocale !== null && loc !== lastTrayLocale) {
+              void emit('tray-locale-changed').catch(() => {})
+            }
+            lastTrayLocale = loc
+          }
+        },
         onLocked: () => {
           void invoke('clear_stashed_dek').catch(() => {})
           void publishMiniLock().catch(() => {})

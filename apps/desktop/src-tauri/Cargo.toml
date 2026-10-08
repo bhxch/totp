@@ -92,6 +92,9 @@ webview2-com = "0.38"
 # Interface::cast 跨 crate 同源假设
 windows = { version = "0.61", features = [
     "Win32_Foundation",
+    # 托盘 i18n（Phase 2 Task 7）：GetUserDefaultUILanguage——settings.locale='auto' 时托盘
+    # 语言按系统 UI 语言判定（与前端 navigator.language 判定同语义）
+    "Win32_Globalization",
     "Win32_Storage_FileSystem",
     "Win32_Security",
     "Win32_Security_Authorization",

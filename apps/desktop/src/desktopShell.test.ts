@@ -104,6 +104,33 @@ describe('init：启动序列与关键初始化', () => {
     expect(ctx2.auto.notifyChanged).toHaveBeenCalled()
   })
 
+  it('locale 持久化成功 → emit tray-locale-changed（Rust 拆旧托盘重建）；同值提交不重复上报', async () => {
+    const { store } = await initShell()
+    await flushPromises()
+    const s = store.value!
+    // 首次提交（locale 未变）只记基线：boot 后首笔设置写入不触发托盘重建
+    s.settings.blurHideEnabled = true
+    await s.commitSettings()
+    await flushPromises()
+    expect(tauriMock.frontendEmitCalls()).toHaveLength(0)
+    // locale 变更 → 上报；emit 后于落盘完成（onCommitted 时序，Rust 读盘必得新值）
+    s.settings.locale = 'en'
+    await s.commitSettings()
+    await flushPromises()
+    expect(tauriMock.frontendEmitCalls()).toEqual([['tray-locale-changed', undefined]])
+    // 同值再提交（其他设置变更）不重复上报
+    tauriMock.event.emit.mockClear()
+    s.settings.locale = 'en'
+    await s.commitSettings()
+    await flushPromises()
+    expect(tauriMock.frontendEmitCalls()).toHaveLength(0)
+    // 再改回 zh → 再次上报
+    s.settings.locale = 'zh'
+    await s.commitSettings()
+    await flushPromises()
+    expect(tauriMock.frontendEmitCalls()).toEqual([['tray-locale-changed', undefined]])
+  })
+
   it('关键初始化失败 → loadError 原始消息（i18n 未装入，模板层兜底）；MCP 装配照常降级进行', async () => {
     tauriMock.fs.mkdir.mockRejectedValue(new Error('disk full'))
     const { deps, store, loadError } = await initShell()

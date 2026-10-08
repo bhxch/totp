@@ -700,33 +700,97 @@ fn apply_shortcut_override(app: &AppHandle) {
     }
 }
 
-/// run() 装配段提函数（R16⑨）：托盘菜单 + 托盘图标 + 菜单事件接线（装配段属拆分豁免
-/// 清单，仅提函数不挪文件）。mcp_info 仅托盘作用域消费：验收条目13 无头模式无窗口可看，
-/// 托盘补「复制 MCP 连接信息」兜底（文本含 token，写入登记 F16 暂存——托盘退出兜底清除）
-fn setup_tray(
-    app: &tauri::App,
-    headless: bool,
-    mcp_cfg: &mcp_server::McpConfig,
-) -> tauri::Result<()> {
-    let show_main_item = MenuItem::with_id(app, "show-main", "显示主窗口", true, None::<&str>)?;
-    let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let mcp_info = if headless {
-        Some(format!(
-            "MCP: http://127.0.0.1:{}  token: {}",
-            mcp_cfg.port, mcp_cfg.token
-        ))
+// ---------- 托盘 i18n（Phase 2 Task 7）：菜单/tooltip 文案跟随界面语言 ----------
+/// 托盘图标固定 id：tray-locale-changed 重建路径按 id 拆旧建新。tauri 经 manager 与
+/// resources_table 持 TrayIcon 克隆保活（本文件局部句柄 drop 不拆图标），remove_tray_by_id
+/// 取出并 drop 末引用即拆除系统托盘图标
+const TRAY_ICON_ID: &str = "main";
+/// 「复制 MCP 连接信息」项显隐旗标（headless 启动参数决定，运行期不变）：重建路径经此单点
+/// 读取；连接信息全文 mcp_info 仍由 setup_tray 一次性注册的菜单事件闭包持有（沿用不重建）
+static TRAY_HAS_MCP_ITEM: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// 托盘文案映射（纯函数，四键 × zh/en）：locale 仅 "en" 走 en 表，其余（含未知值）回退 zh；
+/// 未知 key 回退 zh 首键文案（防御分支，调用侧仅四键）
+fn tray_label(key: &str, locale: &str) -> &'static str {
+    let (show_main, quit, copy_mcp, tooltip) = if locale == "en" {
+        (
+            "Show Main Window",
+            "Quit",
+            "Copy MCP Connection Info",
+            "TOTP Code Tool",
+        )
     } else {
-        None
+        ("显示主窗口", "退出", "复制 MCP 连接信息", "TOTP 验证码工具")
     };
-    let mcp_info_item = match &mcp_info {
-        Some(_) => Some(MenuItem::with_id(
+    match key {
+        "show-main" => show_main,
+        "quit" => quit,
+        "copy-mcp" => copy_mcp,
+        "tooltip" => tooltip,
+        _ => "显示主窗口",
+    }
+}
+
+/// settings.locale → 托盘 locale（"zh"/"en"）：直填值照用；'auto'/缺省/未知值沿前端 i18n
+/// resolve 同语义（navigator.language 系统语言判定，zh 兜底，见 ui/i18n/index.ts）——Rust
+/// 侧以系统 UI 语言主语言位判定
+fn resolve_tray_locale(raw: Option<&str>) -> &'static str {
+    match raw {
+        Some("en") => "en",
+        Some("zh") => "zh",
+        _ => {
+            if system_ui_prefers_english() {
+                "en"
+            } else {
+                "zh"
+            }
+        }
+    }
+}
+
+/// 系统 UI 语言是否英语（LANGID 低 10 位主语言 == LANG_ENGLISH，en-* 与前端 /^en/i 同口径）
+#[cfg(windows)]
+fn system_ui_prefers_english() -> bool {
+    const LANG_ENGLISH: u16 = 0x0009;
+    (unsafe { windows::Win32::Globalization::GetUserDefaultUILanguage() } & 0x03FF) == LANG_ENGLISH
+}
+
+/// 非 Windows：无系统语言探测（不为此引依赖），auto/未知值恒 zh（与 i18n 硬编码旧状一致）
+#[cfg(not(windows))]
+fn system_ui_prefers_english() -> bool {
+    false
+}
+
+/// settings.json → 托盘 locale（读失败 None → resolve 兜底 zh）
+fn read_tray_locale(app: &AppHandle<tauri::Wry>) -> &'static str {
+    // Value 所有权留本帧，取出 str 拷贝后再归一（避免借用临时 Value 出界）
+    let raw = read_section(app, "locale").and_then(|v| v.as_str().map(str::to_string));
+    resolve_tray_locale(raw.as_deref())
+}
+
+/// 托盘装配单点（初建与 tray-locale-changed 重建共用）：菜单（locale 文案）、图标、tooltip
+/// 与点击接线。菜单事件处理器（show-main/copy-mcp-info/quit）不在此列——App::on_menu_event
+/// 为累积注册（tauri manager.menu.global_event_listeners 为 push 语义），仅 setup_tray 注册
+/// 一次，重建路径绝不重入（否则一次菜单点击多次执行）
+fn build_tray(app: &AppHandle<tauri::Wry>, locale: &str) -> tauri::Result<()> {
+    let show_main_item = MenuItem::with_id(
+        app,
+        "show-main",
+        tray_label("show-main", locale),
+        true,
+        None::<&str>,
+    )?;
+    let quit_item = MenuItem::with_id(app, "quit", tray_label("quit", locale), true, None::<&str>)?;
+    let mcp_info_item = if TRAY_HAS_MCP_ITEM.get().copied().unwrap_or(false) {
+        Some(MenuItem::with_id(
             app,
             "copy-mcp-info",
-            "复制 MCP 连接信息",
+            tray_label("copy-mcp", locale),
             true,
             None::<&str>,
-        )?),
-        None => None,
+        )?)
+    } else {
+        None
     };
     let mut items: Vec<&dyn tauri::menu::IsMenuItem<_>> = vec![&show_main_item];
     if let Some(item) = &mcp_info_item {
@@ -735,9 +799,9 @@ fn setup_tray(
     items.push(&quit_item);
     let menu = Menu::with_items(app, &items)?;
 
-    let _tray = TrayIconBuilder::new()
+    TrayIconBuilder::with_id(TRAY_ICON_ID)
         .icon(app.default_window_icon().unwrap().clone())
-        .tooltip("TOTP 验证码工具")
+        .tooltip(tray_label("tooltip", locale))
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|_tray, event| {
@@ -766,7 +830,40 @@ fn setup_tray(
             }
         })
         .build(app)?;
+    Ok(())
+}
 
+/// tray-locale-changed 重建：拆旧托盘（remove_tray_by_id 取出 manager/resources 持引用，
+/// drop 末引用即拆系统图标）再按盘上新 locale 建新。菜单事件闭包状态沿用（见 build_tray
+/// 注释）；失败仅告警不中断（托盘保持旧文案，下次切换自然纠偏）
+fn rebuild_tray(app: &AppHandle<tauri::Wry>) {
+    if let Some(old) = app.remove_tray_by_id(TRAY_ICON_ID) {
+        drop(old);
+    }
+    let locale = read_tray_locale(app);
+    if let Err(e) = build_tray(app, locale) {
+        eprintln!("[tray] locale 重建失败: {e}");
+    }
+}
+
+/// run() 装配段提函数（R16⑨）：托盘装配 + 菜单事件接线（装配段属拆分豁免
+/// 清单，仅提函数不挪文件）。mcp_info 仅托盘作用域消费：验收条目13 无头模式无窗口可看，
+/// 托盘补「复制 MCP 连接信息」兜底（文本含 token，写入登记 F16 暂存——托盘退出兜底清除）
+fn setup_tray(
+    app: &tauri::App,
+    headless: bool,
+    mcp_cfg: &mcp_server::McpConfig,
+) -> tauri::Result<()> {
+    let _ = TRAY_HAS_MCP_ITEM.set(headless);
+    build_tray(app.handle(), read_tray_locale(app.handle()))?;
+    let mcp_info = if headless {
+        Some(format!(
+            "MCP: http://127.0.0.1:{}  token: {}",
+            mcp_cfg.port, mcp_cfg.token
+        ))
+    } else {
+        None
+    };
     app.on_menu_event(move |app, event| {
         match event.id().as_ref() {
             "show-main" => show_main(app),
@@ -939,6 +1036,16 @@ pub fn run() {
             apply_shortcut_override(app.handle());
             // 托盘菜单 + 图标 + 菜单事件接线（R16⑨ 提函数；mcp_info 仅托盘作用域消费）
             setup_tray(app, headless, &mcp_cfg)?;
+            // Phase 2 Task 7 托盘 i18n：前端 locale 持久化成功后 emit（desktopShell
+            // onCommitted 差分上报），此处拆旧托盘按新 locale 重建菜单/tooltip。
+            // run_on_main_thread 兜底线程亲和：muda 菜单（HMENU）与托盘图标创建有主线程
+            // 约束，不假设事件回调所在线程
+            let tray_handle = app.handle().clone();
+            let _ = app.listen("tray-locale-changed", move |_| {
+                let dispatch = tray_handle.clone();
+                let rebuild = tray_handle.clone();
+                let _ = dispatch.run_on_main_thread(move || rebuild_tray(&rebuild));
+            });
             // 释放策略 tick：30s 轮询窗口可见性驱动三段释放（spec 批⑧ §7.3——轮询覆盖所有隐藏路径：
             // 关窗拦截/mini 失焦/前端「隐藏到托盘」，无事件盲区；配置每 tick 现读，改设置即时生效）
             let release_handle = app.handle().clone();
@@ -1291,5 +1398,37 @@ mod tests {
     fn mini_position_for_tray_window_larger_than_work_area_no_panic() {
         // 窗大于工作区：clamp 区间退化不 panic（max 取 min 兜底）
         let _ = mini_position_for_tray(100.0, 100.0, 32.0, 32.0, 4000, 3000, 0, 0, 1920, 1040);
+    }
+
+    // ---------- 托盘 i18n（Phase 2 Task 7）：tray_label 映射与回退 ----------
+    #[test]
+    fn tray_label_maps_four_keys_for_both_locales() {
+        assert_eq!(tray_label("show-main", "zh"), "显示主窗口");
+        assert_eq!(tray_label("quit", "zh"), "退出");
+        assert_eq!(tray_label("copy-mcp", "zh"), "复制 MCP 连接信息");
+        assert_eq!(tray_label("tooltip", "zh"), "TOTP 验证码工具");
+        assert_eq!(tray_label("show-main", "en"), "Show Main Window");
+        assert_eq!(tray_label("quit", "en"), "Quit");
+        assert_eq!(tray_label("copy-mcp", "en"), "Copy MCP Connection Info");
+        assert_eq!(tray_label("tooltip", "en"), "TOTP Code Tool");
+    }
+
+    #[test]
+    fn tray_label_falls_back_to_zh_for_unknown_key_and_locale() {
+        // 未知 key 回退 zh（防御分支）；未知 locale 不走 en 表（仅 "en" 命中）
+        assert_eq!(tray_label("no-such-key", "zh"), "显示主窗口");
+        assert_eq!(tray_label("no-such-key", "en"), "显示主窗口");
+        assert_eq!(tray_label("quit", "fr"), "退出");
+        assert_eq!(tray_label("tooltip", "auto"), "TOTP 验证码工具");
+    }
+
+    #[test]
+    fn resolve_tray_locale_direct_values_and_fallback() {
+        assert_eq!(resolve_tray_locale(Some("zh")), "zh");
+        assert_eq!(resolve_tray_locale(Some("en")), "en");
+        // 'auto'/缺省/未知值走系统 UI 语言判定（本测试环境结果不定），断言产出必为合法二值
+        assert!(matches!(resolve_tray_locale(Some("auto")), "zh" | "en"));
+        assert!(matches!(resolve_tray_locale(Some("fr")), "zh" | "en"));
+        assert!(matches!(resolve_tray_locale(None), "zh" | "en"));
     }
 }

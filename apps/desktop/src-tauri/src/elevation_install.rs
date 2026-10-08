@@ -483,13 +483,15 @@ fn wait_running_n<P: FnMut() -> Result<u32, u32>>(
     interval: Duration,
 ) -> Result<(), String> {
     let mut last = String::new();
-    for _ in 0..max_polls {
+    for i in 0..max_polls {
         match polls() {
             Ok(state) if state == SERVICE_STATE_RUNNING => return Ok(()),
             Ok(state) => last = state.to_string(),
             Err(code) => last = code.to_string(),
         }
-        if !interval.is_zero() {
+        // Phase 2 Task 7 nit：末次尝试后免睡——成功/超时分支都在判定处返回，终态已记
+        // last，末轮再睡一个 interval 纯属空等（超时白加 500ms）；仅中间轮次 sleep 出下轮间隔
+        if i + 1 < max_polls && !interval.is_zero() {
             std::thread::sleep(interval);
         }
     }
@@ -1072,5 +1074,26 @@ mod tests {
     fn wait_running_ok_when_state_reaches_running() {
         let mut polls = || Ok(4u32); // SERVICE_RUNNING
         assert!(wait_running_n(&mut polls, 3, std::time::Duration::ZERO).is_ok());
+    }
+
+    // Phase 2 Task 7：末次尝试免睡——全失败轮询在末轮后立即返回（旧实现超时前多睡一个 interval）
+    #[test]
+    fn wait_running_n_skips_sleep_after_final_attempt() {
+        let mut n = 0u32;
+        let mut polls = || {
+            n += 1;
+            Err::<u32, u32>(1078)
+        };
+        let start = std::time::Instant::now();
+        let r = wait_running_n(&mut polls, 2, std::time::Duration::from_millis(150));
+        let elapsed = start.elapsed();
+        assert!(r.is_err_and(|e| e.contains("1078")));
+        assert_eq!(n, 2, "恰好轮询 max_polls 次");
+        // 新实现只睡 1 次（≈150ms）；旧实现睡 2 次（≈300ms+）。上限留足调度抖动余量，
+        // 仅当末次空睡未发生才可能低于 150ms+130ms
+        assert!(
+            elapsed < std::time::Duration::from_millis(280),
+            "末轮不应再空睡: elapsed={elapsed:?}"
+        );
     }
 }
