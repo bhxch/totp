@@ -337,19 +337,18 @@ export function createDesktopShell(deps: DesktopShellDeps): DesktopShellControll
       let s: VueStore | null = null
       // Phase 2 Task 7 托盘 i18n：locale 持久化成功后差分上报 tray-locale-changed（Rust 拆旧
       // 托盘按新 locale 重建菜单/tooltip）。挂在 onCommitted（enqueue 任务成功后统一回调）保证
-      // emit 时本次落盘已完成——Rust 收到事件读 settings.json 必为新值；首回调仅记基线不 emit
-      // （boot 期间提交不触发重建，托盘初建已按盘上 locale）。emit 失败仅降级（托盘保持旧文案）
-      let lastTrayLocale: string | null = null
+      // emit 时本次落盘已完成——Rust 收到事件读 settings.json 必为新值。基线在 boot 返回后立即
+      // 取盘上 locale（审查 I1：boot 期提交本就由 s==null 短路，托盘初建已按盘上 locale；基线
+      // 若留空会使「首笔提交即改 locale」被记成基线而漏报）。emit 失败仅降级（托盘保持旧文案）
+      let lastTrayLocale = ''
       s = await bootDesktopStore(adapter, {
         windowId: 'main',
         onCommitted: () => {
           deps.auto.notifyChanged()
           const loc = s?.settings.locale
-          if (loc) {
-            if (lastTrayLocale !== null && loc !== lastTrayLocale) {
-              void emit('tray-locale-changed').catch(() => {})
-            }
+          if (loc && loc !== lastTrayLocale) {
             lastTrayLocale = loc
+            void emit('tray-locale-changed').catch(() => {})
           }
         },
         onLocked: () => {
@@ -368,6 +367,9 @@ export function createDesktopShell(deps: DesktopShellDeps): DesktopShellControll
           persistFailed.value = true
         },
       })
+      // 托盘 locale 基线（审查 I1）：boot 返回后同步初始化，此后任何含 locale 变更的提交
+      // （含首笔）都正常差分上报；赋值与 s= 之间无 await，无提交可插队
+      lastTrayLocale = s.settings.locale
       // 释放策略联动（spec 批⑧ §7.4-7.5，Task 14）：锁库事件 + 不锁库路径的 DEK 暂存回注。
       // 监听容错注册（safeListen：失败仅该联动降级，不放大为整屏 loadError）
       unlistens.track(await safeListen('force-lock', () => {

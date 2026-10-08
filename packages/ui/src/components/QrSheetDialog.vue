@@ -49,7 +49,7 @@ function onSave() {
 </template>
 <style scoped>
 /* 拼版宽（2 列 520px 起）：放开 MdDialog 560px 默认上限，attrs class 落在其根元素（父作用域样式可命中子组件根）。
-   max-width 920px 为多码拼版特例，有意突破 dialog 560dp 上限（spec §2.12 D3 裁定保留） */
+   max-width 920px 为多码拼版特例，有意突破 dialog 560dp 上限（phase2 spec §1 D3 裁定保留） */
 .sheet-dialog { max-width: 920px; }
 .sheet-wrap { display: grid; place-items: center; gap: 10px; }
 /* 大画布缩到弹窗宽内展示（height:auto 保比例；保存导出的仍是全尺寸 PNG） */

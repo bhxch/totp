@@ -108,7 +108,7 @@ describe('init：启动序列与关键初始化', () => {
     const { store } = await initShell()
     await flushPromises()
     const s = store.value!
-    // 首次提交（locale 未变）只记基线：boot 后首笔设置写入不触发托盘重建
+    // 首笔提交（locale 未变，基线=boot 盘上值）：不触发托盘重建
     s.settings.blurHideEnabled = true
     await s.commitSettings()
     await flushPromises()
@@ -125,6 +125,17 @@ describe('init：启动序列与关键初始化', () => {
     await flushPromises()
     expect(tauriMock.frontendEmitCalls()).toHaveLength(0)
     // 再改回 zh → 再次上报
+    s.settings.locale = 'zh'
+    await s.commitSettings()
+    await flushPromises()
+    expect(tauriMock.frontendEmitCalls()).toEqual([['tray-locale-changed', undefined]])
+  })
+
+  it('boot 后首笔提交即改 locale → 上报 tray-locale-changed（审查 I1：基线取 boot 盘上值，首笔变更不漏报）', async () => {
+    const { store } = await initShell()
+    await flushPromises()
+    const s = store.value!
+    // 英文系统用户首切 zh 类场景：启动后第一笔设置提交就含 locale 变更，托盘必须跟随
     s.settings.locale = 'zh'
     await s.commitSettings()
     await flushPromises()

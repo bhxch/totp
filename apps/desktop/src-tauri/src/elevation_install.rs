@@ -1085,14 +1085,15 @@ mod tests {
             Err::<u32, u32>(1078)
         };
         let start = std::time::Instant::now();
-        let r = wait_running_n(&mut polls, 2, std::time::Duration::from_millis(150));
+        let r = wait_running_n(&mut polls, 2, std::time::Duration::from_millis(250));
         let elapsed = start.elapsed();
         assert!(r.is_err_and(|e| e.contains("1078")));
         assert_eq!(n, 2, "恰好轮询 max_polls 次");
-        // 新实现只睡 1 次（≈150ms）；旧实现睡 2 次（≈300ms+）。上限留足调度抖动余量，
-        // 仅当末次空睡未发生才可能低于 150ms+130ms
+        // 新实现只睡 1 次（≈250ms）；旧实现睡 2 次（≈500ms+，≥ 上限即判回归）。
+        // 上限 500ms（审查 M2）：对高负载 sleep overshoot 留 250ms 余量防假阳性，
+        // 同时 interval 拉到 250ms 保住对旧实现的判别力
         assert!(
-            elapsed < std::time::Duration::from_millis(280),
+            elapsed < std::time::Duration::from_millis(500),
             "末轮不应再空睡: elapsed={elapsed:?}"
         );
     }
