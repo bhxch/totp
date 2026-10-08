@@ -3,6 +3,7 @@ import { suggestIcons, type BuiltinIcon, type IconSuggestion } from '@totp/core'
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ensureFullIcons, fullIconsError, fullIconsReady } from '../fullIcons'
+import MdChip from './md/MdChip.vue'
 import MdDialog from './md/MdDialog.vue'
 import MdTextField from './md/MdTextField.vue'
 
@@ -77,7 +78,7 @@ function matchesChip(item: Item): boolean {
   if (active.value === 'uploaded') return item.kind === 'stored' && !packKeyOf(item.id)
   return item.kind === 'stored' && packKeyOf(item.id) === active.value
 }
-/** 非 package chip（全部/内置/上传）整体单 button；包 chip 拆 label/× 两个真 button（交互元素不可嵌套） */
+/** 非 package chip（全部/内置/上传）单动作 MdChip；包 chip removable（label=选源、close=删包两步确认） */
 const isPackChip = (key: ChipKey) => key !== 'all' && key !== 'builtin' && key !== 'uploaded'
 const plainChips = computed(() => chips.value.filter((c) => !isPackChip(c.key)))
 const packChips = computed(() => chips.value.filter((c) => isPackChip(c.key)))
@@ -157,22 +158,28 @@ function select(item: Item) {
       :placeholder="t('entryForm.searchIcons')" :aria-label="t('entryForm.searchIconsLabel')"
     />
     <div class="picker-chips">
-      <!-- 非 package chip：单 button 整体可点；包 chip：label 与 × 拆为真 button（键盘可达删包入口） -->
-      <button
-        v-for="chip in plainChips" :key="chip.key" type="button" class="picker-chip"
-        :class="{ active: active === chip.key }" @click="active = chip.key; confirmingRemove = null"
-      >{{ chip.label }}</button>
-      <span v-for="chip in packChips" :key="chip.key" class="picker-chip" :class="{ active: active === chip.key }">
-        <button type="button" class="chip-label" @click="active = chip.key; confirmingRemove = null">{{ chip.label }}</button>
-        <button
-          type="button" class="chip-remove" :aria-label="t('entryForm.iconPackRemoveConfirm')"
-          @click.stop="confirmingRemove = String(chip.key)"
-        >×</button>
-        <template v-if="confirmingRemove === chip.key">
-          <button type="button" class="chip-remove-confirm" @click.stop="onConfirmRemove">{{ t('entryForm.iconPackRemoveConfirm') }}</button>
-          <button type="button" class="chip-remove-cancel" @click.stop="confirmingRemove = null">{{ t('entryForm.iconPackRemoveCancel') }}</button>
-        </template>
-      </span>
+      <!-- 全部收口 MdChip：plain 单动作 chip（click=选源）；包 chip removable（close=删包入口，两步确认）；
+           确认/取消两态钮亦为 MdChip（语义逐一映射：选包=chip click / 删除=close / 确认 / 取消） -->
+      <MdChip
+        v-for="chip in plainChips" :key="chip.key" :label="chip.label"
+        :selected="active === chip.key" @click="active = chip.key; confirmingRemove = null"
+      />
+      <template v-for="chip in packChips" :key="chip.key">
+        <MdChip
+          :label="chip.label" :selected="active === chip.key" removable
+          :remove-label="t('entryForm.iconPackRemoveConfirm')"
+          @click="active = chip.key; confirmingRemove = null"
+          @remove="confirmingRemove = String(chip.key)"
+        />
+        <MdChip
+          v-if="confirmingRemove === chip.key" class="chip-remove-confirm"
+          :label="t('entryForm.iconPackRemoveConfirm')" @click="onConfirmRemove"
+        />
+        <MdChip
+          v-if="confirmingRemove === chip.key"
+          :label="t('entryForm.iconPackRemoveCancel')" @click="confirmingRemove = null"
+        />
+      </template>
     </div>
     <p v-if="open && !fullIconsReady && !fullIconsError" class="picker-loading">{{ t('entryForm.iconsLoading') }}</p>
     <button v-if="open && fullIconsError" type="button" class="picker-retry" @click="void ensureFullIcons()">
@@ -216,19 +223,9 @@ function select(item: Item) {
 
 <style scoped>
 .picker-search { margin-bottom: 4px; }
+/* chips 全量收口 MdChip（形状/字号/状态层/命中带单源），容器只管换行布局 */
 .picker-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
-.picker-chip { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: 999px; background: transparent; color: var(--md-sys-color-on-surface-variant); padding: 2px 10px; font-size: var(--md-sys-typescale-body-small); cursor: pointer; position: relative; }
-/* 命中层:inset -6px 扩薄 chip 触达(视觉尺寸不变;相邻 chip 命中带重叠,MD3 允许) */
-.picker-chip::after { content: ''; position: absolute; inset: -6px; border-radius: inherit; }
-/* C1:packChips 宿主为 span(非交互),命中层是绝对定位盒、绘制于流内内容之上——真实浏览器命中测试
- * 取顶层盒,内嵌 4 类 button(选包/删包/确认/取消)点击全被截走(jsdom 无 hit-testing 故测试未拦)。
- * 内嵌交互元素统一抬高到伪元素之上恢复点击;plainChips 宿主自身为 button(无子 button),不受影响 */
-.picker-chip > button { position: relative; z-index: 1; }
-.picker-chip.active { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); border-color: transparent; }
-.chip-label { border: none; background: transparent; color: inherit; cursor: pointer; font: inherit; padding: 0; }
-.chip-remove { border: none; background: transparent; color: inherit; font: inherit; cursor: pointer; opacity: 0.6; padding: 0 2px; min-width: 40px; min-height: 40px; }
-.chip-remove:hover { opacity: 1; }
-.chip-remove-confirm, .chip-remove-cancel { border: none; background: transparent; color: inherit; font-size: var(--md-sys-typescale-label-small); cursor: pointer; padding: 0 2px; min-width: 40px; min-height: 40px; }
+/* 两步确认钮语义色（error）：MdChip 状态层走 currentColor，hover/按下随确认为 error 色 */
 .chip-remove-confirm { color: var(--md-sys-color-error); }
 .picker-loading, .picker-empty { font-size: var(--md-sys-typescale-body-small); opacity: 0.6; }
 .picker-retry { border: none; background: transparent; color: var(--md-sys-color-primary); cursor: pointer; font-size: var(--md-sys-typescale-body-small); }

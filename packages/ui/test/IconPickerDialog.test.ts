@@ -16,8 +16,8 @@ function mountPicker(opts: { issuer?: string; open?: boolean; stored?: Record<st
   })
 }
 const grid = (w: ReturnType<typeof mount>) => w.find('.picker-grid--all')
-// 包 chip 内含 × 移除钮（确认时还有确认/取消钮），text() 带后缀，一律 includes 匹配
-const chipOf = (w: ReturnType<typeof mount>, label: string) => w.findAll('.picker-chip').find((c) => c.text().includes(label))!
+// chips 收口 MdChip 后一律 .md-chip；close 钮 svg 无文本，text() 即 label，仍用 includes 兜底确认/取消同帧
+const chipOf = (w: ReturnType<typeof mount>, label: string) => w.findAll('.md-chip').find((c) => c.text().includes(label))!
 
 describe('IconPickerDialog', () => {
   it('open=false 时不渲染对话框', () => {
@@ -44,18 +44,18 @@ describe('IconPickerDialog', () => {
 
   it('chips：默认 全部/内置；有上传图标出现「上传」；各包按显示名出现', () => {
     const w = mountPicker({ stored: { gh: 'data:image/png;base64,AA', orphan: 'data:image/png;base64,AA' }, packs: { mypack: { name: 'My Pack', iconIds: ['gh'] } } })
-    const labels = w.findAll('.picker-chip').map((c) => c.text())
+    const labels = w.findAll('.md-chip').map((c) => c.text())
     expect(labels).toContain('全部')
     expect(labels).toContain('内置')
     expect(labels).toContain('上传')
-    expect(labels.some((l) => l.includes('My Pack'))).toBe(true) // 包 chip 带 × 后缀，includes 匹配
+    expect(labels).toContain('My Pack')
   })
 
   it('chip=内置 只显 builtin；chip=包 只显该包 stored（带 id 标签与 img）', async () => {
     const w = mountPicker({ stored: { gh: 'data:image/png;base64,AA' }, packs: { mypack: { name: 'My Pack', iconIds: ['gh'] } } })
     await chipOf(w, '内置')!.trigger('click')
     expect(w.findAll('.picker-grid--all img').length).toBe(0)
-    await chipOf(w, 'My Pack')!.find('.chip-label').trigger('click')
+    await chipOf(w, 'My Pack')!.trigger('click')
     const cells = w.findAll('.picker-grid--all button')
     expect(cells).toHaveLength(1)
     expect(cells[0]!.find('img').attributes('src')).toBe('data:image/png;base64,AA')
@@ -64,7 +64,7 @@ describe('IconPickerDialog', () => {
 
   it('选中 stored → select 载荷 {kind:"stored", id}；选中 builtin → {kind:"builtin"}', async () => {
     const w = mountPicker({ stored: { gh: 'data:image/png;base64,AA' }, packs: { mypack: { name: 'My Pack', iconIds: ['gh'] } } })
-    await chipOf(w, 'My Pack')!.find('.chip-label').trigger('click')
+    await chipOf(w, 'My Pack')!.trigger('click')
     await w.find('.picker-grid--all button').trigger('click')
     expect(w.emitted('select')![0]).toEqual([{ kind: 'stored', id: 'gh', title: 'gh' }])
     await chipOf(w, '内置')!.trigger('click') // 切回 builtin 源再点任一格
@@ -86,15 +86,29 @@ describe('IconPickerDialog', () => {
     expect(w.findAll('.picker-grid--all button')[0]!.attributes('title')).toBe('Google')
   })
 
-  it('包 chip × 两步确认 → emit removePack(normKey)；× 为可聚焦真 button（键盘可达删包入口）', async () => {
+  it('包 chip removable close 两步确认 → emit removePack(normKey)；close 为可聚焦真 button（键盘可达删包入口）', async () => {
     const w = mountPicker({ stored: { gh: 'data:image/png;base64,AA' }, packs: { mypack: { name: 'My Pack', iconIds: ['gh'] } } })
     const packChip = chipOf(w, 'My Pack')
-    const remove = packChip.find('.chip-remove')
-    expect(remove.element.tagName).toBe('BUTTON') // 交互元素不可嵌套：真 button 天然可聚焦，无 tabindex 补丁
+    const remove = packChip.find('.md-chip__remove')
+    expect(remove.element.tagName).toBe('BUTTON') // 交互元素不可嵌套的键盘可达性由真 button 保证
     expect((remove.element as HTMLButtonElement).disabled).toBe(false)
     await remove.trigger('click')
-    await packChip.find('.chip-remove-confirm').trigger('click')
+    // 两步确认钮同为 MdChip（语义逐一映射：选包=chip click / 删除=close / 确认 / 取消）
+    const confirm = w.findAll('.md-chip').find((c) => c.text() === '删除')
+    expect(confirm).toBeDefined()
+    await confirm!.trigger('click')
     expect(w.emitted('removePack')![0]).toEqual(['mypack'])
+  })
+
+  it('包 chip × 取消分支：取消后确认钮收起、不 emit removePack，再点 × 可重开确认', async () => {
+    const w = mountPicker({ stored: { gh: 'data:image/png;base64,AA' }, packs: { mypack: { name: 'My Pack', iconIds: ['gh'] } } })
+    await chipOf(w, 'My Pack')!.find('.md-chip__remove').trigger('click')
+    const cancel = w.findAll('.md-chip').find((c) => c.text() === '取消')!
+    await cancel.trigger('click')
+    expect(w.emitted('removePack')).toBeUndefined()
+    expect(w.findAll('.md-chip').some((c) => c.text() === '删除')).toBe(false)
+    await chipOf(w, 'My Pack')!.find('.md-chip__remove').trigger('click')
+    expect(w.findAll('.md-chip').some((c) => c.text() === '删除')).toBe(true)
   })
 
   it('推荐区 mixed：builtin 出 svg、stored 出 img', () => {

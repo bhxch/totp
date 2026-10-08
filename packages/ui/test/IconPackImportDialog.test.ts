@@ -25,7 +25,7 @@ describe('IconPackImportDialog', () => {
 
   it('快捷填入：点击既有包 chip 回填显示名', async () => {
     const w = mountDialog()
-    await w.findAll('.quick-chip').find((c) => c.text() === 'Aegis Icons')!.trigger('click')
+    await w.findAll('.md-chip').find((c) => c.text() === 'Aegis Icons')!.trigger('click')
     expect((w.find('input').element as HTMLInputElement).value).toBe('Aegis Icons')
   })
 
@@ -47,6 +47,8 @@ describe('IconPackImportDialog', () => {
   it('busy 时确认禁用、取消可用且错误透出', async () => {
     const w = mountDialog({ busy: true, error: 'boom' })
     expect(w.find('.md-dialog__actions button:last-child').attributes('disabled')).toBeDefined()
+    // 快捷填入 chip 随 busy 禁用（MdChip disabled 透传，导入中不回填打扰输入）
+    expect(w.find('.md-chip').attributes('disabled')).toBeDefined()
     // busy 时取消是逃生通道，必须始终可点（审查 Important：不得 :disabled="busy"）
     const cancel = w.find('.md-dialog__actions button:first-child')
     expect(cancel.attributes('disabled')).toBeUndefined()

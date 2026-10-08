@@ -4,6 +4,7 @@ import { normalizeIssuer } from '@totp/core'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import MdButton from './md/MdButton.vue'
+import MdChip from './md/MdChip.vue'
 import MdDialog from './md/MdDialog.vue'
 import MdTextField from './md/MdTextField.vue'
 
@@ -49,11 +50,12 @@ const canConfirm = computed(() => trimmed.value !== '' && !props.busy)
     <p v-if="overrideTarget" class="override-hint">{{ t('entryForm.iconPackOverrideHint', { name: overrideTarget }) }}</p>
     <div v-if="Object.keys(existingPacks).length > 0" class="quick-fill">
       <p class="quick-label">{{ t('entryForm.iconPackQuickFill') }}</p>
+      <!-- 快捷填入收口 MdChip（单动作 click=回填名）；busy 随导入禁用 -->
       <div class="quick-chips">
-        <button
-          v-for="(p, key) in existingPacks" :key="key" type="button" class="quick-chip"
+        <MdChip
+          v-for="(p, key) in existingPacks" :key="key" :label="p.name"
           :disabled="busy" @click="name = p.name"
-        >{{ p.name }}</button>
+        />
       </div>
     </div>
     <p v-if="error" class="error">{{ error }}</p>
@@ -70,11 +72,7 @@ const canConfirm = computed(() => trimmed.value !== '' && !props.busy)
 <style scoped>
 .override-hint { font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-tertiary); margin: 4px 0; }
 .quick-label { font-size: var(--md-sys-typescale-label-medium); opacity: 0.65; margin: 8px 0 4px; }
+/* chips 收口 MdChip（形状/状态层/命中带单源），容器只管换行布局 */
 .quick-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.quick-chip { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 999px; background: transparent; color: var(--md-sys-color-on-surface); padding: 2px 10px; font-size: var(--md-sys-typescale-body-small); cursor: pointer; position: relative; }
-/* 命中层:inset -6px 扩薄 chip 触达(视觉尺寸不变) */
-.quick-chip::after { content: ''; position: absolute; inset: -6px; border-radius: inherit; }
-/* hover 挂 pressed token(12%)：存量即 12%，未擅自归一 M3 hover 8%，观感留真机清单裁决 */
-.quick-chip:hover { background: color-mix(in srgb, var(--md-sys-color-primary) var(--md-sys-state-layer-pressed), transparent); }
 .error { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); }
 </style>

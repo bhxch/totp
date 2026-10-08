@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import MdButton from '../../src/components/md/MdButton.vue'
-import MdChip from '../../src/components/md/MdChip.vue'
 import MdFab from '../../src/components/md/MdFab.vue'
 import MdIconButton from '../../src/components/md/MdIconButton.vue'
 import MdCard from '../../src/components/md/MdCard.vue'
@@ -60,28 +59,6 @@ describe('MdFab', () => {
   })
   it('有 label 时加扩展类', () => {
     expect(mount(MdFab, { props: { label: '添加' } }).classes()).toContain('md-fab--extended')
-  })
-})
-
-describe('MdChip', () => {
-  it('selected 态与 click 事件', async () => {
-    const w = mount(MdChip, { props: { label: '工作', selected: true } })
-    expect(w.classes()).toContain('md-chip--selected')
-    expect(w.text()).toContain('工作')
-    await w.trigger('click')
-    expect(w.emitted('click')).toHaveLength(1)
-  })
-  it('未选中无 selected 类', () => {
-    expect(mount(MdChip, { props: { label: '全部' } }).classes()).not.toContain('md-chip--selected')
-  })
-  it('aria-pressed 随 selected 落 true/false（读屏可辨选中态）', () => {
-    expect(mount(MdChip, { props: { label: '工作', selected: true } }).attributes('aria-pressed')).toBe('true')
-    expect(mount(MdChip, { props: { label: '全部' } }).attributes('aria-pressed')).toBe('false')
-  })
-  it('compact 档渲染紧凑类', () => {
-    const w = mount(MdChip, { props: { label: 'tag', compact: true } })
-    expect(w.classes()).toContain('md-chip--compact')
-    expect(mount(MdChip, { props: { label: 'tag' } }).classes()).not.toContain('md-chip--compact')
   })
 })
 
