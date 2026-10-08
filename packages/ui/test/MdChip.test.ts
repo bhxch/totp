@@ -28,18 +28,36 @@ describe('MdChip', () => {
     expect(w.classes()).toContain('md-chip--compact')
     expect(mount(MdChip, { props: { label: 'tag' } }).classes()).not.toContain('md-chip--compact')
   })
-  it('removable 渲染 trailing close（真 button 可聚焦，aria-label 落 removeLabel），点击 emit remove 且不冒泡成 chip click', async () => {
+  it('非 removable 根保持 button（消费方 button.md-chip 选择器契约不变）', () => {
+    expect(mount(MdChip, { props: { label: 'x' } }).element.tagName).toBe('BUTTON')
+  })
+  it('removable：根为非交互 span 胶囊，主/删两兄弟 button，无嵌套 button', async () => {
     const w = mount(MdChip, { props: { label: 'My Pack', removable: true, removeLabel: '删除' } })
+    expect(w.element.tagName).toBe('SPAN') // 根改非交互容器：消除 button 嵌 button（HTML 内容模型）
+    expect(w.classes()).toContain('md-chip--removable')
+    expect(w.element.querySelector('button button')).toBeNull() // 嵌套交互禁断言
+    const main = w.find('.md-chip__main')
+    expect(main.element.tagName).toBe('BUTTON') // 主区承接原根 click/aria
+    expect(main.text()).toBe('My Pack')
+    expect(main.attributes('aria-pressed')).toBe('false')
     const closeBtn = w.find('.md-chip__remove')
-    expect(closeBtn.exists()).toBe(true)
     expect(closeBtn.element.tagName).toBe('BUTTON') // 真 button 天然可聚焦，无 tabindex 补丁
     expect(closeBtn.attributes('aria-label')).toBe('删除')
     expect(closeBtn.find('path').attributes('d')).toBe(close.d) // 图标走 iconPaths 注册表
-    await w.trigger('click')
+    await main.trigger('click')
     expect(w.emitted('click')).toHaveLength(1)
     await closeBtn.trigger('click')
     expect(w.emitted('remove')).toHaveLength(1)
-    expect(w.emitted('click')).toHaveLength(1) // close 点击被 .stop 拦截，未触发 chip 自身 click
+    expect(w.emitted('click')).toHaveLength(1) // 兄弟结构：close 点击不触发主区 click
+  })
+  it('removable selected：aria-pressed 落主区（读屏可辨选中态）', () => {
+    const main = mount(MdChip, { props: { label: 'x', removable: true, selected: true } }).find('.md-chip__main')
+    expect(main.attributes('aria-pressed')).toBe('true')
+  })
+  it('removable disabled：主/删两钮齐禁', () => {
+    const w = mount(MdChip, { props: { label: 'x', removable: true, disabled: true } })
+    expect((w.find('.md-chip__main').element as HTMLButtonElement).disabled).toBe(true)
+    expect((w.find('.md-chip__remove').element as HTMLButtonElement).disabled).toBe(true)
   })
   it('非 removable 不渲染 close', () => {
     expect(mount(MdChip, { props: { label: '全部' } }).find('.md-chip__remove').exists()).toBe(false)

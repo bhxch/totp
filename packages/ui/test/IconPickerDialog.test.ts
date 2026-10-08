@@ -18,6 +18,12 @@ function mountPicker(opts: { issuer?: string; open?: boolean; stored?: Record<st
 const grid = (w: ReturnType<typeof mount>) => w.find('.picker-grid--all')
 // chips 收口 MdChip 后一律 .md-chip；close 钮 svg 无文本，text() 即 label，仍用 includes 兜底确认/取消同帧
 const chipOf = (w: ReturnType<typeof mount>, label: string) => w.findAll('.md-chip').find((c) => c.text().includes(label))!
+// removable chip 根为非交互 span（消除嵌套 button），click 落主区 __main；非 removable 根即 button
+const clickChip = async (w: ReturnType<typeof mount>, label: string) => {
+  const chip = chipOf(w, label)!
+  const main = chip.find('.md-chip__main')
+  await (main.exists() ? main : chip).trigger('click')
+}
 
 describe('IconPickerDialog', () => {
   it('open=false 时不渲染对话框', () => {
@@ -55,7 +61,7 @@ describe('IconPickerDialog', () => {
     const w = mountPicker({ stored: { gh: 'data:image/png;base64,AA' }, packs: { mypack: { name: 'My Pack', iconIds: ['gh'] } } })
     await chipOf(w, '内置')!.trigger('click')
     expect(w.findAll('.picker-grid--all img').length).toBe(0)
-    await chipOf(w, 'My Pack')!.trigger('click')
+    await clickChip(w, 'My Pack')
     const cells = w.findAll('.picker-grid--all button')
     expect(cells).toHaveLength(1)
     expect(cells[0]!.find('img').attributes('src')).toBe('data:image/png;base64,AA')
@@ -64,7 +70,7 @@ describe('IconPickerDialog', () => {
 
   it('选中 stored → select 载荷 {kind:"stored", id}；选中 builtin → {kind:"builtin"}', async () => {
     const w = mountPicker({ stored: { gh: 'data:image/png;base64,AA' }, packs: { mypack: { name: 'My Pack', iconIds: ['gh'] } } })
-    await chipOf(w, 'My Pack')!.trigger('click')
+    await clickChip(w, 'My Pack')
     await w.find('.picker-grid--all button').trigger('click')
     expect(w.emitted('select')![0]).toEqual([{ kind: 'stored', id: 'gh', title: 'gh' }])
     await chipOf(w, '内置')!.trigger('click') // 切回 builtin 源再点任一格
