@@ -389,6 +389,17 @@ describe('mini 标题区 chrome（spec §1.4/§1.5）', () => {
     expect(tauriMock.window.close).toHaveBeenCalled()
     expect(tauriMock.window.hide).not.toHaveBeenCalled()
   })
+  it('mini 可调尺寸：8 向热区渲染且 pointerdown 按方向触发 startResizeDragging（无边框窗无原生 resize 边缘，2026-10-09）', async () => {
+    const w = await mountMini()
+    const dirs = ['North', 'South', 'East', 'West', 'NorthEast', 'NorthWest', 'SouthEast', 'SouthWest'] as const
+    for (const dir of dirs) {
+      const zone = w.find(`[data-test="resize-${dir}"]`)
+      expect(zone.exists()).toBe(true)
+      await zone.trigger('pointerdown')
+      expect(tauriMock.window.startResizeDragging).toHaveBeenCalledWith(dir)
+    }
+    expect(tauriMock.window.startResizeDragging).toHaveBeenCalledTimes(8)
+  })
 })
 
 describe('mini load 失败暴露（spec §2.2）', () => {

@@ -192,6 +192,13 @@ async function togglePin() {
  *  直调 hide() 不记录位置会使 LAST_MINI_POS 陈旧（销毁重建后快捷键恢复到旧位） */
 function hideMini() { void getCurrentWindow().close() }
 
+/** 无边框窗 8 向边缘拖拽调尺寸（2026-10-09 放开 spec §1.4 固定尺寸）：tauri 不给 undecorated
+ *  窗原生 resize 边缘，由前端热区触发系统 resize 循环（Rust 侧 resizable(true) 放行 +
+ *  allow-start-resize-dragging 授权）；尺寸记忆/恢复在 Rust（LAST_MINI_SIZE，三隐藏路径共用） */
+const RESIZE_DIRS = ['North', 'South', 'East', 'West', 'NorthEast', 'NorthWest', 'SouthEast', 'SouthWest'] as const
+type ResizeDir = (typeof RESIZE_DIRS)[number]
+function startResize(dir: ResizeDir) { void getCurrentWindow().startResizeDragging(dir) }
+
 /** 复制后 500ms 自动隐藏控制器（审查 I-1 武装竞态守卫）：纯逻辑抽至 miniAutoHide.ts 便于单测覆盖取消时序；
  *  pinned 时让位（hide 回调内动态检查，取消 pin 即恢复自动隐藏，无需重建控制器） */
 const autoHide = createCopyAutoHide(500, () => { if (!pinned.value) void getCurrentWindow().hide() })
@@ -252,6 +259,12 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
          在途的 copy 不再武装自动隐藏，审查 I-1） -->
     <!-- 全局 toast 渲染端（R3-I1：复制失败 error toast 与三宿主同口径） -->
     <ToastHost />
+    <!-- 8 向 resize 热区（fixed 贴窗缘，z-index 压内容；pointerdown.prevent 防触发底层拖拽/点击） -->
+    <div
+      v-for="dir in RESIZE_DIRS" :key="dir" :data-test="`resize-${dir}`"
+      class="rz" :class="`rz--${dir}`"
+      @pointerdown.prevent="startResize(dir)"
+    ></div>
   </main>
 </template>
 
@@ -273,4 +286,15 @@ body { font-family: system-ui, sans-serif; margin: 0; }
 .copy-error { text-align: center; color: var(--md-sys-color-error); background: var(--md-sys-color-error-container); border-radius: var(--md-sys-shape-corner-small); padding: 8px 0; font-size: var(--md-sys-typescale-body-small); }
 /* CSS 装载后接管精确主题色：mini.html 内联底色只保首帧（防加载期白屏），html data-mode 随 useTheme 切换 */
 html { background: var(--md-sys-color-background, #fff); }
+/* 8 向 resize 热区：边 5px、角 12px（命中优先级靠后声明覆盖边角交叠），cursor 随方向。
+ * fixed 定位相对视口=窗口（viewport 即窗体），不随 .mini padding 收缩 */
+.rz { position: fixed; z-index: 2000; touch-action: none; }
+.rz--North { top: 0; left: 0; right: 0; height: 5px; cursor: ns-resize; }
+.rz--South { bottom: 0; left: 0; right: 0; height: 5px; cursor: ns-resize; }
+.rz--East { top: 0; bottom: 0; right: 0; width: 5px; cursor: ew-resize; }
+.rz--West { top: 0; bottom: 0; left: 0; width: 5px; cursor: ew-resize; }
+.rz--NorthEast { top: 0; right: 0; width: 12px; height: 12px; cursor: nesw-resize; }
+.rz--SouthWest { bottom: 0; left: 0; width: 12px; height: 12px; cursor: nesw-resize; }
+.rz--NorthWest { top: 0; left: 0; width: 12px; height: 12px; cursor: nwse-resize; }
+.rz--SouthEast { bottom: 0; right: 0; width: 12px; height: 12px; cursor: nwse-resize; }
 </style>

@@ -74,6 +74,9 @@ static LAST_FOCUS_HIDE: Mutex<Option<Instant>> = Mutex::new(None);
 // ---------- mini 托盘定位（spec §1.3）：点击处弹出 + 上次位置恢复 ----------
 static LAST_MINI_POS: Mutex<Option<(i32, i32)>> = Mutex::new(None);
 
+// ---------- mini 窗口尺寸记忆（2026-10-09 可调尺寸起）：物理像素 (w, h)，恢复时机同位置 ----------
+static LAST_MINI_SIZE: Mutex<Option<(u32, u32)>> = Mutex::new(None);
+
 // ---------- mini pin（spec §1.5）：settings.json miniPinned 键 + 内存缓存；失焦/复制后自动隐藏均让位 ----------
 static MINI_PINNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -327,13 +330,19 @@ fn mini_position_for_tray(
     (x, y)
 }
 
-/// 隐藏前记忆 mini 位置（Focused(false)/CloseRequested/托盘 toggle 三路径共用），
+/// 隐藏前记忆 mini 位置与尺寸（Focused(false)/CloseRequested/托盘 toggle 三路径共用），
 /// 供销毁重建后快捷键打开恢复。参数取 Window：on_window_event 回调只给 Window，
 /// WebviewWindow 侧经 as_ref().window() 廉价克隆进入
 fn remember_mini_pos(window: &tauri::Window) {
     if let Ok(p) = window.outer_position() {
         if let Ok(mut g) = LAST_MINI_POS.lock() {
             *g = Some((p.x, p.y));
+        }
+    }
+    // 尺寸与位置同源记忆（无边框窗 outer==inner）：可调尺寸后销毁重建路径才能保住用户拖出的形态
+    if let Ok(s) = window.outer_size() {
+        if let Ok(mut g) = LAST_MINI_SIZE.lock() {
+            *g = Some((s.width, s.height));
         }
     }
 }
@@ -412,7 +421,14 @@ fn toggle_mini(app: &AppHandle, anchor: Option<(f64, f64, f64, f64)>) {
         }
         MiniToggleAction::RepositionOnly | MiniToggleAction::Show => {
             // 定位先于 show（不可见期移动无闪烁）：托盘点击=每次锚定托盘；
-            // 快捷键=恢复上次位置（销毁重建后亦然），无记忆则 OS 默认
+            // 快捷键=恢复上次位置（销毁重建后亦然），无记忆则 OS 默认。
+            // 尺寸恢复先于两条定位分支（position_mini_at_tray 按当前 outer_size 算托盘锚点几何，
+            // 先恢复尺寸锚点才贴合拖大后的窗体）
+            if let Ok(g) = LAST_MINI_SIZE.lock() {
+                if let Some((w, h)) = *g {
+                    let _ = mini.set_size(tauri::PhysicalSize::new(w, h));
+                }
+            }
             if let Some(a) = anchor {
                 position_mini_at_tray(&mini, a);
             } else if let Ok(g) = LAST_MINI_POS.lock() {
@@ -633,10 +649,14 @@ fn ensure_window(app: &AppHandle, label: &str) -> bool {
         .visible(false)
         .skip_taskbar(true)
         .enable_clipboard_access()
-        // spec §1.4/§1.5：无边框 + 系统阴影 + 固定尺寸；pin 存续时重建窗口保持置顶
+        // 2026-10-09 用户裁定放开 spec §1.4/§1.5 的固定尺寸：无边框 + 系统阴影 + 可调
+        // （下限 240×320 保 titlebar+搜索行+数行条目可用）。无边框窗 tauri 不给原生
+        // resize 边缘，实际拖拽由前端 8 向热区 startResizeDragging 承担（MiniApp.vue），
+        // resizable(true) 是系统层放行；pin 存续时重建窗口保持置顶
         .decorations(false)
         .shadow(true)
-        .resizable(false)
+        .resizable(true)
+        .min_inner_size(240.0, 320.0)
         .always_on_top(MINI_PINNED.load(std::sync::atomic::Ordering::Relaxed))
         .build(),
         _ => return false,
