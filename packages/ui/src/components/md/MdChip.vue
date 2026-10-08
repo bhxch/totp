@@ -43,14 +43,20 @@ const emit = defineEmits<{ click: [event: MouseEvent]; remove: [] }>()
  * 保留 ::after inset -8px 的 ≥32px 命中带） */
 .md-chip--compact { height: 28px; padding: 0 12px; font-size: var(--md-sys-typescale-body-small); }
 /* removable：根 span 只做胶囊，padding 让位两 button（主区左 16/右 8 与 close 以 padding 分界，
- * 根兜右 16px，总宽与旧版 16+文+8+icon+16 一致） */
+ * 根兜右 16px，总宽与旧版 16+文+8+icon+16 一致；compact 由下方覆盖恢复右 12px） */
 .md-chip--removable { padding: 0 16px 0 0; cursor: default; }
+/* 两 button 必须自身 relative：static 时其 absolute ::after 的包含块解析到根 span(relative)，
+ * 命中层覆盖整胶囊且绘制于流内兄弟之上 → 真机点标签任意位置误触 remove（无头 Chromium 实证） */
 .md-chip__main { border: none; background: transparent; color: inherit; font: inherit; font-size: inherit; font-weight: inherit;
-  border-radius: inherit; padding: 0 8px 0 16px; align-self: stretch; display: inline-flex; align-items: center; cursor: pointer; }
+  border-radius: inherit; padding: 0 8px 0 16px; align-self: stretch; display: inline-flex; align-items: center; cursor: pointer;
+  position: relative; }
 .md-chip--compact .md-chip__main { padding: 0 8px 0 12px; }
 .md-chip__remove { border: none; background: transparent; color: inherit; font: inherit; border-radius: 100px; padding: 0;
-  width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+  width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+  position: relative; }
 .md-chip--compact .md-chip__remove { width: 28px; height: 28px; }
+/* compact 右兜恢复 12px：--removable 与 --compact 同特异度、序胜覆盖出 16px（胶囊宽 4px） */
+.md-chip--compact.md-chip--removable { padding: 0 12px 0 0; }
 /* disabled 两钮齐禁：胶囊随钮一起降到 38%（:has 兼容目标 Chrome ≥105，旧根 :disabled 语义等价） */
 .md-chip--removable:has(:disabled) { opacity: .38; }
 .md-chip__main:disabled, .md-chip__remove:disabled { cursor: default; }

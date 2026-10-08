@@ -68,6 +68,12 @@ describe('MdChip', () => {
     expect(w.find('.md-chip__remove').exists()).toBe(true)
     expect(chipSfc).toMatch(/\.md-chip__remove::after\s*\{[^}]*inset:\s*-8px/)
     expect(chipSfc).toMatch(/\.md-chip--compact \.md-chip__remove\s*\{[^}]*28px/)
+    // ::after 包含块必须收敛回自身 button：两 button 需 position:relative——static 时 absolute ::after
+    // 解析到根 span，命中层覆盖整胶囊且绘制于流内兄弟之上 → 真机点标签任意位置误触 remove（无头 Chromium 实证）
+    expect(chipSfc).toMatch(/\.md-chip__main\s*\{[^}]*position:\s*relative/)
+    expect(chipSfc).toMatch(/\.md-chip__remove\s*\{[^}]*position:\s*relative/)
+    // compact removable 右 padding 恢复 12px（--removable 与 --compact 同特异度序胜覆盖出 16px 偏差，胶囊宽 4px）
+    expect(chipSfc).toMatch(/\.md-chip--compact\.md-chip--removable\s*\{[^}]*padding:\s*0 12px 0 0/)
   })
   it('disabled 透传（busy 等宿主禁用态）', () => {
     expect(mount(MdChip, { props: { label: 'x', disabled: true } }).attributes('disabled')).toBeDefined()
