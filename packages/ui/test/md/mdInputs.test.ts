@@ -103,6 +103,10 @@ describe('MdTextField', () => {
     await w.setProps({ disabled: false })
     expect(w.find('.md-text-field').classes()).not.toContain('md-text-field--disabled')
   })
+  it('disabled hover 豁免：box hover state layer 祖链 :not(--disabled) 限定，禁用态不浮起（jsdom 无样式，源码断言）', () => {
+    const src = readFileSync(join(__dirname, '../../src/components/md/MdTextField.vue'), 'utf8')
+    expect(src).toMatch(/\.md-text-field:not\(\.md-text-field--disabled\) \.md-text-field__box:hover:not\(:focus-within\)/)
+  })
 })
 describe('MdSwitch', () => {
   it('点击只 emit update,不自行改视觉(受控)', async () => {

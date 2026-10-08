@@ -49,6 +49,8 @@ describe('MdSelect', () => {
     const opts = w.findAll('[role="option"]')
     expect(opts).toHaveLength(4)
     expect(opts.map((o) => o.text())).toEqual(['15 分钟', '1 小时', '6 小时', '每天'])
+    // 弹层根挂共享 md-menu-surface 类（与 MdMenu 同源基线，menu-surface.css 单点维护）
+    expect(menu.classes()).toContain('md-menu-surface')
     expect(opts[1]!.attributes('aria-selected')).toBe('true')
     expect(opts[0]!.attributes('aria-selected')).toBe('false')
     expect(opts[1]!.classes()).toContain('md-select__option--selected')
@@ -249,5 +251,10 @@ describe('MdSelect', () => {
     // 选中项 hover：容器色 92% 叠 on-surface 8%（以 calc(100% - hover) 与 hover token 表达,和恒 100%
     // —— --selected:hover 特异度 (0,3,0) 高于 :hover (0,2,0)，胜出不依赖声明顺序——审查 Minor-1）
     expect(src).toMatch(/\.md-select__option--selected:hover\s*{[^}]*color-mix\(in srgb, var\(--md-sys-color-secondary-container\) calc\(100% - var\(--md-sys-state-layer-hover\)\), var\(--md-sys-color-on-surface\) var\(--md-sys-state-layer-hover\)\)/)
+  })
+
+  it('⑱disabled hover 豁免：触发框 hover state layer 祖链 :not(--disabled) 限定，禁用态不浮起（源码断言）', () => {
+    const src = readFileSync(join(__dirname, '../../src/components/md/MdSelect.vue'), 'utf8')
+    expect(src).toMatch(/\.md-select:not\(\.md-select--disabled\) \.md-select__box:hover:not\(:focus-within\)/)
   })
 })

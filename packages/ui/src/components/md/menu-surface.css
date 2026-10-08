@@ -1,0 +1,8 @@
+/* M3 menu 弹层共享基线（MdMenu/MdSelect 弹层根挂 md-menu-surface 类引用本文件，单点维护）：
+ * Phase 1 曾两处复制粘贴成对偏差（Phase 1 审查记录）——改动只动这里，勿在组件内复制回局部。
+ * 数值口径：min-width 112 / 上下 padding 8 / surface-container 底 / extra-small(4dp) 圆角 /
+ * outline-variant 内描边 + level2 双层阴影 / 选项行 48px 基线（M3 menu 容器规范） */
+.md-menu-surface { min-width: 112px; padding: 8px 0; background: var(--md-sys-color-surface-container);
+  border-radius: var(--md-sys-shape-corner-extra-small);
+  box-shadow: inset 0 0 0 1px var(--md-sys-color-outline-variant), var(--md-sys-elevation-level2); }
+.md-menu-surface > button, .md-menu-surface [role='option'] { min-height: 48px; }

@@ -46,8 +46,9 @@ const inputAttrs = computed(() => {
   min-height: 56px; padding: 0 16px; background: var(--field-bg, var(--md-sys-color-surface-container-highest));
   border-radius: 4px 4px 0 0; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
 /* hover state layer：混入 filled 底色而非 transparent（brief 字面 color-mix transparent 会整体替换
- * background 丢失 filled 底色；8% on-surface 混入底色与 state layer 叠加等价） */
-.md-text-field__box:hover:not(:focus-within) { --field-bg: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-hover), var(--md-sys-color-surface-container-highest)); }
+ * background 丢失 filled 底色；8% on-surface 混入底色与 state layer 叠加等价）；
+ * 补 disabled 豁免（Task 3）：祖链 :not(--disabled) 限定，禁用态不再浮起 */
+.md-text-field:not(.md-text-field--disabled) .md-text-field__box:hover:not(:focus-within) { --field-bg: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-hover), var(--md-sys-color-surface-container-highest)); }
 /* active indicator 绝对定位叠于底边框（bottom:-1px 盖住 1px border），聚焦 scaleX 展开；
  * 取代原「1px→2px border」写法，消除聚焦时 1px 布局位移 */
 .md-text-field__box::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;

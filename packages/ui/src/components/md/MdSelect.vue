@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+// 弹层共享基线（112/8px/surface-container/48px）单点在 menu-surface.css，与 MdMenu 弹层同源
+import './menu-surface.css'
 
 const props = withDefaults(defineProps<{
   /** 触发端字段标签（同 MdTextField label 语义，悬浮呈现） */
@@ -141,7 +143,7 @@ onBeforeUnmount(() => {
         </svg>
       </button>
     </div>
-    <div v-if="open" ref="menuRef" class="md-select__menu" role="listbox" :style="`left: ${pos.left}px; top: ${pos.top}px;`">
+    <div v-if="open" ref="menuRef" class="md-select__menu md-menu-surface" role="listbox" :style="`left: ${pos.left}px; top: ${pos.top}px;`">
       <div v-for="(o, i) in options" :key="o.value" class="md-select__option" role="option"
         :class="{ 'md-select__option--selected': o.value === modelValue, 'md-select__option--active': i === activeIdx }"
         :aria-selected="o.value === modelValue ? 'true' : 'false'"
@@ -158,7 +160,8 @@ onBeforeUnmount(() => {
 .md-select__box { position: relative; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center;
   min-height: 56px; background: var(--select-bg, var(--md-sys-color-surface-container-highest));
   border-radius: 4px 4px 0 0; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
-.md-select__box:hover:not(:focus-within) { --select-bg: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-hover), var(--md-sys-color-surface-container-highest)); }
+/* hover state layer 补 disabled 豁免（Task 3）：祖链 :not(--disabled) 限定，禁用态不再浮起 */
+.md-select:not(.md-select--disabled) .md-select__box:hover:not(:focus-within) { --select-bg: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-hover), var(--md-sys-color-surface-container-highest)); }
 .md-select__box::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
   background: var(--md-sys-color-primary); transform: scaleX(0); transition: transform .12s; }
 .md-select__box:focus-within::after { transform: scaleX(1); }
@@ -176,11 +179,10 @@ onBeforeUnmount(() => {
 .md-select__trigger:focus-visible { outline: 3px solid var(--md-sys-color-primary); outline-offset: 2px; }
 .md-select__value { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .md-select__arrow { flex: none; color: var(--md-sys-color-on-surface-variant); }
-/* 弹层与 MdMenu 同源外观：fixed + surface-container + outline-variant 内描边（M3 menu 容器色） */
-.md-select__menu { position: fixed; z-index: 1100; min-width: 112px; max-height: 280px; overflow: auto; padding: 8px 0;
-  border-radius: 4px; background: var(--md-sys-color-surface-container);
-  box-shadow: inset 0 0 0 1px var(--md-sys-color-outline-variant), var(--md-sys-elevation-level2); }
-.md-select__option { height: 48px; display: flex; align-items: center; padding: 0 16px; cursor: pointer;
+/* 弹层外观基线（min-width/padding/底色/圆角/阴影）由共享 menu-surface.css 提供，此处仅留定位与 select 专属滚动约束 */
+.md-select__menu { position: fixed; z-index: 1100; max-height: 280px; overflow: auto; }
+/* 48px 行高基线由 menu-surface.css [role=option] min-height 提供，此处仅排版（垂直居中用 flex） */
+.md-select__option { display: flex; align-items: center; padding: 0 16px; cursor: pointer;
   font-size: var(--md-sys-typescale-body-large); color: var(--md-sys-color-on-surface); }
 .md-select__option--active { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-hover), transparent); }
 /* 鼠标 hover 同 8% state layer（批 4 抽查修正：此前仅键盘 active 有高亮） */

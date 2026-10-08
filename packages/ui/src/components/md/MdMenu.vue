@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+// 弹层共享基线（112/8px/surface-container/48px）单点在 menu-surface.css，与 MdSelect 弹层同源
+import './menu-surface.css'
 
 const props = defineProps<{ x: number; y: number; open: boolean; /** 触发点元素（可选）：Esc 关闭且焦点在菜单内时回焦；右键等无按钮触发场景可省略 */ triggerEl?: HTMLElement | null }>()
 const emit = defineEmits<{ close: [] }>()
@@ -99,10 +101,9 @@ onBeforeUnmount(() => {
 })
 </script>
 <template>
-  <div v-if="open" ref="rootRef" class="md-menu" role="menu" :style="`left: ${pos.left}px; top: ${pos.top}px;`"><slot /></div>
+  <div v-if="open" ref="rootRef" class="md-menu md-menu-surface" role="menu" :style="`left: ${pos.left}px; top: ${pos.top}px;`"><slot /></div>
 </template>
 <style scoped>
-.md-menu { position: fixed; z-index: 1100; min-width: 112px; padding: 8px 0; border-radius: 4px; /* M3 menu=extra-small 4dp(审查 X9)；min-width 112/上下 8dp 对齐 M3 menu 容器 */
-  background: var(--md-sys-color-surface-container);
-  box-shadow: inset 0 0 0 1px var(--md-sys-color-outline-variant), var(--md-sys-elevation-level2); }
+/* 外观基线（min-width/padding/底色/圆角/阴影/48px 项）由共享 menu-surface.css 提供，此处仅留定位 */
+.md-menu { position: fixed; z-index: 1100; }
 </style>

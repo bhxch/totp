@@ -761,8 +761,9 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .auto-item { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); }
 .auto-status { font-size: var(--md-sys-typescale-body-small); opacity: .65; }
 .confirm-row { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); flex-wrap: wrap; }
-/* 「添加源」菜单项（MdMenu 容器自带定位与外观；MdButton text 形收紧为菜单项排版，同 CodesPage ctx-item） */
-.menu-item { display: block; width: 100%; height: 36px; justify-content: flex-start; border-radius: 0; font-size: var(--md-sys-typescale-body-medium); text-align: left; padding: 0 14px; }
+/* 「添加源」菜单项（MdMenu 容器自带定位与外观；MdButton text 形收紧为菜单项排版，同 CodesPage ctx-item）：
+ * 高度收口 menu-surface 48px 基线（原 36px 与 ctx-item 48px 不一致，Task 3） */
+.menu-item { display: block; width: 100%; min-height: 48px; justify-content: flex-start; border-radius: 0; font-size: var(--md-sys-typescale-body-medium); text-align: left; padding: 0 14px; }
 .hint { font-size: var(--md-sys-typescale-body-small); opacity: .65; margin: 0; }
 .ok { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-medium); }
 .err { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-medium); }

@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import MdDialog from '../../src/components/md/MdDialog.vue'
@@ -231,6 +233,19 @@ describe('MdMenu', () => {
     press('ArrowUp') // 焦点不在项上：ArrowUp 落末个可聚焦项（跳过 aria-disabled/hidden）
     expect(document.activeElement).toBe(item('m-z'))
     w.unmount()
+  })
+  it('弹层根挂共享 md-menu-surface 类（menu-surface.css 单点基线，Task 3 抽取）', () => {
+    const w = mount(MdMenu, { props: { open: true, x: 0, y: 0 } })
+    expect(w.find('.md-menu').classes()).toContain('md-menu-surface')
+    w.unmount()
+  })
+  it('menu-surface.css 单点维护弹层基线：112/8px/surface-container/extra-small/48px（jsdom 无样式，源码断言）', () => {
+    const css = readFileSync(join(__dirname, '../../src/components/md/menu-surface.css'), 'utf8')
+    expect(css).toMatch(/\.md-menu-surface\s*{[^}]*min-width:\s*112px/)
+    expect(css).toMatch(/\.md-menu-surface\s*{[^}]*padding:\s*8px 0/)
+    expect(css).toMatch(/\.md-menu-surface\s*{[^}]*var\(--md-sys-color-surface-container\)/)
+    expect(css).toMatch(/\.md-menu-surface\s*{[^}]*var\(--md-sys-shape-corner-extra-small\)/)
+    expect(css).toMatch(/\.md-menu-surface\s*>\s*button,\s*\.md-menu-surface\s*\[role='option'\]\s*{[^}]*min-height:\s*48px/)
   })
 })
 
