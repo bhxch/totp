@@ -121,7 +121,7 @@ const pageProps = computed<Partial<PagePropsByName>>(() => {
 .nav-shell__rail-action { border: none; background: transparent; cursor: pointer; font: inherit;
   font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-on-surface-variant); padding: 8px 4px; border-radius: 8px;
   min-height: 48px; transition: background-color .15s; }
-.nav-shell__rail-action:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
+.nav-shell__rail-action:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-hover), transparent); }
 /* pressed 12% 状态层(token,Task 1 合入),叠 currentColor 与 hover(on-surface)同源 */
 .nav-shell__rail-action:active { background: color-mix(in srgb, currentColor var(--md-sys-state-layer-pressed), transparent); }
 .nav-shell__rail-action:focus-visible { outline: 3px solid var(--md-sys-color-primary); outline-offset: 2px; }

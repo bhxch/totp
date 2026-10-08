@@ -31,10 +31,10 @@ function onChange(e: Event) {
  * 未选中叠 on-surface,选中在 primary 底上叠 on-primary)::before 置于勾选标 ::after 之下 */
 .md-checkbox__box::before { content: ''; position: absolute; inset: 0; border-radius: inherit;
   background: transparent; transition: background-color .15s; }
-.md-checkbox:hover .md-checkbox__box::before { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
-.md-checkbox:active .md-checkbox__box::before { background: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent); }
-.md-checkbox--checked:hover .md-checkbox__box::before { background: color-mix(in srgb, var(--md-sys-color-on-primary) 8%, transparent); }
-.md-checkbox--checked:active .md-checkbox__box::before { background: color-mix(in srgb, var(--md-sys-color-on-primary) 12%, transparent); }
+.md-checkbox:hover .md-checkbox__box::before { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-hover), transparent); }
+.md-checkbox:active .md-checkbox__box::before { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-pressed), transparent); }
+.md-checkbox--checked:hover .md-checkbox__box::before { background: color-mix(in srgb, var(--md-sys-color-on-primary) var(--md-sys-state-layer-hover), transparent); }
+.md-checkbox--checked:active .md-checkbox__box::before { background: color-mix(in srgb, var(--md-sys-color-on-primary) var(--md-sys-state-layer-pressed), transparent); }
 .md-checkbox--checked .md-checkbox__box { background: var(--md-sys-color-primary); box-shadow: none; }
 .md-checkbox--checked .md-checkbox__box::after { content: ''; position: absolute; left: 5px; top: 1px;
   width: 5px; height: 10px; border-right: 2px solid var(--md-sys-color-on-primary);

@@ -617,13 +617,14 @@ fieldset { border: 1px solid var(--md-sys-color-outline-variant); border-radius:
 .rule-row .rule-pattern { flex: 1; }
 .rule-row .rule-pattern.invalid :deep(.md-text-field__box) { border-bottom-color: var(--md-sys-color-error); }
 .rule-error { font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-error); flex-basis: 100%; }
+/* 静态着色例外（非交互态,不属 state-layer 收编):推荐区容器保留 primary 12% tint 以示建议 affordance */
 .icon-recommend { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); padding: 4px 8px; background: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent); border-radius: var(--md-sys-shape-corner-small); }
 .icon-recommend .recommend-item { display: grid; place-items: center; padding: 6px 8px; border: none; border-radius: var(--md-sys-shape-corner-small); background: transparent; color: inherit; cursor: pointer; position: relative; }
 /* 命中层:inset -4px 在 padding 6px 8px 基础上再扩(20px 图标钮达标) */
 .icon-recommend .recommend-item::after { content: ''; position: absolute; inset: -4px; border-radius: inherit; }
-/* 状态层走 token（hover 8% / pressed 12%，MD3 状态层口径） */
-.icon-recommend .recommend-item:hover { background: color-mix(in srgb, var(--md-sys-color-primary) var(--md-sys-state-layer-hover), transparent); }
-.icon-recommend .recommend-item:active { background: color-mix(in srgb, var(--md-sys-color-primary) var(--md-sys-state-layer-pressed), transparent); }
+/* 状态层走 token（hover 8% / pressed 12%，MD3 状态层口径）;基色 on-surface（D5 裁定,弃 primary） */
+.icon-recommend .recommend-item:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-hover), transparent); }
+.icon-recommend .recommend-item:active { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-pressed), transparent); }
 .icon-preview { width: 20px; height: 20px; fill: currentColor; flex: none; }
 .icon-current-img { width: 20px; height: 20px; object-fit: contain; flex: none; }
 .icon-picker summary { cursor: pointer; font-weight: 600; }

@@ -80,13 +80,23 @@ const stateLayerBlock = `:root {
   --md-sys-state-layer-hover:8%;
   --md-sys-state-layer-pressed:12%;
 }`
+// M3 官方阴影六档:mode 无关,恒载 :root(不随 data-mode/data-color 变化);多层逗号须整串进变量,组件处 box-shadow: var(...) 整体引用
+const elevationBlock = `:root {
+  --md-sys-elevation-level0:none;
+  --md-sys-elevation-level1:0 1px 2px 0 rgba(0,0,0,.30), 0 1px 3px 1px rgba(0,0,0,.15);
+  --md-sys-elevation-level2:0 1px 2px 0 rgba(0,0,0,.30), 0 2px 6px 2px rgba(0,0,0,.15);
+  --md-sys-elevation-level3:0 1px 3px 0 rgba(0,0,0,.30), 0 4px 8px 3px rgba(0,0,0,.15);
+  --md-sys-elevation-level4:0 2px 3px 0 rgba(0,0,0,.30), 0 6px 10px 4px rgba(0,0,0,.15);
+  --md-sys-elevation-level5:0 4px 4px 0 rgba(0,0,0,.30), 0 8px 12px 6px rgba(0,0,0,.15);
+}`
 
-// base 恒载产物:typescale/shape/state-layer :root 块 + color-scheme 4 声明 + 无 [data-color] 限定的 light/dark/auto×media 块,值=默认种子 blue(兜底)
+// base 恒载产物:typescale/shape/state-layer/elevation :root 块 + color-scheme 4 声明 + 无 [data-color] 限定的 light/dark/auto×media 块,值=默认种子 blue(兜底)
 const base = [
-  header('base 恒载:typescale/shape/state-layer :root 块 + 无 [data-color] 限定的 light/dark/auto 块,色值=默认种子 blue(未加载 palettes 时的兜底色)。', '本文件 (0,1,0) 兜底,tokens-palettes.css (0,2,0) 恒胜。'),
+  header('base 恒载:typescale/shape/state-layer/elevation :root 块 + 无 [data-color] 限定的 light/dark/auto 块,色值=默认种子 blue(未加载 palettes 时的兜底色)。', '本文件 (0,1,0) 兜底,tokens-palettes.css (0,2,0) 恒胜。'),
   typescaleBlock,
   shapeBlock,
   stateLayerBlock,
+  elevationBlock,
   '[data-mode="light"] { color-scheme: light }',
   '[data-mode="dark"] { color-scheme: dark }',
   '@media (prefers-color-scheme: light) { [data-mode="auto"] { color-scheme: light } }',

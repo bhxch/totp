@@ -33,10 +33,10 @@ function onChange(e: Event) {
  * 未选中叠 on-surface,选中在 primary 轨道上叠 on-primary)::before 置于拇指之下 */
 .md-switch__track::before { content: ''; position: absolute; inset: 0; border-radius: inherit;
   background: transparent; transition: background-color .15s; }
-.md-switch:hover .md-switch__track::before { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
-.md-switch:active .md-switch__track::before { background: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent); }
-.md-switch--checked:hover .md-switch__track::before { background: color-mix(in srgb, var(--md-sys-color-on-primary) 8%, transparent); }
-.md-switch--checked:active .md-switch__track::before { background: color-mix(in srgb, var(--md-sys-color-on-primary) 12%, transparent); }
+.md-switch:hover .md-switch__track::before { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-hover), transparent); }
+.md-switch:active .md-switch__track::before { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-pressed), transparent); }
+.md-switch--checked:hover .md-switch__track::before { background: color-mix(in srgb, var(--md-sys-color-on-primary) var(--md-sys-state-layer-hover), transparent); }
+.md-switch--checked:active .md-switch__track::before { background: color-mix(in srgb, var(--md-sys-color-on-primary) var(--md-sys-state-layer-pressed), transparent); }
 /* 命中层:inset -8px 使 32px 高轨道达 MD3 48dp 触达目标;透明无背景——状态层仍由 ::before 以轨道面近似叠加 */
 .md-switch__track::after { content: ''; position: absolute; inset: -8px; border-radius: inherit; }
 /* M3 拇指随状态缩放(审查挂账收口):未选中 16dp(on-surface-variant 描边+芯,border-box 含描边)、

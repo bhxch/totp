@@ -81,7 +81,7 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--md-sys-color-scrim) 32%, transparent); } /* M3 scrim 32%（原 55%） */
 .md-dialog { width: 90%; min-width: 280px; max-width: 560px; max-height: 85vh; overflow-y: auto; padding: 24px; border-radius: 28px; /* M3 dialog=extra-large 28dp(审查 X9)；min-width 280dp */
   background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface);
-  box-shadow: 0 4px 12px var(--md-sys-color-shadow); }
+  box-shadow: var(--md-sys-elevation-level2); }
 .md-dialog:focus-visible { outline: none; }
 /* headline-small（24px）为 spec §2.10 全局裁定，不按个别弹窗降档（spec 裁定，观感异议走 CONCERN） */
 .md-dialog__headline { margin: 0 0 16px; font-size: var(--md-sys-typescale-headline-small); font-weight: 500; }

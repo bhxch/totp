@@ -41,10 +41,10 @@ function onKeydown(e: KeyboardEvent) {
  * 重叠,MD3 允许);radius 跟随段圆端;不得设 pointer-events:none——否则命中扩展失效 */
 .md-seg__item::after { content: ''; position: absolute; inset: -4px; border-radius: inherit;
   background: transparent; transition: background-color .15s; }
-.md-seg__item:hover::after { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
+.md-seg__item:hover::after { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-hover), transparent); }
 /* M3 状态层:pressed 12% / focus 12%(focus 同时保留 3px focus ring) */
 .md-seg__item:active::after,
-.md-seg__item:focus-visible::after { background: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent); }
+.md-seg__item:focus-visible::after { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-pressed), transparent); }
 .md-seg__item:focus-visible { outline: 3px solid var(--md-sys-color-primary); outline-offset: 2px; }
 .md-seg__item--selected { background: var(--md-sys-color-secondary-container);
   color: var(--md-sys-color-on-secondary-container); box-shadow: none; }

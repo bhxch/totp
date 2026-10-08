@@ -74,6 +74,7 @@ const canConfirm = computed(() => trimmed.value !== '' && !props.busy)
 .quick-chip { border: 1px solid var(--md-sys-color-outline-variant); border-radius: 999px; background: transparent; color: var(--md-sys-color-on-surface); padding: 2px 10px; font-size: var(--md-sys-typescale-body-small); cursor: pointer; position: relative; }
 /* 命中层:inset -6px 扩薄 chip 触达(视觉尺寸不变) */
 .quick-chip::after { content: ''; position: absolute; inset: -6px; border-radius: inherit; }
-.quick-chip:hover { background: color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent); }
+/* hover 挂 pressed token(12%)：存量即 12%，未擅自归一 M3 hover 8%，观感留真机清单裁决 */
+.quick-chip:hover { background: color-mix(in srgb, var(--md-sys-color-primary) var(--md-sys-state-layer-pressed), transparent); }
 .error { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); }
 </style>

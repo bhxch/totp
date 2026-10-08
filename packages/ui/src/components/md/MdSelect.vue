@@ -179,14 +179,14 @@ onBeforeUnmount(() => {
 /* 弹层与 MdMenu 同源外观：fixed + surface-container + outline-variant 内描边（M3 menu 容器色） */
 .md-select__menu { position: fixed; z-index: 1100; min-width: 112px; max-height: 280px; overflow: auto; padding: 8px 0;
   border-radius: 4px; background: var(--md-sys-color-surface-container);
-  box-shadow: inset 0 0 0 1px var(--md-sys-color-outline-variant), 0 2px 8px var(--md-sys-color-shadow); }
+  box-shadow: inset 0 0 0 1px var(--md-sys-color-outline-variant), var(--md-sys-elevation-level2); }
 .md-select__option { height: 48px; display: flex; align-items: center; padding: 0 16px; cursor: pointer;
   font-size: var(--md-sys-typescale-body-large); color: var(--md-sys-color-on-surface); }
-.md-select__option--active { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
+.md-select__option--active { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-hover), transparent); }
 /* 鼠标 hover 同 8% state layer（批 4 抽查修正：此前仅键盘 active 有高亮） */
-.md-select__option:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
+.md-select__option:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-hover), transparent); }
 .md-select__option--selected { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
-/* 选中项 hover 保留容器色（仅叠 8% state layer，审查 Minor-1）：选择依据是特异度 (0,3,0) 高于
+/* 选中项 hover 保留容器色（仅叠 hover 状态层，审查 Minor-1）：选择依据是特异度 (0,3,0) 高于
  * :hover 的 (0,2,0)，与声明顺序无关；未 hover 的选中项由上条 (0,2,0) 同特异度声明顺序兜住 */
-.md-select__option--selected:hover { background: color-mix(in srgb, var(--md-sys-color-secondary-container) 92%, var(--md-sys-color-on-surface) 8%); }
+.md-select__option--selected:hover { background: color-mix(in srgb, var(--md-sys-color-secondary-container) calc(100% - var(--md-sys-state-layer-hover)), var(--md-sys-color-on-surface) var(--md-sys-state-layer-hover)); }
 </style>

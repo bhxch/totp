@@ -73,7 +73,7 @@ const errorToasts = computed(() => toasts.value.filter((t) => t.kind === 'error'
   align-items: center;
   padding: 10px 16px;
   font-size: var(--md-sys-typescale-body-medium);
-  box-shadow: 0 2px 6px var(--md-sys-color-shadow);
+  box-shadow: var(--md-sys-elevation-level2);
   cursor: pointer;
   user-select: none;
 }

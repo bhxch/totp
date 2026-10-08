@@ -131,7 +131,7 @@ function openManage() {
   padding: 6px 10px; border-radius: var(--md-sys-shape-corner-small);
   background: var(--md-sys-color-inverse-surface); color: var(--md-sys-color-inverse-on-surface);
   font-size: var(--md-sys-typescale-body-small); white-space: normal;
-  box-shadow: 0 2px 8px var(--md-sys-color-shadow);
+  box-shadow: var(--md-sys-elevation-level2);
 }
 /* 管理标签 tooltip（R3-M5）：行尾按钮气泡右对齐防溢出视口 */
 .manage-wrap { position: relative; display: inline-flex; }

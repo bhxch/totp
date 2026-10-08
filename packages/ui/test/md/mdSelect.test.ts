@@ -243,11 +243,11 @@ describe('MdSelect', () => {
     w.unmount()
   })
 
-  it('⑰选项 hover 状态层：CSS :hover 8% on-surface；选中项 hover 特异度(0,3,0)显式保留容器色（jsdom 无样式，源码断言）', () => {
+  it('⑰选项 hover 状态层：CSS :hover 走 state-layer hover token；选中项 hover 特异度(0,3,0)显式保留容器色（jsdom 无样式，源码断言）', () => {
     const src = readFileSync(join(__dirname, '../../src/components/md/MdSelect.vue'), 'utf8')
-    expect(src).toMatch(/\.md-select__option:hover\s*{[^}]*color-mix\(in srgb, var\(--md-sys-color-on-surface\) 8%, transparent\)/)
-    // 选中项 hover：容器色 92% 叠 on-surface 8%（--selected:hover 特异度 (0,3,0) 高于 :hover (0,2,0)，
-    // 胜出不依赖声明顺序——审查 Minor-1）
-    expect(src).toMatch(/\.md-select__option--selected:hover\s*{[^}]*color-mix\(in srgb, var\(--md-sys-color-secondary-container\) 92%, var\(--md-sys-color-on-surface\) 8%\)/)
+    expect(src).toMatch(/\.md-select__option:hover\s*{[^}]*color-mix\(in srgb, var\(--md-sys-color-on-surface\) var\(--md-sys-state-layer-hover\), transparent\)/)
+    // 选中项 hover：容器色 92% 叠 on-surface 8%（以 calc(100% - hover) 与 hover token 表达,和恒 100%
+    // —— --selected:hover 特异度 (0,3,0) 高于 :hover (0,2,0)，胜出不依赖声明顺序——审查 Minor-1）
+    expect(src).toMatch(/\.md-select__option--selected:hover\s*{[^}]*color-mix\(in srgb, var\(--md-sys-color-secondary-container\) calc\(100% - var\(--md-sys-state-layer-hover\)\), var\(--md-sys-color-on-surface\) var\(--md-sys-state-layer-hover\)\)/)
   })
 })

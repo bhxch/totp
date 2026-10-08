@@ -175,7 +175,7 @@ function onContextMenu(e: MouseEvent): void {
 /* P3：position relative 供行顶进度条绝对定位。MD3 紧凑化：行盒 56px 档（padding 6px 16px +
    min-height 56px），width:100% 保证整行等宽（进度条等长兜底——宿主容器不再决定行宽） */
 .otp-item { position: relative; display: flex; align-items: center; gap: 12px; padding: 6px 16px; min-height: 56px; width: 100%; cursor: pointer; border-radius: 8px; }
-.otp-item:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
+.otp-item:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-hover), transparent); }
 /* pressed 态走 state-layer token（12%，同 MdIconButton pressed 口径） */
 .otp-item:active { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-pressed), transparent); }
 /* 紧凑档：快速窗（QuickCodesPanel）48px 行高 */

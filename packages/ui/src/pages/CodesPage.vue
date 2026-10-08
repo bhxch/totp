@@ -569,7 +569,7 @@ h2 { margin: 0; font-size: var(--md-sys-typescale-title-medium); }
 /* 选择模式底部浮动操作条（悬浮于列表上方，FAB 左侧留位） */
 .select-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: 24px; z-index: 20;
   display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 100px;
-  background: var(--md-sys-color-surface-container-high); box-shadow: 0 4px 12px var(--md-sys-color-shadow); }
+  background: var(--md-sys-color-surface-container-high); box-shadow: var(--md-sys-elevation-level3); }
 /* 右键菜单项（MdMenu 容器自带定位与外观；MdButton text 形收紧为菜单项排版,槽内容归本组件作用域） */
 .ctx-item { display: block; width: 100%; height: 48px; justify-content: flex-start; border-radius: 0; font-size: var(--md-sys-typescale-body-medium); text-align: left; padding: 0 14px; }
 </style>

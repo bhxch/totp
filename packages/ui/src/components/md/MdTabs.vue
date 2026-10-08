@@ -22,8 +22,8 @@ const emit = defineEmits<{ select: [name: string] }>()
   position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px;
   height: 64px; padding: 8px 8px 4px; color: var(--md-sys-color-on-surface-variant); /* M3 bottom nav 64dp（原 56） */
   transition: color .15s, background-color .15s; }
-.md-tabs__item:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
-.md-tabs__item:active { background: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent); }
+.md-tabs__item:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-hover), transparent); }
+.md-tabs__item:active { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-pressed), transparent); }
 .md-tabs__item:focus-visible { outline: 3px solid var(--md-sys-color-primary); outline-offset: -1px; }
 .md-tabs__item--active { color: var(--md-sys-color-primary); }
 /* active indicator：居中 30px 胶囊（M3 规范 30×3/4dp 圆角），替代原 left/right 16 拉伸条 */

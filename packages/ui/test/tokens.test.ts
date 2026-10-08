@@ -26,6 +26,12 @@ describe('MD3 token 体系完整性（spec §2.8）', () => {
     expect(css).toContain('--md-sys-state-layer-hover:8%')
     expect(css).toContain('--md-sys-state-layer-pressed:12%')
   })
+  it('elevation token 六档存在', () => {
+    expect(css).toContain('--md-sys-elevation-level0:none')
+    for (const k of ['level1', 'level2', 'level3', 'level4', 'level5']) {
+      expect(css).toMatch(new RegExp(`--md-sys-elevation-${k}:\\s*0`))
+    }
+  })
   it('amoled 暗色覆写块补 background 纯黑（spec §2.8.1）', () => {
     // dark 直写块与 auto@media 块均须覆写;amoled.css 值风格为「: 」带空格,用正则兼容
     const blocks = amoledCss.match(/html\[data-contrast='amoled'\]\[data-mode='(?:dark|auto)'\][^}]*\}/g) ?? []
