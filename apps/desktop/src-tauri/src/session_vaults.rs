@@ -193,6 +193,13 @@ pub fn clear_mini_dek(window: tauri::WebviewWindow) -> Result<(), String> {
     clear_mini_dek_inner(window.label())
 }
 
+/// 测试专用串行锁（仅测试构建存在）：STASHED_DEK/MINI_DEK 为进程级 static 槽，跨用例并行
+/// 共享——直测全局槽的用例（cfd4639 引入）各持守卫串行化，消除并行竞态 flake（Phase 2 批
+/// 执行期 mini_dek_commands_enforce_window_label_ownership 13 轮偶发复现）。局部槽直测用例
+/// （dek_slot_semantics_stash_take_clear 等）不触全局态，无需挂守卫
+#[cfg(test)]
+static TEST_LOCK: Mutex<()> = Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,6 +225,7 @@ mod tests {
     // 入口/出口经 clear_stashed_dek 自净化（Minor-2）：消除与未来其他触全局槽用例的并行互扰
     #[test]
     fn stashed_dek_commands_roundtrip_on_global_slot() {
+        let _guard = TEST_LOCK.lock().expect("TEST_LOCK 已中毒"); // 直测 STASHED_DEK 全局槽，与 mini_dek_tests 的成对清空用例互斥
         clear_stashed_dek();
         assert_eq!(take_stashed_dek(), None, "无暂存返回 None（前端收 null）");
         stash_dek("dek".into());
@@ -261,6 +269,7 @@ mod mini_dek_tests {
 
     #[test]
     fn mini_dek_set_peek_clear_cycle() {
+        let _guard = TEST_LOCK.lock().expect("TEST_LOCK 已中毒"); // MINI_DEK 全局槽串行化
         dek_slots_clear_on_lock(); // 前置净化：含 MINI_DEK（顺带覆盖成对清空入口）
         assert_eq!(peek_inner(), None);
         dek_slot_stash(&MINI_DEK, "ZGVr".into());
@@ -273,6 +282,7 @@ mod mini_dek_tests {
     // M1 审查修复：set_mini_dek 入参校验——base64 合法且恰 32 字节，非法拒绝且不入槽
     #[test]
     fn set_mini_dek_validates_base64_and_32_byte_length() {
+        let _guard = TEST_LOCK.lock().expect("TEST_LOCK 已中毒"); // MINI_DEK 全局槽串行化
         dek_slots_clear_on_lock();
         // 合法：入槽
         set_mini_dek_inner("main", DEK32_B64).unwrap();
@@ -294,6 +304,7 @@ mod mini_dek_tests {
     // M2 审查修复：槽所有权按窗口 label 收敛——set/clear 仅 main，peek 仅 mini
     #[test]
     fn mini_dek_commands_enforce_window_label_ownership() {
+        let _guard = TEST_LOCK.lock().expect("TEST_LOCK 已中毒"); // flake 根因用例：并行共享 MINI_DEK 全局槽（cfd4639 引入）
         dek_slots_clear_on_lock();
         // mini（或任意非 main label）不得写/清槽
         assert!(set_mini_dek_inner("mini", DEK32_B64).is_err());
@@ -316,6 +327,7 @@ mod mini_dek_tests {
     // mini 聚焦重建 peek 残留 DEK 自动解锁」的不变量击穿
     #[test]
     fn dek_slots_clear_on_lock_clears_both_paired_slots() {
+        let _guard = TEST_LOCK.lock().expect("TEST_LOCK 已中毒"); // 双槽（STASHED_DEK+MINI_DEK）串行化
         dek_slots_clear_on_lock(); // 前置净化
         assert_eq!(take_stashed_dek(), None);
         assert_eq!(peek_mini_dek_inner("mini").unwrap(), None);
