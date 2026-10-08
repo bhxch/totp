@@ -45,6 +45,21 @@ describe('MdTextField', () => {
     expect(a.find('.md-text-field__error').attributes('id')).toBe(idA)
     expect(b.find('.md-text-field__error').attributes('id')).toBe(idB)
   })
+  it('hint 常态渲染于 supporting 位置；error 存在时被 error 取代；两者皆无不渲染（Task 4）', () => {
+    const hinted = mount(MdTextField, { props: { modelValue: '', label: 'x', hint: '不超过 8 位' } })
+    expect(hinted.find('.md-text-field__hint').text()).toBe('不超过 8 位')
+    expect(hinted.find('.md-text-field__error').exists()).toBe(false)
+    const both = mount(MdTextField, { props: { modelValue: '', label: 'x', hint: '提示', error: '必填' } })
+    expect(both.find('.md-text-field__hint').exists()).toBe(false)
+    expect(both.find('.md-text-field__error').text()).toBe('必填')
+    const none = mount(MdTextField, { props: { modelValue: '', label: 'x' } })
+    expect(none.find('.md-text-field__hint').exists()).toBe(false)
+  })
+  it('hint 色 on-surface-variant（body-small supporting 槽位；jsdom 无样式，源码断言）', () => {
+    const src = readFileSync(join(__dirname, '../../src/components/md/MdTextField.vue'), 'utf8')
+    expect(src).toMatch(/\.md-text-field__hint\s*{[^}]*var\(--md-sys-color-on-surface-variant\)/)
+    expect(src).toMatch(/\.md-text-field__hint\s*{[^}]*var\(--md-sys-typescale-body-small\)/)
+  })
   it('无 error 时不渲染 aria-invalid/aria-describedby', () => {
     const input = mount(MdTextField, { props: { modelValue: '', label: 'x' } }).find('input')
     expect(input.attributes('aria-invalid')).toBeUndefined()

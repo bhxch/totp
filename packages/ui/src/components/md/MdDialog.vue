@@ -69,8 +69,9 @@ onBeforeUnmount(() => {
 </script>
 <template>
   <div v-if="open" class="md-dialog__scrim" @click="emit('close')">
-    <div ref="dialogRef" class="md-dialog" role="dialog" aria-modal="true" tabindex="-1" @click.stop="onDialogClick">
-      <h2 v-if="headline" class="md-dialog__headline">{{ headline }}</h2>
+    <div ref="dialogRef" class="md-dialog" role="dialog" aria-modal="true" tabindex="-1"
+      :aria-labelledby="headline ? 'md-dialog-title' : undefined" @click.stop="onDialogClick">
+      <h2 v-if="headline" id="md-dialog-title" class="md-dialog__headline">{{ headline }}</h2>
       <div class="md-dialog__body"><slot /></div>
       <div v-if="$slots.actions" class="md-dialog__actions"><slot name="actions" /></div>
     </div>

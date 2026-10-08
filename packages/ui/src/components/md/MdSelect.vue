@@ -10,7 +10,9 @@ const props = withDefaults(defineProps<{
   options: Array<{ value: string | number; label: string }>
   disabled?: boolean
   ariaLabel?: string
-}>(), { disabled: false })
+  /** supporting 槽位常态提示文案（同 MdTextField hint 语义；本组件无 error 态，仅 hint） */
+  hint?: string
+}>(), { disabled: false, hint: '' })
 const emit = defineEmits<{ 'update:modelValue': [value: string | number] }>()
 
 const open = ref(false)
@@ -134,8 +136,11 @@ onBeforeUnmount(() => {
   <div ref="rootRef" class="md-select" :class="{ 'md-select--disabled': disabled }">
     <div class="md-select__box">
       <span class="md-select__label" :class="{ 'md-select__label--floated': floated }">{{ label }}</span>
+      <!-- aria-activedescendant：读屏跟随键盘高亮（Task 4）；仅弹层开启且高亮 ≥0 时挂引用——
+        -1（无匹配选中项）与关闭态（option 已卸载）移除，避免指向不存在节点的悬空引用 -->
       <button ref="triggerRef" type="button" class="md-select__trigger" :disabled="disabled"
         aria-haspopup="listbox" :aria-expanded="open ? 'true' : 'false'" :aria-label="ariaLabel || undefined"
+        :aria-activedescendant="open && activeIdx >= 0 ? `md-select-opt-${activeIdx}` : undefined"
         @click="toggle" @keydown="onTriggerKeydown">
         <span class="md-select__value">{{ selectedLabel }}</span>
         <svg class="md-select__arrow" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
@@ -144,11 +149,13 @@ onBeforeUnmount(() => {
       </button>
     </div>
     <div v-if="open" ref="menuRef" class="md-select__menu md-menu-surface" role="listbox" :style="`left: ${pos.left}px; top: ${pos.top}px;`">
-      <div v-for="(o, i) in options" :key="o.value" class="md-select__option" role="option"
+      <div v-for="(o, i) in options" :key="o.value" :id="`md-select-opt-${i}`" class="md-select__option" role="option"
         :class="{ 'md-select__option--selected': o.value === modelValue, 'md-select__option--active': i === activeIdx }"
         :aria-selected="o.value === modelValue ? 'true' : 'false'"
         @click="select(o)">{{ o.label }}</div>
     </div>
+    <!-- supporting 槽位（同 MdTextField hint 位置语义）：常态提示，on-surface-variant body-small -->
+    <p v-if="hint" class="md-select__hint">{{ hint }}</p>
   </div>
 </template>
 <style scoped>
@@ -188,6 +195,8 @@ onBeforeUnmount(() => {
 /* 鼠标 hover 同 8% state layer（批 4 抽查修正：此前仅键盘 active 有高亮） */
 .md-select__option:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-hover), transparent); }
 .md-select__option--selected { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+/* supporting 槽位 hint：同 MdTextField supporting 排版（body-small on-surface-variant，左右 16 对齐框内 padding） */
+.md-select__hint { margin: 0; padding: 0 16px; font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-on-surface-variant); }
 /* 选中项 hover 保留容器色（仅叠 hover 状态层，审查 Minor-1）：选择依据是特异度 (0,3,0) 高于
  * :hover 的 (0,2,0)，与声明顺序无关；未 hover 的选中项由上条 (0,2,0) 同特异度声明顺序兜住 */
 .md-select__option--selected:hover { background: color-mix(in srgb, var(--md-sys-color-secondary-container) calc(100% - var(--md-sys-state-layer-hover)), var(--md-sys-color-on-surface) var(--md-sys-state-layer-hover)); }

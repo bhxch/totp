@@ -7,7 +7,7 @@ import { computed, useAttrs } from 'vue'
 // inheritAttrs:false + $attrs 透传内部 input：autocomplete/min/max/disabled/onKeydown/data-* 等直达原生 input；
 // class/style 例外——关闭自动继承后 Vue 不再落根，须显式绑回根元素（消费方布局 class 依赖根元素）
 defineOptions({ inheritAttrs: false })
-withDefaults(defineProps<{ modelValue: string; label: string; type?: string; error?: string; placeholder?: string; ariaLabel?: string; multiline?: boolean; rows?: number; dense?: boolean }>(), { type: 'text', error: '', placeholder: '', multiline: false, rows: 3, dense: false })
+withDefaults(defineProps<{ modelValue: string; label: string; type?: string; error?: string; hint?: string; placeholder?: string; ariaLabel?: string; multiline?: boolean; rows?: number; dense?: boolean }>(), { type: 'text', error: '', hint: '', placeholder: '', multiline: false, rows: 3, dense: false })
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 const errorId = `md-text-field-error-${++errorIdCounter}`
 const attrs = useAttrs()
@@ -35,7 +35,8 @@ const inputAttrs = computed(() => {
         :aria-label="ariaLabel" :aria-invalid="error ? 'true' : undefined" :aria-describedby="error ? errorId : undefined"
         @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)" />
     </label>
-    <p v-if="error" :id="errorId" class="md-text-field__error">{{ error }}</p>
+    <!-- supporting 槽位：error 优先（error 态被 error 文本取代），常态兜底 hint（Task 4） -->
+    <p v-if="error || hint" :id="error ? errorId : undefined" :class="error ? 'md-text-field__error' : 'md-text-field__hint'">{{ error || hint }}</p>
   </div>
 </template>
 <style scoped>
@@ -71,6 +72,8 @@ const inputAttrs = computed(() => {
   padding: 0; font: inherit; font-size: var(--md-sys-typescale-body-large); line-height: 24px; color: var(--md-sys-color-on-surface); }
 .md-text-field__input::placeholder { color: var(--md-sys-color-on-surface-variant); }
 .md-text-field__error { margin: 0; padding: 0 16px; font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-error); }
+/* hint：supporting 槽位常态文案（error 优先），body-small on-surface-variant（M3 supporting text） */
+.md-text-field__hint { margin: 0; padding: 0 16px; font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-on-surface-variant); }
 /* multiline：box 只给水平 padding，textarea 首行自留浮动 label 空间（原顶部 22px 由 input padding 承担） */
 .md-text-field__textarea { resize: vertical; min-height: 72px; line-height: 1.5; padding-top: 24px; }
 /* dense 档（spec §2.5 compact，mini/popup 快速窗）：40px 高 + body-medium 槽位。

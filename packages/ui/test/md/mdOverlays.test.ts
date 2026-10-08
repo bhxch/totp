@@ -10,6 +10,22 @@ describe('MdDialog', () => {
   it('open=false 不渲染', () => {
     expect(mount(MdDialog, { props: { open: false } }).find('.md-dialog').exists()).toBe(false)
   })
+  it('headline 渲染时 dialog 带 aria-labelledby 指向 headline id；无 headline 不挂引用（Task 4）', () => {
+    // 先取值并 unmount 再断言：open 态 MdDialog 挂 window keydown 监听，断言失败提前抛出会泄漏
+    // 监听污染后续 window 派发用例（unmount 前置保证失败也不残留）
+    const w = mount(MdDialog, { props: { open: true, headline: '确认' } })
+    const role = w.find('.md-dialog').attributes('role')
+    const labelled = w.find('.md-dialog').attributes('aria-labelledby')
+    const headlineId = w.find('.md-dialog__headline').attributes('id')
+    w.unmount()
+    const noHeadline = mount(MdDialog, { props: { open: true } })
+    const noLabelled = noHeadline.find('.md-dialog').attributes('aria-labelledby')
+    noHeadline.unmount()
+    expect(role).toBe('dialog')
+    expect(labelled).toBe('md-dialog-title')
+    expect(headlineId).toBe('md-dialog-title')
+    expect(noLabelled).toBeUndefined()
+  })
   it('Esc 关闭;actions 内 data-md-close 点击关闭', async () => {
     const w = mount(MdDialog, { props: { open: true, headline: '确认' }, slots: { actions: '<button data-md-close>好</button>' }, attachTo: document.body })
     await w.find('.md-dialog__scrim').trigger('keydown', { key: 'Escape' })

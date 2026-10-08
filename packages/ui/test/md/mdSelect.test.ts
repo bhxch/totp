@@ -257,4 +257,36 @@ describe('MdSelect', () => {
     const src = readFileSync(join(__dirname, '../../src/components/md/MdSelect.vue'), 'utf8')
     expect(src).toMatch(/\.md-select:not\(\.md-select--disabled\) \.md-select__box:hover:not\(:focus-within\)/)
   })
+
+  it('⑲hint 常态渲染于字段下方 supporting 位置；未传不渲染（Task 4）', () => {
+    const hinted = mount(MdSelect, { props: { label: '间隔', modelValue: 60, options: OPTIONS, hint: '自动同步的最小间隔' } })
+    expect(hinted.find('.md-select__hint').text()).toBe('自动同步的最小间隔')
+    const plain = mount(MdSelect, { props: { label: '间隔', modelValue: 60, options: OPTIONS } })
+    expect(plain.find('.md-select__hint').exists()).toBe(false)
+  })
+
+  it('⑳aria-activedescendant 随键盘高亮更新，-1 与关闭态移除（Task 4）', async () => {
+    // modelValue 不在 options → 开启高亮 -1：属性移除；方向键高亮后指向对应 option id
+    const w = mount(MdSelect, { props: { label: '间隔', modelValue: '', options: OPTIONS }, attachTo: document.body })
+    const trigger = w.find('button.md-select__trigger')
+    expect(trigger.attributes('aria-activedescendant')).toBeUndefined() // 关闭态
+    await trigger.trigger('keydown', { key: 'Enter' })
+    expect(trigger.attributes('aria-activedescendant')).toBeUndefined() // 开启但高亮 -1 → 移除
+    await trigger.trigger('keydown', { key: 'ArrowDown' }) // -1 起步落首项
+    expect(trigger.attributes('aria-activedescendant')).toBe('md-select-opt-0')
+    expect(w.findAll('[role="option"]')[0]!.attributes('id')).toBe('md-select-opt-0')
+    await trigger.trigger('keydown', { key: 'ArrowDown' })
+    expect(trigger.attributes('aria-activedescendant')).toBe('md-select-opt-1')
+    await trigger.trigger('keydown', { key: 'Escape' })
+    expect(trigger.attributes('aria-activedescendant')).toBeUndefined() // 关闭后 option 卸载，引用随之移除
+    w.unmount()
+  })
+
+  it('㉑开启高亮定位当前选中项时 aria-activedescendant 指向选中 option（Task 4）', async () => {
+    const w = mount(MdSelect, { props: { label: '间隔', modelValue: 360, options: OPTIONS } })
+    const trigger = w.find('button.md-select__trigger')
+    await trigger.trigger('click')
+    expect(trigger.attributes('aria-activedescendant')).toBe('md-select-opt-2') // 高亮定位选中项 idx 2
+    w.unmount()
+  })
 })

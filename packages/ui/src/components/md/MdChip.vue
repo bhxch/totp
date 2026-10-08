@@ -46,6 +46,7 @@ const emit = defineEmits<{ click: [event: MouseEvent]; remove: [] }>()
  * （覆盖 Phase 1 .chip-remove ≥40 与 compact 叠加 ≥44 验收）；z-index 抬过 chip 命中层——chip::after
  * 为绝对定位末位子盒、绘制于在流子元素之上（同 Phase 1 packChips 命中截留机制），不抬则 close 点击被截走 */
 .md-chip__remove { width: 24px; height: 24px; z-index: 1; }
+/* 覆写 MdIconButton 基础 -4px，靠样式注入顺序取胜，勿重排 import（与 .md-icon-btn::after 同特异度，后注入者赢） */
 .md-chip__remove::after { inset: -8px; }
 .md-chip--compact .md-chip__remove { width: 28px; height: 28px; }
 </style>
