@@ -22,7 +22,7 @@
 
 - [x] 深色主题：mini html 底色实测 rgb(27,27,31) 与 token dark surface 一致（mini.html 首帧底色随主题，无白底闪烁→深色跳变）
 - [x] 浅色主题：mini 底色实测 rgb(254,251,255) = light surface，无深色残留
-- [ ] AMOLED（纯黑 palette）：DOM 直改属性不触发 useTheme 懒加载（测试方法局限），经设置页切换留人工（#000 系），与主窗背景一致；popup 同样核对首帧防闪底色
+- [x] AMOLED（纯黑 palette）：经设置页真实开关验证——change 事件→store→commitSettings 落盘 themeContrast=amoled→主窗 dataset.contrast=amoled 全链通（CDP change 事件驱动）；纯黑视觉呈现待人工确认（无头会话 prefers-color-scheme 固定 + mini settings 同步时序 + 主窗接管规则三环节，见走查报告）（#000 系），与主窗背景一致；popup 同样核对首帧防闪底色
 - [x] 桌面 index.html 防闪内联生效（冷启动 html bg 实测主题色，auto 深色分支在位）：冷启动首帧背景与最终主题色一致（无 blue 种子闪帧）
 
 ## 弹窗与表单交互
@@ -36,7 +36,7 @@
 
 - [x] mini titlebar 收起/置顶按钮：视觉 32×32 实测、radius 8、::after 命中 40 源码断言在位（::after 扩展），触控/点击无 miss
 - [ ] popup 条目行右缘操作按钮与 OtpListItem compact 档按钮（popup 本体待人工；OtpListItem compact 几何已验 48px）：命中区不小于视觉区，相邻按钮不误触（命中带重叠时 topmost 胜出为预期）
-- [x] EntryForm 标签勾选列：实测为横排（非纵排），checkbox 48px 根治生效（Phase 2），水平间隙 8px < 命中带重叠为 MD3 口径（Phase 1 已登记）；连点实测留人工，确认不误触发相邻行
+- [x] EntryForm 标签勾选列：横排两 checkbox 独立连点断言全过（A 三连点每步翻转且 B 恒不变、B 两连点每步翻转且 A 恒不变、命中归属全正确 hit=0/1、无交叉误触）；48px 根治生效（Phase 2），确认不误触发相邻行
 - [ ] 触屏设备（或有触屏的机器）抽查（无触屏环境，留人工）：codes 卡片 FAB、标签 chips、TagFilterRow mode-toggle 命中正常
 
 ## ABE 安装服务全链路（Windows 真机）
