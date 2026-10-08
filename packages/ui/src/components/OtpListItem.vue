@@ -174,12 +174,16 @@ function onContextMenu(e: MouseEvent): void {
 <style scoped>
 /* P3：position relative 供行顶进度条绝对定位。MD3 紧凑化：行盒 56px 档（padding 6px 16px +
    min-height 56px），width:100% 保证整行等宽（进度条等长兜底——宿主容器不再决定行宽） */
-.otp-item { position: relative; display: flex; align-items: center; gap: 12px; padding: 6px 16px; min-height: 56px; width: 100%; cursor: pointer; border-radius: 8px; }
+.otp-item { position: relative; box-sizing: border-box; display: flex; align-items: center; gap: 12px; padding: 6px 16px; min-height: 56px; width: 100%; cursor: pointer; border-radius: 8px; }
 .otp-item:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-hover), transparent); }
 /* pressed 态走 state-layer token（12%，同 MdIconButton pressed 口径） */
 .otp-item:active { background: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-sys-state-layer-pressed), transparent); }
 /* 紧凑档：快速窗（QuickCodesPanel）48px 行高 */
 .otp-item--compact { min-height: 48px; padding: 4px 12px; }
+/* compact 档行高压至 40 内容高：48 = 40 + padding 8（box-sizing 精确档位） */
+.otp-item--compact .title-line { line-height: 18px; }
+.otp-item--compact .code { line-height: 20px; }
+/* box-sizing 使 min-height 含 padding：行高精确收敛 56/48 档（真机量测 68px 修正） */
 /* P3：行顶进度条（替环形倒计时）。刻意无 transition（GPU 红线，见 progressPct 注释） */
 .progress-line { position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--md-sys-color-outline-variant); border-radius: 8px 8px 0 0; overflow: hidden; }
 .progress-fill { height: 100%; background: var(--md-sys-color-primary); }
@@ -194,7 +198,7 @@ function onContextMenu(e: MouseEvent): void {
 /* P3：上行标题裁切容器；R3-M8 起 ★ 与 title-text 并列为其 flex 子项（★ 恒固定不参与跑马灯），
    title-text inline-block 使 transform 跑马灯生效且 shrink-to-fit 宽度跟随容器（溢出时
    clientWidth=可视宽、scrollWidth=全文宽，checkOverflow 据此判定） */
-.title-line { display: flex; overflow: hidden; white-space: nowrap; }
+.title-line { display: flex; overflow: hidden; white-space: nowrap; line-height: 20px; }
 .title-text { display: inline-block; font-weight: 600; }
 /* P3：超长跑马灯（约 8s/循环）；终点经 --marquee-viewport 注入实测可视宽（checkOverflow 写入，
    未溢出无变量），160px 为变量缺失保底；仅 overflowing 时启用，未溢出无动画 */
@@ -204,7 +208,7 @@ function onContextMenu(e: MouseEvent): void {
 .pin { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-medium); margin-right: 4px; flex: none; }
 /* P3：下行=大号验证码 */
 .code-line { display: flex; align-items: center; gap: 8px; }
-.code { font-family: system-ui, sans-serif; font-weight: 700; font-variant-numeric: tabular-nums; font-size: var(--md-sys-typescale-code-large); line-height: 24px; letter-spacing: 1px; }
+.code { font-family: system-ui, sans-serif; font-weight: 700; font-variant-numeric: tabular-nums; font-size: var(--md-sys-typescale-code-large); line-height: 22px; letter-spacing: 1px; }
 .code.invalid { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-medium); cursor: help; }
 /* ④A：揭示态验证码转主题主色醒目（与进度条紧急的错误红区分：主色=就绪可用，红=紧急） */
 .code.revealed { color: var(--md-sys-color-primary); }
