@@ -95,7 +95,7 @@
 
 ### 2.6 QuickCodesPanel contextMenu 默认值（`QuickCodesPanel.vue`）
 
-- `withDefaults` 补 `contextMenu: false`，对齐既有注释语义；mini/popup 右键恢复浏览器默认菜单（当前 preventDefault 后空转）。
+- `withDefaults` 补 `contextMenu: false`，对齐既有注释语义；mini/popup 右键恢复浏览器默认菜单（当前 preventDefault 后空转）。2026-10-08 勘误：根因归因失实——透传 undefined 经 props Boolean casting 实证已兜底，右键菜单失效并非线上缺陷；默认值修正保留（注释语义对齐的防御性收敛）。
 
 ### 2.7 安装服务诊断增强（`apps/desktop/src-tauri` + `SecurityCard.vue` + i18n）
 
@@ -126,7 +126,7 @@
 | MdSwitch | track 52×32（不变） | ≥48 高 |
 | MdCheckbox | 盒 18px（不变） | 盒/无 label 行 ≥44×48 |
 | CodesPage `.ctx-item` | 36px→**48px**（MD3 menu item） | 48 |
-| TagFilterRow `.mode-toggle`（CodesPage） | 恢复 40px（现被覆写 32px） | 48 |
+| TagFilterRow `.mode-toggle`（CodesPage） | 恢复 40px（现被覆写 32px）。2026-10-08 勘误：40px 已落实于终审修复波 ba7bf63（删除默认档 32px 覆写），非本批改动 | 48 |
 | MiniApp `.tb-btn` | 28→40px | ≥44 |
 | NavigationShell `.nav-shell__rail-action` | ~34→min-height 48 | 48 |
 | IconPickerDialog `.chip-remove`（~14px）/`.picker-chip`（~22px）、IconPackImportDialog `.quick-chip`（~22px）、EntryForm `.recommend-item`（~24px） | 视觉适度放大 | ≥40 命中（弹窗内密集控件，deviation 记录） |
