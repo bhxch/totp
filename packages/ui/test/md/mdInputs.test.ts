@@ -223,6 +223,10 @@ describe('MdCheckbox', () => {
     const src = readFileSync(join(__dirname, '../../src/components/md/MdCheckbox.vue'), 'utf8')
     expect(src).toMatch(/\.md-checkbox__label\s*{[^}]*min-height:\s*48px/)
   })
+  it('48px label 行内文字垂直居中（min-height 后文字顶在块首与勾选盒错位的回归修复；源码断言）', () => {
+    const src = readFileSync(join(__dirname, '../../src/components/md/MdCheckbox.vue'), 'utf8')
+    expect(src).toMatch(/\.md-checkbox__label\s*{[^}]*display:\s*flex[^}]*align-items:\s*center/)
+  })
 })
 describe('MdSegmentedButton', () => {
   const options = [

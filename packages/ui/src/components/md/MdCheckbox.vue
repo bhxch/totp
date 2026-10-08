@@ -24,8 +24,10 @@ function onChange(e: Event) {
 .md-checkbox--disabled { cursor: default; opacity: .38; }
 /* label 行 min-height 48px（spec §2.2.6 根治项落地）：box-sizing 保证 48 含 padding，
  * flex item 上 min-height 生效、盒面随 align-items:center 垂直居中——视觉行高与命中区
- * （根 ::after inset -15px）对齐；行高变化影响列表观感属预期（EntryForm 纵向标签列等） */
-.md-checkbox__label { box-sizing: border-box; min-height: 48px; }
+ * （根 ::after inset -15px）对齐；行高变化影响列表观感属预期（EntryForm 纵向标签列等）。
+ * display:flex + align-items:center：48px 行内文字自居中——62b6679 引入 min-height 后
+ * span 成 48px 高块、文字顶在块首，与 18px 勾选盒错位 ~13px（真机 2026-10-09 实证） */
+.md-checkbox__label { box-sizing: border-box; min-height: 48px; display: flex; align-items: center; }
 .md-checkbox__input { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .md-checkbox__box { position: relative; width: 18px; height: 18px; border-radius: 2px; box-sizing: border-box;
