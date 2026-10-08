@@ -55,6 +55,15 @@ describe('MdTextField', () => {
     const none = mount(MdTextField, { props: { modelValue: '', label: 'x' } })
     expect(none.find('.md-text-field__hint').exists()).toBe(false)
   })
+  it('hint 时 aria-describedby 指向 hint id；error 存在仍优先指 error id（读屏关联 Task 2）', () => {
+    const hinted = mount(MdTextField, { props: { modelValue: '', label: 'x', hint: '不超过 8 位' } })
+    const hintLine = hinted.find('.md-text-field__hint')
+    expect(hintLine.attributes('id')).toMatch(/^md-text-field-hint-\d+$/)
+    expect(hinted.find('input').attributes('aria-describedby')).toBe(hintLine.attributes('id'))
+    // error 优先回归：hint 与 error 并存时引用 error 文案 id（supporting 槽位被 error 取代的语义一致）
+    const both = mount(MdTextField, { props: { modelValue: '', label: 'x', hint: '提示', error: '必填' } })
+    expect(both.find('input').attributes('aria-describedby')).toBe(both.find('.md-text-field__error').attributes('id'))
+  })
   it('hint 色 on-surface-variant（body-small supporting 槽位；jsdom 无样式，源码断言）', () => {
     const src = readFileSync(join(__dirname, '../../src/components/md/MdTextField.vue'), 'utf8')
     expect(src).toMatch(/\.md-text-field__hint\s*{[^}]*var\(--md-sys-color-on-surface-variant\)/)

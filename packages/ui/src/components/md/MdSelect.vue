@@ -2,6 +2,7 @@
 // 模块级计数器:跨实例唯一(同 MdTextField errorIdCounter 先例)——同页多 MdSelect 时
 // aria-activedescendant 不得指向其他实例的同名 option id
 let optIdCounter = 0
+let hintIdCounter = 0
 </script>
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
@@ -21,6 +22,8 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ 'update:modelValue': [value: string | number] }>()
 /** option id 实例前缀（模块计数器递增段 + 序号）：aria-activedescendant 与 option id 同源 */
 const optIdBase = `md-select-opt-${++optIdCounter}-`
+/** hint id 实例前缀（同计数器先例）：触发按钮 aria-describedby 读屏关联（Task 2） */
+const hintId = `md-select-hint-${++hintIdCounter}`
 
 const open = ref(false)
 const activeIdx = ref(-1)
@@ -148,6 +151,7 @@ onBeforeUnmount(() => {
       <button ref="triggerRef" type="button" class="md-select__trigger" :disabled="disabled"
         aria-haspopup="listbox" :aria-expanded="open ? 'true' : 'false'" :aria-label="ariaLabel || undefined"
         :aria-activedescendant="open && activeIdx >= 0 ? `${optIdBase}${activeIdx}` : undefined"
+        :aria-describedby="hint ? hintId : undefined"
         @click="toggle" @keydown="onTriggerKeydown">
         <span class="md-select__value">{{ selectedLabel }}</span>
         <svg class="md-select__arrow" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
@@ -161,8 +165,9 @@ onBeforeUnmount(() => {
         :aria-selected="o.value === modelValue ? 'true' : 'false'"
         @click="select(o)">{{ o.label }}</div>
     </div>
-    <!-- supporting 槽位（同 MdTextField hint 位置语义）：常态提示，on-surface-variant body-small -->
-    <p v-if="hint" class="md-select__hint">{{ hint }}</p>
+    <!-- supporting 槽位（同 MdTextField hint 位置语义）：常态提示，on-surface-variant body-small；
+      id 供触发按钮 aria-describedby 读屏关联（Task 2） -->
+    <p v-if="hint" :id="hintId" class="md-select__hint">{{ hint }}</p>
   </div>
 </template>
 <style scoped>

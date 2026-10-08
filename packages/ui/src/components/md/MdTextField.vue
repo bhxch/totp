@@ -1,15 +1,20 @@
 <script lang="ts">
 // 模块级计数器:跨实例唯一(测试中每次 mount 为独立 app,useId() 会重置)
 let errorIdCounter = 0
+let hintIdCounter = 0
 </script>
 <script setup lang="ts">
 import { computed, useAttrs } from 'vue'
 // inheritAttrs:false + $attrs 透传内部 input：autocomplete/min/max/disabled/onKeydown/data-* 等直达原生 input；
 // class/style 例外——关闭自动继承后 Vue 不再落根，须显式绑回根元素（消费方布局 class 依赖根元素）
 defineOptions({ inheritAttrs: false })
-withDefaults(defineProps<{ modelValue: string; label: string; type?: string; error?: string; hint?: string; placeholder?: string; ariaLabel?: string; multiline?: boolean; rows?: number; dense?: boolean }>(), { type: 'text', error: '', hint: '', placeholder: '', multiline: false, rows: 3, dense: false })
+const props = withDefaults(defineProps<{ modelValue: string; label: string; type?: string; error?: string; hint?: string; placeholder?: string; ariaLabel?: string; multiline?: boolean; rows?: number; dense?: boolean }>(), { type: 'text', error: '', hint: '', placeholder: '', multiline: false, rows: 3, dense: false })
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 const errorId = `md-text-field-error-${++errorIdCounter}`
+const hintId = `md-text-field-hint-${++hintIdCounter}`
+// aria-describedby 读屏关联（Phase 2 审查挂账）：error 优先指 error id（现状语义不变），
+// 否则 hint 存在指 hint id，都无移除（supporting 文案未渲染时悬空引用比无引用更扰读屏）
+const describedBy = computed(() => (props.error ? errorId : props.hint ? hintId : undefined))
 const attrs = useAttrs()
 // disabled 经 $attrs 透传内部 input,组件内自行感知以做视觉降级(对齐 MdSwitch/MdCheckbox 的 opacity .38);
 // $attrs 响应式,动态增删 disabled 时类名跟随。'' 与缺省视为禁用/未禁用的 HTML 原生语义边界
@@ -29,14 +34,15 @@ const inputAttrs = computed(() => {
     <label class="md-text-field__box" :class="{ 'md-text-field__box--dense': dense }">
       <span class="md-text-field__label" :class="{ 'md-text-field__label--floated': multiline || !!modelValue || !!placeholder }">{{ label }}</span>
       <input v-if="!multiline" v-bind="inputAttrs" class="md-text-field__input" :type="type" :value="modelValue" :placeholder="placeholder"
-        :aria-label="ariaLabel" :aria-invalid="error ? 'true' : undefined" :aria-describedby="error ? errorId : undefined"
+        :aria-label="ariaLabel" :aria-invalid="error ? 'true' : undefined" :aria-describedby="describedBy"
         @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)" />
       <textarea v-else v-bind="inputAttrs" class="md-text-field__input md-text-field__textarea" :rows="rows" :value="modelValue" :placeholder="placeholder"
-        :aria-label="ariaLabel" :aria-invalid="error ? 'true' : undefined" :aria-describedby="error ? errorId : undefined"
+        :aria-label="ariaLabel" :aria-invalid="error ? 'true' : undefined" :aria-describedby="describedBy"
         @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)" />
     </label>
-    <!-- supporting 槽位：error 优先（error 态被 error 文本取代），常态兜底 hint（Task 4） -->
-    <p v-if="error || hint" :id="error ? errorId : undefined" :class="error ? 'md-text-field__error' : 'md-text-field__hint'">{{ error || hint }}</p>
+    <!-- supporting 槽位：error 优先（error 态被 error 文本取代），常态兜底 hint（Task 4）；
+      读屏经 aria-describedby 关联（error→errorId / hint→hintId，Task 2） -->
+    <p v-if="error || hint" :id="error ? errorId : hintId" :class="error ? 'md-text-field__error' : 'md-text-field__hint'">{{ error || hint }}</p>
   </div>
 </template>
 <style scoped>

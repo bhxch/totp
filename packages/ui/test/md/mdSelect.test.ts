@@ -265,6 +265,18 @@ describe('MdSelect', () => {
     expect(plain.find('.md-select__hint').exists()).toBe(false)
   })
 
+  it('⑲a hint 时触发按钮 aria-describedby 指向 hint id；未传 hint 不声明（读屏关联 Task 2）', () => {
+    const hinted = mount(MdSelect, { props: { label: '间隔', modelValue: 60, options: OPTIONS, hint: '自动同步的最小间隔' } })
+    const hintLine = hinted.find('.md-select__hint')
+    expect(hintLine.attributes('id')).toMatch(/^md-select-hint-\d+$/)
+    expect(hinted.find('button.md-select__trigger').attributes('aria-describedby')).toBe(hintLine.attributes('id'))
+    // hint id 跨实例唯一（同 option id 计数器先例，多实例不串）
+    const other = mount(MdSelect, { props: { label: '位数', modelValue: 6, options: OPTIONS, hint: '其他提示' } })
+    expect(other.find('.md-select__hint').attributes('id')).not.toBe(hintLine.attributes('id'))
+    const plain = mount(MdSelect, { props: { label: '间隔', modelValue: 60, options: OPTIONS } })
+    expect(plain.find('button.md-select__trigger').attributes('aria-describedby')).toBeUndefined()
+  })
+
   it('⑳aria-activedescendant 随键盘高亮更新，-1 与关闭态移除（Task 4）', async () => {
     // modelValue 不在 options → 开启高亮 -1：属性移除；方向键高亮后指向对应 option id
     const w = mount(MdSelect, { props: { label: '间隔', modelValue: '', options: OPTIONS }, attachTo: document.body })
