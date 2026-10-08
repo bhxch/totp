@@ -70,6 +70,9 @@ const inputAttrs = computed(() => {
   font-size: var(--md-sys-typescale-body-large); color: var(--md-sys-color-on-surface-variant); pointer-events: none; transition: all .15s; }
 .md-text-field__label--floated,
 .md-text-field__box:focus-within .md-text-field__label { top: 8px; transform: none; font-size: var(--md-sys-typescale-body-small); }
+/* dense 40px 槽：floated label 收缩至 label-small 并贴顶，input 下移——真机量测重叠 5px 的修正（40px 槽为本项目 opt-in deviation，M3 无 density 规范） */
+.md-text-field__box--dense .md-text-field__label--floated,
+.md-text-field__box--dense:focus-within .md-text-field__label { top: 2px; font-size: var(--md-sys-typescale-label-small); line-height: 1; }
 .md-text-field__box:focus-within .md-text-field__label { color: var(--md-sys-color-primary); }
 .md-text-field--error .md-text-field__box:focus-within .md-text-field__label,
 .md-text-field--error .md-text-field__label { color: var(--md-sys-color-error); }
@@ -84,7 +87,7 @@ const inputAttrs = computed(() => {
 .md-text-field__textarea { resize: vertical; min-height: 72px; line-height: 1.5; padding-top: 24px; }
 /* dense 档（spec §2.5 compact，mini/popup 快速窗）：40px 高 + body-medium 槽位。
  * min-height:40 后序覆写 56 基线；padding 覆写 box 的 0 16px（input padding 已归零，本块零改动生效） */
-.md-text-field__box--dense { min-height: 40px; padding: 10px 12px 4px; }
+.md-text-field__box--dense { min-height: 40px; padding: 11px 12px 3px; }
 .md-text-field__box--dense .md-text-field__label { left: 12px; } /* dense 水平 padding 12px，label 同步内缩（Task 7 挂账的 4px 错位） */
 .md-text-field__box--dense .md-text-field__label--floated,
 .md-text-field__box--dense:focus-within .md-text-field__label { top: 2px; } /* 40px 槽位内 label top:8px 会压 input 行，上提保间距 */
