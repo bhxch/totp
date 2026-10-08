@@ -9,6 +9,7 @@ import { fullIconsReady } from '../fullIcons'
 import { searchEntries } from '../popupFilter'
 import { moveToIndex, moveWithinPartition, sortEntries } from '../entriesSort'
 import { createEdgeAutoScroll, findScrollHost, type ScrollHostLike } from '../edgeAutoScroll'
+import { add, dragIndicator } from '../components/iconPaths'
 import type { VueStore } from '../store'
 import EntryFormDialog from '../components/EntryFormDialog.vue'
 import TagFilterRow from '../components/TagFilterRow.vue'
@@ -437,7 +438,7 @@ function openSheet() {
               v-if="dragEnabled" class="handle" :title="t('codesPage.dragHandleTitle')"
               :aria-label="t('codesPage.dragHandleTitle')" @click.stop
               @pointerdown.prevent="onHandlePointerDown($event, e.uuid)"
-            >⠿</span>
+            ><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path :d="dragIndicator.d" /></svg></span>
             <input
               v-if="indexEditing === e.uuid" class="index-input" type="number" min="1" :value="i + 1"
               :aria-label="t('codesPage.indexEditAria', { label: e.label })" @click.stop
@@ -470,8 +471,8 @@ function openSheet() {
       </div>
     </MdCard>
 
-    <!-- 新建入口：MdFab 替代原「＋ 添加」text button，触发同一 creating 态 -->
-    <MdFab class="page-fab" :aria-label="t('codesPage.addEntry')" :title="t('codesPage.addEntry')" @click="creating = true; editing = null">＋</MdFab>
+    <!-- 新建入口：MdFab 替代原「＋ 添加」text button，触发同一 creating 态（＋ 用 add path SVG，对齐 M3 FAB 24dp 图标） -->
+    <MdFab class="page-fab" :aria-label="t('codesPage.addEntry')" :title="t('codesPage.addEntry')" @click="creating = true; editing = null"><svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true"><path :d="add.d" /></svg></MdFab>
 
     <!-- 选择模式底部浮动操作条（spec §2.5）：有选中才出现；取消=清空并退出；④B 删除两击确认 -->
     <div v-if="selected.size > 0" class="select-bar" data-test="select-bar">
@@ -533,6 +534,8 @@ h2 { margin: 0; font-size: var(--md-sys-typescale-title-medium); }
    R2-M5：touch-action:none 屏蔽触屏滚动手势抢事件（pointermove 被浏览器滚动打断成
    pointercancel，拖拽不可用）——把手是唯一拖拽发起区，禁默认触摸行为不影响行滚动 */
 .handle { cursor: grab; opacity: .6; margin-right: 2px; touch-action: none; }
+/* 把手 SVG（drag_indicator 16px）：middle 对齐序号文本（默认 baseline 会沉底并撑高行盒） */
+.handle svg { vertical-align: middle; }
 .row .handle { display: none; }
 .row:hover .handle, .handle:active { display: inline; }
 /* 杂-I2（Task 13 修订）：hover 把手与序号并列出现、序号保持可见可点——原「hover 隐藏序号」

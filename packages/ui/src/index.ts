@@ -53,6 +53,8 @@ export { default as MdSelect } from './components/md/MdSelect.vue'
 export { default as NavigationShell } from './pages/NavigationShell.vue'
 export { themeRoutes } from './pages/routes'
 export { NAV_ICONS } from './pages/navIcons'
+// Material Symbols path 注册表（Task 5）：宿主内联 SVG 消费（MiniApp ✕→close 等）
+export * from './components/iconPaths'
 export type { BackupAutoPrefs, BackupPlatform, LocalSourceView } from './components/backupPlatform'
 export type { AutoPrefsShape } from './components/backupPlatform'
 export { createCloudBackend } from './components/cloudPlatform'

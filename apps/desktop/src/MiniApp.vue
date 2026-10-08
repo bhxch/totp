@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { emit, listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { filterByTags, type TagFilterMode } from '@totp/core'
-import { PersistErrorBanner, QuickCodesPanel, ToastHost, createIconStore, searchEntries, useOtpCodes, useTheme, useToast, type IconStore, type VueStore } from '@totp/ui'
+import { PersistErrorBanner, QuickCodesPanel, ToastHost, close, createIconStore, searchEntries, useOtpCodes, useTheme, useToast, type IconStore, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, shallowRef, watch } from 'vue'
 import { createTauriFs } from './tauriFs'
 import { bootDesktopStore, persistFailed, useDesktopI18n } from './desktopShell'
@@ -225,7 +225,7 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
     <header class="titlebar">
       <span class="title-drag" data-tauri-drag-region>TOTP</span>
       <button class="tb-btn" data-test="pin-btn" :class="{ active: pinned }" :aria-pressed="pinned" :title="tr('mini.pinTitle')" :aria-label="tr('mini.pinTitle')" @click="togglePin">📌</button>
-      <button class="tb-btn" data-test="hide-btn" :title="tr('mini.hideTitle')" :aria-label="tr('mini.hideTitle')" @click="hideMini">✕</button>
+      <button class="tb-btn" data-test="hide-btn" :title="tr('mini.hideTitle')" :aria-label="tr('mini.hideTitle')" @click="hideMini"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path :d="close.d" /></svg></button>
     </header>
     <!-- R16⑤（评审 A2 方案 a）：落盘失败常驻告警，与主体并列不互斥 -->
     <PersistErrorBanner :show="persistFailed" :text="tr('app.persistError')" />
@@ -263,6 +263,8 @@ body { font-family: system-ui, sans-serif; margin: 0; }
 .title-drag { flex: 1; font-size: var(--md-sys-typescale-body-small); opacity: .6; }
 /* 32px 视觉（spec §2.5 titlebar 30px 紧凑档）；Task 2 曾为 40px 视觉，与 30px titlebar 溢出收敛 */
 .tb-btn { border: none; background: transparent; cursor: pointer; width: 32px; height: 32px; border-radius: var(--md-sys-shape-corner-small); color: inherit; font-size: 12px; line-height: 1; position: relative; }
+/* 隐藏钮 SVG（close 16px）：middle 对齐替代原 ✕ 文本的行内渲染（默认 baseline 沉底） */
+.tb-btn svg { vertical-align: middle; }
 /* 命中层:inset -4px 使 32px 钮达 40px 触达（compact 裁定，spec §2.9 内部冲突以小窗紧凑优先） */
 .tb-btn::after { content: ''; position: absolute; inset: -4px; border-radius: inherit; }
 .tb-btn:hover { background: var(--md-sys-color-surface-container-highest, rgba(0, 0, 0, .08)); }

@@ -2,7 +2,7 @@
 import { base64ToBytes, unlockWithPrf } from '@totp/core'
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { LOCK_ICONS } from './lockIcons'
+import { visibility, visibilityOff } from './iconPaths'
 import type { AbeOps, DpapiUnlockOps } from './securityPlatform'
 import { getPrfOutput, prfSupported } from '../prf'
 import type { VueStore } from '../store'
@@ -173,7 +173,7 @@ async function onPasskeyUnlock(): Promise<void> {
         >
           <!-- Material Icons 24px 标准 path（navIcons 同源方式），密文态显示 visibility、明文态显示 visibility_off -->
           <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true">
-            <path :d="showPassword ? LOCK_ICONS.visibilityOff : LOCK_ICONS.visibility" />
+            <path :d="showPassword ? visibilityOff.d : visibility.d" />
           </svg>
         </MdIconButton>
       </div>
