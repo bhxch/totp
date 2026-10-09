@@ -79,7 +79,7 @@ cargo clippy / fmt --check 干净。新增用例：MdTextField/MdSelect 浮动�
 
 ## 遗留
 
-- 36 笔未推送 origin（累积至此批）
+- 本批 7 笔未推送 origin（ffd9dad..5555ba3；此前批次已推送）
 - 用户若偏好 mini 默认尺寸/记住尺寸策略调整，属产品决策另议
 
 ## 追加（同日）：mini 窗口尺寸跨重启持久化（bc75734，真机 2/2 达标）
