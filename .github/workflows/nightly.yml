@@ -2,10 +2,17 @@
 # 复用 build.yml 构建 main，产物带日期标签后缀，发布到固定 nightly prerelease
 #（先删旧 release 与旧 tag，再由 softprops 重建 tag，避免旧 tag 残留导致
 # softprops/action-gh-release 不移动已存在的 tag、release 永挂首日 commit）。
+# check 任务先比对 main HEAD 与 nightly tag 指向的 commit：无新提交整体跳过
+#（build/publish 均 skip，昨日 release 原样保留）；手动触发可 force 绕过。
 name: nightly
 on:
   schedule: [{ cron: "0 16 * * *" }]   # UTC 16:00 = 北京 0 点
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 跳过无变更检查，强制构建
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -15,11 +22,47 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      should_run: ${{ steps.diff.outputs.should_run }}
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9（= v9.0.0）
+        id: diff
+        with:
+          script: |
+            // 无新提交跳过：nightly tag 由上轮 publish 在当时 main HEAD 重建，指向上次构建
+            // 的 commit；与当前 HEAD 同 sha 即整日无变更。首跑（无 tag）放行。
+            // 注意 release tag 是 annotated：ref 的 object.sha 是 tag 对象，须 getTag 解引用
+            const force = '${{ inputs.force }}' === 'true'
+            const head = (await github.rest.repos.getBranch({
+              owner: context.repo.owner, repo: context.repo.repo, branch: 'main'
+            })).data.commit.sha
+            let prev = null
+            const ref = await github.rest.git.getRef({
+              owner: context.repo.owner, repo: context.repo.repo, ref: 'refs/tags/nightly'
+            }).catch(() => null)
+            if (ref) {
+              prev = ref.data.object.sha
+              if (ref.data.object.type === 'tag') {
+                prev = (await github.rest.git.getTag({
+                  owner: context.repo.owner, repo: context.repo.repo, tag_sha: prev
+                })).data.object.sha
+              }
+            }
+            const shouldRun = force || !prev || prev !== head
+            core.setOutput('should_run', String(shouldRun))
+            core.info(`head=${head} prev=${prev ?? '(no tag)'} force=${force} shouldRun=${shouldRun}`)
+
   build:
+    needs: check
+    if: needs.check.outputs.should_run == 'true'
     uses: ./.github/workflows/build.yml
     with: { ref: main, suffix: nightly, nightly: true }
   publish:
-    needs: build
+    needs: [check, build]
+    if: needs.check.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
