@@ -1,12 +1,18 @@
 // packages/ui/src/theme/generate.mjs — 构建期生成 tokens.css(产物入库,改色板后手动重跑:pnpm --filter @totp/ui theme)
 import { readFileSync, writeFileSync } from 'node:fs'
+import { register } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { argbFromHex, hexFromArgb, themeFromSourceColor } from '@material/material-color-utilities'
 
-// 实际用法说明:本仓库固定使用 @material/material-color-utilities@0.2.7,
-// 其 Scheme 实例自带经典角色 props(scheme.props[p]),与下方 scheme.props[p] 写法一致;
-// 0.3.0+/0.4.0 版本需改用 getter scheme[p],且 0.4.0 内部 ESM import 缺 .js 扩展名无法纯 Node 直跑,故不采用。
+// mcu 0.4.0 的 ESM barrel 内部相对 import 缺 .js 扩展名(上游 issue #195,open),
+// 直跑需先挂 resolve hook 补扩展名;register 只影响本 Node 进程,vitest 走 vite 解析不受影响。
+// 注意:静态 import 的解析发生在本模块求值(register 执行)之前,故 mcu 必须在 hook 就位后动态 import。
+register('./mcu-esm-loader.mjs', import.meta.url)
+const { argbFromHex, hexFromArgb, themeFromSourceColor } = await import('@material/material-color-utilities')
+
+// 版本说明:自 2026-10(Task 9)起 devDependency 固定 @material/material-color-utilities@0.4.0,
+// 仅本脚本经 loader 直跑;0.4.0 的 Scheme 类标 DEPRECATED 但经典角色 props(scheme.props[p])运行时仍可用,
+// themeFromSourceColor 返回的 schemes/palettes 结构与 0.2.7 一致,产物经 themeTokens 测试逐值断言。
 const here = dirname(fileURLToPath(import.meta.url))
 const palettes = JSON.parse(readFileSync(join(here, 'palettes.json'), 'utf8'))
 

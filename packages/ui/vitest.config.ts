@@ -5,6 +5,15 @@ export default defineConfig({
   plugins: [vue()],
   test: {
     environment: 'jsdom',
+    server: {
+      deps: {
+        // mcu 0.4.0 ESM barrel 内部相对 import 缺 .js 扩展名(上游 issue #195,open):
+        // vitest 对 node_modules 依赖默认外部化、走 Node 原生 ESM 严格解析(必须带扩展名)会炸;
+        // inline 后交 vite(esbuild)预打包,其解析容忍缺扩展名。仅测试进程受影响;
+        // generate.mjs 的 Node 直跑进程走 mcu-esm-loader.mjs resolve hook,两处互不影响。
+        inline: ['@material/material-color-utilities'],
+      },
+    },
     coverage: {
       // 覆盖率 gate（coverage-design §5，P6 开闸）：vitest 2 实测 96.12% lines / 90.01% branches；
       // vitest 5 ast 重映射口径实测 95.46% lines / 88.10% branches（2026-10-09 vite8+vitest5 迁移，
