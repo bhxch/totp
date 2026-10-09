@@ -25,7 +25,7 @@ jobs:
           persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6（= v6.1.0）
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6（= v6.5.0）
-        with: { node-version: 22, cache: pnpm }
+        with: { node-version: 26, cache: pnpm }
       # dtolnay/rust-toolchain 的 stable 是浮动分支，pin 到 2026-09-22 的分支 HEAD
       #（来源 api.github.com/repos/dtolnay/rust-toolchain/commits/stable）
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable HEAD @ 2026-09-22
@@ -75,7 +75,7 @@ jobs:
           persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6（= v6.1.0）
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6（= v6.5.0）
-        with: { node-version: 22, cache: pnpm }
+        with: { node-version: 26, cache: pnpm }
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable HEAD @ 2026-09-22
         with: { targets: "aarch64-apple-darwin,x86_64-apple-darwin" }
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
@@ -112,7 +112,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev libxdo-dev rpm
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6（= v6.1.0）
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6（= v6.5.0）
-        with: { node-version: 22, cache: pnpm }
+        with: { node-version: 26, cache: pnpm }
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable HEAD @ 2026-09-22
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with: { workspaces: apps/desktop/src-tauri }
@@ -160,7 +160,7 @@ jobs:
           persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6（= v6.1.0）
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6（= v6.5.0）
-        with: { node-version: 22, cache: pnpm }
+        with: { node-version: 26, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec wxt build -b ${{ matrix.browser }}
         working-directory: apps/extension
