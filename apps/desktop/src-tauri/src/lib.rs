@@ -74,8 +74,26 @@ static LAST_FOCUS_HIDE: Mutex<Option<Instant>> = Mutex::new(None);
 // ---------- mini 托盘定位（spec §1.3）：点击处弹出 + 上次位置恢复 ----------
 static LAST_MINI_POS: Mutex<Option<(i32, i32)>> = Mutex::new(None);
 
-// ---------- mini 窗口尺寸记忆（2026-10-09 可调尺寸起）：物理像素 (w, h)，恢复时机同位置 ----------
+// ---------- mini 窗口尺寸记忆（2026-10-09 可调尺寸起）：客户区物理像素 (w, h)。
+// 恢复单点在 ensure_window 构建后（hidden 期 set_size 无闪烁，覆盖重启/销毁重建）；
+// 跨重启经 settings.json miniWindowSize 持久化（用户裁定，2026-10-09）：remember 隐藏路径
+// 变更即写 + RunEvent::ExitRequested 兜底（托盘退出 app.exit(0) 不经 remember 隐藏路径）。
+// 存客户区 inner 而非 outer——set_size 语义是 inner，无边框窗 outer 含 ~13px 隐形边框，
+// outer 存 inner 取会每轮 hide/restore 放大
 static LAST_MINI_SIZE: Mutex<Option<(u32, u32)>> = Mutex::new(None);
+
+/// settings.json `miniWindowSize` 分节解析（[宽, 高] 物理像素；非法/非正数/浮点/负数
+/// 一律回 None 走默认 320×420，坏数据不致产出异常窗口）
+fn parse_mini_window_size(v: Option<serde_json::Value>) -> Option<(u32, u32)> {
+    let value = v?;
+    let arr = value.as_array()?;
+    if arr.len() != 2 {
+        return None;
+    }
+    let w = arr[0].as_u64()?;
+    let h = arr[1].as_u64()?;
+    (w > 0 && h > 0).then_some((w as u32, h as u32))
+}
 
 // ---------- mini pin（spec §1.5）：settings.json miniPinned 键 + 内存缓存；失焦/复制后自动隐藏均让位 ----------
 static MINI_PINNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -339,10 +357,22 @@ fn remember_mini_pos(window: &tauri::Window) {
             *g = Some((p.x, p.y));
         }
     }
-    // 尺寸与位置同源记忆（无边框窗 outer==inner）：可调尺寸后销毁重建路径才能保住用户拖出的形态
-    if let Ok(s) = window.outer_size() {
-        if let Ok(mut g) = LAST_MINI_SIZE.lock() {
-            *g = Some((s.width, s.height));
+    // 尺寸与位置同源记忆；变更才落盘（失焦隐藏高频触发，无变化不写 settings.json）。
+    // 锁异常按「有变化」兜底重写（幂等）
+    if let Ok(s) = window.inner_size() {
+        let size = (s.width, s.height);
+        let changed = match LAST_MINI_SIZE.lock() {
+            Ok(mut g) => {
+                let changed = *g != Some(size);
+                *g = Some(size);
+                changed
+            }
+            Err(_) => true,
+        };
+        if changed {
+            if let Err(e) = write_section(window.app_handle(), "miniWindowSize", &size) {
+                eprintln!("[mini] persist window size failed: {e}");
+            }
         }
     }
 }
@@ -422,13 +452,8 @@ fn toggle_mini(app: &AppHandle, anchor: Option<(f64, f64, f64, f64)>) {
         MiniToggleAction::RepositionOnly | MiniToggleAction::Show => {
             // 定位先于 show（不可见期移动无闪烁）：托盘点击=每次锚定托盘；
             // 快捷键=恢复上次位置（销毁重建后亦然），无记忆则 OS 默认。
-            // 尺寸恢复先于两条定位分支（position_mini_at_tray 按当前 outer_size 算托盘锚点几何，
-            // 先恢复尺寸锚点才贴合拖大后的窗体）
-            if let Ok(g) = LAST_MINI_SIZE.lock() {
-                if let Some((w, h)) = *g {
-                    let _ = mini.set_size(tauri::PhysicalSize::new(w, h));
-                }
-            }
+            // 尺寸恢复不在本分支——单点收敛到 ensure_window 构建后（hidden 期 set_size），
+            // 窗口存活期尺寸自持，重建/重启由构建时恢复覆盖
             if let Some(a) = anchor {
                 position_mini_at_tray(&mini, a);
             } else if let Ok(g) = LAST_MINI_POS.lock() {
@@ -661,7 +686,23 @@ fn ensure_window(app: &AppHandle, label: &str) -> bool {
         .build(),
         _ => return false,
     };
-    if built.is_ok() {
+    if let Ok(win) = &built {
+        // mini 尺寸恢复（客户区物理像素；hidden 期 set_size 无闪烁）：会话内记忆优先
+        // （destroy 重建路径最鲜活），settings miniWindowSize 兜底（跨重启）。恢复即回填
+        // 缓存，remember 的「变更才落盘」以此为基线。builder 的 320×420 仅是未恢复前缺省
+        if label == "mini" {
+            let restored = LAST_MINI_SIZE
+                .lock()
+                .ok()
+                .and_then(|g| *g)
+                .or_else(|| parse_mini_window_size(read_section(app, "miniWindowSize")));
+            if let Some((w, h)) = restored {
+                let _ = win.set_size(tauri::PhysicalSize::new(w, h));
+                if let Ok(mut g) = LAST_MINI_SIZE.lock() {
+                    *g = Some((w, h));
+                }
+            }
+        }
         if let Ok(mut track) = RELEASE_TRACK.lock() {
             track.reset();
         }
@@ -1159,6 +1200,18 @@ pub fn run() {
                 // code=None 即窗口全关触发的退出请求，阻止之；托盘「退出」走 app.exit(0)
                 // （code=Some）不受影响。销毁窗口不触发 CloseRequested，prevent_close 拦不到
                 tauri::RunEvent::ExitRequested { code, api, .. } => {
+                    // 退出前持久化 mini 当前尺寸（托盘「退出」app.exit(0) 不经 remember 隐藏路径
+                    // 的兜底；code=None 的「最后窗口关闭」路径幂等写无害）。此刻窗口未 teardown，
+                    // outer/inner 可读；best-effort 失败仅留痕
+                    if let Some(mini) = _app.get_webview_window("mini") {
+                        if let Ok(s) = mini.inner_size() {
+                            if let Err(e) =
+                                write_section(_app, "miniWindowSize", &(s.width, s.height))
+                            {
+                                eprintln!("[mini] persist window size on exit failed: {e}");
+                            }
+                        }
+                    }
                     if code.is_none() {
                         api.prevent_exit();
                     }
@@ -1419,6 +1472,51 @@ mod tests {
     fn mini_position_for_tray_window_larger_than_work_area_no_panic() {
         // 窗大于工作区：clamp 区间退化不 panic（max 取 min 兜底）
         let _ = mini_position_for_tray(100.0, 100.0, 32.0, 32.0, 4000, 3000, 0, 0, 1920, 1040);
+    }
+
+    // ---------- mini 窗口尺寸持久化（2026-10-09）：分节解析与 settings 往返 ----------
+
+    #[test]
+    fn mini_window_size_parse_accepts_pair_and_rejects_malformed() {
+        // 合法二元正整数组
+        assert_eq!(
+            parse_mini_window_size(Some(serde_json::json!([800, 1200]))),
+            Some((800, 1200))
+        );
+        // 非法形态全部回 None 走默认尺寸：缺节/非数组/元素数不符/零/负/浮点
+        assert_eq!(parse_mini_window_size(None), None);
+        assert_eq!(parse_mini_window_size(Some(serde_json::json!(null))), None);
+        assert_eq!(parse_mini_window_size(Some(serde_json::json!("big"))), None);
+        assert_eq!(parse_mini_window_size(Some(serde_json::json!([800]))), None);
+        assert_eq!(
+            parse_mini_window_size(Some(serde_json::json!([800, 1200, 3]))),
+            None
+        );
+        assert_eq!(
+            parse_mini_window_size(Some(serde_json::json!([0, 1200]))),
+            None
+        );
+        assert_eq!(
+            parse_mini_window_size(Some(serde_json::json!([-800, 1200]))),
+            None
+        );
+        assert_eq!(
+            parse_mini_window_size(Some(serde_json::json!([800.5, 1200]))),
+            None
+        );
+    }
+
+    #[test]
+    fn mini_window_size_roundtrips_via_settings_section() {
+        // write_section（元组序列化为 [w, h] 数组）→ read_section → parse 全链一致
+        let dir = std::env::temp_dir().join(format!("totp-mini-size-rt-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        let written = settings_io::write_section_at(&path, "miniWindowSize", &(800u32, 1200u32));
+        let parsed = settings_io::read_section_at(&path, "miniWindowSize");
+        let _ = std::fs::remove_dir_all(&dir);
+        written.unwrap();
+        assert_eq!(parse_mini_window_size(parsed), Some((800, 1200)));
     }
 
     // ---------- 托盘 i18n（Phase 2 Task 7）：tray_label 映射与回退 ----------
