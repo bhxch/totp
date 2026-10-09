@@ -19,7 +19,7 @@
     "@totp/core": "workspace:*",
     "@totp/ui": "workspace:*",
     "vue": "^3.5.43",
-    "vue-router": "^4.4.0"
+    "vue-router": "^5.4.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.1",

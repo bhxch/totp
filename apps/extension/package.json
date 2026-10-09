@@ -15,7 +15,7 @@
     "@totp/ui": "workspace:*",
     "vue": "^3.5.43",
     "vue-i18n": "^11.4.13",
-    "vue-router": "^4.4.0"
+    "vue-router": "^5.4.0"
   },
   "devDependencies": {
     "@types/chrome": "^0.2.0",
