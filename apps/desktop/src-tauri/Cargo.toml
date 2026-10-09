@@ -28,8 +28,9 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-mcp-bridge = "0.13"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# F4 对话框授权 token 的 CSPRNG（tauri 传递依赖已在树中，不新增编译产物）
-getrandom = "0.3"
+# F4 对话框授权 token 的 CSPRNG（tauri 传递依赖已在树中，不新增编译产物）；
+# 0.4 与 0.3 同用 getrandom::fill（同名 API，零适配）
+getrandom = "0.4"
 
 # plan17：内嵌 MCP 服务器（Streamable HTTP）。rmcp 自带 tokio 栈与 tauri 2 同源；
 # StreamableHttpService 为 Tower service，HTTP 挂载层（axum）由 plan17 Task 6 自备
@@ -59,9 +60,10 @@ tower = "0.5"
 # rustls-no-provider（TLS：0.13 已移除公开 native-tls；选 ring provider 而非默认 aws-lc-rs
 # 免 cmake/NASM 构建负担；platform-verifier 随 feature 带入，Windows 用系统证书库）+
 # system-proxy（system 模式语义：hyper-util 读 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY）+
-# socks（socks5(h) 代理）；http/1.1 恒开，不开 http2 免引 h2 树。base64 0.22 已在树
-# （lock 0.22.1）不新增编译产物
-base64 = "0.22"
+# socks（socks5(h) 代理）；http/1.1 恒开，不开 http2 免引 h2 树。base64 0.23：
+# Engine API 与 0.22 同形（全仓 decode 错误均 map_err/ok_or 消费，无变体穷举匹配）；
+# 默认 feature 含 simd-unsafe（保持默认开启，勿加 default-features=false）
+base64 = "0.23"
 reqwest = { version = "0.13", default-features = false, features = [
     "rustls-no-provider",
     "system-proxy",
@@ -117,16 +119,19 @@ windows = { version = "0.62", features = [
 # ABE 提权服务 SCM 接入（plan p6 §0.1）：service_dispatcher + control handler；
 # crate 自带 windows-sys 依赖，与上表 windows 互不影响
 windows-service = "0.8"
-# 调用者验证：SHA256(client exe 文件)（plan p6 §0.1；rs 调用方传入比对值，验证纯函数不落 IO）
-sha2 = "0.10"
+# 调用者验证：SHA256(client exe 文件)（plan p6 §0.1；rs 调用方传入比对值，验证纯函数不落 IO）；
+# 0.11（digest 0.11）移除 hasher 的 io::Write impl——elevation_service 的哈希改显式读循环
+sha2 = "0.11"
 # UAC 单命令提权（plan p6 §0.2）：trigger_install 以 runas 拉起自身 --elevation-install
 runas = "1.2"
 
-# osAutoUnlock 统一通道（mac Keychain / linux Secret Service）：仅对应目标编译，Windows 构建不下载不编译
+# osAutoUnlock 统一通道（mac Keychain / linux Secret Service）：仅对应目标编译，Windows 构建不下载不编译。
+# 4.x 移除 per-backend feature：v1 模式自动选平台默认 store（Linux=Secret Service），
+# 原 linux 段 features=["sync-secret-service"] 为 3.x feature，v4 已不存在
 [target.'cfg(target_os = "macos")'.dependencies]
-keyring = "3"
+keyring = "4"
 [target.'cfg(target_os = "linux")'.dependencies]
-keyring = { version = "3", features = ["sync-secret-service"] }
+keyring = "4"
 
 # E2E 基建 vendored fork（原因见上方 mcp-bridge 依赖注释）：上游 0.13.0 锁 webview2-com 0.38/windows 0.61，
 # 与 tauri 2.12 传递依赖冲突；vendor 目录内已适配 0.39/0.62。上游发兼容版后移除本段与 vendor 目录

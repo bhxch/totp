@@ -8,6 +8,7 @@
 
 use std::ffi::OsString;
 use std::fmt;
+use std::io::Read;
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
@@ -556,11 +557,19 @@ fn query_process_image(process: HANDLE) -> Option<String> {
     None
 }
 
-/// SHA256(exe 文件字节) 小写 hex（流式读，不整文件进内存）；Task 3 安装侧复用
+/// SHA256(exe 文件字节) 小写 hex（流式读，不整文件进内存）；Task 3 安装侧复用。
+/// 显式读循环：sha2 0.11（digest 0.11）移除 hasher 的 io::Write impl，io::copy 不再可用
 pub(crate) fn sha256_file_hex(path: &str) -> Option<String> {
-    let file = std::fs::File::open(path).ok()?;
+    let mut reader = std::fs::File::open(path).ok()?;
     let mut hasher = sha2::Sha256::new();
-    std::io::copy(&mut std::io::BufReader::new(file), &mut hasher).ok()?;
+    let mut buf = [0u8; 65536];
+    loop {
+        let n = reader.read(&mut buf).ok()?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
     Some(
         hasher
             .finalize()
@@ -614,9 +623,17 @@ fn sha256_file_hex_shared(path: &str) -> Option<String> {
         )
     };
     // 裸句柄交 std::fs::File 托管（Drop 即 CloseHandle），流式读复用 sha256_file_hex 同款形态
-    let file = unsafe { std::fs::File::from_raw_handle(opened.ok()?.0) };
+    // （sha2 0.11 移除 io::Write impl，io::copy 改显式读循环；双读语义不变）
+    let mut reader = unsafe { std::fs::File::from_raw_handle(opened.ok()?.0) };
     let mut hasher = sha2::Sha256::new();
-    std::io::copy(&mut std::io::BufReader::new(file), &mut hasher).ok()?;
+    let mut buf = [0u8; 65536];
+    loop {
+        let n = reader.read(&mut buf).ok()?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
     Some(
         hasher
             .finalize()
