@@ -367,6 +367,8 @@ See the [plan13-16 full code review](docs/review/2026-09-18-plan13-16-full-code-
 - **Firefox (MV3)**: clipboard auto-clear unavailable (no offscreen API, clearing degrades to foreground-only, unscheduled); idle/lock auto-lock is supported per MDN compatibility (including the `locked` state, min_version 140) — if anything misbehaves on real hardware, rely on the runtime degradation notice; Passkey (PRF) unlock is limited — the entry hides itself when probing fails
 - **No pagination for cloud listings**: when objects under a single directory/prefix exceed the cloud API's page cap (e.g. 1000 for S3), rolling deletion may miss the oldest backups; when the cap is reached the status line prompts manual cleanup (truncation awareness implemented for gdrive/onedrive/s3)
 
+- **ABE auto-unlock stops working after replacing/reinstalling the exe — re-bind once to restore**: the elevation service verifies the caller by the executable's SHA256 (binding stored in HKLM); once the file is replaced (manual overwrite, in-place upgrade, nightly update) the hash mismatches and calls are rejected — the ABE status on the desktop Security page turns abnormal; run Bind once more (one UAC prompt) to restore. No impact if you don't use ABE auto-unlock
+
 ## License
 
 [MIT](LICENSE)
