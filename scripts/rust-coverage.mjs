@@ -17,6 +17,12 @@
 //   实测 TOTAL：行 71.56%、分支 54.69%（Branches 426 总量），与 CI gate 基线一致。
 //   注意 JSON totals 分母略大（含测试二进制自身插桩行，3804 vs 文本 3136）：
 //   gate 模式实测 lines 71.69%/branches ~55-56%，两次运行分支数有 ±3 的并发波动，gate 边际已留足。
+//
+// vendor 排除（2026-10-09）：vendored fork tauri-plugin-mcp-bridge（028da8d，上游发兼容版后
+// 移除 vendor 时同步删下方 IGNORE_FILENAME_REGEX 注入行）是死代码快照，0% 覆盖进分母会把
+// gate 从业务口径 ~68/47 结构性摊薄到 ~57/39。默认注入 --ignore-filename-regex 排除，使
+// gate 与业务代码直连；字符类 [/\\] 同时匹配 Windows 反斜杠与 POSIX 正斜杠路径（llvm-cov
+// 报告路径分隔符平台相关，CI windows runner 实证反斜杠）。调用方显式传同名选项时不覆盖。
 import { spawnSync } from 'node:child_process'
 import { readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -25,6 +31,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const manifestDir = resolve(root, 'apps/desktop/src-tauri')
+const IGNORE_FILENAME_REGEX = 'vendor[/\\\\]tauri-plugin-mcp-bridge'
 
 // gate 参数只认 --fail-under-lines / --fail-under-branches（数字），其余原样透传 cargo-llvm-cov
 const gates = {}
@@ -45,6 +52,9 @@ for (let i = 2; i < process.argv.length; i++) {
 
 const gating = gates.lines !== undefined || gates.branches !== undefined
 const args = ['+nightly', 'llvm-cov', '--no-rustc-wrapper', '--branch', ...passthrough]
+if (!passthrough.includes('--ignore-filename-regex')) {
+  args.push('--ignore-filename-regex', IGNORE_FILENAME_REGEX)
+}
 
 // gate 模式改走 JSON export（llvm-cov export -format=json 的 data[0].totals）：
 // --summary-only 仅保留文件级汇总（体积可控），报告落临时文件，解析后即清理
