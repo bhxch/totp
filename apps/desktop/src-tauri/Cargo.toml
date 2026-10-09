@@ -138,4 +138,3 @@ keyring = "4"
 [patch.crates-io]
 tauri-plugin-mcp-bridge = { path = "vendor/tauri-plugin-mcp-bridge" }
 
-

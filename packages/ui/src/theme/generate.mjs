@@ -4,8 +4,9 @@ import { register } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
-// mcu 0.4.0 的 ESM barrel 内部相对 import 缺 .js 扩展名(上游 issue #195,open),
-// 直跑需先挂 resolve hook 补扩展名;register 只影响本 Node 进程,vitest 走 vite 解析不受影响。
+// mcu 0.4.0 的 ESM barrel 内部相对 import 缺 .js 扩展名(上游 issue #195,open),需两处配套
+// (互不替代,上游修复 #195 后均可移除):Node 直跑靠同目录 mcu-esm-loader.mjs(register hook 补 .js);
+// vitest 进程靠 packages/ui/vitest.config.ts 的 server.deps.inline(esbuild 预打包容忍缺扩展名)。
 // 注意:静态 import 的解析发生在本模块求值(register 执行)之前,故 mcu 必须在 hook 就位后动态 import。
 register('./mcu-esm-loader.mjs', import.meta.url)
 const { argbFromHex, hexFromArgb, themeFromSourceColor } = await import('@material/material-color-utilities')

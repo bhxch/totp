@@ -10,7 +10,7 @@ export default defineConfig({
       // 覆盖率 gate（coverage-design §5，P6 开闸）：vitest 2 实测 97.07% lines / 92.44% branches；
       // vitest 5 ast 重映射口径实测 94.99% lines / 88.21% branches（2026-10-09 vite8+vitest5 迁移：
       // .vue template 编译分支首次计入 branches + 回调按函数级计，较 v8 range 粒度更严；
-      // extension 完整链路迁移并入 Task 8，彼时随 wxt 0.21 再收紧），各减 0.5pp 安全边际重校准
+      // extension 完整链路迁移并入 Task 8（wxt 0.21 迁移后未再收紧）），各减 0.5pp 安全边际重校准
       thresholds: { lines: 94.4, branches: 87.7 },
       // 豁免清单（coverage-design §1.3）：createApp 三行入口装配，无运行时逻辑可测
       // 覆盖默认排除集后需补回测试目录（自定义数组整体替换默认值）

@@ -18,32 +18,32 @@ export default defineConfig({
       // 各减 0.5pp 安全边际重校准
       thresholds: { lines: 97, branches: 92.4 },
       exclude: [
-      ...configDefaults.coverage.exclude,
-      'coverage/**',
-      'dist/**',
-      '**/node_modules/**',
-      '**/[.]**',
-      'packages/*/test?(s)/**',
-      '**/*.d.ts',
-      '**/virtual:*',
-      '**/__x00__*',
-      'cypress/**',
-      'test?(s)/**',
-      'test?(-*).?(c|m)[jt]s?(x)',
-      '**/*{.,-}{test,spec,bench,benchmark}?(-d).?(c|m)[jt]s?(x)',
-      '**/__tests__/**',
-      '**/{karma,rollup,webpack,vite,vitest,jest,ava,babel,nyc,cypress,tsup,build,eslint,prettier}.config.*',
-      '**/vitest.{workspace,projects}.[jt]s?(on)',
-      '**/.{eslint,mocha,prettier}rc.{?(c|m)js,yml}',
-      'src-tauri/**',
-      '**/*.test.ts',
-      // 豁免清单（coverage-design §1.3）：createApp 三行入口装配，无运行时逻辑可测
-      // （同 extension popup/options main.ts 先例；2026-09-26 终审补登记）
-      'src/main.ts',
-      'src/mini.ts',
-      // 纯转发出口（一行 re-export，零可执行语句）：vitest 5 ast-v8-to-istanbul 重映射判
-      // 0 可执行语句计入 0%，同 model.ts 纯类型豁免先例（2026-10-09 补登记）
-      'src/miniSort.ts',
+        ...configDefaults.coverage.exclude,
+        'coverage/**',
+        'dist/**',
+        '**/node_modules/**',
+        '**/[.]**',
+        'packages/*/test?(s)/**',
+        '**/*.d.ts',
+        '**/virtual:*',
+        '**/__x00__*',
+        'cypress/**',
+        'test?(s)/**',
+        'test?(-*).?(c|m)[jt]s?(x)',
+        '**/*{.,-}{test,spec,bench,benchmark}?(-d).?(c|m)[jt]s?(x)',
+        '**/__tests__/**',
+        '**/{karma,rollup,webpack,vite,vitest,jest,ava,babel,nyc,cypress,tsup,build,eslint,prettier}.config.*',
+        '**/vitest.{workspace,projects}.[jt]s?(on)',
+        '**/.{eslint,mocha,prettier}rc.{?(c|m)js,yml}',
+        'src-tauri/**',
+        '**/*.test.ts',
+        // 豁免清单（coverage-design §1.3）：createApp 三行入口装配，无运行时逻辑可测
+        // （同 extension popup/options main.ts 先例；2026-09-26 终审补登记）
+        'src/main.ts',
+        'src/mini.ts',
+        // 纯转发出口（一行 re-export，零可执行语句）：vitest 5 ast-v8-to-istanbul 重映射判
+        // 0 可执行语句计入 0%，同 model.ts 纯类型豁免先例（2026-10-09 补登记）
+        'src/miniSort.ts',
       ],
     },
   },

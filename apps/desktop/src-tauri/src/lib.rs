@@ -583,7 +583,8 @@ fn try_suspend_window(app: &AppHandle, label: &str) {
                 return;
             };
             // brief 原拟 cast ICoreWebView2_6：webview2-com 0.38 绑定中 TrySuspend 实际声明在
-            // ICoreWebView2_3（_6 仅有 OpenTaskManagerWindow），以真实绑定为准
+            // ICoreWebView2_3（_6 仅有 OpenTaskManagerWindow），以真实绑定为准（0.39 同：
+            // ICoreWebView2_3::TrySuspend 签名未变，编译期已验）
             let Ok(wv3) = core.cast::<ICoreWebView2_3>() else {
                 return;
             };

@@ -86,7 +86,8 @@ jobs:
       # 定值；上值 67.65/46.27。增量=vendored fork tauri-plugin-mcp-bridge（028da8d，适配
       # webview2-com 0.39/windows 0.62）1333 行 + 152 分支 0% 覆盖进分母的结构性下跌——业务
       # 代码排除 vendor 口径实测 68.16/46.90，与旧基线 68.15/46.77 持平微升，无测试回退；
-      # 上游发兼容版移除 vendor 后将回升，gate 只防回退不追高）。
+      # 上游发兼容版移除 vendor 后将回升，gate 只防回退不追高——vendor 移除属结构性分母变化，
+      # 届时按新实测重校准（不受不追高惯例约束））。
       # 前值 67.65/46.27（2026-10-09 重校准：实测 68.15% lines / 46.77% branches 减边际定值；
       # 再上值 68.19/47.35。增量=lib.rs mini 窗口尺寸持久化的 OS 胶水 ~30 行——remember 隐藏路径/
       # ensure_window 构建恢复/ExitRequested 退出落盘均为 Window/AppHandle 绑定路径，单测不可

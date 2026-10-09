@@ -3,7 +3,8 @@
 // 纯 Node 直跑报 ERR_MODULE_NOT_FOUND。本文件是 module.register 的 resolve hook:
 // 对 mcu 包内部相对导入的解析失败,依次尝试追加 .js / /index.js 再解析。
 // 作用域:仅挂载于 generate.mjs 的 Node 直跑进程(register 只影响本进程);
-// vitest 经 vite 的 ESM 解析(容忍缺扩展名)不受影响,无需此 hook。
+// vitest 进程不经过本 hook,靠 packages/ui/vitest.config.ts 的 server.deps.inline
+// (esbuild 预打包容忍缺扩展名),两者互不替代。
 const MCU_DIR = '/@material/material-color-utilities/'
 
 export async function resolve(specifier, context, nextResolve) {
