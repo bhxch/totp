@@ -859,8 +859,10 @@ fn create_pipe_instance(sddl_str: &str, first: bool) -> Result<HANDLE, ServiceEr
     }
     if handle == INVALID_HANDLE_VALUE {
         return Err(ServiceError(format!(
+            // windows-result 0.4（windows 0.62 依赖树）移除 Error::from_win32()，
+            // 改名 from_thread()，语义不变（取 GetLastError 包装）
             "CreateNamedPipeW 失败: {}",
-            WinError::from_win32()
+            WinError::from_thread()
         )));
     }
     Ok(handle)
