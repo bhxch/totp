@@ -3,6 +3,11 @@
   "license": "MIT",
   "private": true,
   "packageManager": "pnpm@10.28.1",
+  "pnpm": {
+    "overrides": {
+      "@vitejs/plugin-vue": "^6.0.9"
+    }
+  },
   "scripts": {
     "test": "vitest run && pnpm -r --no-bail run test",
     "test:scripts": "vitest run",
