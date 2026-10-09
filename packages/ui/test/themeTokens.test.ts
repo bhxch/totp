@@ -20,14 +20,14 @@ const ROLES = ['primary','on-primary','primary-container','on-primary-container'
 const DEFAULT_ID = 'blue'
 const nonDefault = palettes.filter((p) => p.id !== DEFAULT_ID)
 
-// 与 generate.mjs 同源的 35 角色期望值重算:经典角色取 scheme.props(camelCase),扩展角色按 M3 surface tone 表派生
+// 与 generate.mjs 同源的 35 角色期望值重算:经典角色取 scheme 角色 getter(camelCase),扩展角色按 M3 surface tone 表派生
 const SURFACE_TONES = {
   light: { dim: 87, bright: 98, lowest: 100, low: 96, container: 94, high: 92, highest: 90 },
   dark: { dim: 6, bright: 24, lowest: 4, low: 10, container: 12, high: 17, highest: 22 },
 } as const
 function expectedRoleValues(hex: string, mode: 'light' | 'dark'): Record<string, string> {
   const theme = themeFromSourceColor(argbFromHex(hex))
-  const props = (theme.schemes[mode] as unknown as { props: Record<string, number> }).props
+  const scheme = theme.schemes[mode] as unknown as Record<string, number>
   const neutral = theme.palettes.neutral
   const t = SURFACE_TONES[mode]
   const derived: Record<string, number> = {
@@ -42,7 +42,7 @@ function expectedRoleValues(hex: string, mode: 'light' | 'dark'): Record<string,
   }
   const out: Record<string, string> = {}
   for (const role of ROLES) {
-    const argb = derived[role] ?? props[role.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())]!
+    const argb = derived[role] ?? scheme[role.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())]!
     out[role] = hexFromArgb(argb).toLowerCase()
   }
   return out

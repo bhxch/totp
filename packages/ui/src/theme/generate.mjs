@@ -12,7 +12,8 @@ register('./mcu-esm-loader.mjs', import.meta.url)
 const { argbFromHex, hexFromArgb, themeFromSourceColor } = await import('@material/material-color-utilities')
 
 // 版本说明:自 2026-10(Task 9)起 devDependency 固定 @material/material-color-utilities@0.4.0,
-// 仅本脚本经 loader 直跑;0.4.0 的 Scheme 类标 DEPRECATED 但经典角色 props(scheme.props[p])运行时仍可用,
+// 仅本脚本经 loader 直跑;0.4.0 的 Scheme 类标 DEPRECATED,经典角色统一走 scheme[p] 角色 getter
+// (0.4.0 为 camelCase getter 委托内部 props,props 本体已在类型面 private 化勿再直取),
 // themeFromSourceColor 返回的 schemes/palettes 结构与 0.2.7 一致,产物经 themeTokens 测试逐值断言。
 const here = dirname(fileURLToPath(import.meta.url))
 const palettes = JSON.parse(readFileSync(join(here, 'palettes.json'), 'utf8'))
@@ -37,7 +38,7 @@ function schemeVars(theme, mode) {
   const scheme = theme.schemes[mode]
   const neutral = theme.palettes.neutral
   const t = SURFACE_TONES[mode]
-  const vars = CLASSIC.map((p) => `  --md-sys-color-${kebab(p)}:${hexFromArgb(scheme.props[p])};`)
+  const vars = CLASSIC.map((p) => `  --md-sys-color-${kebab(p)}:${hexFromArgb(scheme[p])};`)
   const derived = {
     'surface-dim': neutral.tone(t.dim),
     'surface-bright': neutral.tone(t.bright),
