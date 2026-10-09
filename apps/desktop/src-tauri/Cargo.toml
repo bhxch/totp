@@ -137,4 +137,3 @@ keyring = "4"
 # 与 tauri 2.12 传递依赖冲突；vendor 目录内已适配 0.39/0.62。上游发兼容版后移除本段与 vendor 目录
 [patch.crates-io]
 tauri-plugin-mcp-bridge = { path = "vendor/tauri-plugin-mcp-bridge" }
-

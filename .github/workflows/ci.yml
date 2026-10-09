@@ -83,8 +83,8 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with: { workspaces: apps/desktop/src-tauri }
       # 原始口径 gate（2026-10-09 二次校准：rust-coverage.mjs 默认注入 --ignore-filename-regex
-      # 排除 vendored mcp-bridge——死代码快照恒 0%，曾把分母撑大 1333 行/152 分支、gate 被摊薄至
-      # 57.25/39.22；排除后 gate 恢复与业务代码直连：实测 68.18% lines / 47.02% branches 减边际
+      # 排除 vendored mcp-bridge——死代码快照恒 0%，曾把分母撑大 1333 行/152 分支（llvm-cov 可插拔行
+      # 口径，非 wc -l 物理行：vendored 包 wc -l 计 4159）、gate 被摊薄至 57.25/39.22；排除后 gate 恢复与业务代码直连：实测 68.18% lines / 47.02% branches 减边际
       # 定值。regex vendor[/\\]tauri-plugin-mcp-bridge 的 [/\\] 字符类兼容 Windows 反斜杠与
       # POSIX 正斜杠路径（llvm-cov 报告路径分隔符平台相关）；上游发兼容版移除 vendor 时删脚本
       # 注入行即可，本 gate 数值无需再动——分母不再受 vendor 增删影响）。
