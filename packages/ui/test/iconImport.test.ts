@@ -99,8 +99,9 @@ describe('importIconPackZip', () => {
     expect(icons.resolve({ kind: 'stored', id: 'github' })).toBe(toDataUrl(PNG_BYTES))
   })
 
-  // 65537 成员 zipSync 真实压缩墙钟贴近默认 5s（vitest 5 下已越线）——参照 core twoDevice 30s 先例收口
-  it('F15：成员数超过 65536 整体拒绝；输入超过 50MB 解压前拒绝', { timeout: 30_000 }, async () => {
+  // 65537 成员 zipSync 真实压缩墙钟大且波动大（本机实测隔离 17.8s、全量并发被抢 CPU 时 >30s
+  // 致 30s 档 CI flake 一次）——参照 core C8/B21 墙钟用例先例收口 60s
+  it('F15：成员数超过 65536 整体拒绝；输入超过 50MB 解压前拒绝', { timeout: 60_000 }, async () => {
     const icons = createIconStore(createMemoryStorage())
     await icons.init()
     const many: Record<string, Uint8Array> = {}
