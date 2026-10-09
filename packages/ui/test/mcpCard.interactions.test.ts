@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import McpServerCard from '../src/components/McpServerCard.vue'
@@ -13,21 +13,23 @@ function baseCfg(over: Partial<McpConfigWithStatusDto> = {}): McpConfigWithStatu
   }
 }
 
+// vitest 5 起 vi.fn() 默认 Mock<Procedure> 不再匹配具体函数签名：字段类型须显式签名泛型
+// （同 SyncPage.health.test 先例），与 mcpCard.ts McpPlatform 契约逐一对应
 type MockPlatform = {
-  getConfig: ReturnType<typeof vi.fn>
-  setConfig: ReturnType<typeof vi.fn>
-  regenerateToken: ReturnType<typeof vi.fn>
-  revokeApprovals: ReturnType<typeof vi.fn>
-  copyText: ReturnType<typeof vi.fn>
+  getConfig: Mock<() => Promise<McpConfigWithStatusDto>>
+  setConfig: Mock<(cfg: McpConfigDto) => Promise<void>>
+  regenerateToken: Mock<() => Promise<string>>
+  revokeApprovals: Mock<() => Promise<number>>
+  copyText: Mock<(value: string) => Promise<void>>
 }
 
 function mkPlatform(cfg: McpConfigWithStatusDto = baseCfg(), over: Partial<MockPlatform> = {}): MockPlatform {
   return {
-    getConfig: vi.fn().mockResolvedValue(cfg),
-    setConfig: vi.fn().mockResolvedValue(undefined),
-    regenerateToken: vi.fn().mockResolvedValue('new-token'),
-    revokeApprovals: vi.fn().mockResolvedValue(3),
-    copyText: vi.fn().mockResolvedValue(undefined),
+    getConfig: vi.fn<() => Promise<McpConfigWithStatusDto>>().mockResolvedValue(cfg),
+    setConfig: vi.fn<(cfg: McpConfigDto) => Promise<void>>().mockResolvedValue(undefined),
+    regenerateToken: vi.fn<() => Promise<string>>().mockResolvedValue('new-token'),
+    revokeApprovals: vi.fn<() => Promise<number>>().mockResolvedValue(3),
+    copyText: vi.fn<(value: string) => Promise<void>>().mockResolvedValue(undefined),
     ...over,
   }
 }
@@ -211,7 +213,7 @@ describe('McpServerCard token 与一次性授权', () => {
   })
 
   it('copyText 失败：错误横幅（fail 通道）', async () => {
-    const platform = mkPlatform(baseCfg(), { copyText: vi.fn().mockRejectedValue(new Error('clipboard busy')) })
+    const platform = mkPlatform(baseCfg(), { copyText: vi.fn<(value: string) => Promise<void>>().mockRejectedValue(new Error('clipboard busy')) })
     const w = await mountCard(platform)
     await w.findAll('button').find((b) => b.text() === '复制配置')!.trigger('click')
     await flushPromises()

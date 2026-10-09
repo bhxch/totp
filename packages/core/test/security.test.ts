@@ -30,14 +30,16 @@ describe('securityStore', () => {
     expect(security.profile).toBe('balanced')
     expect(typeof security.passwordChangedAt).toBe('number')
   })
-  it('setupVaultEncryption 写入 profile 与 passwordChangedAt', async () => {
+  // C8/B21：paranoid 档真实 KDF（PBKDF2 262144 次）墙钟随负载浮动，默认 5s 在多包并发下偶败——参照 twoDevice 30s 先例收口
+  // （vitest 5 起三参签名 test(name, fn, options) 已移除，options 前移为第二参）
+  it('setupVaultEncryption 写入 profile 与 passwordChangedAt', { timeout: 30_000 }, async () => {
     const r = await setupVaultEncryption('{}', '口令', { profile: 'paranoid' })
     expect(r.security.profile).toBe('paranoid')
     expect(r.security.kdf.m).toBe(262144)
     expect(typeof r.security.passwordChangedAt).toBe('number')
     // 档位展开参数真实参与派生：新口令可解锁
     expect(await unlockVaultEncryption(r.security, '口令')).toEqual(r.dek)
-  }, { timeout: 30_000 }) // C8/B21：paranoid 档真实 KDF（PBKDF2 262144 次）墙钟随负载浮动，默认 5s 在多包并发下偶败——参照 twoDevice 30s 先例收口
+  })
   it('口令错误报中文错误', async () => {
     const { security } = await setupVaultEncryption(vaultJson, '对')
     await expect(unlockVaultEncryption(security, '错')).rejects.toThrow('口令错误或数据已损坏')

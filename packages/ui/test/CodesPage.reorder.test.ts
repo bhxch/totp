@@ -30,13 +30,18 @@ function issuers(s: VueStore): string[] {
 
 /** pointer 拖拽驱动（jsdom）：把手 pointerdown → window pointermove（需先 stub document.elementFromPoint 指向目标行）→ pointerup */
 async function pointerDrag(
-  w: { findAll: (sel: string) => Array<{ find: (sel2: string) => { trigger: (ev: string, init?: Record<string, unknown>) => Promise<void>; element: HTMLElement } }> },
+  w: { findAll: (sel: string) => Array<{ find: (sel2: string) => { element: HTMLElement } }> },
   fromRow: number,
   toRow: number,
 ) {
   const rows = w.findAll('.row')
   document.elementFromPoint = () => rows[toRow]!.find('.otp-item').element as HTMLElement
-  await rows[fromRow]!.find('.handle').trigger('pointerdown', { pointerId: 1, clientX: 10, clientY: 10 })
+  // jsdom 30 起事件几何属性为 Web IDL getter-only（clientX 挂在 MouseEvent.prototype），
+  // @vue/test-utils trigger 对 PointerEvent 的原型赋值路径会抛错：改用规范 init 直接构造派发
+  rows[fromRow]!.find('.handle').element.dispatchEvent(
+    new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 10, clientY: 10 }),
+  )
+  await nextTick()
   window.dispatchEvent(new MouseEvent('pointermove', { clientX: 30, clientY: 40 }))
   await flushPromises()
   window.dispatchEvent(new MouseEvent('pointerup', { clientX: 30, clientY: 40 }))
@@ -48,7 +53,11 @@ describe('CodesPage 拖拽排序（④C，pointer 长按方案）', () => {
     const { w, store } = await mountPage()
     const rows = w.findAll('.row')
     document.elementFromPoint = () => rows[2]!.find('.otp-item').element as HTMLElement
-    await rows[0]!.find('.handle').trigger('pointerdown', { pointerId: 1, clientX: 10, clientY: 10 })
+    // 同 helper：jsdom 30 getter-only 几何属性，trigger 赋值路径不可用，直接派发 PointerEvent
+    rows[0]!.find('.handle').element.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 10, clientY: 10 }),
+    )
+    await nextTick()
     window.dispatchEvent(new MouseEvent('pointermove', { clientX: 30, clientY: 40 }))
     await flushPromises()
     expect(rows[2]!.classes()).toContain('drag-below') // jsdom rect 全 0：位移向下 → 下缘
@@ -64,7 +73,11 @@ describe('CodesPage 拖拽排序（④C，pointer 长按方案）', () => {
     expect(w.emitted('copy')).toBeUndefined()
     const rows = w.findAll('.row')
     document.elementFromPoint = () => rows[1]!.find('.otp-item').element as HTMLElement
-    await rows[0]!.find('.handle').trigger('pointerdown', { pointerId: 1, clientX: 10, clientY: 10 })
+    // 同 helper：jsdom 30 getter-only 几何属性，trigger 赋值路径不可用，直接派发 PointerEvent
+    rows[0]!.find('.handle').element.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 10, clientY: 10 }),
+    )
+    await nextTick()
     window.dispatchEvent(new MouseEvent('pointermove', { clientX: 30, clientY: 40 }))
     await flushPromises()
     expect(rows[1]!.classes()).toContain('drag-below')

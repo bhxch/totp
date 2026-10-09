@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryStorage, newEntryFromUri } from '@totp/core'
 import { createVueStore } from '../../src/store'
@@ -6,7 +6,7 @@ import SyncPage from '../../src/pages/SyncPage.vue'
 import BackupCard from '../../src/components/BackupCard.vue'
 import { createTestI18n } from '../helpers/i18n'
 import type { CloudPlatform } from '../../src/components/cloudPlatform'
-import type { SyncPlatform } from '../../src/components/syncPlatform'
+import type { SyncPlatform, SyncStatus } from '../../src/components/syncPlatform'
 
 async function readyStore() {
   const s = createVueStore(createMemoryStorage())
@@ -33,7 +33,8 @@ function cloudPlatform(over: Partial<CloudPlatform> = {}): CloudPlatform {
   } as CloudPlatform
 }
 
-function syncPlatform(readStatus: ReturnType<typeof vi.fn> = vi.fn(async () => null)): SyncPlatform {
+// vitest 5 起 ReturnType<typeof vi.fn> 为 Mock<Procedure> 不再匹配具体签名：显式泛型
+function syncPlatform(readStatus: Mock<() => Promise<SyncStatus | null>> = vi.fn<() => Promise<SyncStatus | null>>(async () => null)): SyncPlatform {
   return {
     syncEnabled: false,
     setSyncEnabled: vi.fn(async () => {}),

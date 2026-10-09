@@ -30,7 +30,8 @@ function toDataUrl(bytes: Uint8Array): string {
 }
 
 describe('importIconPackZip', () => {
-  it('F15：高膨胀炸弹按真实产出预算中止（谎言头不可穿透——预算只认 inflate 真实产出）', async () => {
+  // 高膨胀炸弹真实 inflate 产出 70MiB 墙钟 12s+（vitest 5 下越默认 5s 线）——参照同文件 65536 成员 30s 先例收口
+  it('F15：高膨胀炸弹按真实产出预算中止（谎言头不可穿透——预算只认 inflate 真实产出）', { timeout: 30_000 }, async () => {
     const icons = createIconStore(createMemoryStorage())
     await icons.init()
     // 70MiB 零字节 deflate 后极小（远小于 50MB 输入门），但解压产出 70MiB > 64MiB 预算
@@ -98,7 +99,8 @@ describe('importIconPackZip', () => {
     expect(icons.resolve({ kind: 'stored', id: 'github' })).toBe(toDataUrl(PNG_BYTES))
   })
 
-  it('F15：成员数超过 65536 整体拒绝；输入超过 50MB 解压前拒绝', async () => {
+  // 65537 成员 zipSync 真实压缩墙钟贴近默认 5s（vitest 5 下已越线）——参照 core twoDevice 30s 先例收口
+  it('F15：成员数超过 65536 整体拒绝；输入超过 50MB 解压前拒绝', { timeout: 30_000 }, async () => {
     const icons = createIconStore(createMemoryStorage())
     await icons.init()
     const many: Record<string, Uint8Array> = {}

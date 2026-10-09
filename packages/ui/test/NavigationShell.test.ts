@@ -93,7 +93,9 @@ describe('NavigationShell', () => {
       addEventListener: (_t: string, cb: (e: { matches: boolean }) => void) => { hooks.change = cb },
       removeEventListener: () => { hooks.change = null },
     }
-    vi.spyOn(window, 'matchMedia').mockReturnValue(mql as unknown as MediaQueryList)
+    // jsdom 30 起不内置 window.matchMedia（此前 spyOn 依赖其存在）：显式补桩（同 useTheme.test 先例）
+    Object.defineProperty(window, 'matchMedia', { configurable: true, writable: true,
+      value: () => mql as unknown as MediaQueryList })
     const router = makeRouter()
     await router.push('/'); await router.isReady()
     const w = mount(NavigationShell, { global: { plugins: [router, createTestI18n()] }, props: { store: stubStore } })

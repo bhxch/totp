@@ -182,7 +182,9 @@ describe('dpapi（OS 自动解锁通道）', () => {
     await f.dpapi.remove()
     expect(store.removeDpapiSourceOp).toHaveBeenCalled()
     await vi.waitFor(() => expect(warnSpy).toHaveBeenCalledWith('[desktop] keyring 条目清理失败', expect.any(Error)))
-    warnSpy.mockRestore()
+    // vitest 5（tinyspy 3）起重复 spyOn 同一目标返回同一 mock 实例：mockRestore 会连
+    // I2 describe 的模块级 warnSpy 一并卸载，此处只清调用记录、保留打桩
+    warnSpy.mockClear()
   })
 
   it('add/remove 在 store 未就绪时「数据尚未就绪」', async () => {
@@ -225,7 +227,7 @@ describe('abeOps（ABE 服务宿主通道，P6 T4）', () => {
     expect(await f.abe.status()).toBeNull()
     tauriMock.onReturn('abe_status', null)
     expect(await f.abe.status()).toBeNull()
-    warnSpy.mockRestore()
+    warnSpy.mockClear()
   })
 
   it('bind：成功 {ok:true}；Err 前缀协议解析判别联合（cancelled/failed/notready），无前缀兜底 failed 不抛（Task 11）', async () => {
@@ -246,7 +248,7 @@ describe('abeOps（ABE 服务宿主通道，P6 T4）', () => {
     if (bare.ok) throw new Error('expected bind failure')
     expect(bare.reason).toBe('failed')
     expect(bare.detail).toBe('安装过程异常终止')
-    warnSpy.mockRestore()
+    warnSpy.mockClear()
   })
 
   it('wrap（C1 终审）：DEK 以 number 数组入 abe_wrap，成功 true；invoke Err 折叠 false', async () => {
@@ -258,7 +260,7 @@ describe('abeOps（ABE 服务宿主通道，P6 T4）', () => {
     tauriMock.on('abe_wrap', () => { throw new Error('pipe busy') })
     expect(await f.abe.wrap(DEK)).toBe(false)
     expect(warnSpy).toHaveBeenCalledWith('[desktop] abe_wrap 失败（服务不可达/被拒），绑定序列中止', expect.any(Error))
-    warnSpy.mockRestore()
+    warnSpy.mockClear()
   })
 
   it('remove：{ok} 透传；invoke 异常 → {ok:false,message}', async () => {
@@ -271,6 +273,29 @@ describe('abeOps（ABE 服务宿主通道，P6 T4）', () => {
     const r = await f.abe.remove()
     expect(r.ok).toBe(false)
     expect(r.message).toContain('ipc broken')
+  })
+
+  it('addSource/removeSource → store abe 标记源 op（T6 绑定编排落盘步，密文在服务侧 HKLM）；未就绪报「数据尚未就绪」', async () => {
+    const { f, store, holder } = makeFactory()
+    await f.abe.addSource()
+    expect(store.addAbeSourceOp).toHaveBeenCalledTimes(1)
+    await f.abe.removeSource()
+    expect(store.removeAbeSourceOp).toHaveBeenCalledTimes(1)
+    holder.value = null
+    await expect(f.abe.addSource()).rejects.toThrow('数据尚未就绪')
+    await expect(f.abe.removeSource()).rejects.toThrow('数据尚未就绪')
+  })
+
+  it('unwrap（T7 锁屏静默解锁）：成功 → Uint8Array；服务失败收敛 null 供 LockScreen 回退 dpapi（仅告警）；非 Windows 短路 null', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { f } = makeFactory()
+    tauriMock.onReturn('abe_unwrap', Array.from(DEK))
+    expect(await f.abe.unwrap()).toEqual(DEK)
+    tauriMock.on('abe_unwrap', () => { throw new Error('service mismatch') })
+    expect(await f.abe.unwrap()).toBeNull()
+    expect(warnSpy).toHaveBeenCalledWith('[desktop] abe_unwrap 失败（服务未装/失配/不可达），锁屏将回退 OS 通道', expect.any(Error))
+    warnSpy.mockClear()
+    expect(await makeFactory(UA_LINUX).f.abe.unwrap()).toBeNull()
   })
 })
 
@@ -318,11 +343,13 @@ describe('migrateDekWrapToEntropyBound（F3 幂等/best-effort）', () => {
     tauriMock.on('os_auto_protect', () => { throw new Error('dpapi denied') })
     await expect(f.migrateDekWrapToEntropyBound()).resolves.toBeUndefined()
     await vi.waitFor(() => expect(warnSpy).toHaveBeenCalledWith('[migrate] DEK 包裹升级为应用熵绑定格式失败（旧格式仍可解锁，下次重试）', expect.any(Error)))
-    warnSpy.mockRestore()
+    warnSpy.mockClear()
   })
 })
 
 describe('I2 终审：ABE 服务侧密文与 DEK 生命周期联动（security 通道包装）', () => {
+  // 模块级打桩（文件尾前全程生效）：vitest 5 下文件内其余 in-test spyOn 返回同一 mock，
+  // 其清理只能 mockClear（见上），不得 mockRestore
   const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
   afterEach(() => {

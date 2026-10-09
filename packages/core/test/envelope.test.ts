@@ -73,13 +73,15 @@ describe('envelope v2', () => {
     await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, m: 262145 } }, 'p')).rejects.toThrow('invalid backup envelope')
     await expect(openBackupEnvelope({ ...env, kdf: { ...env.kdf, p: 2 } }, 'p')).rejects.toThrow('invalid backup envelope')
   })
-  it('最重档 paranoid（262144/4/1）恰好等于钳制上限：放行并正常解开', async () => {
+  // C8/B21：paranoid 档 argon2id（256MB）真实派生墙钟随负载浮动，默认 5s 在多包并发下偶败——参照 twoDevice 30s 先例收口
+  // （vitest 5 起三参签名 test(name, fn, options) 已移除，options 前移为第二参）
+  it('最重档 paranoid（262144/4/1）恰好等于钳制上限：放行并正常解开', { timeout: 30_000 }, async () => {
     const env = await createBackupEnvelope(vaultJson, '口令', 'paranoid')
     expect(env.kdf.m).toBe(262144)
     expect(env.kdf.t).toBe(4)
     expect(env.kdf.p).toBe(1)
     expect(await openBackupEnvelope(env, '口令')).toBe(vaultJson)
-  }, { timeout: 30_000 }) // C8/B21：paranoid 档 argon2id（256MB）真实派生墙钟随负载浮动，默认 5s 在多包并发下偶败——参照 twoDevice 30s 先例收口
+  })
   it('kdf 参数下限违规抛 invalid backup envelope（m<1024/t<1/p<1 拒绝；OWASP 最低推荐）', async () => {
     const env = await createBackupEnvelope(vaultJson, 'p')
     // m 下限：m=512/1023/0/负数/小数/非数字 全部拒绝

@@ -23,7 +23,7 @@
  * store 构造守则（桌面端 mock 工厂同款）：挂载测试一律
  * createVueStore(createMemoryStorage(), { windowId })，禁止把普通 store 传入 reactive 包装。
  */
-import { vi } from 'vitest'
+import { vi, type Mock } from 'vitest'
 
 export type Store = Record<string, unknown>
 /** 真实 changes 形状：新增/修改带 newValue，删除仅 oldValue（R5-M4 自写回声用例依赖） */
@@ -148,7 +148,8 @@ export interface ChromeShim {
     addListener(cb: OnChangedListener): void
     removeListener(cb: OnChangedListener): void
   }
-  setBadgeText: ReturnType<typeof vi.fn>
+  // vitest 5 起 ReturnType<typeof vi.fn> 为 Mock<Procedure> 不可调用：显式签名泛型
+  setBadgeText: Mock<(info: { text: string }) => void>
   idle?: IdleShim
   alarms: {
     created: Array<{ name: string; info?: unknown }>
@@ -165,7 +166,7 @@ export interface ChromeShim {
   contextMenus: ContextMenusShim
   notifications: NotificationsShim
   offscreen?: OffscreenShim
-  tabs: { query(): Promise<Array<{ url?: string }>>; create: ReturnType<typeof vi.fn> }
+  tabs: { query(): Promise<Array<{ url?: string }>>; create: Mock<(opts: { url: string }) => Promise<Record<string, unknown>>> }
   /** 当前注册的 onMessage listener 副本（直接派发/断言 offscreen listener 返回值用） */
   onMessageListeners(): MessageListener[]
   /** 出站消息记录（sendMessage 语义经 chrome.runtime.sendMessage） */
@@ -193,7 +194,7 @@ export function installChromeShim(opts: ChromeShimOptions = {}): ChromeShim {
   const messageListeners: MessageListener[] = []
   const contextMenuListeners: Array<(info: Record<string, unknown>) => void> = []
 
-  const setBadgeText = vi.fn()
+  const setBadgeText = vi.fn<(info: { text: string }) => void>()
 
   const dispatchMessage = (msg: unknown, sender: unknown): Promise<unknown> => {
     const listeners = [...messageListeners]
@@ -305,7 +306,7 @@ export function installChromeShim(opts: ChromeShimOptions = {}): ChromeShim {
     },
   }
 
-  const tabsCreate = vi.fn(async () => ({}))
+  const tabsCreate = vi.fn(async (_opts: { url: string }) => ({} as Record<string, unknown>))
 
   const runtimeApi = {
     lastError: undefined as unknown,

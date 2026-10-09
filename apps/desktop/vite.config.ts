@@ -13,6 +13,6 @@ export default defineConfig({
   build: {
     target: 'chrome105',
     outDir: 'dist',
-    rollupOptions: { input: { main: 'index.html', mini: 'mini.html' } },
+    rolldownOptions: { input: { main: 'index.html', mini: 'mini.html' } },
   },
 })
