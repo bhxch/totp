@@ -80,6 +80,27 @@ cargo clippy / fmt --check 干净。新增用例：MdTextField/MdSelect 浮动�
 ## 遗留
 
 - 36 笔未推送 origin（累积至此批）
-- LAST_MINI_SIZE 重建路径（释放策略销毁→快捷键重建）未真机驱动，逻辑简单
-  （remember 三路径共用 + toggle 恢复分支先尺寸后定位），靠单测与下一次走查
 - 用户若偏好 mini 默认尺寸/记住尺寸策略调整，属产品决策另议
+
+## 追加（同日）：mini 窗口尺寸跨重启持久化（bc75734，真机 2/2 达标）
+
+273f0fb 的尺寸记忆为内存态、重启即失，用户裁定需跨重启保留。
+
+- 方案：settings.json 增 `miniWindowSize`（[宽,高] **客户区**物理像素，沿用
+  miniPinned 读写模式）。落盘 = remember 隐藏路径变更即写（失焦高频，无变化
+  不写）+ `RunEvent::ExitRequested` 兜底（托盘退出 app.exit(0) 不经 remember）；
+  恢复单点收敛到 `ensure_window` 构建后（hidden 期 set_size 无闪烁，覆盖重启/
+  销毁重建/首次启动），会话记忆优先、settings 兜底。
+- **顺带修正 273f0fb 的缺陷**：记忆源 outer_size→inner_size。`set_size` 语义
+  是客户区，无边框窗 outer 含 ~13px 隐形边框，outer 存 inner 取会每轮
+  hide/restore 放大（真机 outer 826 vs inner 800 实证差值）。
+- 分节解析拒绝非数组/元素数不符/零/负/浮点，坏数据回落默认 320×420；
+  cargo test 230（+2：解析形态矩阵、settings 往返）。
+- 真机实证（dev，DPR=2）：mini 调 400×500 逻辑→收起→settings 落盘
+  `[800, 1000]`；硬杀重启后 hidden 期 `innerSize` 即 800×1000 物理（构建时
+  恢复，未做任何显示操作）。此前遗留的「LAST_MINI_SIZE 重建路径未真机驱动」
+  由构建时恢复 + 本轮重启链路覆盖，撤销该项。
+
+## 环境坑补记
+
+- 恢复已装 release 版前确认 dev 已杀（两者同为 totp-desktop.exe，互相让位）。
