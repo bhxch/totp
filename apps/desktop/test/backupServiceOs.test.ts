@@ -10,7 +10,7 @@ import { READABLE_BACKUP_RE, type BackupEnvelope } from '@totp/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { tauriMock } from './mocks/tauri'
 import {
-  pickBackupOpenOs, pickBackupSaveOs, saveConflictBackupToDir,
+  pickBackupOpenOs, pickBackupSaveOs, saveBackupFileOs, saveConflictBackupToDir,
   writeBackupFileOs, writeBytesFileOs, writeTextFileOs,
 } from '../src/backupService'
 
@@ -109,5 +109,24 @@ describe('pickBackupSaveOs / pickBackupOpenOs（F4 对话框授权句柄）', ()
 
     tauriMock.onReturn('pick_open_file_os', null)
     expect(await pickBackupOpenOs(filters)).toBeNull()
+  })
+})
+
+describe('saveBackupFileOs（plan23 §4）', () => {
+  it('另存确认：.totpbackup 过滤器 + 文本写盘通道收到 UTF-8 信封文本，返回 true', async () => {
+    tauriMock.onReturn('pick_save_file_os', { path: 'C:\\out\\vault-20261010-090000.totpbackup', dirToken: 'tk' })
+    const bytes = new TextEncoder().encode('{"envelope":1}')
+    await expect(saveBackupFileOs('vault-20261010-090000.totpbackup', bytes)).resolves.toBe(true)
+    const [pick] = tauriMock.calls('pick_save_file_os')
+    expect((pick?.args as { filters: Array<{ extensions: string[] }> }).filters[0]?.extensions).toContain('totpbackup')
+    const [write] = tauriMock.calls('write_text_file_os')
+    expect(write?.args).toMatchObject({ path: 'C:\\out\\vault-20261010-090000.totpbackup', contents: '{"envelope":1}' })
+  })
+
+  it('取消另存：返回 false，不写盘', async () => {
+    tauriMock.onReturn('pick_save_file_os', null)
+    const bytes = new TextEncoder().encode('{"envelope":1}')
+    await expect(saveBackupFileOs('vault-20261010-090000.totpbackup', bytes)).resolves.toBe(false)
+    expect(tauriMock.calls('write_text_file_os')).toHaveLength(0)
   })
 })

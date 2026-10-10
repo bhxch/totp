@@ -260,6 +260,16 @@ export async function writeBytesFileOs(picked: PickedOsFile, bytes: Uint8Array):
   await invoke('write_bytes_file_os', { path: picked.path, contents: Array.from(bytes), dirToken: picked.dirToken })
 }
 
+/** 云端备份密文原件另存（plan23 §4）：picked 由 pickBackupSaveOs 产生，遏制基准=其登记父目录。
+ *  信封 JSON 是 UTF-8 文本，走 write_text_file_os 通道（EXPORT_EXTENSIONS 含 .totpbackup）——
+ *  write_bytes_file_os 白名单 .png 专属（dialog_grants.rs:506），不适用。取消另存=false */
+export async function saveBackupFileOs(name: string, bytes: Uint8Array): Promise<boolean> {
+  const picked = await pickBackupSaveOs(name, [{ name: 'TOTP 备份', extensions: ['totpbackup'] }])
+  if (!picked) return false
+  await writeTextFileOs(picked, new TextDecoder().decode(bytes))
+  return true
+}
+
 /** 导出写盘（F4）：picked 由 pickBackupSaveOs 的 Rust save 对话框产生，遏制基准=其登记父目录 */
 export async function writeBackupFileOs(picked: PickedOsFile, envelope: BackupEnvelope): Promise<void> {
   await writeTextFileOs(picked, JSON.stringify(envelope, null, 2))

@@ -19,7 +19,7 @@ import type { CloudPlatform, VueStore } from '@totp/ui'
 // host 工厂经 '@totp/ui/host' 子出口导入(不经主出口:宿主测试对 '@totp/ui' 的全量 vi.mock
 // 只需覆盖宿主直接消费的 runner/桥四件;host 内部自引用 '@totp/ui' 命中同一 mock,见 host/index.ts)
 import { createCloudSyncRunnerForStore, createStoreBackedCloudPlatform, createRevSeal } from '@totp/ui/host'
-import { saveConflictBackupToDir, saveCloudSourcesPreservingLocal } from './backupService'
+import { saveBackupFileOs, saveConflictBackupToDir, saveCloudSourcesPreservingLocal } from './backupService'
 import {
   CLOUD_AUTO_STATUS_KEY, loadCloudPrefs, persistCloudPrefs, readAutoStatusText, recordAutoStatus,
   readCloudContentHash, writeCloudContentHash,
@@ -54,6 +54,8 @@ export function createCloudPlatform(deps: CloudPlatformDeps): CloudPlatform {
         set: (p) => persistCloudPrefs(p),
       },
       loadAutoStatus: async () => readAutoStatusText(CLOUD_AUTO_STATUS_KEY),
+      // plan23 §4：云端备份密文原件另存（信封 JSON 走文本写盘通道，见 saveBackupFileOs 注释）
+      saveBackupFile: (name, bytes) => saveBackupFileOs(name, bytes),
       // ③ 每源代理：desktop reqwest 支持 per-request 代理，CloudCredFields 渲染代理控件
       proxySupport: true,
     },
