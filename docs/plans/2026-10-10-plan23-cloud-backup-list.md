@@ -275,7 +275,7 @@ vi.mock('../src/components/cloudPlatform', async (importOriginal) => ({
   createCloudBackend: vi.fn(),
 }))
 
-const WEBDAV_CRED = { backend: 'webdav', serverUrl: 'https://dav.example.com', username: 'u', appPassword: 'p' } as CloudCred
+const WEBDAV_CRED = { backend: 'webdav', serverUrl: 'https://dav.example.com', username: 'u', password: 'p' } as CloudCred
 const GIST_CRED = { backend: 'gist', token: 't', gistId: 'g' } as CloudCred
 
 const SOURCE_KEEP: BackupSource = { id: 'src-1', kind: 'webdav', name: 'WebDAV', retention: { type: 'keep', n: 3 }, enabled: true, role: 'primary' }
