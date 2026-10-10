@@ -27,7 +27,7 @@ describe('listCloudBackups（plan23 §1）', () => {
   it('无 Ex：回落 listBackups 且 complete=true（retention.ts 既有回退语义）', async () => {
     const r = await listCloudBackups(backendOf({ listBackups: vi.fn(async () => ['vault-20261009-210000.totpbackup']) }))
     expect(r.complete).toBe(true)
-    expect(r.items[0]).toMatchObject({ base: 'vault-20261009-210000.totpbackup', at: expect.any(Number) })
+    expect(r.items[0]).toMatchObject({ base: 'vault-20261009-210000.totpbackup', at: new Date(2026, 9, 9, 21, 0, 0).getTime() }) // 本地 2026-10-09 21:00:00（锁定解析口径）
   })
 
   it('倒序输出（字典序=时间序，最新在前）且 basename 映射 at（不可解析名 at=null）', async () => {
@@ -36,6 +36,13 @@ describe('listCloudBackups（plan23 §1）', () => {
     }))
     expect(r.items.map((x) => x.base)).toEqual(['vault-20261010-090000.totpbackup', 'vault-20261009-210000.totpbackup'])
     expect(r.items.every((x) => x.at !== null)).toBe(true)
+  })
+
+  it('混合目录前缀仍按文件名时间倒序（basename 口径，不受目录字典序干扰）', async () => {
+    const r = await listCloudBackups(backendOf({
+      listBackups: vi.fn(async () => ['e/vault-20261010-090000.totpbackup', 'd/vault-20261009-210000.totpbackup']),
+    }))
+    expect(r.items.map((x) => x.base)).toEqual(['vault-20261010-090000.totpbackup', 'vault-20261009-210000.totpbackup'])
   })
 
   it('错误原样上抛（UI 逐源行内展示，区别于 latestKeepPath 吞错语义）', async () => {

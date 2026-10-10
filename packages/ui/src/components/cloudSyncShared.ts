@@ -36,15 +36,17 @@ export function errorDigest(message: string, max = 60): string {
   return message.replace(/\s+/g, ' ').slice(0, max)
 }
 
+/** 名单路径取 basename（'a/b/c.totpbackup'→'c.totpbackup'；无目录段原样）：list 侧与展示侧共用 */
+const basenameOf = (p: string): string => p.split('/').filter((s) => s !== '').pop() ?? p
+
 /** keep 源远端最新份路径：listBackups 名单内时间戳备份的最新份（字典序=时间序，与滚动删除同口径）；
  *  后端不支持列名单/名单为空/listBackups 抛错 → null。抛错同按 null 走（该源按云端无对象首推，
  *  收敛归后续轮；本地/远端内容零丢失）——读侧名单失败不得炸整轮 Promise.all（逐源隔离，同 ⑮ 裁定） */
 export async function latestKeepPath(backend: CloudBackend): Promise<string | null> {
   if (!backend.listBackups) return null
-  const basename = (p: string): string => p.split('/').filter((s) => s !== '').pop() ?? p
   let names: string[]
   try {
-    names = (await backend.listBackups()).filter((p) => BACKUP_NAME_RE.test(basename(p))).sort()
+    names = (await backend.listBackups()).filter((p) => BACKUP_NAME_RE.test(basenameOf(p))).sort()
   } catch (err) {
     // spec §4.3：吞错返回 null 的首推语义保留（读侧名单失败不得炸整轮），但留痕可排查
     console.warn('[cloud] listBackups 失败，keep 源按云端无对象首推', err)
@@ -62,22 +64,21 @@ export interface CloudBackupItem {
 }
 
 /** 云端备份列表（plan23 §1）：优先 listBackupsEx（F6 截断感知），无则 listBackups 且 complete=true
- *  （retention.ts 既有回退语义）。名单过滤/排序与 latestKeepPath 同口径（BACKUP_NAME_RE、
- *  字典序=时间序），输出倒序（最新在前）。错误原样上抛——UI 逐源行内展示，
- *  区别于 latestKeepPath 吞错返回 null 的「按云端无对象首推」语义 */
+ *  （retention.ts 既有回退语义）。名单过滤/排序按 basename 口径（BACKUP_NAME_RE、basename 字典序
+ *  =时间序）——混合目录前缀下全路径字典序≠时间序，倒序输出（最新在前）改按 base 比较（理论性
+ *  修正）。错误原样上抛——UI 逐源行内展示，区别于 latestKeepPath 吞错返回 null 的「按云端无对象
+ *  首推」语义 */
 export async function listCloudBackups(backend: CloudBackend): Promise<{ items: CloudBackupItem[]; complete: boolean }> {
   const listed = backend.listBackupsEx
     ? await backend.listBackupsEx()
     : { names: backend.listBackups ? await backend.listBackups() : [], complete: true }
-  const basename = (p: string): string => p.split('/').filter((s) => s !== '').pop() ?? p
   const items = listed.names
-    .filter((p) => BACKUP_NAME_RE.test(basename(p)))
-    .sort()
-    .reverse()
+    .filter((p) => BACKUP_NAME_RE.test(basenameOf(p)))
     .map((path) => {
-      const base = basename(path)
+      const base = basenameOf(path)
       return { path, base, at: backupNameTimestampMs(base) }
     })
+    .sort((a, b) => (a.base < b.base ? 1 : a.base > b.base ? -1 : 0))
   return { items, complete: listed.complete }
 }
 
