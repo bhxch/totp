@@ -83,8 +83,11 @@ CloudCard 每源展开区内、凭据字段区之后新增「云端备份」区�
 
 - 新可选成员 `CloudPlatform.saveBackupFile?(name: string, bytes: Uint8Array): Promise<boolean>`
   （`false` = 用户取消另存）。导出**不解密**：`backend.get(原名)` 原样字节落盘，便于离线留存与迁移。
-- desktop 实现：`pickBackupSaveOs`（文件过滤器补 `.totpbackup`）+ `writeBytesFileOs`；
-  extension 实现：Blob 下载（`exportConflictCopy` 同款）。
+- desktop 实现：`pickBackupSaveOs`（文件过滤器补 `.totpbackup`）+ `writeTextFileOs`——云端密文
+  原件本质是信封 JSON 的 UTF-8 文本（`put` 前 `JSON.stringify`，`syncOrchestrator.ts:64-69`），
+  文本管道无损；`writeBytesFileOs` 白名单是 `.png` 专属（`dialog_grants.rs:506`），不适用
+  （2026-10-10 计划期勘误：初稿误写 writeBytesFileOs）。Rust 仍零改动。
+  extension 实现：Blob 下载（`exportConflictCopy`/`saveTextFile` 同款 `downloadBlob` 通道）。
 - 未提供该成员的宿主不渲染导出按钮（能力检测，BackupCard `v-if="platform.restoreByName"` 同模式）。
 - Gist 超 1MB 被截断的份：`get` 抛既有中文错误（`gist.ts:56`），导出按钮报错即可。
 
