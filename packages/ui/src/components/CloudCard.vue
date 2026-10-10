@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { BackupSource, CloudCred, EntryConflict, SourceSyncState } from '@totp/core'
-import { BACKEND_LABEL, contentHashVault, pushEnvelope, resolveObjectPath, resolveTimestampPath, syncMultipleTargets } from '@totp/core'
+import { BACKEND_LABEL, contentHashVault, openBackupEnvelope, pushEnvelope, resolveObjectPath, resolveTimestampPath, syncMultipleTargets } from '@totp/core'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { VueStore } from '../store'
@@ -10,7 +10,7 @@ import { useAutoPrefs } from '../composables/useAutoPrefs'
 import { blankCred, customProxyUrlError, hasPlaintextUrl, intervalOptions, isBlankCred, newSourceId, retentionOptions } from './cardShared'
 import { createCloudBackend } from './cloudPlatform'
 import type { CloudPlatform } from './cloudPlatform'
-import { actionStatusLabelKey, allTargetsSettled, buildSyncTargets, errorDigest, runExclusive, runKeepRetention } from './cloudSyncShared'
+import { actionStatusLabelKey, allTargetsSettled, buildSyncTargets, errorDigest, listCloudBackups, runExclusive, runKeepRetention } from './cloudSyncShared'
 import { pendingMergeConfirm, requestMergeConfirm, settleMergeConfirm, syncProgressState } from './cloudSyncBridge'
 import CloudCredFields from './CloudCredFields.vue'
 import MergeConflictList from './MergeConflictList.vue'
@@ -104,6 +104,46 @@ async function onExportCopy(name: string): Promise<void> {
   } catch (e) {
     fail(e)
   }
+}
+
+// ---------- 云端备份列表（plan23 §1：每源折叠区+按需刷新；core/Rust 零改动，直调既有 backend 成员） ----------
+interface CloudBackupView { path: string; base: string; at: number | null }
+/** 每源云端备份缓存：手动刷新是唯一更新入口（挂载不自动拉，避免打开页面触发 N 个网络请求）；源移除清空 */
+const backupsBySource = ref<Record<string, { items: CloudBackupView[]; complete: boolean }>>({})
+const backupsLoading = ref<Record<string, boolean>>({})
+const backupsError = ref<Record<string, string>>({})
+
+/** 源凭据解析（onConfirmReset 同口径）：编辑副本非空白优先，回落已存凭据；锁定态缓存空 → undefined */
+function credOf(s: BackupSource): CloudCred | undefined {
+  const draft = credDrafts.value[s.id]
+  return draft && !isBlankCred(draft) ? draft : props.platform?.creds[s.id]
+}
+
+/** 拉取该源远端时间戳备份名单：缺凭据行内报错不构造 backend；网络错误行内展示不炸整卡 */
+async function refreshBackups(s: BackupSource): Promise<void> {
+  if (backupsLoading.value[s.id]) return
+  const cred = credOf(s)
+  if (!cred || isBlankCred(cred)) {
+    backupsError.value[s.id] = t('cloudCard.missingCreds')
+    return
+  }
+  backupsLoading.value[s.id] = true
+  backupsError.value[s.id] = ''
+  try {
+    backupsBySource.value[s.id] = await listCloudBackups(createCloudBackend(cred))
+  } catch (e) {
+    backupsError.value[s.id] = t('cloudCard.backupsLoadFailed', { message: trunc(String((e as Error)?.message ?? e)) })
+  } finally {
+    backupsLoading.value[s.id] = false
+  }
+}
+
+function backupsFor(id: string): { items: CloudBackupView[]; complete: boolean } | null {
+  return backupsBySource.value[id] ?? null
+}
+/** 文件名时间戳 → 本地时间展示（不可解析名恒不出此列，防御兜底空串） */
+function backupTime(at: number | null): string {
+  return at === null ? '' : new Date(at).toLocaleString()
 }
 
 // ---------- T11 角色互斥（spec §2 活动目标单选，T6 遗留收口） ----------
@@ -230,6 +270,9 @@ function removeTarget(id: string): void {
   pendingStates.value = pendingStates.value.filter(([k]) => k !== id)
   delete statusMap.value[id]
   delete credDrafts.value[id]
+  delete backupsBySource.value[id]
+  delete backupsLoading.value[id]
+  delete backupsError.value[id]
   expanded.value = expandedId !== undefined && expandedId !== null
     ? sources.value.findIndex((x) => x.id === expandedId)
     : -1
@@ -671,6 +714,28 @@ const hasDuplicateNames = computed(() => {
              isOAuthCapableDraft 守卫合并为一段（token 文案按 backend 三元取键）；嵌套字段就地
              编辑=编辑副本语义不变，草稿整体替换仍在父级 credDrafts；retention 供目标路径预览分支 -->
         <CloudCredFields :draft="credDrafts[s.id]" :busy="busy" :retention="s.retention" :proxy-support="platform.proxySupport === true" />
+        <!-- 云端备份区块（plan23 §1）：手动刷新按需加载；空态按保留模式分流说明 -->
+        <div class="cloud-backups">
+          <div class="cloud-backups-head">
+            <span class="cloud-backups-title">{{ t('cloudCard.backupsTitle') }}</span>
+            <MdButton variant="text" class="backup-refresh" :disabled="busy || confirmPending || backupsLoading[s.id] === true" @click="refreshBackups(s)">{{ t('cloudCard.backupsRefresh') }}</MdButton>
+          </div>
+          <p v-if="backupsError[s.id]" class="hint">{{ backupsError[s.id] }}</p>
+          <template v-if="backupsFor(s.id)">
+            <p v-if="backupsFor(s.id)!.items.length === 0" class="hint">
+              {{ s.retention.type === 'overwrite' ? t('cloudCard.backupsEmptyOverwrite') : t('cloudCard.backupsEmpty') }}
+            </p>
+            <template v-else>
+              <p v-if="!backupsFor(s.id)!.complete" class="hint">{{ t('cloudCard.backupsTruncated') }}</p>
+              <ul class="cloud-backup-list">
+                <li v-for="b in backupsFor(s.id)!.items" :key="b.path">
+                  <span class="bname">{{ b.base }}</span>
+                  <span v-if="b.at !== null" class="btime">{{ backupTime(b.at) }}</span>
+                </li>
+              </ul>
+            </template>
+          </template>
+        </div>
       </template>
       <span v-if="statusFor(s.id)" class="target-status">{{ statusFor(s.id) }}</span>
       <MdButton
@@ -783,4 +848,12 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
   animation: cloud-spin 1s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
 @keyframes cloud-spin { to { transform: rotate(360deg); } }
+/* 云端备份区块（plan23 §1）：标题行+刷新；列表行名+时间小字（对齐 BackupCard.backup-list 观感） */
+.cloud-backups { display: flex; flex-direction: column; gap: 4px; }
+.cloud-backups-head { display: flex; align-items: center; gap: 8px; }
+.cloud-backups-title { font-size: var(--md-sys-typescale-title-small); font-weight: 500; }
+.cloud-backup-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.cloud-backup-list li { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-small); }
+.cloud-backup-list .bname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cloud-backup-list .btime { opacity: .65; flex: none; }
 </style>
