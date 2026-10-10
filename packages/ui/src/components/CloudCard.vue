@@ -146,6 +146,65 @@ function backupTime(at: number | null): string {
   return at === null ? '' : new Date(at).toLocaleString()
 }
 
+/** 恢复挂起份的解密产物：get/解密/校验全部在进入确认行**之前**完成（spec §2：坏份/错口令
+ *  不进入确认流，同 onSync 的 parseVaultJson 先行口径）；确认只做 persistDownloaded */
+const pendingRestoreJson = ref('')
+
+async function onRestoreClick(s: BackupSource, name: string): Promise<void> {
+  const p = props.platform
+  const cred = credOf(s)
+  if (!p || !cred || isBlankCred(cred) || !props.sessionSecret) return
+  busy.value = true
+  try {
+    const secret: string = props.sessionSecret
+    const bytes = await createCloudBackend(cred).get(name)
+    if (bytes === null) throw new Error(t('cloudCard.backupReadEmpty'))
+    const json = await openBackupEnvelope(JSON.parse(new TextDecoder().decode(bytes)), secret)
+    parseVaultJson(json) // 恢复校验先行：不合格不进入确认流
+    pendingRestoreJson.value = json
+    askConfirm('backupRestore', `${s.id}\n${name}`)
+  } catch (e) {
+    fail(e)
+  } finally {
+    busy.value = false
+  }
+}
+
+/** 确认行文案取名单（payload=`${sourceId}\n${name}`；备份名受 BACKUP_NAME_RE 约定无 \n） */
+function restoreTargetName(): string {
+  const raw = pendingRestore.value ?? ''
+  return raw.slice(raw.indexOf('\n') + 1)
+}
+
+/** 确认恢复：整体替换本地（adopt 同链路）；**刻意不写基线**——恢复历史份=本地有意偏离云端
+ *  最新，基线保持不动，下次同步按既有四分支收敛（本地已改→上传/合并提示），与 adopt 的
+ *  pendingStates 机制方向相反（spec §2） */
+async function onConfirmBackupRestore(): Promise<void> {
+  const p = props.platform
+  const json = pendingRestoreJson.value
+  if (!p || !json) {
+    pendingRestore.value = null
+    return
+  }
+  busy.value = true
+  try {
+    await p.persistDownloaded(json)
+    msg.value = t('cloudCard.backupRestored')
+    msgKind.value = 'ok'
+  } catch (e) {
+    fail(e)
+  } finally {
+    busy.value = false
+  }
+  pendingRestore.value = null
+  pendingRestoreJson.value = ''
+}
+
+function onCancelBackupRestore(): void {
+  pendingRestore.value = null
+  pendingRestoreJson.value = ''
+}
+
 // ---------- T11 角色互斥（spec §2 活动目标单选，T6 遗留收口） ----------
 /** 角色选项（MdSegmentedButton；短文案适配行内排版） */
 const ROLE_OPTIONS = [
@@ -186,12 +245,16 @@ const progress = syncProgressState()
 onUnmounted(() => settleMergeConfirm(false))
 
 // 行内两步确认挂起态组（R7 收 confirmPattern）：adopt=待采纳 vault JSON（同步结果发起，绕过
-// ask 直接赋值）、reset/remove=待确认重置/移除的源 id；ask 互斥=同时至多一个确认行展开
+// ask 直接赋值）、reset/remove=待确认重置/移除的源 id、backupRestore/backupDelete=待确认恢复/
+// 删除的云端备份（payload=`${sourceId}\n${name}`，backupDelete Task 5 消费）；ask 互斥=同时至多
+// 一个确认行展开
 const { slots: confirmSlots, ask: askConfirm, cancel: cancelConfirm, anyPending: confirmPending } =
-  useConfirmPattern(['adopt', 'reset', 'remove'])
+  useConfirmPattern(['adopt', 'reset', 'remove', 'backupRestore', 'backupDelete'])
 const pendingAdopt = confirmSlots.adopt
 const pendingReset = confirmSlots.reset
 const pendingRemove = confirmSlots.remove
+const pendingRestore = confirmSlots.backupRestore
+const pendingDelete = confirmSlots.backupDelete // Task 5 消费
 /** 采纳源 rev 基线延后至「采用云端」确认成功才落盘（取消则不写，下次同步重新下载提示） */
 const pendingStates = ref<Array<[string, SourceSyncState]>>([])
 
@@ -731,6 +794,7 @@ const hasDuplicateNames = computed(() => {
                 <li v-for="b in backupsFor(s.id)!.items" :key="b.path">
                   <span class="bname">{{ b.base }}</span>
                   <span v-if="b.at !== null" class="btime">{{ backupTime(b.at) }}</span>
+                  <MdButton variant="text" class="backup-restore" :disabled="busy || confirmPending || !sessionSecret" @click="onRestoreClick(s, b.path)">{{ t('cloudCard.backupRestore') }}</MdButton>
                 </li>
               </ul>
             </template>
@@ -794,6 +858,11 @@ const hasDuplicateNames = computed(() => {
       <span>{{ t('cloudCard.resetConfirm', { name: sourceName(pendingReset) }) }}</span>
       <MdButton danger :disabled="busy" @click="onConfirmReset">{{ t('cloudCard.confirmReset') }}</MdButton>
       <MdButton variant="text" :disabled="busy" @click="onCancelReset">{{ t('cloudCard.cancel') }}</MdButton>
+    </div>
+    <div v-if="pendingRestore" class="confirm-row backup-restore-row">
+      <span>{{ t('cloudCard.backupRestoreConfirm', { name: restoreTargetName() }) }}</span>
+      <MdButton danger class="backup-restore-confirm" :disabled="busy" @click="onConfirmBackupRestore">{{ t('cloudCard.backupRestoreBtn') }}</MdButton>
+      <MdButton variant="text" class="backup-restore-cancel" :disabled="busy" @click="onCancelBackupRestore">{{ t('cloudCard.cancel') }}</MdButton>
     </div>
     <div v-if="pendingRemove" class="confirm-row remove-confirm-row">
       <!-- 锁定态无法立即删除保管区凭据（缓存为空不误触未解锁 reject）：如实提示改由解锁后对账清理 -->

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { createBackupEnvelope } from '@totp/core'
 import type { CloudBackend, CloudCred, BackupSource } from '@totp/core'
 import CloudCard from '../src/components/CloudCard.vue'
 import { createCloudBackend } from '../src/components/cloudPlatform'
@@ -126,5 +127,88 @@ describe('CloudCard 云端备份区块：列表与刷新（plan23 §1）', () =>
     expect(w.find('.cloud-backups').text()).toContain('列表获取失败')
     expect(w.find('.cloud-backups').text()).toContain('401')
     expect(w.find('button.creds-save').attributes('disabled')).toBeUndefined()
+  })
+})
+
+async function envelopeBytes(vault: string, password = 'pw'): Promise<Uint8Array> {
+  return new TextEncoder().encode(JSON.stringify(await createBackupEnvelope(vault, password, 'balanced')))
+}
+
+/** 恢复链含真实 Argon2（balanced=64MiB，加解密各一次）：全量套件并行时单轮可超 1s——waitFor 给足余量 */
+const CRYPTO_WAIT = { timeout: 15_000 }
+
+describe('CloudCard 云端备份恢复（plan23 §2）', () => {
+  /** 恢复按钮挂在列表行内（brief 语义修正：手动刷新是唯一列表入口，先刷新出列表行才能点恢复） */
+  function listableBackend(over: Partial<CloudBackend> = {}): CloudBackend {
+    return fakeBackend({ listBackupsEx: vi.fn(async () => ({ names: ['d/vault-20261010-090000.totpbackup'], complete: true })), ...over })
+  }
+
+  it('恢复：确认前完成读取/解密/校验；确认后 persistDownloaded 收明文，且不写任何基线', async () => {
+    useBackends({ webdav: listableBackend({ get: vi.fn(async () => await envelopeBytes(VALID_VAULT)) }) })
+    const persist = vi.fn(async () => {})
+    const saveState = vi.fn(async () => {})
+    const w = await mountCard(mkPlatform({ persistDownloaded: persist, saveSourceState: saveState }))
+    await expand(w, 0)
+    await w.find('.cloud-backups button.backup-refresh').trigger('click')
+    await flushPromises()
+    await w.find('button.backup-restore').trigger('click')
+    // 恢复链含真实 Argon2（hash-wasm）+ WebCrypto subtle：完成回调经任务队列落地，单次
+    // flushPromises 只推进一个宏任务轮不够——按 BackupCard 测试先例改用 vi.waitFor 等落地
+    await vi.waitFor(() => expect(w.find('.backup-restore-row').exists()).toBe(true), CRYPTO_WAIT)
+    expect(persist).not.toHaveBeenCalled() // 确认前不落库
+    await w.find('button.backup-restore-confirm').trigger('click')
+    await flushPromises()
+    expect(persist).toHaveBeenCalledWith(VALID_VAULT)
+    expect(saveState).not.toHaveBeenCalled() // 刻意不写 SourceSyncState 基线（spec §2）
+    expect(w.find('.backup-restore-row').exists()).toBe(false)
+  })
+
+  it('get 空（已被并发删除/置空）：报「不存在或为空」，不进入确认行', async () => {
+    useBackends({ webdav: listableBackend({ get: vi.fn(async () => null) }) })
+    const w = await mountCard(mkPlatform())
+    await expand(w, 0)
+    await w.find('.cloud-backups button.backup-refresh').trigger('click')
+    await flushPromises()
+    await w.find('button.backup-restore').trigger('click')
+    await flushPromises()
+    expect(w.find('.backup-restore-row').exists()).toBe(false)
+    expect(w.find('.err').exists()).toBe(true)
+  })
+
+  it('口令不匹配（他口令信封）：报错不进入确认行', async () => {
+    useBackends({ webdav: listableBackend({ get: vi.fn(async () => await envelopeBytes(VALID_VAULT, 'other-pw')) }) })
+    const w = await mountCard(mkPlatform())
+    await expand(w, 0)
+    await w.find('.cloud-backups button.backup-refresh').trigger('click')
+    await flushPromises()
+    await w.find('button.backup-restore').trigger('click')
+    await vi.waitFor(() => expect(w.find('.err').exists()).toBe(true), CRYPTO_WAIT) // 解密链经任务队列落地
+    expect(w.find('.backup-restore-row').exists()).toBe(false)
+  })
+
+  it('解密成功但内容非法（parseVaultJson 不过）：报错不进入确认行', async () => {
+    useBackends({ webdav: listableBackend({ get: vi.fn(async () => await envelopeBytes('{"foo":1}')) }) })
+    const w = await mountCard(mkPlatform())
+    await expand(w, 0)
+    await w.find('.cloud-backups button.backup-refresh').trigger('click')
+    await flushPromises()
+    await w.find('button.backup-restore').trigger('click')
+    await vi.waitFor(() => expect(w.find('.err').exists()).toBe(true), CRYPTO_WAIT) // 解密链经任务队列落地
+    expect(w.find('.backup-restore-row').exists()).toBe(false)
+  })
+
+  it('取消确认：本地存储不动、确认行收起', async () => {
+    useBackends({ webdav: listableBackend({ get: vi.fn(async () => await envelopeBytes(VALID_VAULT)) }) })
+    const persist = vi.fn(async () => {})
+    const w = await mountCard(mkPlatform({ persistDownloaded: persist }))
+    await expand(w, 0)
+    await w.find('.cloud-backups button.backup-refresh').trigger('click')
+    await flushPromises()
+    await w.find('button.backup-restore').trigger('click')
+    await vi.waitFor(() => expect(w.find('.backup-restore-row').exists()).toBe(true), CRYPTO_WAIT) // 解密链经任务队列落地
+    await w.find('button.backup-restore-cancel').trigger('click')
+    await flushPromises()
+    expect(persist).not.toHaveBeenCalled()
+    expect(w.find('.backup-restore-row').exists()).toBe(false)
   })
 })
