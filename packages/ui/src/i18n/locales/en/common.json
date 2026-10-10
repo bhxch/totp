@@ -335,6 +335,7 @@
     "backupsLoadFailed": "Failed to list cloud backups: {message}",
     "backupRestore": "Restore",
     "backupReadEmpty": "Cloud backup does not exist or is empty",
+    "backupExport": "Export",
     "backupRestoreConfirm": "Replace all local data with cloud backup \"{name}\"? This does not change the sync baseline; the next sync converges via merge/upload.",
     "backupRestoreBtn": "Restore",
     "backupRestored": "Local data restored from cloud backup",

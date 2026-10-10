@@ -335,6 +335,7 @@
     "backupsLoadFailed": "云端备份列表获取失败：{message}",
     "backupRestore": "恢复",
     "backupReadEmpty": "云端备份不存在或内容为空",
+    "backupExport": "导出",
     "backupRestoreConfirm": "用云端备份「{name}」整体替换当前本地数据？该操作不改变同步基线，下次同步将按合并/上传收敛。",
     "backupRestoreBtn": "确认恢复",
     "backupRestored": "已从云端备份恢复本地数据",

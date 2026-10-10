@@ -261,3 +261,40 @@ describe('CloudCard 云端备份删除（plan23 §3）', () => {
     expect(list).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('CloudCard 云端备份导出（plan23 §4）', () => {
+  it('有 saveBackupFile 能力：导出按钮渲染，get 原字节 → saveBackupFile(basename, bytes)', async () => {
+    const bytes = new TextEncoder().encode('{"envelope":1}')
+    useBackends({ webdav: fakeBackend({ listBackupsEx: vi.fn(async () => ({ names: ['d/vault-20261010-090000.totpbackup'], complete: true })), get: vi.fn(async () => bytes) }) })
+    const save = vi.fn(async () => true)
+    const w = await mountCard(mkPlatform({ saveBackupFile: save }))
+    await expand(w, 0)
+    await w.find('.cloud-backups button.backup-refresh').trigger('click')
+    await flushPromises()
+    await w.find('button.backup-export').trigger('click')
+    await flushPromises()
+    expect(save).toHaveBeenCalledWith('vault-20261010-090000.totpbackup', bytes)
+  })
+
+  it('无 saveBackupFile 能力：不渲染导出按钮（能力检测）', async () => {
+    useBackends({ webdav: fakeBackend({ listBackups: vi.fn(async () => ['vault-20261010-090000.totpbackup']) }) })
+    const w = await mountCard(mkPlatform())
+    await expand(w, 0)
+    await w.find('.cloud-backups button.backup-refresh').trigger('click')
+    await flushPromises()
+    expect(w.find('button.backup-export').exists()).toBe(false)
+  })
+
+  it('get 空：报「不存在或为空」，不调 saveBackupFile', async () => {
+    useBackends({ webdav: fakeBackend({ listBackups: vi.fn(async () => ['vault-20261010-090000.totpbackup']) }) })
+    const save = vi.fn(async () => true)
+    const w = await mountCard(mkPlatform({ saveBackupFile: save }))
+    await expand(w, 0)
+    await w.find('.cloud-backups button.backup-refresh').trigger('click')
+    await flushPromises()
+    await w.find('button.backup-export').trigger('click')
+    await flushPromises()
+    expect(save).not.toHaveBeenCalled()
+    expect(w.find('.err').exists()).toBe(true)
+  })
+})

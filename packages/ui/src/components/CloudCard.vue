@@ -150,6 +150,25 @@ function backupTime(at: number | null): string {
  *  不进入确认流，同 onSync 的 parseVaultJson 先行口径）；确认只做 persistDownloaded */
 const pendingRestoreJson = ref('')
 
+/** 导出密文原件（spec §4 唯一下载出口=显式点击）：get 原字节交宿主落盘，**不解密**（离线留存/
+ *  迁移语义）；保存名取 basename（dir/name → name）。取消（false）静默，与 saveImageFile 同口径 */
+async function onBackupExport(s: BackupSource, name: string): Promise<void> {
+  const p = props.platform
+  if (!p?.saveBackupFile) return
+  const cred = credOf(s)
+  if (!cred || isBlankCred(cred)) return
+  busy.value = true
+  try {
+    const bytes = await createCloudBackend(cred).get(name)
+    if (bytes === null) throw new Error(t('cloudCard.backupReadEmpty'))
+    await p.saveBackupFile(name.split('/').filter((x) => x !== '').pop() ?? name, bytes)
+  } catch (e) {
+    fail(e)
+  } finally {
+    busy.value = false
+  }
+}
+
 async function onRestoreClick(s: BackupSource, name: string): Promise<void> {
   const p = props.platform
   const cred = credOf(s)
@@ -829,6 +848,7 @@ const hasDuplicateNames = computed(() => {
                   <span class="bname">{{ b.base }}</span>
                   <span v-if="b.at !== null" class="btime">{{ backupTime(b.at) }}</span>
                   <MdButton variant="text" class="backup-restore" :disabled="busy || confirmPending || !sessionSecret" @click="onRestoreClick(s, b.path)">{{ t('cloudCard.backupRestore') }}</MdButton>
+                  <MdButton v-if="platform.saveBackupFile" variant="text" class="backup-export" :disabled="busy || confirmPending" @click="onBackupExport(s, b.path)">{{ t('cloudCard.backupExport') }}</MdButton>
                   <MdButton variant="text" danger class="backup-delete" :disabled="busy || confirmPending" @click="askConfirm('backupDelete', `${s.id}\n${b.path}`)">{{ t('cloudCard.backupDelete') }}</MdButton>
                 </li>
               </ul>
