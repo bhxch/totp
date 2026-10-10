@@ -7,7 +7,6 @@ import { createCloudBackend } from '../src/components/cloudPlatform'
 import { settleMergeConfirm } from '../src/components/cloudSyncBridge'
 import { createTestI18n } from './helpers/i18n'
 import type { CloudPlatform } from '../src/components/cloudPlatform'
-import type { VueStore } from '../src/store'
 
 vi.mock('../src/components/cloudPlatform', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -296,5 +295,29 @@ describe('CloudCard 云端备份导出（plan23 §4）', () => {
     await flushPromises()
     expect(save).not.toHaveBeenCalled()
     expect(w.find('.err').exists()).toBe(true)
+  })
+})
+
+/** 测试专用投影：经 $ 内部 setupState 读卡内备份缓存（模板不渲染缓存本体，无别的断言面；不改生产面） */
+function setupStateBackups(setup: Record<string, unknown>, id: string): unknown {
+  return (setup.backupsBySource as Record<string, unknown> | undefined)?.[id]
+}
+
+describe('CloudCard 云端备份缓存生命周期（plan23 §1）', () => {
+  it('移除源：backupsBySource/backupsLoading/backupsError 三态随 removeTarget 清理', async () => {
+    useBackends({ webdav: fakeBackend({ listBackupsEx: vi.fn(async () => ({ names: ['vault-20261010-090000.totpbackup'], complete: true })) }) })
+    const w = await mountCard(mkPlatform())
+    await expand(w, 0)
+    await w.find('.cloud-backups button.backup-refresh').trigger('click')
+    await flushPromises()
+    expect(w.find('.cloud-backup-list').exists()).toBe(true)
+    await w.findAll('button.target-remove')[0]!.trigger('click')
+    await flushPromises()
+    await w.find('.remove-confirm-row').findAll('button')[0]!.trigger('click') // 确认移除
+    await flushPromises()
+    const setup = (w.vm.$ as unknown as { setupState: Record<string, unknown> }).setupState
+    expect(setupStateBackups(setup, 'src-1')).toBeUndefined()
+    expect((setup.backupsLoading as Record<string, unknown>)['src-1']).toBeUndefined() // 三态同法清理
+    expect((setup.backupsError as Record<string, unknown>)['src-1']).toBeUndefined()
   })
 })

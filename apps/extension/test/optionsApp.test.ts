@@ -350,6 +350,8 @@ describe('createOptionsCloudPlatform（host 装配 + extension 差异注入）',
     const calls0 = (URL.createObjectURL as unknown as ReturnType<typeof vi.fn>).mock.calls.length
     await expect(platform.saveBackupFile!('vault-20261010-090000.totpbackup', new TextEncoder().encode('{"envelope":1}'))).resolves.toBe(true)
     expect((URL.createObjectURL as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls0 + 1)
+    const blob = (URL.createObjectURL as unknown as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as Blob
+    expect(blob.type).toBe('application/octet-stream')
   })
 })
 

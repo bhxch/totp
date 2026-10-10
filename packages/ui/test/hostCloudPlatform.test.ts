@@ -15,6 +15,7 @@ describe('createStoreBackedCloudPlatform.saveBackupFile 透传（plan23 §4）',
   it('overrides 提供：平台成员透传同引用', async () => {
     const saveBackupFile = vi.fn(async () => true)
     const platform = createStoreBackedCloudPlatform(DUMMY_STORE, DUMMY_ADAPTER, { ...baseOverrides, saveBackupFile })
+    expect(platform.saveBackupFile).toBe(saveBackupFile)
     await expect(platform.saveBackupFile!('vault-20261010-090000.totpbackup', new Uint8Array([1]))).resolves.toBe(true)
     expect(saveBackupFile).toHaveBeenCalledWith('vault-20261010-090000.totpbackup', new Uint8Array([1]))
   })

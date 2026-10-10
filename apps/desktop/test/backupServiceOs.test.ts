@@ -119,6 +119,7 @@ describe('saveBackupFileOs（plan23 §4）', () => {
     await expect(saveBackupFileOs('vault-20261010-090000.totpbackup', bytes)).resolves.toBe(true)
     const [pick] = tauriMock.calls('pick_save_file_os')
     expect((pick?.args as { filters: Array<{ extensions: string[] }> }).filters[0]?.extensions).toContain('totpbackup')
+    expect((pick?.args as { defaultName?: string }).defaultName).toBe('vault-20261010-090000.totpbackup')
     const [write] = tauriMock.calls('write_text_file_os')
     expect(write?.args).toMatchObject({ path: 'C:\\out\\vault-20261010-090000.totpbackup', contents: '{"envelope":1}' })
   })
