@@ -212,3 +212,52 @@ describe('CloudCard 云端备份恢复（plan23 §2）', () => {
     expect(w.find('.backup-restore-row').exists()).toBe(false)
   })
 })
+
+describe('CloudCard 云端备份删除（plan23 §3）', () => {
+  it('删除：两步确认 → delete(原名) → 自动刷新该源列表；webdav 无 gist 标注', async () => {
+    const list = vi.fn(async () => ['vault-20261010-090000.totpbackup'])
+    const del = vi.fn(async () => {})
+    useBackends({ webdav: fakeBackend({ listBackups: list, delete: del }) })
+    const w = await mountCard(mkPlatform())
+    await expand(w, 0)
+    await w.find('.cloud-backups button.backup-refresh').trigger('click')
+    await flushPromises()
+    await w.find('button.backup-delete').trigger('click')
+    await flushPromises()
+    expect(w.find('.backup-delete-row').exists()).toBe(true)
+    expect(w.find('.backup-delete-row').text()).toContain('vault-20261010-090000.totpbackup')
+    expect(w.find('.gist-delete-note').exists()).toBe(false)
+    await w.find('button.backup-delete-confirm').trigger('click')
+    await flushPromises()
+    expect(del).toHaveBeenCalledWith('vault-20261010-090000.totpbackup')
+    expect(list).toHaveBeenCalledTimes(2) // 删除成功后自动刷新（初刷 + 删后刷）
+    expect(w.find('.backup-delete-row').exists()).toBe(false)
+  })
+
+  it('gist 源：确认行显示伪删标注（内容置空、骨架残留）', async () => {
+    useBackends({ gist: fakeBackend({ id: 'gist', listBackups: vi.fn(async () => ['vault-20261010-090000.totpbackup']) }) })
+    const w = await mountCard(mkPlatform())
+    await expand(w, 1) // SOURCE_GIST
+    await w.find('.cloud-backups button.backup-refresh').trigger('click')
+    await flushPromises()
+    await w.find('button.backup-delete').trigger('click')
+    await flushPromises()
+    expect(w.find('.gist-delete-note').exists()).toBe(true)
+  })
+
+  it('取消：不调 delete、列表不刷新', async () => {
+    const list = vi.fn(async () => ['vault-20261010-090000.totpbackup'])
+    const del = vi.fn(async () => {})
+    useBackends({ webdav: fakeBackend({ listBackups: list, delete: del }) })
+    const w = await mountCard(mkPlatform())
+    await expand(w, 0)
+    await w.find('.cloud-backups button.backup-refresh').trigger('click')
+    await flushPromises()
+    await w.find('button.backup-delete').trigger('click')
+    await flushPromises()
+    await w.find('button.backup-delete-cancel').trigger('click')
+    await flushPromises()
+    expect(del).not.toHaveBeenCalled()
+    expect(list).toHaveBeenCalledTimes(1)
+  })
+})

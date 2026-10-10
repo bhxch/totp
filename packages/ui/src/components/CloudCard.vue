@@ -205,6 +205,40 @@ function onCancelBackupRestore(): void {
   pendingRestoreJson.value = ''
 }
 
+/** 确认行解析（payload=`${sourceId}\n${name}`）：name 展示用 + 定位源供 gist 标注/删后刷新 */
+function deleteTarget(): { name: string; source: BackupSource | undefined } {
+  const raw = pendingDelete.value ?? ''
+  const id = raw.slice(0, raw.indexOf('\n'))
+  return { name: raw.slice(raw.indexOf('\n') + 1), source: sources.value.find((x) => x.id === id) }
+}
+
+/** 确认删除：delete(原名)（与列表同域）→ 成功后自动刷新该源名单。rev 基线不动：删最新份后
+ *  下轮同步按既有分支收敛（内容比对/碰撞核验兜底；云端清空走「无对象→续钟重推」），spec §3 */
+async function onConfirmBackupDelete(): Promise<void> {
+  const { source, name } = deleteTarget()
+  const cred = source ? credOf(source) : undefined
+  if (!source || !cred || isBlankCred(cred)) {
+    pendingDelete.value = null
+    return
+  }
+  busy.value = true
+  try {
+    await createCloudBackend(cred).delete(name)
+    msg.value = t('cloudCard.backupDeleted')
+    msgKind.value = 'ok'
+    await refreshBackups(source)
+  } catch (e) {
+    fail(e)
+  } finally {
+    busy.value = false
+  }
+  pendingDelete.value = null
+}
+
+function onCancelBackupDelete(): void {
+  pendingDelete.value = null
+}
+
 // ---------- T11 角色互斥（spec §2 活动目标单选，T6 遗留收口） ----------
 /** 角色选项（MdSegmentedButton；短文案适配行内排版） */
 const ROLE_OPTIONS = [
@@ -795,6 +829,7 @@ const hasDuplicateNames = computed(() => {
                   <span class="bname">{{ b.base }}</span>
                   <span v-if="b.at !== null" class="btime">{{ backupTime(b.at) }}</span>
                   <MdButton variant="text" class="backup-restore" :disabled="busy || confirmPending || !sessionSecret" @click="onRestoreClick(s, b.path)">{{ t('cloudCard.backupRestore') }}</MdButton>
+                  <MdButton variant="text" danger class="backup-delete" :disabled="busy || confirmPending" @click="askConfirm('backupDelete', `${s.id}\n${b.path}`)">{{ t('cloudCard.backupDelete') }}</MdButton>
                 </li>
               </ul>
             </template>
@@ -863,6 +898,13 @@ const hasDuplicateNames = computed(() => {
       <span>{{ t('cloudCard.backupRestoreConfirm', { name: restoreTargetName() }) }}</span>
       <MdButton danger class="backup-restore-confirm" :disabled="busy" @click="onConfirmBackupRestore">{{ t('cloudCard.backupRestoreBtn') }}</MdButton>
       <MdButton variant="text" class="backup-restore-cancel" :disabled="busy" @click="onCancelBackupRestore">{{ t('cloudCard.cancel') }}</MdButton>
+    </div>
+    <div v-if="pendingDelete" class="confirm-row backup-delete-row">
+      <span>{{ t('cloudCard.backupDeleteConfirm', { name: deleteTarget().name }) }}</span>
+      <!-- gist 伪删如实标注（spec §3）：PATCH content='' 非真删，骨架残留但列表/滚动清理即刻不可见 -->
+      <span v-if="deleteTarget().source?.kind === 'gist'" class="hint gist-delete-note">{{ t('cloudCard.gistDeleteNote') }}</span>
+      <MdButton danger class="backup-delete-confirm" :disabled="busy" @click="onConfirmBackupDelete">{{ t('cloudCard.confirmDelete') }}</MdButton>
+      <MdButton variant="text" class="backup-delete-cancel" :disabled="busy" @click="onCancelBackupDelete">{{ t('cloudCard.cancel') }}</MdButton>
     </div>
     <div v-if="pendingRemove" class="confirm-row remove-confirm-row">
       <!-- 锁定态无法立即删除保管区凭据（缓存为空不误触未解锁 reject）：如实提示改由解锁后对账清理 -->
