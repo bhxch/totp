@@ -8,7 +8,7 @@
  * （人工确认流）。该分叉由各通道自持，本模块只收同构路径（重构方案 R1 首选范围）。
  */
 import {
-  BACKUP_NAME_RE, enforceRemoteRetention, resolveObjectPath, resolveTimestampPath,
+  BACKUP_NAME_RE, backupNameTimestampMs, enforceRemoteRetention, resolveObjectPath, resolveTimestampPath,
   type BackupSource, type CloudBackend, type CloudCred, type MultiTargetInput, type RevSyncAction,
   type RevSyncOutcome, type SourceSyncState, type TargetResult,
 } from '@totp/core'
@@ -51,6 +51,34 @@ export async function latestKeepPath(backend: CloudBackend): Promise<string | nu
     return null
   }
   return names[names.length - 1] ?? null
+}
+
+/** 云端备份列表项（展示视图，plan23 §1）：path=后端原名（与 get/delete 同域，恢复/导出/删除直用）；
+ *  base=basename（展示）；at=文件名时间戳 ms（vault-{ts} 名可解析，否则 null） */
+export interface CloudBackupItem {
+  path: string
+  base: string
+  at: number | null
+}
+
+/** 云端备份列表（plan23 §1）：优先 listBackupsEx（F6 截断感知），无则 listBackups 且 complete=true
+ *  （retention.ts 既有回退语义）。名单过滤/排序与 latestKeepPath 同口径（BACKUP_NAME_RE、
+ *  字典序=时间序），输出倒序（最新在前）。错误原样上抛——UI 逐源行内展示，
+ *  区别于 latestKeepPath 吞错返回 null 的「按云端无对象首推」语义 */
+export async function listCloudBackups(backend: CloudBackend): Promise<{ items: CloudBackupItem[]; complete: boolean }> {
+  const listed = backend.listBackupsEx
+    ? await backend.listBackupsEx()
+    : { names: backend.listBackups ? await backend.listBackups() : [], complete: true }
+  const basename = (p: string): string => p.split('/').filter((s) => s !== '').pop() ?? p
+  const items = listed.names
+    .filter((p) => BACKUP_NAME_RE.test(basename(p)))
+    .sort()
+    .reverse()
+    .map((path) => {
+      const base = basename(path)
+      return { path, base, at: backupNameTimestampMs(base) }
+    })
+  return { items, complete: listed.complete }
 }
 
 /** 双通道共享的 targets 组装（core syncMultipleTargets 输入）：每对 {source, cred} 造 backend、
