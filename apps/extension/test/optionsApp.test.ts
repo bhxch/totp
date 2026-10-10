@@ -343,6 +343,14 @@ describe('createOptionsCloudPlatform（host 装配 + extension 差异注入）',
     const platform = createOptionsCloudPlatform({ store: store as never, t, autoPrefs: createCloudAutoPrefsChannel(storageAdapter), onManualSynced })
     expect((platform as CloudPlatform).onManualSynced).toBe(onManualSynced)
   })
+
+  it('saveBackupFile：Blob 下载通道恒 true（plan23 §4）', async () => {
+    stubBlobUrl()
+    const { platform } = makePlatform()
+    const calls0 = (URL.createObjectURL as unknown as ReturnType<typeof vi.fn>).mock.calls.length
+    await expect(platform.saveBackupFile!('vault-20261010-090000.totpbackup', new TextEncoder().encode('{"envelope":1}'))).resolves.toBe(true)
+    expect((URL.createObjectURL as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls0 + 1)
+  })
 })
 
 describe('createOptionsSecurityPlatform（host security ops + ext 差异）', () => {

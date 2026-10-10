@@ -135,6 +135,11 @@ export function createOptionsCloudPlatform(deps: OptionsCloudPlatformDeps): Clou
     // T11 冲突区块:副本元数据列表 + 手动导出(唯一下载出口;desktop 无此二能力=不渲染副本区)
     listConflictCopies: async () => (await listConflictCopies(storageAdapter)).map((c) => ({ name: c.name, at: c.at })),
     exportConflictCopy: (name) => exportConflictCopy(storageAdapter, name),
+    // 云端备份密文原件下载(plan23 §4):Blob 走 saveTextFile 同款 a[download] 通道;无「取消」回执,恒 true
+    saveBackupFile: async (name, bytes) => {
+      downloadBlob(name, new Blob([bytes as BlobPart], { type: 'application/octet-stream' }))
+      return true
+    },
     autoPrefs: {
       get: () => autoPrefs.get(),
       set: (p) => autoPrefs.set(p),
