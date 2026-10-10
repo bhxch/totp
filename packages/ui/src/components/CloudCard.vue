@@ -151,8 +151,8 @@ function backupTime(at: number | null): string {
 const pendingRestoreJson = ref('')
 
 /** 导出密文原件（spec §4 唯一下载出口=显式点击）：get 原字节交宿主落盘，**不解密**（离线留存/
- *  迁移语义）；保存名取 basename（dir/name → name）。取消（false）静默，与 saveImageFile 同口径 */
-async function onBackupExport(s: BackupSource, name: string): Promise<void> {
+ *  迁移语义）；保存名由调用点传入 basename（b.base）。取消（false）静默，与 saveImageFile 同口径 */
+async function onBackupExport(s: BackupSource, name: string, base: string): Promise<void> {
   const p = props.platform
   if (!p?.saveBackupFile) return
   const cred = credOf(s)
@@ -161,7 +161,7 @@ async function onBackupExport(s: BackupSource, name: string): Promise<void> {
   try {
     const bytes = await createCloudBackend(cred).get(name)
     if (bytes === null) throw new Error(t('cloudCard.backupReadEmpty'))
-    await p.saveBackupFile(name.split('/').filter((x) => x !== '').pop() ?? name, bytes)
+    await p.saveBackupFile(base, bytes)
   } catch (e) {
     fail(e)
   } finally {
@@ -308,6 +308,8 @@ const pendingReset = confirmSlots.reset
 const pendingRemove = confirmSlots.remove
 const pendingRestore = confirmSlots.backupRestore
 const pendingDelete = confirmSlots.backupDelete // Task 5 消费
+// ask 互斥兜底清槽（reset/remove 抢占）不等价于 cancel——watch 兜底同步清空恢复密文，维持「cancel 必清」不变量
+watch(pendingRestore, (v) => { if (v === null) pendingRestoreJson.value = '' })
 /** 采纳源 rev 基线延后至「采用云端」确认成功才落盘（取消则不写，下次同步重新下载提示） */
 const pendingStates = ref<Array<[string, SourceSyncState]>>([])
 
@@ -848,7 +850,7 @@ const hasDuplicateNames = computed(() => {
                   <span class="bname">{{ b.base }}</span>
                   <span v-if="b.at !== null" class="btime">{{ backupTime(b.at) }}</span>
                   <MdButton variant="text" class="backup-restore" :disabled="busy || confirmPending || !sessionSecret" @click="onRestoreClick(s, b.path)">{{ t('cloudCard.backupRestore') }}</MdButton>
-                  <MdButton v-if="platform.saveBackupFile" variant="text" class="backup-export" :disabled="busy || confirmPending" @click="onBackupExport(s, b.path)">{{ t('cloudCard.backupExport') }}</MdButton>
+                  <MdButton v-if="platform.saveBackupFile" variant="text" class="backup-export" :disabled="busy || confirmPending" @click="onBackupExport(s, b.path, b.base)">{{ t('cloudCard.backupExport') }}</MdButton>
                   <MdButton variant="text" danger class="backup-delete" :disabled="busy || confirmPending" @click="askConfirm('backupDelete', `${s.id}\n${b.path}`)">{{ t('cloudCard.backupDelete') }}</MdButton>
                 </li>
               </ul>
@@ -916,7 +918,7 @@ const hasDuplicateNames = computed(() => {
     </div>
     <div v-if="pendingRestore" class="confirm-row backup-restore-row">
       <span>{{ t('cloudCard.backupRestoreConfirm', { name: restoreTargetName() }) }}</span>
-      <MdButton danger class="backup-restore-confirm" :disabled="busy" @click="onConfirmBackupRestore">{{ t('cloudCard.backupRestoreBtn') }}</MdButton>
+      <MdButton danger class="backup-restore-confirm" :disabled="busy || !sessionSecret" @click="onConfirmBackupRestore">{{ t('cloudCard.backupRestoreBtn') }}</MdButton>
       <MdButton variant="text" class="backup-restore-cancel" :disabled="busy" @click="onCancelBackupRestore">{{ t('cloudCard.cancel') }}</MdButton>
     </div>
     <div v-if="pendingDelete" class="confirm-row backup-delete-row">
