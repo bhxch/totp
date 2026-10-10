@@ -13,7 +13,7 @@ import { createRevSeal } from './revSeal'
  * (store 保管区 op)/creds(credsCache 只读视图 getter)/readVaultJson/persistDownloaded
  * (store.replaceAllOp 整体替换)/loadSourceState/saveSourceState(rev 基线 + DEK seal)/
  * deviceId/kdfProfile。
- * 注入差异(8 键 = 2 必选 + 6 可选,全部已核实):
+ * 注入差异(9 键 = 2 必选 + 7 可选,全部已核实):
  * - saveSources(必):desktop=合并写保留并发本地源(BackupCard 并发通道);extension=core
  *   saveSources 直写(无本地源);
  * - autoPrefs(必,存储通道):desktop=localStorage;extension=storage.local 异步+进程内缓存;
@@ -21,10 +21,11 @@ import { createRevSeal } from './revSeal'
  *   extension=storage.local 列表滚动删;
  * - loadAutoStatus(存储通道):desktop 同步 localStorage 不取词;extension 异步 + 展示时取词;
  * - listConflictCopies / exportConflictCopy:extension 独有能力(T11 冲突区块),缺省不渲染副本区;
+ * - saveBackupFile: 云端备份密文原件落盘(plan23):desktop=另存对话框;extension=Blob 下载;缺省不渲染导出按钮;
  * - onManualSynced:extension 独有(凭据失效警示恢复闭环,属 badge/横幅通道族);
  * - proxySupport(③ 每源代理能力声明):desktop true(reqwest 生效);extension false(浏览器无法
  *   per-request 代理,UI 不渲染代理控件);缺省 false。
- * overrides 键数 8 ≪ 字面量成员 18(同型 10)→ 该工厂可抽。
+ * overrides 键数 9 ≪ 字面量成员 19(同型 10)→ 该工厂可抽。
  */
 
 export interface StoreBackedCloudPlatformOverrides {
@@ -41,6 +42,8 @@ export interface StoreBackedCloudPlatformOverrides {
   listConflictCopies?(): Promise<Array<{ name: string; at: number }>>
   /** 手动导出冲突副本(extension 独有;无名/已滚动清理=false 交 UI 提示) */
   exportConflictCopy?(name: string): Promise<boolean>
+  /** 云端备份密文原件落盘(desktop=另存对话框;extension=Blob 下载恒 true);缺省=CloudCard 不渲染导出按钮 */
+  saveBackupFile?(name: string, bytes: Uint8Array): Promise<boolean>
   /** 手动同步全部目标成功回调(extension 独有,审查 I1);缺省不通知 */
   onManualSynced?(): void
   /** 每源网络代理能力声明(③):desktop true / extension false;缺省 false=CloudCredFields 不渲染代理控件 */
@@ -82,6 +85,7 @@ export function createStoreBackedCloudPlatform(
       : undefined,
     ...(overrides.listConflictCopies ? { listConflictCopies: overrides.listConflictCopies } : {}),
     ...(overrides.exportConflictCopy ? { exportConflictCopy: overrides.exportConflictCopy } : {}),
+    ...(overrides.saveBackupFile ? { saveBackupFile: overrides.saveBackupFile } : {}),
     // rev 基线(spec §1.2)+ DEK seal 静态保护:与 runner 通道共用同一 revSeal(共享 cloudSyncState 键)
     loadSourceState: (id) => loadSyncState(requireAdapter(), id, seal()),
     saveSourceState: (id, st) => saveSyncState(requireAdapter(), id, st, seal()),

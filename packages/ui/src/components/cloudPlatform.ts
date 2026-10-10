@@ -87,6 +87,9 @@ export interface CloudPlatform {
   listConflictCopies?(): Promise<Array<{ name: string; at: number }>>
   /** [可选] 手动导出冲突副本（spec §4：下载仅显式点击触发；无名/已滚动清理=false 交 UI 提示） */
   exportConflictCopy?(name: string): Promise<boolean>
+  /** [可选] 云端备份密文原件落盘（plan23：desktop=另存对话框+文本写盘；extension=Blob 下载恒 true）；
+   *  返回 false=用户取消另存。缺省=CloudCard 不渲染导出按钮（能力检测） */
+  saveBackupFile?(name: string, bytes: Uint8Array): Promise<boolean>
   /** 按源 id 读取该源 rev 基线（core loadSyncState；spec §1.2 SourceSyncState），无记录 → 空状态 */
   loadSourceState(sourceId: string): Promise<SourceSyncState>
   /** 按源 id 持久化 rev 基线（core saveSyncState；同步编排返回的 states 逐源回写） */
