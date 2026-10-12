@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./host": "./src/host/index.ts",
+    "./qr": "./src/qr/index.ts",
     "./src/theme/tokens.css": "./src/theme/tokens.css"
   },
   "scripts": {

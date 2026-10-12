@@ -11,7 +11,7 @@ const { blobToPixels, decodeQrToUri } = vi.hoisted(() => ({
   decodeQrToUri: vi.fn((): { uri?: string; error?: string } => ({ error: 'no qr' })),
 }))
 
-vi.mock('@totp/ui', () => ({ blobToPixels, decodeQrToUri }))
+vi.mock('@totp/ui/qr', () => ({ blobToPixels, decodeQrToUri }))
 
 import { decodeImageBytesToUri } from '../src/qrDecode'
 
