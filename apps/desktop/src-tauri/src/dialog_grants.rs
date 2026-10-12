@@ -235,12 +235,12 @@ fn normalize_with(
     }
 }
 
-/// 词法归一（canonicalize 不可用的卷上的退路，仅 Windows）：
-/// ① 绝对路径校验（对话框路径恒绝对，相对即异常 fail-closed）；
-/// ② 逐组件消解 . 与 ..（出根即拒绝，防穿越）；
-/// ③ 逐级祖先 symlink_metadata 查 reparse 位——无链接解析能力时对一切 reparse 点
-///   fail-closed（junction/symlink 带的 0x400 位可直接查得），纯普通路径放行。
-/// 末位组件也一并查（目录登记时它即目标本身；文件路径的叶子另有 leaf_is_reparse 把守）
+/// 词法归一（canonicalize 不可用的卷上的退路，仅 Windows）：绝对路径校验（对话框路径恒
+/// 绝对，相对即异常 fail-closed）；逐组件消解 . 与 ..（出根即拒绝，防穿越）；逐级祖先双重
+/// 检查——symlink_metadata 存在性（死目录在持久化装载过滤时须失败）+ leaf_redirects_path
+/// 路径重定向判定（无链接解析能力时对 symlink/junction fail-closed，云占位等无路径目标
+/// reparse 与普通路径放行）。末位组件也一并查（目录登记时它即目标本身；文件路径的叶子
+/// 另有读取/直写通道的同名判定把守）
 #[cfg(windows)]
 fn lexical_normalize(p: &std::path::Path) -> Result<std::path::PathBuf, String> {
     use std::path::Component;
@@ -268,8 +268,8 @@ fn lexical_normalize(p: &std::path::Path) -> Result<std::path::PathBuf, String> 
     }
     let mut anc = out.as_path();
     loop {
-        let meta = std::fs::symlink_metadata(anc).map_err(|e| e.to_string())?;
-        if leaf_is_reparse(&meta) {
+        std::fs::symlink_metadata(anc).map_err(|e| e.to_string())?;
+        if leaf_redirects_path(anc) {
             return Err("path outside allowed dir".into());
         }
         match anc.parent() {
@@ -299,19 +299,16 @@ fn folded_starts_with(parent: &std::path::Path, dir: &std::path::Path) -> bool {
     !d.is_empty() && (p == d || p.starts_with(&format!("{d}\\")))
 }
 
-/// 叶子 symlink/reparse 判定（B2 叶子穿透防护；meta 须来自 symlink_metadata，不跟随末尾组件）。
-/// Windows 以 FILE_ATTRIBUTE_REPARSE_POINT（0x400）判定，覆盖 symlink/junction 等一切
-/// reparse point（Rust 的 FileType::is_symlink 对 junction 不恒真）；Unix 以 is_symlink 判定
-fn leaf_is_reparse(meta: &std::fs::Metadata) -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        meta.file_attributes() & 0x400 != 0
-    }
-    #[cfg(not(windows))]
-    {
-        meta.file_type().is_symlink()
-    }
+/// 路径重定向链接叶子判定（B2 叶子穿透防护，2026-10-12 修订：细分 reparse 标签）。
+/// 判定以 std::fs::read_link 能否解析出目标为准——Windows 上 std 仅解析
+/// IO_REPARSE_TAG_SYMLINK 与 IO_REPARSE_TAG_MOUNT_POINT 两类标签（std/src/sys/fs/
+/// windows.rs readlink），其余 reparse 标签（云占位 CLOUD_1..9/CLOUD_SYNC_ROOT、ProjFS、
+/// DEDUP 等系统托管标签，内容经驱动原位补全、不重定向路径，如 OneDrive 占位文件）一律
+/// 报错，恰好构成「是否路径重定向」的分界：解析得出目标（symlink/junction）→ true，
+/// 调用方按「路径越界」拒绝；解析不出（含普通文件）→ false 放行，云占位文件得以读取/写入。
+/// TOCTOU 诚实边界：与既有检查相同，判定与后续读写之间窗口仍在
+fn leaf_redirects_path(path: &std::path::Path) -> bool {
+    std::fs::read_link(path).is_ok()
 }
 
 // ---------- 扩展名白名单（R11 单点：5 个文件命令共用 ensure_extension，白名单按命令用途分组） ----------
@@ -535,13 +532,15 @@ pub fn list_backup_files_os(
 }
 
 /// 读取守护链公共段（is_file + dirToken 反查登记目录遏制，双侧归一防逃逸——canonicalize
-/// 优先，卷不支持时词法归一 + 逐级 reparse 拒绝），
+/// 优先，卷不支持时词法归一 + 逐级路径重定向拒绝），
 /// 白名单由各命令按用途前置（read_text 大小写敏感、import 组大小写不敏感，语义各自保留），
 /// 返回经校验的路径供读取。
-/// B2 叶子穿透防护：is_file 改以 symlink_metadata 判定（不跟随末尾组件），叶子为
-/// symlink/reparse point 一律按「路径越界」同类错误拒绝（不读穿目录外目标、不泄漏目标
-/// 信息）。TOCTOU 诚实边界：canonicalize(parent) 与最终 read 之间窗口仍在，本检查收窄
-/// 窗口而非完全关闭 TOCTOU（不引入 openat 复杂度）
+/// B2 叶子穿透防护（2026-10-12 修订）：is_file 以 symlink_metadata 判定（不跟随末尾组件）；
+/// 叶子为路径重定向链接（symlink/junction，read_link 可解析出目标）按「路径越界」同类错误
+/// 拒绝（不读穿目录外目标、不泄漏目标信息）；云占位等无路径目标的系统 reparse 标签放行
+/// （原 0x400 一刀切误杀 OneDrive 类占位文件——带属性即使已落地仍保留）。TOCTOU 诚实边界：
+/// canonicalize(parent) 与最终 read 之间窗口仍在，本检查收窄窗口而非完全关闭 TOCTOU
+/// （不引入 openat 复杂度）
 fn read_granted_file_core(
     grants: &DialogGrants,
     path: &str,
@@ -549,7 +548,7 @@ fn read_granted_file_core(
 ) -> Result<std::path::PathBuf, String> {
     let p = std::path::Path::new(path);
     let meta = std::fs::symlink_metadata(p).map_err(|_| "not a file".to_string())?;
-    if leaf_is_reparse(&meta) {
+    if leaf_redirects_path(p) {
         return Err("path outside allowed dir".into());
     }
     if !meta.is_file() {
@@ -633,14 +632,13 @@ fn write_bytes_file_granted(
         return Err("path is a directory".into());
     }
     ensure_within(p, &grants.resolve(dir_token)?)?;
-    // B2 叶子穿透防护：直写通道跟随 symlink 会覆写目录外目标，叶子为 symlink/reparse point
-    // 一律按「路径越界」同类错误拒绝（text 通道 rename 落盘替换链接本身、无此穿透，保持
-    // 不动）。TOCTOU 诚实边界：与 ensure_within 的 canonicalize 之间窗口仍在，本检查收窄
-    // 窗口而非完全关闭；路径不存在（新建文件）时 symlink_metadata 失败照常放行
-    if let Ok(meta) = std::fs::symlink_metadata(&path) {
-        if leaf_is_reparse(&meta) {
-            return Err("path outside allowed dir".into());
-        }
+    // B2 叶子穿透防护（2026-10-12 修订）：直写通道跟随 symlink 会覆写目录外目标，叶子为
+    // 路径重定向链接（symlink/junction，read_link 可解析出目标）按「路径越界」同类错误拒绝
+    // （text 通道 rename 落盘替换链接本身、无此穿透，保持不动）；云占位等无路径目标的
+    // reparse 标签放行。TOCTOU 诚实边界：与 ensure_within 的归一化之间窗口仍在，本检查
+    // 收窄窗口而非完全关闭；路径不存在（新建文件）时 read_link 失败照常放行
+    if leaf_redirects_path(std::path::Path::new(&path)) {
+        return Err("path outside allowed dir".into());
     }
     // 直写通道（与 text 侧原子写有意不同）：PNG 等二进制不经 UTF-8 管道，rename 亦无增益
     std::fs::write(path, contents).map_err(|e| e.to_string())
@@ -1131,7 +1129,8 @@ mod tests {
 
     // B2 叶子穿透防护：授权目录内被植入的 symlink 叶子不得穿透——读通道
     // （read_granted_file_core，覆盖 read_text/import/bytes 三读命令）与 bytes 直写通道对
-    // reparse 叶子一律按「路径越界」同类错误拒绝，目录外目标不被读取/覆写。
+    // 路径重定向链接叶子按「路径越界」同类错误拒绝，目录外目标不被读取/覆写
+    // （2026-10-12 修订：云占位等无路径目标 reparse 已放行，见 leaf_redirects_path）。
     // Windows 无特权（非开发者模式）创建 symlink 常失败，创建失败即跳过
     #[test]
     fn symlink_leaf_inside_granted_dir_rejected_for_read_and_direct_write() {
@@ -1179,6 +1178,61 @@ mod tests {
             std::fs::read(&payload).unwrap(),
             b"orig",
             "目录外目标不得被穿透覆写"
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    // B2 修订（2026-10-12）：leaf_redirects_path 以 read_link 可解析为准（std 仅解析
+    // SYMLINK/MOUNT_POINT 两类标签，云占位 CLOUD*/ProjFS/DEDUP 等一律报错）——
+    // 钉死该分界语义，防 std 行为漂移或误改判定
+    #[cfg(windows)]
+    #[test]
+    fn leaf_redirects_path_pins_read_link_discriminator() {
+        let base = std::env::temp_dir().join("totp_redirect_discriminator");
+        std::fs::create_dir_all(&base).unwrap();
+        let plain = base.join("plain.json");
+        std::fs::write(&plain, "{}").unwrap();
+        // 普通文件与不存在路径：非重定向（云占位文件同属此分支 → 读取/写入放行）
+        assert!(!leaf_redirects_path(&plain));
+        assert!(!leaf_redirects_path(&base.join("nonexistent.json")));
+        // symlink 文件：可解析出目标 → 重定向
+        let secret = base.join("secret.json");
+        std::fs::write(&secret, "x").unwrap();
+        let link = base.join("link.json");
+        if create_file_symlink(&secret, &link) {
+            assert!(leaf_redirects_path(&link));
+            std::fs::remove_file(&link).ok();
+        }
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    // B2 修订配套：junction（MOUNT_POINT 标签）叶子同样可被 read_link 解析 → 读通道
+    // 仍按越界拒绝（junction 无特权可建，比 symlink 用例少一个环境跳过条件）
+    #[cfg(windows)]
+    #[test]
+    fn junction_leaf_inside_granted_dir_rejected_for_read() {
+        let base = std::env::temp_dir().join("totp_junction_leaf_test");
+        let allowed = base.join("allowed");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&allowed).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let grants = DialogGrants::default();
+        let token = grants.register(std::fs::canonicalize(&allowed).unwrap(), GrantSource::Dir);
+        let link = allowed.join("vault-20260916-120000.totpbackup");
+        let mklink = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(&outside)
+            .output();
+        if !mklink.map(|o| o.status.success()).unwrap_or(false) {
+            eprintln!("skip junction_leaf 用例：mklink 不可用");
+            std::fs::remove_dir_all(&base).ok();
+            return;
+        }
+        assert_eq!(
+            read_text_file_granted(&grants, link.to_str().unwrap(), &token).unwrap_err(),
+            "path outside allowed dir",
+            "junction 叶子必须按路径越界拒绝，不得读穿目录"
         );
         std::fs::remove_dir_all(&base).ok();
     }
