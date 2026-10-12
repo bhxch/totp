@@ -2,10 +2,12 @@
 #（coverage-web 四包阈值 / coverage-rust cargo-llvm-cov，coverage-design §5）。
 # Linux 系统依赖与 build.yml 的 desktop-linux job 保持一致
 #（ubuntu-24.04 已移除 libappindicator3-dev，用 libayatana-appindicator3-dev）。
+# workflow_call：由 release.yml 作为发布前置全量重跑（验证发布 ref 本身）。
 name: ci
 on:
   push: { branches: [main] }
   pull_request: { branches: [main] }
+  workflow_call: {}
 
 permissions:
   contents: read

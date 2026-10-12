@@ -1,6 +1,8 @@
 # 正式发布流水线：push v* tag 触发。
-# gate 校验 tag 与根 package.json version 一致后，复用 build.yml 全量构建，
-# 最后汇总产物 + sha256 清单发布 GitHub Release。
+# gate 校验 tag 与根 package.json version 一致；ci 复用 ci.yml 对 tag ref 全量重跑
+#（分支保护 required checks 只对 branch 生效、tag 推送无法用仓库规则强制，
+# 故 CI 门禁在此工作流内实现，见 gate 注释）。
+# 复用 build.yml 全量构建，最后汇总产物 + sha256 清单发布 GitHub Release。
 name: release
 on:
   push: { tags: ["v*"] }
@@ -17,8 +19,11 @@ jobs:
         with: { persist-credentials: false }
       - name: tag == 全部版本落点一致（bump --check）
         run: node scripts/bump.mjs "${GITHUB_REF_NAME#v}" --check
+  ci:
+    # 发布前置：对 tag 指向的 commit 重跑完整 CI（workflow_call 在调用方 ref 执行）
+    uses: ./.github/workflows/ci.yml
   build:
-    needs: gate
+    needs: [gate, ci]
     uses: ./.github/workflows/build.yml
     with: { ref: "${{ github.ref_name }}", suffix: release, nightly: false }
   publish:
