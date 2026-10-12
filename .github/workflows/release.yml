@@ -33,6 +33,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      # 读取 CHANGELOG.md 与截取脚本（publish job 此前只下载产物，不落仓库内容）
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with: { persist-credentials: false }
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8（= v8.0.1）
         with: { path: artifacts, merge-multiple: true }
       # desktop-linux 的 zip 内保留 deb/、appimage/ 子目录（两个 glob path 的
@@ -42,9 +45,16 @@ jobs:
         run: find artifacts -mindepth 2 -type f -exec mv -t artifacts {} + && find artifacts -mindepth 1 -type d -empty -delete
       - name: sha256
         run: cd artifacts && sha256sum * > ../sha256sums.txt
+      # 发布说明 = CHANGELOG.md 对应版本小节（extract-changelog.mjs）；小节缺失时脚本打
+      # ::warning:: 并输出空 body（恒落空文件，body_path 必须存在），Release 仍以
+      # generate_release_notes 的提交列表兜底发布；CHANGELOG.md 文件本身缺失则退出码 2
+      # 中断发布（配置错误应显式暴露）
+      - name: Extract changelog section
+        run: node scripts/extract-changelog.mjs "${GITHUB_REF_NAME#v}" > release-body.md
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3（= v3.0.3，annotated tag 解引用后的 commit）
         with:
           files: |
             artifacts/*
             sha256sums.txt
+          body_path: release-body.md
           generate_release_notes: true
