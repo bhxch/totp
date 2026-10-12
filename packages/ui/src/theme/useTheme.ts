@@ -76,7 +76,7 @@ export function useTheme(store: VueStore): { mode: WritableComputedRef<ThemeMode
   function contrastValue(): string {
     return store.settings.themeContrast === 'amoled' ? 'amoled' : 'standard'
   }
-  /** 首帧镜像（入口 html 内联脚本据 themePref 还原 mode/color/contrast）：contrast 缺失会让 AMOLED
+  /** 首帧镜像（入口 html 外链的 theme-seed.js 据此还原 mode/color/contrast）：contrast 缺失会让 AMOLED
    *  用户首帧回落标准对比度再跳变（FOUC 同源问题），故三字段一并镜像；contrast 取值在写入时统一收敛 */
   function writeMirror(m: string, c: string) {
     try { localStorage.setItem(THEME_PREF_KEY, JSON.stringify({ mode: m, color: c, contrast: contrastValue() })) } catch { /* 镜像失败不影响功能 */ }

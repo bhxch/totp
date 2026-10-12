@@ -79,11 +79,18 @@ describe('useTheme', () => {
     expect(JSON.parse(localStorage.getItem('themePref')!)).toEqual({ mode: 'dark', color: 'blue', contrast: 'amoled' })
     expect(document.documentElement.dataset.contrast).toBe('amoled')
   })
-  it('四入口 html 内联脚本据镜像还原 data-contrast（无 contrast 值不设置）', () => {
+  it('四入口 html 外链 theme-seed.js（MV3 CSP 禁 inline script），种子文件两份镜像一致且含还原逻辑', () => {
     for (const f of ['apps/desktop/index.html', 'apps/desktop/mini.html', 'apps/extension/entrypoints/popup/index.html', 'apps/extension/entrypoints/options/index.html']) {
       const html = readFileSync(join(__dirname, '../../../', f), 'utf8')
-      expect(html).toContain("if(p.contrast)d.contrast=p.contrast")
+      expect(html).toContain('<script src="/theme-seed.js"></script>')
+      expect(html).not.toMatch(/<script>try\{var p=/)
     }
+    const extSeed = readFileSync(join(__dirname, '../../../apps/extension/public/theme-seed.js'), 'utf8')
+    const desktopSeed = readFileSync(join(__dirname, '../../../apps/desktop/public/theme-seed.js'), 'utf8')
+    expect(extSeed).toBe(desktopSeed)
+    // 关键逻辑片段：镜像 key 与 contrast 缺失不设置语义
+    expect(extSeed).toContain("localStorage.getItem('themePref')")
+    expect(extSeed).toContain('if (p.contrast) d.contrast = p.contrast')
   })
 })
 
