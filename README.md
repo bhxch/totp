@@ -19,7 +19,7 @@
 
 - 从 [GitHub Releases](https://github.com/bhxch/totp/releases) 下载扩展 zip：`totp-extension-chromium-<版本>.zip` / `totp-extension-firefox-<版本>.zip`（Release 附 `sha256sums.txt` 校验）
   - Chrome/Edge：解压后进入 `chrome://extensions` 开启「开发者模式」→「加载已解压的扩展程序」选中解压目录
-  - Firefox：要求 Firefox 140+（`strict_min_version: 140.0`）；未签名 zip 可经 `about:debugging` →「此 Firefox」→「临时载入附加组件」加载，商店（AMO）上架包以 zip 人工上传
+  - Firefox：要求 Firefox 140+（`strict_min_version: 140.0`；Firefox for Android 需 142+，数据收集声明的平台要求）；未签名 zip 可经 `about:debugging` →「此 Firefox」→「临时载入附加组件」加载，商店（AMO）上架包以 zip 人工上传
 - 自建：Chrome 目标 `pnpm --filter @totp/extension build` 产出 `.output/chrome-mv3`；Firefox 目标另跑 `pnpm --filter @totp/extension exec wxt build -b firefox` 产出 `.output/firefox-mv3`（CI 对双目标分别构建并断言 manifest 均为 MV3，见 [Assert MV3 artifacts 步](.github/workflows/build.yml)）
 
 ### 桌面（Tauri 2）
@@ -238,6 +238,13 @@ vault 加密支持多种解锁来源（KEK 来源）并存，在「安全」页�
 - 桌面版全功能；**插件端自动同步仅在 options 页打开期间运行**（Service Worker 后台不持有会话口令/DEK，无法加密，故不做后台 alarm），页面关闭即停
 - 自动执行仅在解锁会话且备份口令就绪时运行；自动采纳云端版本不弹确认（区别于手动同步的两步确认），结果不打扰，状态行显示「上次自动同步：时间 + 成功/失败/跳过 + 逐源明细」；未设置备份口令/库锁定/无启用源时显示中文跳过原因
 
+#### 云端备份列表与管理
+
+- 每个云源可按需加载「云端备份」列表（手动刷新，不自动拉取）：按文件名倒序展示远端加密备份
+- **恢复**：选中一份历史备份，解密校验通过并两步确认后整体替换当前库（恢复历史份不改动同步基线，后续同步按既有规则收敛）
+- **导出**：把云端密文原件保存到本地（不解密）；桌面走另存对话框，插件走浏览器下载
+- **删除**：两步确认后删除云端份并自动刷新该源列表；GitHub Gist 后端为伪删（其 API 无真删，仅清空内容，列表与滚动清理即刻不可见）
+
 ## 浏览器同步（扩展端）
 
 仅插件端支持：借 Chrome 账号经 `chrome.storage.sync` 在登录同一账号的浏览器之间同步数据（桌面版无此功能）。开关在「浏览器同步」卡，**默认关闭**，需显式开启；卡内状态条显示上次同步时间/状态。
@@ -276,10 +283,10 @@ vault 加密支持多种解锁来源（KEK 来源）并存，在「安全」页�
 - **Authenticator Plus**：口令加密 ZIP 备份支持导入，需输入备份口令（AES 加密 ZIP，对齐官方加密布局）
 - **通用 JSON / JSON array / JSONL**：逐字段配置点路径映射（如 `otp.params.secret`）将行对象映射为条目，secret 字段必填；单个 JSON 对象会自动探测其嵌套的行数组。secret 自动去空白并大写，非法 algorithm/digits/period 回落默认值（SHA1/6/30），Steam 条目固定 5 位。映射方案可命名保存、复用与删除：再次导入同结构文件时按列名匹配自动推荐，也可手动套用
 
-**SQLite 数据库（桌面与插件均可导入，需联网）**
+**SQLite 数据库（桌面与插件均可导入）**
 
 - 来源设备数据库文件（应用私有目录的 db，经系统备份/adb 等方式取出）：先按 SQLite 文件头校验，再在 sqlite_master 中按已知表名探测并解析（当前识别 Microsoft Authenticator 的 `accounts` 表）
-- 解析经 sql.js 完成，其 wasm 二进制固定从 jsdelivr CDN 加载，**首次使用需联网**；离线时明确报错，SQLite 类导入不可用
+- 解析经 sql.js 完成，其 wasm 二进制随应用打包为本地资产（**离线可用**）；实例化前按固定 SHA-256 校验完整性，不一致即拒绝加载
 
 **暂不支持**
 
@@ -358,6 +365,8 @@ pnpm typecheck     # 类型检查：core 为纯 tsc；ui/extension/desktop 为 v
 - MCP 服务器设计：[docs/plans/2026-09-21-mcp-server-design.md](docs/plans/2026-09-21-mcp-server-design.md)
 - 实施计划（按里程碑）：[docs/plans/](docs/plans/)
 - 审查与端到端验证报告（含 MCP 真机测试）：[docs/review/](docs/review/)
+- 更新日志（版本变更记录，release 说明自动取自此处）：[CHANGELOG.md](CHANGELOG.md)
+- 隐私政策（中英双语）：[docs/PRIVACY.md](docs/PRIVACY.md)
 
 ## 权限说明
 

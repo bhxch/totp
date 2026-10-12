@@ -19,7 +19,7 @@ Design doc: [docs/plans/2026-09-13-totp-tool-design.md](docs/plans/2026-09-13-to
 
 - Download the extension zips from [GitHub Releases](https://github.com/bhxch/totp/releases): `totp-extension-chromium-<version>.zip` / `totp-extension-firefox-<version>.zip` (releases include a `sha256sums.txt`)
   - Chrome/Edge: unzip, open `chrome://extensions`, enable "Developer mode" → "Load unpacked" and pick the unzipped folder
-  - Firefox: requires Firefox 140+ (`strict_min_version: 140.0`); the unsigned zip can be loaded via `about:debugging` → "This Firefox" → "Load Temporary Add-on"; the store (AMO) package is uploaded manually from the zip
+  - Firefox: requires Firefox 140+ (`strict_min_version: 140.0`; Firefox for Android requires 142+, the platform requirement of the data-collection declaration); the unsigned zip can be loaded via `about:debugging` → "This Firefox" → "Load Temporary Add-on"; the store (AMO) package is uploaded manually from the zip
 - Build from source: the Chrome target `pnpm --filter @totp/extension build` produces `.output/chrome-mv3`; the Firefox target is built separately with `pnpm --filter @totp/extension exec wxt build -b firefox`, producing `.output/firefox-mv3` (CI builds the two targets separately and asserts each manifest is MV3, see the [Assert MV3 artifacts step](.github/workflows/build.yml))
 
 ### Desktop (Tauri 2)
@@ -232,6 +232,13 @@ Sync data across devices through your own cloud drive / object storage. Entry po
 - Full-featured on desktop; **on the extension, automatic sync runs only while the options page is open** (the Service Worker background holds no session passphrase/DEK and cannot encrypt, so no background alarm), stopping when the page closes
 - Automatic runs happen only in an unlocked session with the backup passphrase ready; automatically adopting a cloud version skips confirmation (unlike manual sync's two-step confirmation); results stay quiet — the status line shows "last auto sync: time + success/failure/skipped + per-source details"; a Chinese skip reason is shown when the backup passphrase is unset / the vault is locked / no source is enabled
 
+#### Cloud backup list and management
+
+- Each cloud source has an on-demand "cloud backups" list (manual refresh, no auto-fetch): remote encrypted backups listed newest-first by file name
+- **Restore**: pick a historical backup; after decryption checks pass and a two-step confirmation, it replaces the current vault wholesale (restoring a historical copy does not touch the sync baseline; later syncs converge by the existing rules)
+- **Export**: save the remote encrypted envelope as-is (no decryption); desktop uses a save dialog, the extension uses a browser download
+- **Delete**: removed from the cloud after a two-step confirmation and the source list refreshes automatically; the GitHub Gist backend performs a pseudo-delete (its API has no true delete — content is emptied and the skeleton remains, but it immediately disappears from the list and rolling cleanup)
+
 ## Browser sync (extension only)
 
 Extension only: uses your Chrome account via `chrome.storage.sync` to sync data across browsers signed into the same account (the desktop app has no such feature). The toggle sits on the "Browser sync" card, **off by default** and must be enabled explicitly; the card's status line shows the last sync time/state.
@@ -270,10 +277,10 @@ Imports start on the Import page. After picking a file the format is auto-sniffe
 - **Authenticator Plus**: passphrase-encrypted ZIP backups supported, needs the backup passphrase (AES-encrypted ZIP, aligned with the official layout)
 - **Generic JSON / JSON array / JSONL**: configure dotted-path field mappings (e.g. `otp.params.secret`) to map row objects into entries; secret is required; a single JSON object auto-detects its nested row array. Secrets are trimmed and uppercased; invalid algorithm/digits/period fall back to defaults (SHA1/6/30); Steam entries are fixed at 5 digits. Mapping schemes can be named, saved, reused and deleted: re-importing a same-shaped file auto-recommends a scheme by column names, and schemes can be applied manually
 
-**SQLite databases (desktop and extension, network required)**
+**SQLite databases (desktop and extension)**
 
 - A source device database file (the app-private db, pulled via system backup/adb): validated by the SQLite file header, then tables are probed in sqlite_master by known names (currently Microsoft Authenticator's `accounts` table)
-- Parsing uses sql.js whose wasm binary is loaded from the jsdelivr CDN, so **first use requires network**; offline it errors explicitly and SQLite imports are unavailable
+- Parsing uses sql.js whose wasm binary ships with the app as a local asset (**works offline**); integrity is verified against a pinned SHA-256 before instantiation, and mismatches are rejected
 
 **Not yet supported**
 
@@ -352,6 +359,8 @@ Docs index:
 - MCP server design: [docs/plans/2026-09-21-mcp-server-design.md](docs/plans/2026-09-21-mcp-server-design.md)
 - Implementation plans (per milestone): [docs/plans/](docs/plans/)
 - Review and end-to-end verification reports (incl. the MCP real-machine test): [docs/review/](docs/review/)
+- Changelog (per-version notes; release descriptions are extracted from here): [CHANGELOG.md](CHANGELOG.md)
+- Privacy policy (bilingual): [docs/PRIVACY.md](docs/PRIVACY.md)
 
 ## Permissions
 
