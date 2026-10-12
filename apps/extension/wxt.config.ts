@@ -26,6 +26,14 @@ export default defineConfig({
     // 云同步（WebDAV/S3 等）请求全部经 background SW 出网：SW 携 host_permissions 时
     // fetch 不受页面 CORS 限制，页面层 setCloudFetch 注入 background 代理（cloudFetchProxy）
     host_permissions: ['http://*/*', 'https://*/*'],
+    // hash-wasm（argon2id/scrypt，安全页加密与备份信封的 KDF）运行时 WebAssembly 编译
+    // 内嵌 WASM：MV3 默认 CSP `script-src 'self'` 会将其拦截（安全页设密报 CSP 违例、
+    // 从文件恢复在 openBackupEnvelope 内被吞成 invalid envelope）。MV3 仅放行
+    // 'wasm-unsafe-eval'（chrome 88+/firefox 102+ 均支持，仍禁止 eval/远程代码），
+    // 其余保持各渠道默认口径：object-src 'self' + upgrade-insecure-requests
+    content_security_policy: {
+      extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; upgrade-insecure-requests",
+    },
     ...(browser === 'firefox'
       ? {
           // 稳定 ID（AMO 一经发布不可改）：email 形式合规且表达 GitHub 归属；

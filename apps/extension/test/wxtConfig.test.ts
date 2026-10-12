@@ -59,6 +59,18 @@ describe('wxt.config manifest 双渠道差异（B6-29/30）', () => {
     expect(manifest.protocol_handlers).toBeUndefined()
   })
 
+  it('双渠道：extension_pages CSP 放行 wasm-unsafe-eval（hash-wasm KDF 的 WASM 编译前提），不放松 eval/远程源', () => {
+    // 事故背景：MV3 默认 CSP `script-src 'self'` 拦截 WebAssembly.compile——安全页设密直接报
+    // CSP 违例，从文件恢复在 openBackupEnvelope 吞错后表现为「口令正确仍恢复失败」
+    for (const browser of ['chrome', 'firefox'] as const) {
+      const csp = (manifestOf(browser).content_security_policy as { extension_pages?: string } | undefined)?.extension_pages ?? ''
+      expect(csp).toContain("script-src 'self' 'wasm-unsafe-eval'")
+      expect(csp).not.toMatch(/(?<!wasm-)unsafe-eval/) // 仅 wasm-unsafe-eval，禁止整段 unsafe-eval
+      expect(csp).not.toMatch(/script-src[^;]*(http|https|blob:|data:)/)
+      expect(csp).toContain("object-src 'self'")
+    }
+  })
+
   it('offscreen HTML entrypoint 标记 manifest.include 仅 chrome（构建期对 firefox 排除）', () => {
     const html = readFileSync(fileURLToPath(new URL('../entrypoints/offscreen/index.html', import.meta.url)), 'utf-8')
     expect(html).toContain(`<meta name="manifest.include" content='["chrome"]' />`)
