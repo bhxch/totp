@@ -7,6 +7,11 @@ settings:
 overrides:
   '@vitejs/plugin-vue': ^6.0.9
 
+patchedDependencies:
+  '@vue/runtime-dom':
+    hash: 0ca548e8d0ddd4244e39737b5bb83bca41875198944a7bd1ca13c2ca96acb973
+    path: patches/@vue__runtime-dom.patch
+
 importers:
 
   .:
@@ -2367,7 +2372,7 @@ snapshots:
       '@vue/reactivity': 3.5.43
       '@vue/shared': 3.5.43
 
-  '@vue/runtime-dom@3.5.43':
+  '@vue/runtime-dom@3.5.43(patch_hash=0ca548e8d0ddd4244e39737b5bb83bca41875198944a7bd1ca13c2ca96acb973)':
     dependencies:
       '@vue/reactivity': 3.5.43
       '@vue/runtime-core': 3.5.43
@@ -2377,7 +2382,7 @@ snapshots:
   '@vue/server-renderer@3.5.43':
     dependencies:
       '@vue/compiler-ssr': 3.5.43
-      '@vue/runtime-dom': 3.5.43
+      '@vue/runtime-dom': 3.5.43(patch_hash=0ca548e8d0ddd4244e39737b5bb83bca41875198944a7bd1ca13c2ca96acb973)
       '@vue/shared': 3.5.43
 
   '@vue/shared@3.5.43': {}
@@ -3242,7 +3247,7 @@ snapshots:
     dependencies:
       '@vue/compiler-dom': 3.5.43
       '@vue/compiler-sfc': 3.5.43
-      '@vue/runtime-dom': 3.5.43
+      '@vue/runtime-dom': 3.5.43(patch_hash=0ca548e8d0ddd4244e39737b5bb83bca41875198944a7bd1ca13c2ca96acb973)
       '@vue/server-renderer': 3.5.43
       '@vue/shared': 3.5.43
     optionalDependencies:

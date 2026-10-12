@@ -6,6 +6,9 @@
   "pnpm": {
     "overrides": {
       "@vitejs/plugin-vue": "^6.0.9"
+    },
+    "patchedDependencies": {
+      "@vue/runtime-dom": "patches/@vue__runtime-dom.patch"
     }
   },
   "scripts": {

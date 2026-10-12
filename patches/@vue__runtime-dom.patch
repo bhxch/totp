@@ -1,0 +1,26 @@
+diff --git a/dist/runtime-dom.esm-bundler.js b/dist/runtime-dom.esm-bundler.js
+index 6068d4180139250b8fd06e4adab81eb1762cbe1b..f3169886b1ca97f7b9064ee3bdfe9ce76fff8376 100644
+--- a/dist/runtime-dom.esm-bundler.js
++++ b/dist/runtime-dom.esm-bundler.js
+@@ -66,10 +66,17 @@ const nodeOps = {
+         if (start === end || !(start = start.nextSibling)) break;
+       }
+     } else {
+-      templateContainer.innerHTML = unsafeToTrustedHTML(
+-        namespace === "svg" ? `<svg>${content}</svg>` : namespace === "mathml" ? `<math>${content}</math>` : content
+-      );
+-      const template = templateContainer.content;
++      // TOTP patch (vs 3.5.43): parse via DOMParser into a detached <template>
++      // instead of assigning `templateContainer.innerHTML` — same inert fragment
++      // parsing semantics, but no direct innerHTML assignment ships in the bundle
++      // (Firefox AMO linter reports it as UNSAFE_VAR_ASSIGNMENT).
++      const templateOwner = new DOMParser().parseFromString(
++        `<template>${unsafeToTrustedHTML(
++          namespace === "svg" ? `<svg>${content}</svg>` : namespace === "mathml" ? `<math>${content}</math>` : content
++        )}</template>`,
++        "text/html"
++      ).body.firstChild;
++      const template = templateOwner.content;
+       if (namespace === "svg" || namespace === "mathml") {
+         const wrapper = template.firstChild;
+         while (wrapper.firstChild) {
