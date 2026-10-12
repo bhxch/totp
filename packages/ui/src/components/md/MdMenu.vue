@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 // 弹层共享基线（112/8px/surface-container/48px）单点在 menu-surface.css，与 MdSelect 弹层同源
 import './menu-surface.css'
 
@@ -11,16 +11,26 @@ const EST_HEIGHT = 200
 const GAP = 8
 
 const rootRef = ref<HTMLElement | null>(null)
+const pos = ref({ left: props.x, top: props.y })
 
-const pos = computed(() => {
-  let left = props.x
-  let top = props.y
+/** 视口钳制：右/下越界时翻回 GAP 内边距。宽高由调用方给——开窗首帧用估算值先落位，
+ *  渲染后以 offsetWidth/Height 实测重钳（估算按最小菜单 200px，CodesPage 六项菜单实际
+ *  ~304px，估小会漏钳：最下一条的右键菜单底部越出窗口，2026-10-12 真机缺陷） */
+function clamp(x: number, y: number, w: number, h: number): { left: number; top: number } {
+  let left = x
+  let top = y
   if (typeof window !== 'undefined') {
-    if (left + EST_WIDTH > window.innerWidth) left = Math.max(GAP, window.innerWidth - EST_WIDTH - GAP)
-    if (top + EST_HEIGHT > window.innerHeight) top = Math.max(GAP, window.innerHeight - EST_HEIGHT - GAP)
+    if (left + w > window.innerWidth) left = Math.max(GAP, window.innerWidth - w - GAP)
+    if (top + h > window.innerHeight) top = Math.max(GAP, window.innerHeight - h - GAP)
   }
   return { left, top }
-})
+}
+
+watch(
+  [() => props.x, () => props.y],
+  ([x, y]) => { pos.value = clamp(x, y, EST_WIDTH, EST_HEIGHT) },
+  { immediate: true },
+)
 
 /** 菜单项（键盘导航/role 标注对象）：菜单根内 button/[href]/显式 tabindex 的可聚焦元素。
  *  跳过 disabled（含通用 disabled 属性与 aria-disabled）与明显隐藏项；jsdom 无布局，深度可见性
@@ -84,6 +94,8 @@ watch(
       // 菜单项均静态，open 期间动态增删项的重新标注不做；查询不到可聚焦项时静默跳过
       void nextTick(() => {
         if (!props.open) return // 竞态兜底：nextTick 前已关闭
+        // 实测重钳：jsdom 无布局 offsetWidth/Height 恒 0，|| 回退估算值
+        pos.value = clamp(props.x, props.y, rootRef.value?.offsetWidth || EST_WIDTH, rootRef.value?.offsetHeight || EST_HEIGHT)
         const items = menuItems()
         for (const el of items) el.setAttribute('role', 'menuitem')
         items[0]?.focus()
