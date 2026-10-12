@@ -185,6 +185,29 @@ describe('CodesPage 序号定位移动（④C）', () => {
     w.unmount()
   })
 
+  it('真机缺陷修复（2026-10-12）：每秒 TOTP tick 重渲染不覆盖未确认的序号草稿', async () => {
+    // 旧实现 :value 单向绑定 + runtime 对 value prop 强制重 patch 特例：tick 换新 codes 后
+    // DOM 草稿被打回旧序号（须赶 1s 内回车）。v-model 草稿后 tick 写回的恒为最新键入
+    vi.useFakeTimers()
+    try {
+      const { w, store } = await mountPage()
+      await w.findAll('.index-num')[0]!.trigger('click')
+      await flushPromises()
+      const input = w.find('.index-input')
+      await input.setValue('3')
+      // useOtpCodes 每秒 codes.value 换全新 Map/对象 → 整页重渲染：草稿必须原样保留
+      await vi.advanceTimersByTimeAsync(1000)
+      await flushPromises()
+      expect((input.element as HTMLInputElement).value).toBe('3')
+      await input.trigger('keydown.enter')
+      await flushPromises()
+      // 首行输入 3：moveToIndex 钳位落末尾（同「输入超最大序号落末尾」语义）
+      expect(issuers(store)).toEqual(['B', 'C', 'A'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('Esc 取消不落库', async () => {
     const { w, store } = await mountPage()
     await w.findAll('.index-num')[0]!.trigger('click')

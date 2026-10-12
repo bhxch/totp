@@ -268,6 +268,10 @@ const dragEnabled = computed(() => !selecting.value && query.value.trim() === ''
 const dragOver = ref<{ uuid: string; before: boolean } | null>(null)
 let dragUuid: string | null = null
 const indexEditing = ref<string | null>(null)
+/** 序号草稿（真机缺陷修复 2026-10-12）：useOtpCodes 每秒 tick 换新 codes 触发整页重渲染，
+ *  runtime 对 value prop 有「无论新旧强制重 patch」特例——单向 :value 会把 DOM 里未确认的
+ *  键入打回旧序号（改序须赶在 1s 内回车）；草稿入 Vue 状态后 v-model 重渲染写回的恒为最新键入 */
+const indexDraft = ref('')
 /** 序号编辑器聚焦宿主（真机缺陷修复）：卡片组件实例挂 ref，startIndexEdit 经 $el 查询 .index-input 聚焦 */
 const editorHost = ref<{ $el?: HTMLElement } | null>(null)
 
@@ -350,8 +354,9 @@ function clearDrag() {
   dragOver.value = null
 }
 onUnmounted(clearDrag)
-function startIndexEdit(uuid: string) {
+function startIndexEdit(uuid: string, index: number) {
   if (!dragEnabled.value) return
+  indexDraft.value = String(index + 1)
   indexEditing.value = uuid
   // 真机缺陷修复（2026-10-06 e2e 实测）：编辑器无聚焦逻辑——真实鼠标点击打开后焦点仍在
   // body，键入数字与 Enter 全部落空（jsdom setValue 直写掩盖）；聚焦并全选便于直接覆盖输入
@@ -362,10 +367,11 @@ function startIndexEdit(uuid: string) {
     el?.select()
   })
 }
-/** 序号定位移动：Enter/失焦确认（Esc 取消后的 blur 经 guard 跳过），moveToIndex 钳位后 reorderOp */
-async function confirmIndexMove(uuid: string, ev: Event) {
+/** 序号定位移动：Enter/失焦确认（Esc 取消后的 blur 经 guard 跳过），moveToIndex 钳位后 reorderOp；
+ *  键入读 indexDraft 草稿 ref（不经 event.target——每秒 tick 重渲染下 DOM 值不可靠） */
+async function confirmIndexMove(uuid: string) {
   if (indexEditing.value !== uuid) return
-  const parsed = Number.parseInt((ev.target as HTMLInputElement).value, 10)
+  const parsed = Number.parseInt(indexDraft.value, 10)
   indexEditing.value = null
   if (!Number.isFinite(parsed)) return
   const entries = sorted.value
@@ -441,10 +447,10 @@ function openSheet() {
               @pointerdown.prevent="onHandlePointerDown($event, e.uuid)"
             ><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path :d="dragIndicator.d" /></svg></span>
             <input
-              v-if="indexEditing === e.uuid" class="index-input" type="number" min="1" :value="i + 1"
+              v-if="indexEditing === e.uuid" class="index-input" type="number" min="1" v-model="indexDraft"
               :aria-label="t('codesPage.indexEditAria', { label: e.label })" @click.stop
-              @keydown.enter.prevent="confirmIndexMove(e.uuid, $event)" @keydown.esc.prevent="indexEditing = null"
-              @blur="confirmIndexMove(e.uuid, $event)"
+              @keydown.enter.prevent="confirmIndexMove(e.uuid)" @keydown.esc.prevent="indexEditing = null"
+              @blur="confirmIndexMove(e.uuid)"
             />
             <!-- 杂-I3：序号定位键盘可达——仅 dragEnabled（可交互）时声明 button 语义，
                  Enter/Space 触发与 click 同一 handler；.stop 阻断冒泡（.otp-item 根的
@@ -454,9 +460,9 @@ function openSheet() {
               :title="dragEnabled ? t('codesPage.indexEditTitle') : t('codesPage.sortDisabledHint')"
               :tabindex="dragEnabled ? 0 : undefined" :role="dragEnabled ? 'button' : undefined"
               :aria-label="dragEnabled ? t('codesPage.indexNumAria', { label: e.label }) : undefined"
-              @click.stop="startIndexEdit(e.uuid)"
-              @keydown.enter.stop.prevent="startIndexEdit(e.uuid)"
-              @keydown.space.stop.prevent="startIndexEdit(e.uuid)"
+              @click.stop="startIndexEdit(e.uuid, i)"
+              @keydown.enter.stop.prevent="startIndexEdit(e.uuid, i)"
+              @keydown.space.stop.prevent="startIndexEdit(e.uuid, i)"
             >{{ i + 1 }}</span>
           </template>
         </OtpListItem>
