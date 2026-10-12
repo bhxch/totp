@@ -1,5 +1,6 @@
 //! 对话框授权与备份/导入文件命令（R8 自 lib.rs 分节纯移动）：对话框由 Rust 侧打开，
-//! 选中目录 canonicalize 后登记进 DialogGrants 并返回不透明 token，文件命令以 dirToken
+//! 选中目录 normalize_for_containment（canonicalize 优先，RamDisk 等卷不支持时词法归一）
+//! 后登记进 DialogGrants 并返回不透明 token，文件命令以 dirToken
 //! 反查登记目录做遏制；接线（manage 登记/run() 装载持久化授权）留在 lib.rs。
 
 use std::sync::Mutex;
@@ -11,8 +12,8 @@ use crate::settings_io::write_text_atomic;
 // ---------- 备份/导入文件命令 ----------
 // 信任边界（F4 根修）：read/write_text_file_os 等命令的遏制基准不再接受前端 IPC 自证的
 // allowed_dir（前端以 parentDirOf(同一路径) 自证派生，遏制比较按构造恒真）。现在对话框由
-// Rust 侧打开（pick_dir_os / pick_open_file_os / pick_save_file_os），选中目录 canonicalize
-// 后登记进 DialogGrants 并返回不透明 token，文件命令以 dirToken 反查登记目录做遏制；
+// Rust 侧打开（pick_dir_os / pick_open_file_os / pick_save_file_os），选中目录归一后登记进
+// DialogGrants 并返回不透明 token，文件命令以 dirToken 反查登记目录做遏制；
 // 扩展名白名单（备份 .totpbackup / 导入扩展名组）保持不变，防被前端脚本当任意读写原语。
 // remove_backup_file 仅允许 AppData/backups 下的合法备份名（白名单防路径穿越）。
 
@@ -51,7 +52,7 @@ fn random_token() -> String {
 }
 
 impl DialogGrants {
-    /** 登记目录（须已 canonicalize）：同目录复用既有 token（刷新为最近使用），超限逐出最旧。
+    /** 登记目录（须已经 normalize_for_containment 归一）：同目录复用既有 token（刷新为最近使用），超限逐出最旧。
      *  来源只升不降：同目录先经目录对话框授权（Dir，已落盘）后再被文件对话框复登记（File）
      *  不降级，已持久化授权保持重启可装载 */
     fn register(&self, canonical: std::path::PathBuf, source: GrantSource) -> String {
@@ -85,7 +86,7 @@ impl DialogGrants {
         Ok(d)
     }
 
-    /** 按已 canonicalize 的目录反查 token：备份源仅持久化路径字符串，重启后经此重取句柄 */
+    /** 按已归一目录反查 token：备份源仅持久化路径字符串，重启后经此重取句柄 */
     fn token_for(&self, canonical: &std::path::Path) -> Option<String> {
         self.entries
             .lock()
@@ -112,7 +113,8 @@ fn grants_store_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
 }
 
 /// 持久化装载核心（B3 抽纯函数，不依赖 AppHandle，便于单测）：JSON 字符串数组 → 逐项
-/// canonicalize（回调注入） → 过滤失败项（目录已删/不可达）。仅接受字符串数组——磁盘格式
+/// 归一化（回调注入，canonicalize 优先/词法退路） → 过滤失败项（目录已删/不可达）。仅接受
+/// 字符串数组——磁盘格式
 /// 自始即 Vec<String>，旧文件天然兼容，装载项一律按 Dir 来源登记；非数组/元素类型不符/
 /// 解析失败返回空（与既有 load_grants 静默忽略口径一致）
 fn parse_persisted_dirs(
@@ -136,7 +138,9 @@ pub fn load_grants(app: &tauri::AppHandle) {
         return;
     };
     let state = app.state::<DialogGrants>();
-    for c in parse_persisted_dirs(&text, |d| std::fs::canonicalize(d)) {
+    for c in parse_persisted_dirs(&text, |d| {
+        normalize_for_containment(std::path::Path::new(d)).map_err(std::io::Error::other)
+    }) {
         state.register(c, GrantSource::Dir);
     }
 }
@@ -163,17 +167,136 @@ fn valid_backup_name(name: &str) -> bool {
         && !name.contains("..")
 }
 
-/** C9/F4：校验 path.parent() 必须落在后端登记目录内，canonicalize 双侧防 symlink/相对路径逃逸 */
+/** C9/F4：校验 path.parent() 必须落在后端登记目录内。双侧 normalize_for_containment 归一：
+ *  canonicalize 解析 symlink/junction/8.3/大小写防链接逃逸（原行为）；卷不支持时词法归一 +
+ *  逐级 reparse 拒绝（见该函数文档），比较走大小写不敏感折叠（Windows 语义） */
 fn ensure_within(path: &std::path::Path, allowed_dir: &std::path::Path) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| "invalid path: no parent".to_string())?;
-    let abs_parent = std::fs::canonicalize(parent).map_err(|e| e.to_string())?;
-    let abs_allowed = std::fs::canonicalize(allowed_dir).map_err(|e| e.to_string())?;
-    if !abs_parent.starts_with(&abs_allowed) {
-        return Err("path outside allowed dir".into());
+    ensure_within_with(parent, allowed_dir, |p: &std::path::Path| {
+        std::fs::canonicalize(p)
+    })
+}
+
+/// 可注入 canonicalize 的遏制核心（单测模拟 RamDisk 类卷：canonicalize 恒报 os error 1）
+fn ensure_within_with(
+    parent: &std::path::Path,
+    allowed_dir: &std::path::Path,
+    canonicalize: impl Fn(&std::path::Path) -> std::io::Result<std::path::PathBuf>,
+) -> Result<(), String> {
+    let abs_parent = normalize_with(parent, |p: &std::path::Path| canonicalize(p))?;
+    let abs_allowed = normalize_with(allowed_dir, |p: &std::path::Path| canonicalize(p))?;
+    #[cfg(windows)]
+    {
+        if !folded_starts_with(&abs_parent, &abs_allowed) {
+            return Err("path outside allowed dir".into());
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        if !abs_parent.starts_with(&abs_allowed) {
+            return Err("path outside allowed dir".into());
+        }
     }
     Ok(())
+}
+
+/// 卷不支持 GetFinalPathNameByHandle 的识别（Windows 语义：os error 1 Incorrect function
+/// ——实测 RamDisk 卷即此错、50 Not supported、120 Call not implemented）。仅按 raw code
+/// 判定且仅 Windows 启用：Unix 的 raw 1 是 EPERM，语义无关，保持既有 fail-closed
+#[cfg(windows)]
+fn canonicalize_unsupported(e: &std::io::Error) -> bool {
+    matches!(e.raw_os_error(), Some(1 | 50 | 120))
+}
+
+/// 登记与遏制比较共用的路径归一化：canonicalize 优先（解析链接/大小写/8.3）；卷不支持时
+/// 退回词法归一（RamDisk 等虚拟盘驱动不实现 GetFinalPathNameByHandle，实测 Z: 报
+/// 「Incorrect function (os error 1)」而纯读取正常——导入/导出/备份在这些盘上全军覆没的根因）。
+/// 登记/校验双侧恒走同一函数，归一形态可比较；其余错误（不存在/拒绝访问等）照常 fail-closed
+fn normalize_for_containment(p: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    normalize_with(p, |q: &std::path::Path| std::fs::canonicalize(q))
+}
+
+/// 可注入 canonicalize 的归一化核心（单测注入恒失败模拟 RamDisk 类卷）
+fn normalize_with(
+    p: &std::path::Path,
+    canonicalize: impl Fn(&std::path::Path) -> std::io::Result<std::path::PathBuf>,
+) -> Result<std::path::PathBuf, String> {
+    match canonicalize(p) {
+        Ok(c) => Ok(c),
+        Err(e) => {
+            #[cfg(windows)]
+            if canonicalize_unsupported(&e) {
+                return lexical_normalize(p);
+            }
+            Err(e.to_string())
+        }
+    }
+}
+
+/// 词法归一（canonicalize 不可用的卷上的退路，仅 Windows）：
+/// ① 绝对路径校验（对话框路径恒绝对，相对即异常 fail-closed）；
+/// ② 逐组件消解 . 与 ..（出根即拒绝，防穿越）；
+/// ③ 逐级祖先 symlink_metadata 查 reparse 位——无链接解析能力时对一切 reparse 点
+///   fail-closed（junction/symlink 带的 0x400 位可直接查得），纯普通路径放行。
+/// 末位组件也一并查（目录登记时它即目标本身；文件路径的叶子另有 leaf_is_reparse 把守）
+#[cfg(windows)]
+fn lexical_normalize(p: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    use std::path::Component;
+    if !p.is_absolute() {
+        return Err("path not absolute".into());
+    }
+    let mut out = std::path::PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::ParentDir => {
+                if !out.pop() {
+                    return Err("path outside allowed dir".into());
+                }
+            }
+            Component::CurDir => {}
+            // RootDir 不能走 PathBuf::push（带根路径的替换语义：verbatim/UNC 前缀 + "\"
+            // 会被整段吞成 "\"，实测 \\?\E: + "\\\\" → "\\"），改 OsString 裸拼接
+            Component::RootDir => {
+                let mut os: std::ffi::OsString = out.into_os_string();
+                os.push(std::path::MAIN_SEPARATOR_STR);
+                out = os.into();
+            }
+            _ => out.push(c.as_os_str()),
+        }
+    }
+    let mut anc = out.as_path();
+    loop {
+        let meta = std::fs::symlink_metadata(anc).map_err(|e| e.to_string())?;
+        if leaf_is_reparse(&meta) {
+            return Err("path outside allowed dir".into());
+        }
+        match anc.parent() {
+            Some(up) if up != anc => anc = up,
+            _ => break,
+        }
+    }
+    Ok(out)
+}
+
+/// Windows 遏制比较的形态折叠：\\?\verbatim 剥离、\\?\UNC\server\share → \\server\share
+/// 对齐、小写化（Windows 路径大小写不敏感）。canonical（\\?\E:\a）与词法（E:\a）混合形态
+/// 也能对齐；非尾随 \ 的目录前缀须以「目录+\」为界（Path::starts_with 组件语义的字符串版）
+#[cfg(windows)]
+fn folded_starts_with(parent: &std::path::Path, dir: &std::path::Path) -> bool {
+    let fold = |p: &std::path::Path| {
+        let mut s = p.to_string_lossy().to_string();
+        if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+            s = format!(r"\\{rest}");
+        } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+            s = rest.to_string();
+        }
+        s.to_lowercase()
+    };
+    let (p, d) = (fold(parent), fold(dir));
+    let d = d.trim_end_matches('\\');
+    !d.is_empty() && (p == d || p.starts_with(&format!("{d}\\")))
 }
 
 /// 叶子 symlink/reparse 判定（B2 叶子穿透防护；meta 须来自 symlink_metadata，不跟随末尾组件）。
@@ -257,10 +380,10 @@ pub struct DialogFilter {
 
 /// 登记选中「目录」本身（备份源目录，Dir 来源），并持久化跨会话授权
 fn grant_dir(app: &tauri::AppHandle, dir: std::path::PathBuf) -> Result<PickedPath, String> {
-    let canonical = std::fs::canonicalize(&dir).map_err(|e| e.to_string())?;
+    let normalized = normalize_for_containment(&dir)?;
     let token = app
         .state::<DialogGrants>()
-        .register(canonical, GrantSource::Dir);
+        .register(normalized, GrantSource::Dir);
     persist_grants(app);
     Ok(PickedPath {
         dir_token: token,
@@ -269,7 +392,7 @@ fn grant_dir(app: &tauri::AppHandle, dir: std::path::PathBuf) -> Result<PickedPa
 }
 
 /// 登记选中「文件所在父目录」（导出保存/打开读取为单次会话流，File 来源不落盘）。
-/// save 选中的新文件尚不存在，须对父目录 canonicalize（对话框保证父目录已存在）
+/// save 选中的新文件尚不存在，须对父目录归一登记（对话框保证父目录已存在）
 fn grant_file_parent(
     app: &tauri::AppHandle,
     file: std::path::PathBuf,
@@ -278,10 +401,10 @@ fn grant_file_parent(
         .parent()
         .ok_or_else(|| "invalid path: no parent".to_string())?
         .to_path_buf();
-    let canonical = std::fs::canonicalize(&dir).map_err(|e| e.to_string())?;
+    let normalized = normalize_for_containment(&dir)?;
     let token = app
         .state::<DialogGrants>()
-        .register(canonical, GrantSource::File);
+        .register(normalized, GrantSource::File);
     Ok(PickedPath {
         dir_token: token,
         path: file.to_string_lossy().to_string(),
@@ -332,12 +455,12 @@ pub async fn pick_save_file_os(
     grant_file_parent(&app, fp.into_path().map_err(|e| e.to_string())?).map(Some)
 }
 
-/// 备份源目录重取会话 token：仅对已登记（对话框授权过/启动装载）的 canonical 目录发放
+/// 备份源目录重取会话 token：仅对已登记（对话框授权过/启动装载）的归一目录发放
 #[tauri::command]
 pub fn dir_token_os(app: tauri::AppHandle, dir: String) -> Result<String, String> {
-    let canonical = std::fs::canonicalize(&dir).map_err(|e| e.to_string())?;
+    let normalized = normalize_for_containment(std::path::Path::new(&dir))?;
     app.state::<DialogGrants>()
-        .token_for(&canonical)
+        .token_for(&normalized)
         .ok_or_else(|| "dir not granted via dialog".into())
 }
 
@@ -411,7 +534,8 @@ pub fn list_backup_files_os(
     list_backup_files_granted(&grants, &dir_token)
 }
 
-/// 读取守护链公共段（is_file + dirToken 反查登记目录遏制，canonicalize 双侧防逃逸），
+/// 读取守护链公共段（is_file + dirToken 反查登记目录遏制，双侧归一防逃逸——canonicalize
+/// 优先，卷不支持时词法归一 + 逐级 reparse 拒绝），
 /// 白名单由各命令按用途前置（read_text 大小写敏感、import 组大小写不敏感，语义各自保留），
 /// 返回经校验的路径供读取。
 /// B2 叶子穿透防护：is_file 改以 symlink_metadata 判定（不跟随末尾组件），叶子为
@@ -620,6 +744,95 @@ mod tests {
         std::fs::write(&inside, "x").unwrap();
         assert!(ensure_within(&inside, &allowed).is_ok());
         std::fs::remove_dir_all(&base).ok();
+    }
+
+    // ---- 真机缺陷 2026-10-12：RamDisk 等卷不支持 canonicalize（os error 1）时的词法归一退路 ----
+
+    /// 注入恒失败的 canonicalize（os error 1 = ERROR_INVALID_FUNCTION）：模拟 Z: RamDisk 类
+    /// 虚拟盘驱动不实现 GetFinalPathNameByHandle（实测纯读取正常、canonicalize 必挂）
+    #[cfg(windows)]
+    fn ramdisk_like_canon(_p: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+        Err(std::io::Error::from_raw_os_error(1))
+    }
+
+    #[test]
+    fn normalize_with_supported_volume_matches_canonicalize() {
+        let dir = std::env::temp_dir().join("totp_normalize_canon");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(
+            normalize_with(&dir, |p: &std::path::Path| std::fs::canonicalize(p)).unwrap(),
+            std::fs::canonicalize(&dir).unwrap()
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ensure_within_lexical_fallback_allows_plain_paths_and_rejects_traversal() {
+        let base = std::env::temp_dir().join("totp_lexical_fallback_ok");
+        let allowed = base.join("Allowed");
+        std::fs::create_dir_all(&allowed).unwrap();
+        let inside = allowed.join("import.json");
+        std::fs::write(&inside, "{}").unwrap();
+        // 登记小写形态、读取原始形态：词法分支大小写不敏感须命中同一目录
+        //（temp 路径含大写段，metadata 查询走 NTFS 大小写不敏感语义不受影响）
+        let lower = std::path::PathBuf::from(allowed.to_string_lossy().to_lowercase());
+        assert!(ensure_within_with(inside.parent().unwrap(), &lower, ramdisk_like_canon).is_ok());
+        // RootDir OsString 拼接回归：verbatim 前缀形态不被 push 的带根替换语义吞掉
+        let verbatim = std::path::PathBuf::from(format!(r"\\?\{}", allowed.display()));
+        assert_eq!(lexical_normalize(&verbatim).unwrap(), verbatim);
+        // .. 穿越在词法分支同样拒绝（词法消解后越出登记目录）
+        std::fs::create_dir_all(base.join("Other")).unwrap();
+        let tricky = allowed.join("..").join("Other").join("x.json");
+        assert!(
+            ensure_within_with(tricky.parent().unwrap(), &allowed, ramdisk_like_canon).is_err()
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ensure_within_lexical_fallback_rejects_reparse_component() {
+        // 词法分支无链接解析能力：路径任一祖先是 junction（reparse 点）即 fail-closed，
+        // 即便其解析目标就落在登记目录内（保守拒绝，与「放行普通路径」不冲突）。
+        // junction 走 mklink /J（无特权可用；std 未提供 junction 创建 API）
+        let base = std::env::temp_dir().join("totp_lexical_fallback_reparse");
+        let real = base.join("real");
+        let link = base.join("link");
+        std::fs::create_dir_all(&real).unwrap();
+        let mklink = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(&real)
+            .output();
+        if !mklink.map(|o| o.status.success()).unwrap_or(false) {
+            eprintln!("skip junction 用例：mklink 不可用");
+            std::fs::remove_dir_all(&base).ok();
+            return;
+        }
+        let sub = link.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let f = sub.join("x.json");
+        std::fs::write(&f, "{}").unwrap();
+        assert!(ensure_within_with(f.parent().unwrap(), &link, ramdisk_like_canon).is_err());
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn parse_persisted_dirs_fallback_keeps_unsupported_volume_dir() {
+        // 持久化装载走同一归一退路：重启后 RamDisk 类卷上的备份源目录不再被静默丢弃
+        //（目录真实存在，仅 canonicalize 不被支持）
+        let dir = std::env::temp_dir().join("totp_persist_fallback");
+        std::fs::create_dir_all(&dir).unwrap();
+        let text = serde_json::to_string(&vec![dir.to_string_lossy().to_string()]).unwrap();
+        let got = parse_persisted_dirs(&text, |d| {
+            normalize_with(std::path::Path::new(d), ramdisk_like_canon)
+                .map_err(std::io::Error::other)
+        });
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0], dir);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     // ---------- F4 对话框授权登记（DialogGrants）单测 ----------
