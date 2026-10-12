@@ -4,6 +4,8 @@
 # softprops/action-gh-release 不移动已存在的 tag、release 永挂首日 commit）。
 # check 任务先比对 main HEAD 与 nightly tag 指向的 commit：无新提交整体跳过
 #（build/publish 均 skip，昨日 release 原样保留）；手动触发可 force 绕过。
+# 有新提交时还要求该 commit 的 ci 四 job 全绿（schedule 事件不触发 ci.yml，
+# required checks 又只对 branch 生效，发布侧只能在门禁里查询 CI 结论）。
 name: nightly
 on:
   schedule: [{ cron: "0 16 * * *" }]   # UTC 16:00 = 北京 0 点
@@ -16,6 +18,7 @@ on:
 
 permissions:
   contents: read
+  checks: read
 
 concurrency:
   group: nightly
@@ -51,7 +54,26 @@ jobs:
                 })).data.object.sha
               }
             }
-            const shouldRun = force || !prev || prev !== head
+            let shouldRun = force || !prev || prev !== head
+            // CI 门禁：有新提交时要求 main HEAD 的 ci 四 job（名单与 ci.yml jobs 对应，
+            // 同 sha 上 nightly/release 的 check run 名不同，精确名单不会误伤）全绿才发布。
+            // 未触发/进行中一律视为未绿：调度恰落在 CI 运行窗口内时按跳过处理，保留昨日
+            // release，warning 注解提示，CI 绿后手动 force 触发补发。
+            if (shouldRun && !force) {
+              const expect = ['web', 'rust', 'coverage-web', 'coverage-rust']
+              const runs = await github.paginate(github.rest.checks.listForRef, {
+                owner: context.repo.owner, repo: context.repo.repo, ref: head, per_page: 100
+              })
+              const byName = new Map(runs.map((run) => [run.name, run]))
+              const notGreen = expect.filter((name) => {
+                const run = byName.get(name)
+                return !run || run.status !== 'completed' || run.conclusion !== 'success'
+              })
+              if (notGreen.length) {
+                shouldRun = false
+                core.warning(`nightly 跳过：main HEAD 的 ci 有 job 未绿（${notGreen.join('、')}；未触发/进行中亦计入），保留昨日 release。CI 绿后手动 force 触发可补发`)
+              }
+            }
             core.setOutput('should_run', String(shouldRun))
             core.info(`head=${head} prev=${prev ?? '(no tag)'} force=${force} shouldRun=${shouldRun}`)
 
