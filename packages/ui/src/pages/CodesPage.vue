@@ -523,7 +523,9 @@ function openSheet() {
 </template>
 
 <style scoped>
-.page { padding: 16px; display: flex; flex-direction: column; gap: 12px; /* R5-M6：MdCard padding compact 8px = .frozen 两侧缝隙宽（见下） */ --frozen-bleed: 8px; }
+/* padding-bottom 88px 给右下 FAB（fixed，占视口底 16~72px）留位：否则最后一条滚到底时
+   行尾 ops（编辑/删除）正落在 FAB 下方被挡（2026-10-12 真机缺陷）；72 + 16 页面标准间距 */
+.page { padding: 16px; padding-bottom: 88px; display: flex; flex-direction: column; gap: 12px; /* R5-M6：MdCard padding compact 8px = .frozen 两侧缝隙宽（见下） */ --frozen-bleed: 8px; }
 .codes-card { display: flex; flex-direction: column; gap: 4px; }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .row-check { flex: none; margin-right: 4px; }
