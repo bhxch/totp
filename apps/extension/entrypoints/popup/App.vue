@@ -388,6 +388,10 @@ function cancelAutoClose(): void {
 </template>
 
 <style>
+/* 行尾控件命中层（MdCheckbox ::after inset -15px）越出视口会撑出 document 横向滚动条
+ * （mini 真机 2026-10-12 实证，popup 行尾「搜密钥」同构）；命中层被窗缘裁剪本属平台常态，
+ * popup 无横向内容，滚动根直接禁横向 */
+html { overflow-x: hidden; }
 body { font-family: system-ui, sans-serif; margin: 0; padding: 8px; }
 /* R5-M6：body padding 8px = sticky 冻结条两侧缝隙宽，面板 .frozen 负 margin 补偿取同值 */
 main { display: flex; flex-direction: column; gap: 4px; --frozen-bleed: 8px; }

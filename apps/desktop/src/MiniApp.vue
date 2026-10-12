@@ -284,8 +284,11 @@ body { font-family: system-ui, sans-serif; margin: 0; }
 .tb-btn.active { color: var(--md-sys-color-primary); }
 /* 空态（原 .empty）：Task 6 收口 EmptyState（32px 0 / body-medium / on-surface-variant） */
 .copy-error { text-align: center; color: var(--md-sys-color-error); background: var(--md-sys-color-error-container); border-radius: var(--md-sys-shape-corner-small); padding: 8px 0; font-size: var(--md-sys-typescale-body-small); }
-/* CSS 装载后接管精确主题色：mini.html 内联底色只保首帧（防加载期白屏），html data-mode 随 useTheme 切换 */
-html { background: var(--md-sys-color-background, #fff); }
+/* CSS 装载后接管精确主题色：mini.html 内联底色只保首帧（防加载期白屏），html data-mode 随 useTheme 切换。
+ * overflow-x hidden：行尾控件命中层（MdCheckbox ::after inset -15px）越出视口会撑出 document
+ * 横向滚动条（2026-10-12 真机实证：search-row「搜密钥」命中层越界 9px）；命中层被窗缘裁剪
+ * 本属平台常态，快速窗无横向内容，滚动根直接禁横向 */
+html { background: var(--md-sys-color-background, #fff); overflow-x: hidden; }
 /* 8 向 resize 热区：边 5px、角 12px（命中优先级靠后声明覆盖边角交叠），cursor 随方向。
  * fixed 定位相对视口=窗口（viewport 即窗体），不随 .mini padding 收缩 */
 .rz { position: fixed; z-index: 2000; touch-action: none; }
