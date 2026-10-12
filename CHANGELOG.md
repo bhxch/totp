@@ -6,11 +6,14 @@ GitHub Release 说明的开头（其后附自动生成的提交列表）。
 
 ## [未发布]
 
+## [1.0.2] - 2026-10-13
+
 ### 修复
 
 - **扩展（Chrome/Firefox）：background 体积从 8.33 MB 瘦身至 390 KB**。此前解码纯函数经共享包根模块引入，连带整棵界面组件树与两份资产被以 base64 形式内嵌进后台脚本（WXT 以单文件模式打包 background，其中 `?url` 资产会被构建器强制内联），超出 Firefox 扩展商店 AMO 单文件 5 MB 解析上限导致无法提交；改为经 `@totp/ui/qr` 子路径直接引入解码纯函数，双浏览器产物同步受益
 - **扩展（Firefox）：manifest 补充数据收集声明**（`data_collection_permissions: required: ['none']`，本项目为纯前端离线工具、不收集任何数据）。该声明为 AMO 对新版本扩展的必填项；同时 Firefox for Android 需 142 才支持该声明，Android 端最低版本单独抬升至 142（桌面 Firefox 维持 140 ESR 基线不变）
 - **扩展（Firefox）：AMO 静态检查清零**。对 Vue 运行时中静态内容解析的唯一一处 `innerHTML` 直接赋值打补丁改为等价的 DOMParser 解析（本应用编译产物不含调用该路径的代码，行为无变化），消除商店检查报告的 UNSAFE_VAR_ASSIGNMENT 警告
+- **扩展（Chrome/Firefox）：商店名与后台文案本地化**。manifest 名称/描述与右键菜单、系统通知文案此前硬编码中文，改经 `_locales`（zh_CN/en）按浏览器语言展示；英文商店审核员不再见到中文商店名与中文右键菜单
 
 ## [1.0.1] - 2026-10-12
 
@@ -33,6 +36,7 @@ GitHub Release 说明的开头（其后附自动生成的提交列表）。
 - **桌面专属**：托盘常驻 + 只读 mini 弹窗（全局快捷键 `Alt+Shift+T`）、窗口资源释放三段式（隐藏→暂停→销毁）、内置 MCP 服务器（本机 AI 客户端只读取码，Bearer Token + 四档客户端授权，默认关闭）
 - **发布物**：GitHub Release 提供 Windows（NSIS）/ macOS（dmg）/ Linux（deb/AppImage）桌面安装包与 Chromium/Firefox 扩展 zip，附 sha256sums.txt
 
-[未发布]: https://github.com/bhxch/totp/compare/v1.0.1...HEAD
+[未发布]: https://github.com/bhxch/totp/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/bhxch/totp/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/bhxch/totp/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/bhxch/totp/commits/v1.0.0
