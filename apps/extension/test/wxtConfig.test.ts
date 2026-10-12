@@ -44,8 +44,19 @@ describe('wxt.config manifest 双渠道差异（B6-29/30）', () => {
   })
 
   it('firefox：gecko 稳定 id + strict_min_version 140 + ext+otpauth 协议回调', () => {
-    const gecko = (manifestOf('firefox').browser_specific_settings as { gecko?: Record<string, unknown> })?.gecko
-    expect(gecko).toMatchObject({ id: 'totp@bhxch.github.io', strict_min_version: '140.0' })
+    const bss = manifestOf('firefox').browser_specific_settings as {
+      gecko?: Record<string, unknown>
+      gecko_android?: Record<string, unknown>
+    }
+    // data_collection_permissions：AMO 新版必填（纯前端不出网 → required ['none']）；
+    // gecko_android 142：该键 Android 端 142 才支持，平台最小版本单独抬高，
+    // 否则 addons-linter 报 KEY_FIREFOX_ANDROID_UNSUPPORTED_BY_MIN_VERSION
+    expect(bss.gecko).toMatchObject({
+      id: 'totp@bhxch.github.io',
+      strict_min_version: '140.0',
+      data_collection_permissions: { required: ['none'] },
+    })
+    expect(bss.gecko_android).toMatchObject({ strict_min_version: '142.0' })
 
     const handlers = manifestOf('firefox').protocol_handlers as Array<Record<string, unknown>>
     expect(handlers).toEqual([

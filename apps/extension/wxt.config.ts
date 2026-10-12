@@ -37,8 +37,19 @@ export default defineConfig({
     ...(browser === 'firefox'
       ? {
           // 稳定 ID（AMO 一经发布不可改）：email 形式合规且表达 GitHub 归属；
-          // min_version 140（2025 ESR 基线，MV3 所需 API 全齐：storage.session 115+/event page/SW 121+）
-          browser_specific_settings: { gecko: { id: 'totp@bhxch.github.io', strict_min_version: '140.0' } },
+          // min_version 140（2025 ESR 基线，MV3 所需 API 全齐：storage.session 115+/event page/SW 121+）；
+          // 数据收集声明（AMO 2025 起新版必填，缺失上报 MISSING_DATA_COLLECTION_PERMISSIONS）：
+          // 纯前端离线工具不出网收集任何数据，按政策口径申报 required: ['none']；
+          // 该键 Android 端 142 才支持，gecko_android 平台最小版本单独抬高（桌面 140 不动），
+          // 否则 addons-linter 报 KEY_FIREFOX_ANDROID_UNSUPPORTED_BY_MIN_VERSION
+          browser_specific_settings: {
+            gecko: {
+              id: 'totp@bhxch.github.io',
+              strict_min_version: '140.0',
+              data_collection_permissions: { required: ['none'] },
+            },
+            gecko_android: { strict_min_version: '142.0' },
+          },
           protocol_handlers: [
             { protocol: 'ext+otpauth', name: 'TOTP 验证码工具', uriTemplate: '/popup.html?uri=%s' },
           ],
