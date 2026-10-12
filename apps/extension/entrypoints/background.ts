@@ -24,6 +24,14 @@ const PENDING_NOTIFY_ID = 'totp-pending-add'
 /** 批量导入通知 id（R5-I2）：多条分流可点击，onClicked 点击 → options#/codes 导入页 */
 const BATCH_IMPORT_NOTIFY_ID = 'totp-batch-import'
 
+/** _locales 消息直取（chrome.i18n，跟随浏览器 UI 语言）：右键菜单/系统通知属浏览器级
+ *  UI 面，与应用内 settings.locale（vue-i18n）解耦——商店审核员的英文浏览器即得英文
+ *  菜单/通知。消息表 public/_locales/{zh_CN,en}/messages.json 与 manifest name/description
+ *  共用一套。宿主必有 i18n（_locales + default_locale 为 manifest 加载前提），不做回退表 */
+function t(key: string, substitutions?: string | string[]): string {
+  return ext!.i18n.getMessage(key, substitutions)
+}
+
 /** 桌面通知单点（R16⑪ 三连收敛）：basic 通知样式恒同（图标/标题），仅 message 差异 */
 function notify(message: string): void {
   // MV3 create 无 callback 重载返回 Promise：创建失败（图标缺失/上下文失效）会 reject——
@@ -32,7 +40,7 @@ function notify(message: string): void {
     .create({
       type: 'basic',
       iconUrl: '/icon/128.png',
-      title: 'TOTP 验证码工具',
+      title: t('extName'),
       message,
     })
     .catch(() => {})
@@ -45,7 +53,7 @@ function notifyClickable(id: string, message: string): void {
     .create(id, {
       type: 'basic',
       iconUrl: '/icon/128.png',
-      title: 'TOTP 验证码工具',
+      title: t('extName'),
       message,
     })
     .catch(() => {})
@@ -98,16 +106,16 @@ export default defineBackground(() => {
   // C11：右键菜单在 SW 每次启动时注册，幂等：create 同 id 会抛错（lastError），吞掉即视为成功。
   // 原 onInstalled 注册在浏览器 SW 已被本扩展事件唤醒的场景下不触发，导致菜单偶发缺失。
   ext!.contextMenus.create(
-    { id: OTPAUTH_MENU_ID, title: '将选中的验证码内容添加为条目', contexts: ['selection'] },
+    { id: OTPAUTH_MENU_ID, title: t('menuAddSelection'), contexts: ['selection'] },
     () => void ext!.runtime.lastError,
   )
   ext!.contextMenus.create(
-    { id: QR_IMAGE_MENU_ID, title: '识别图中的验证码二维码', contexts: ['image'] },
+    { id: QR_IMAGE_MENU_ID, title: t('menuDecodeQrImage'), contexts: ['image'] },
     () => void ext!.runtime.lastError,
   )
   // P4：action 图标右键 / 页面右键均可直达主界面态（URL 与 popup「打开主界面」按钮同源）
   ext!.contextMenus.create(
-    { id: OPEN_MAIN_MENU_ID, title: '打开主界面', contexts: ['action', 'page'] },
+    { id: OPEN_MAIN_MENU_ID, title: t('menuOpenMain'), contexts: ['action', 'page'] },
     () => void ext!.runtime.lastError,
   )
   // 点击：listener 改 async（MV3 只要求 addListener 本身同步注册；事件回调返回的 promise 被
@@ -123,7 +131,7 @@ export default defineBackground(() => {
         uri = await decodeImageBytesToUri(new Uint8Array(await res.arrayBuffer()))
       } catch { uri = null }
       if (uri === null) {
-        notify('图中未识别到有效的 otpauth 二维码')
+        notify(t('notifyQrInvalid'))
         return
       }
       // P5：写盘升级为 pending 信封（kind=uri），popup 消费端按 kind 分派
@@ -131,7 +139,7 @@ export default defineBackground(() => {
       // M4：成功也发带 id 通知（复用 totp-pending-add 通道）——Firefox 等无 openPopup 宿主
       // 点击通知经 notifications.onClicked 打开 popup.html 消费 pending（kind=uri 信封链路同）；
       // Chromium 通知常驻可点，作 openPopup 缺席时的兜底入口。失败路径仍普通 notify（无 pending 可消费）
-      notifyClickable(PENDING_NOTIFY_ID, '已识别验证码二维码，点击完成添加')
+      notifyClickable(PENDING_NOTIFY_ID, t('notifyQrAdded'))
       return
     }
     // P4 打开主界面：tabs.create 建新标签页直达 options#/codes；create 失败（浏览器侧极少）吞掉
@@ -151,14 +159,14 @@ export default defineBackground(() => {
       return
     }
     if (parsed.entries.length === 0) {
-      notify('未识别出可导入的条目')
+      notify(t('notifyNothingToImport'))
       return
     }
     if (parsed.entries.length > 1) {
       // R5-I2：多条分流通知带 id 可点击——点击直达 options#/codes 导入页（对齐「打开主界面」
       // 菜单行为）；旧 notify() 无 id 点击无动作、文案指路含糊（浏览器通知点击后自动消失，
       // 无需手动 clear）
-      notifyClickable(BATCH_IMPORT_NOTIFY_ID, `识别到 ${parsed.entries.length} 条，点击通知打开主界面完成批量添加`)
+      notifyClickable(BATCH_IMPORT_NOTIFY_ID, t('notifyBatchCount', String(parsed.entries.length)))
       return
     }
     void ext!.storage.local
@@ -173,10 +181,10 @@ export default defineBackground(() => {
             if (result instanceof Promise) {
               // R5-M3：openPopup reject（无用户手势等）时 pending 已写但既无弹窗也无通知——
               // 兜底发 PENDING_NOTIFY_ID 保住「点击完成添加」入口，信封不滞留成零反馈孤儿
-              void result.catch(() => notifyClickable(PENDING_NOTIFY_ID, '已识别待添加内容，点击完成添加'))
+              void result.catch(() => notifyClickable(PENDING_NOTIFY_ID, t('notifyPendingAdded')))
             }
           } else {
-            notifyClickable(PENDING_NOTIFY_ID, '已识别待添加内容，点击完成添加')
+            notifyClickable(PENDING_NOTIFY_ID, t('notifyPendingAdded'))
           }
         } catch { /* API 不存在/调用失败：静默降级 */ }
       })

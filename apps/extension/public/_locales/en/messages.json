@@ -1,0 +1,35 @@
+{
+  "extName": {
+    "message": "TOTP Code Tool"
+  },
+  "extDescription": {
+    "message": "A pure front-end TOTP code manager — no backend, your data stays local."
+  },
+  "menuAddSelection": {
+    "message": "Add selected code text as an entry"
+  },
+  "menuDecodeQrImage": {
+    "message": "Scan image for an otpauth QR code"
+  },
+  "menuOpenMain": {
+    "message": "Open main UI"
+  },
+  "notifyQrInvalid": {
+    "message": "No valid otpauth QR code found in the image"
+  },
+  "notifyQrAdded": {
+    "message": "QR code recognized — click to finish adding"
+  },
+  "notifyNothingToImport": {
+    "message": "No importable entries recognized"
+  },
+  "notifyBatchCount": {
+    "message": "$COUNT$ entries recognized — click to open the main UI and finish importing",
+    "placeholders": {
+      "count": { "content": "$1" }
+    }
+  },
+  "notifyPendingAdded": {
+    "message": "Content recognized — click to finish adding"
+  }
+}

@@ -23,6 +23,8 @@
  * store 构造守则（桌面端 mock 工厂同款）：挂载测试一律
  * createVueStore(createMemoryStorage(), { windowId })，禁止把普通 store 传入 reactive 包装。
  */
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { vi, type Mock } from 'vitest'
 
 export type Store = Record<string, unknown>
@@ -136,6 +138,19 @@ export interface OffscreenShim {
   createDocument(opts: Record<string, unknown>): Promise<void>
 }
 
+/** chrome.i18n 内存实现：直读产物侧消息表 public/_locales/zh_CN/messages.json（单一来源，
+ * 与 _locales 文件零漂移——background 菜单/通知文案经它取词），占位符 $NAME$ 按
+ * placeholders.content（$1 形态）代入 substitutions，与 Chrome 语义一致 */
+export interface I18nShim {
+  /** background 实际取用过的消息键（供测试断言接线而非硬编码文案） */
+  used: Set<string>
+  getMessage(key: string, substitutions?: string | string[]): string
+}
+
+/** 消息表路径：vitest cwd 恒为包根（pnpm -r 逐包运行）——jsdom 环境下 import.meta.url
+ *  非 file 协议（vitest 模块服务 URL），fileURLToPath 会炸，故不用 URL 相对推导 */
+export const ZH_MESSAGES_PATH = join(process.cwd(), 'public/_locales/zh_CN/messages.json')
+
 export interface ChromeShim {
   /** 注入 globalThis.chrome 的对象（生产代码经 extApi 惰性桥读取） */
   chrome: Record<string, unknown>
@@ -165,6 +180,7 @@ export interface ChromeShim {
   emitNotificationClick(notificationId: string): void
   contextMenus: ContextMenusShim
   notifications: NotificationsShim
+  i18n: I18nShim
   offscreen?: OffscreenShim
   tabs: { query(): Promise<Array<{ url?: string }>>; create: Mock<(opts: { url: string }) => Promise<Record<string, unknown>>> }
   /** 当前注册的 onMessage listener 副本（直接派发/断言 offscreen listener 返回值用） */
@@ -287,6 +303,28 @@ export function installChromeShim(opts: ChromeShimOptions = {}): ChromeShim {
 
   const notificationClickListeners: Array<(notificationId: string) => void> = []
 
+  // 消息表模块级加载一次（文件缺失即抛错——fixture 与产物 _locales 结构耦合是刻意的，
+  // locales 守卫测试会先行拦截结构漂移）
+  const zhMessages = JSON.parse(readFileSync(ZH_MESSAGES_PATH, 'utf8')) as Record<
+    string,
+    { message: string; placeholders?: Record<string, { content: string }> }
+  >
+  const i18nUsed = new Set<string>()
+  const i18n: I18nShim = {
+    used: i18nUsed,
+    getMessage(key, substitutions) {
+      i18nUsed.add(key)
+      const entry = zhMessages[key]
+      if (!entry) return '' // 真实 API 缺键返回 ''（locales 守卫测试保证 background 用键存在）
+      const subs = substitutions === undefined ? [] : Array.isArray(substitutions) ? substitutions : [substitutions]
+      // $NAME$ → placeholders[name 小写].content（"$1" 形态）→ substitutions[n-1]
+      return entry.message.replace(/\$(\w+)\$/g, (_, name: string) => {
+        const ph = entry.placeholders?.[name.toLowerCase()]?.content ?? ''
+        return ph.replace(/\$(\d+)/g, (_, idx: string) => subs[Number(idx) - 1] ?? '')
+      })
+    },
+  }
+
   const notifications: NotificationsShim = {
     created: [],
     create(notificationIdOrOpts, opts) {
@@ -370,6 +408,7 @@ export function installChromeShim(opts: ChromeShimOptions = {}): ChromeShim {
     },
     runtime: runtimeApi,
     action,
+    i18n,
     contextMenus,
     notifications,
     tabs: {
@@ -406,6 +445,7 @@ export function installChromeShim(opts: ChromeShimOptions = {}): ChromeShim {
     offscreen,
     contextMenus,
     notifications,
+    i18n,
     tabs: chrome.tabs as ChromeShim['tabs'],
     alarms: chrome.alarms as ChromeShim['alarms'],
     emitAlarm(alarm) {

@@ -23,10 +23,12 @@ function manifestOf(browser: ManifestEnv['browser']): Manifest {
 }
 
 describe('wxt.config manifest 双渠道差异（B6-29/30）', () => {
-  it('顶层统一 manifestVersion: 3 与基础信息', () => {
+  it('顶层统一 manifestVersion: 3 与基础信息（name/description 经 _locales 本地化）', () => {
     expect(config.manifestVersion).toBe(3)
-    expect(manifestOf('chrome').name).toBe('TOTP 验证码工具')
-    expect(manifestOf('firefox').name).toBe('TOTP 验证码工具')
+    // __MSG_ 由浏览器按 UI 语言替换（Chrome/Firefox 均支持）：英文商店审核员不再见中文硬编码名；
+    // protocol_handlers.name 保留字面量（该字段本地化支持不一致，未替换会裸显 token）
+    expect(manifestOf('chrome').name).toBe('__MSG_extName__')
+    expect(manifestOf('firefox').name).toBe('__MSG_extName__')
   })
 
   it('chrome：permissions 含 offscreen（后台清剪贴板前提）与双端共用权限', () => {

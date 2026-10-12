@@ -1,0 +1,35 @@
+{
+  "extName": {
+    "message": "TOTP 验证码工具"
+  },
+  "extDescription": {
+    "message": "纯前端 TOTP 验证码管理"
+  },
+  "menuAddSelection": {
+    "message": "将选中的验证码内容添加为条目"
+  },
+  "menuDecodeQrImage": {
+    "message": "识别图中的验证码二维码"
+  },
+  "menuOpenMain": {
+    "message": "打开主界面"
+  },
+  "notifyQrInvalid": {
+    "message": "图中未识别到有效的 otpauth 二维码"
+  },
+  "notifyQrAdded": {
+    "message": "已识别验证码二维码，点击完成添加"
+  },
+  "notifyNothingToImport": {
+    "message": "未识别出可导入的条目"
+  },
+  "notifyBatchCount": {
+    "message": "识别到 $COUNT$ 条，点击通知打开主界面完成批量添加",
+    "placeholders": {
+      "count": { "content": "$1" }
+    }
+  },
+  "notifyPendingAdded": {
+    "message": "已识别待添加内容，点击完成添加"
+  }
+}
