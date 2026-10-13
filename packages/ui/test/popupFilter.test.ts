@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { addTag, createVault, addEntry } from '@totp/core'
-import { resolvePopupVisible, searchEntries, HINT_SITE_TAGGED, HINT_TAG_RELAXED, HINT_SITE_PLAIN, HINT_SITE_ALL } from '../src/popupFilter'
+import { resolvePopupVisible, searchEntries, popupFilterRowAffix, HINT_SITE_TAGGED, HINT_TAG_RELAXED, HINT_SITE_PLAIN, HINT_SITE_ALL } from '../src/popupFilter'
 import zhMessages from '../src/i18n/locales/zh/common.json'
 import enMessages from '../src/i18n/locales/en/common.json'
 import type { OtpEntry } from '@totp/core'
@@ -129,5 +129,23 @@ describe('searchEntries 搜索谓词单一来源（R16④ 两份谓词合一）'
   })
   it('includeSecret=true 时基础字段匹配不受影响（分支不互斥）', () => {
     expect(searchEntries([note], 'work', { includeSecret: true }).map((x) => x.uuid)).toEqual(['n'])
+  })
+})
+
+describe('popupFilterRowAffix（spec §C：过滤行行内缀三态）', () => {
+  const base = { visible: [], urlMatchCount: 0 } as const
+  it('有 hint：hint 优先（与匹配数互斥）', () => {
+    expect(popupFilterRowAffix({ ...base, hint: 'popupFilter.hintSitePlain', urlMatchCount: 0 }, true))
+      .toEqual({ kind: 'hint', key: 'popupFilter.hintSitePlain' })
+    expect(popupFilterRowAffix({ ...base, hint: 'popupFilter.hintTagRelaxed', urlMatchCount: 3 }, true))
+      .toEqual({ kind: 'hint', key: 'popupFilter.hintTagRelaxed' })
+  })
+  it('无 hint 且开启站点过滤且有命中：匹配数', () => {
+    expect(popupFilterRowAffix({ ...base, hint: '', urlMatchCount: 3 }, true))
+      .toEqual({ kind: 'matchCount', count: 3 })
+  })
+  it('无 hint、未开过滤或零命中：null（行内不渲染）', () => {
+    expect(popupFilterRowAffix({ ...base, hint: '', urlMatchCount: 0 }, true)).toBeNull()
+    expect(popupFilterRowAffix({ ...base, hint: '', urlMatchCount: 3 }, false)).toBeNull()
   })
 })

@@ -64,3 +64,14 @@ export function resolvePopupVisible(input: PopupFilterInput): PopupFilterResult 
   if (urlOnly.length > 0) return { visible: urlOnly, hint: HINT_TAG_RELAXED, urlMatchCount: urlOnly.length }
   return { visible: base, hint: HINT_SITE_ALL, urlMatchCount: 0 }
 }
+
+/** 过滤行行内缀（spec 2026-10-13 §C）：回退 hint 与「匹配 N 条」同位互斥渲染的数据源。
+ * hint 优先（无匹配回退语义压过命中计数）；无 hint 且开启站点过滤且有命中 → 匹配数；
+ * 其余 null（行内不渲染）。独立 hint 行仅剩 !tabUrl 场景（渲染端门控）。 */
+export type PopupRowAffix = { kind: 'hint'; key: string } | { kind: 'matchCount'; count: number } | null
+
+export function popupFilterRowAffix(result: PopupFilterResult, filterOn: boolean): PopupRowAffix {
+  if (result.hint) return { kind: 'hint', key: result.hint }
+  if (filterOn && result.urlMatchCount > 0) return { kind: 'matchCount', count: result.urlMatchCount }
+  return null
+}

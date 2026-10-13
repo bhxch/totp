@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { getBuiltinIcons, parsePastedText, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
-import { createIconStore, EntryForm, fullIconsReady, LockScreen, MdButton, MdCheckbox, MdIconButton, NAV_ICONS, normalizeExtOtpauth, parseUriToEntryData, PersistErrorBanner, prefillFromParsed, QuickCodesPanel, resolvePopupVisible, sortEntries, ToastHost, useOtpCodes, useTheme, useToast, type EntryFormData } from '@totp/ui'
+import { createIconStore, EntryForm, fullIconsReady, LockScreen, MdButton, MdCheckbox, MdIconButton, NAV_ICONS, normalizeExtOtpauth, parseUriToEntryData, PersistErrorBanner, popupFilterRowAffix, prefillFromParsed, QuickCodesPanel, resolvePopupVisible, sortEntries, ToastHost, useOtpCodes, useTheme, useToast, type EntryFormData } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { decodePending, isPendingExpired, PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
@@ -147,6 +147,8 @@ const filterResult = computed(() => resolvePopupVisible({
   tabUrl: tabUrl.value,
 }))
 const visible = computed(() => filterResult.value.visible)
+/** 过滤行行内缀（spec §C）：回退 hint 与「匹配 N 条」同位互斥 */
+const rowAffix = computed(() => popupFilterRowAffix(filterResult.value, filterOn.value))
 const toggleFilter = async () => {
   settings.urlFilterEnabled = !settings.urlFilterEnabled
   await commitSettings()
@@ -346,14 +348,16 @@ function cancelAutoClose(): void {
 
     <div v-if="error" class="error">{{ error }}</div>
 
-    <!-- URL 过滤行与 hint 留在面板上方（宿主管辖，不进面板）：四级回退链的过滤执行在宿主 -->
+    <!-- URL 过滤行留在面板上方（宿主管辖）：行内缀 = 回退 hint 与「匹配 N 条」同位互斥（spec §C） -->
     <div class="filter-row" v-if="tabUrl">
       <!-- M3 MdCheckbox(审查 X10):原 UA 原生 checkbox 深色 scheme 下未选中即深灰填充,即「复选框底色偏深」根因 -->
       <MdCheckbox :model-value="filterOn" :label="t('popup.filterBySite')" @update:model-value="toggleFilter" />
-      <span v-if="!filterResult.hint && filterOn && filterResult.urlMatchCount > 0" class="hint">{{ t('popup.matchCount', { count: filterResult.urlMatchCount }) }}</span>
+      <span v-if="rowAffix" class="hint row-affix" :title="rowAffix.kind === 'hint' ? t(rowAffix.key) : undefined">
+        {{ rowAffix.kind === 'hint' ? t(rowAffix.key) : t('popup.matchCount', { count: rowAffix.count }) }}
+      </span>
     </div>
-    <!-- hint 不受 tabUrl 门控：无标签页 URL（新标签页等）时放宽提示仍可达（spec §3 回退提示） -->
-    <span v-if="filterResult.hint" class="hint hint-row">{{ t(filterResult.hint) }}</span>
+    <!-- 独立 hint 行仅剩无 tabUrl 场景（读不到当前标签页时过滤行不存在，回退提示仍须可达） -->
+    <span v-if="!tabUrl && filterResult.hint" class="hint hint-row">{{ t(filterResult.hint) }}</span>
 
     <!-- 非法 pending URI 报错常显（无粘贴框后的唯一 importError 渲染位） -->
     <div v-if="importError" class="error">{{ importError }}</div>
@@ -402,5 +406,7 @@ h1 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .filter-row { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-small); padding: 0 4px; }
 .hint { opacity: .6; }
 .hint-row { padding: 0 4px; }
+/* 行内缀（spec §C）：ellipsis 防极端 i18n 长串把过滤行撑出横向滚动（popup 360px 窄幅） */
+.row-affix { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .form-actions { display: flex; justify-content: flex-end; gap: 8px; }
 </style>
