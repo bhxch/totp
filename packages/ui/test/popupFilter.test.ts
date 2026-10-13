@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { addTag, createVault, addEntry } from '@totp/core'
-import { resolvePopupVisible, searchEntries, popupFilterRowAffix, HINT_SITE_TAGGED, HINT_TAG_RELAXED, HINT_SITE_PLAIN, HINT_SITE_ALL } from '../src/popupFilter'
+import { resolvePopupVisible, searchEntries, popupFilterRowAffix, type PopupFilterResult, HINT_SITE_TAGGED, HINT_TAG_RELAXED, HINT_SITE_PLAIN, HINT_SITE_ALL } from '../src/popupFilter'
 import zhMessages from '../src/i18n/locales/zh/common.json'
 import enMessages from '../src/i18n/locales/en/common.json'
 import type { OtpEntry } from '@totp/core'
@@ -133,7 +133,7 @@ describe('searchEntries 搜索谓词单一来源（R16④ 两份谓词合一）'
 })
 
 describe('popupFilterRowAffix（spec §C：过滤行行内缀三态）', () => {
-  const base = { visible: [], urlMatchCount: 0 } as const
+  const base: PopupFilterResult = { visible: [], hint: '', urlMatchCount: 0 }
   it('有 hint：hint 优先（与匹配数互斥）', () => {
     expect(popupFilterRowAffix({ ...base, hint: 'popupFilter.hintSitePlain', urlMatchCount: 0 }, true))
       .toEqual({ kind: 'hint', key: 'popupFilter.hintSitePlain' })
