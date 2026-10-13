@@ -196,7 +196,9 @@ describe('LockScreen', () => {
 
   it('dpapi unprotect 失败（跨机器/跨用户）：静默保留口令解锁路径，不 emit unlocked', async () => {
     const unprotect = vi.fn().mockRejectedValue(new Error('DPAPI 解密失败'))
-    const store = mockStore({ prfSources: computed(() => []), securitySettings: ref(null) })
+    // locked 必须提供：该用例的 1s 静默失败回查（LockScreen onMounted setTimeout）会读
+    // store.locked.value，真实 store 为必有 ref；缺失时 timer 在测试文件尾部触发 unhandled error
+    const store = mockStore({ locked: computed(() => true), prfSources: computed(() => []), securitySettings: ref(null) })
     const w = mount(LockScreen, { props: { store, dpapi: makeDpapi({ unprotect }) }, global: { plugins: [createTestI18n()] } })
     await vi.waitFor(() => expect(unprotect).toHaveBeenCalled())
     await new Promise((r) => setTimeout(r, 0))
@@ -309,5 +311,57 @@ describe('LockScreen PRF 能力显隐（C17）', () => {
       // vue 把 :disabled="false" 渲染成空串属性（仍是 falsy，不阻断点击）
       expect(btn.attributes('disabled')).toBeFalsy()
     })
+  })
+})
+
+describe('LockScreen passkeyMode / autoPasskey（spec §B）', () => {
+  it("passkeyMode='external'：点击仅 emit external-unlock，不执行 inline WebAuthn", async () => {
+    const store = mockStore({
+      prfSources: computed(() => [{ credentialId: 'Y3JlZC0x', salt: 'cw==' }]),
+      securitySettings: ref(null),
+    })
+    const w = mount(LockScreen, { props: { store, passkeyMode: 'external' }, global: { plugins: [createTestI18n()] } })
+    for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 5))
+    await w.find('button.passkey').trigger('click')
+    expect(w.emitted('external-unlock')).toHaveLength(1)
+    expect(w.emitted('unlocked')).toBeUndefined()
+    expect((navigator as unknown as { credentials?: unknown }).credentials).toBeUndefined()
+  })
+
+  it('autoPasskey：PRF 探测通过后自动发起一次（等价点击，走完整解锁链）', async () => {
+    const { security, dek, prfOutput, salt } = await prfFixture()
+    const unlockWithDek = vi.fn().mockResolvedValue(undefined)
+    const store = mockStore({
+      prfSources: computed(() => [{ credentialId: 'Y3JlZC0x', salt }]),
+      securitySettings: ref(security),
+      unlockWithDek,
+    })
+    mockWebAuthnGet([prfOutput])
+    mount(LockScreen, { props: { store, autoPasskey: true }, global: { plugins: [createTestI18n()] } })
+    const getCred = (navigator as unknown as { credentials: { get: ReturnType<typeof vi.fn> } }).credentials.get
+    await vi.waitFor(() => expect(getCred).toHaveBeenCalled(), { timeout: 2000, interval: 5 })
+    await vi.waitFor(() => expect(unlockWithDek).toHaveBeenCalledWith(dek))
+  })
+
+  it('autoPasskey：PRF 能力 false 时不自动发起（Review Focus 2），无绑定来源也不发起', async () => {
+    const Stub = class {
+      static isUserVerifyingPlatformAuthenticatorAvailable = vi.fn().mockResolvedValue(false)
+      static getClientCapabilities = vi.fn().mockResolvedValue({ prf: false })
+    }
+    Object.defineProperty(globalThis, 'PublicKeyCredential', { configurable: true, value: Stub, writable: true })
+    const { security, salt } = await prfFixture()
+    const getSpy = vi.fn()
+    ;(navigator as unknown as { credentials: unknown }).credentials = { get: getSpy }
+    mount(LockScreen, {
+      props: { store: mockStore({ prfSources: computed(() => [{ credentialId: 'Y3JlZC0x', salt }]), securitySettings: ref(security) }), autoPasskey: true },
+      global: { plugins: [createTestI18n()] },
+    })
+    mount(LockScreen, {
+      props: { store: mockStore({ prfSources: computed(() => []), securitySettings: ref(null) }), autoPasskey: true },
+      global: { plugins: [createTestI18n()] },
+    })
+    await new Promise((r) => setTimeout(r, 60))
+    expect(getSpy).not.toHaveBeenCalled()
+    stubPrfSupported() // 恢复全局 stub 供后续用例
   })
 })

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { base64ToBytes, unlockWithPrf } from '@totp/core'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { visibility, visibilityOff } from './iconPaths'
 import type { AbeOps, DpapiUnlockOps } from './securityPlatform'
@@ -23,12 +23,19 @@ const props = withDefaults(
     abe?: AbeOps | null
     /** [可选] 是否提供 Passkey 解锁按钮（默认 true）。popup 认证器弹窗夺焦即销毁窗口、WebAuthn get() 中断，该入口恒失败，popup 传 false 隐藏 */
     allowPasskey?: boolean
+    /** [可选] Passkey 入口形态（spec §B）：inline=组件内直接跑 WebAuthn（desktop/options 默认）；
+     *  external=点击仅 emit external-unlock——popup 失焦即销毁，认证在宿主打开的独立解锁窗完成。
+     *  两形态的按钮显隐/禁用逻辑一致（prfSources 非空 + 能力探测） */
+    passkeyMode?: 'inline' | 'external'
+    /** [可选] 挂载后自动发起一次 Passkey 解锁（unlock.html?unlock=passkey 专用）：PRF 能力探测为
+     *  true 且入口可见时触发一次（与用户点击同一 onPasskeyUnlock 通道）；探测 false/无绑定不触发 */
+    autoPasskey?: boolean
   }>(),
   // 显式默认 true：Boolean prop 缺省会被 vue 运行时 boolean-cast 成 false，必须声明 default
-  { allowPasskey: true },
+  { allowPasskey: true, passkeyMode: 'inline', autoPasskey: false },
 )
 
-const emit = defineEmits<{ (e: 'unlocked'): void }>()
+const emit = defineEmits<{ (e: 'unlocked'): void; (e: 'external-unlock'): void }>()
 
 // D1 抽串示范：锁定页文案走 i18n（lock.*）
 const { t } = useI18n()
@@ -44,6 +51,24 @@ const prfCap = ref<'unknown' | boolean>('unknown')
 const showPasskey = computed(() => props.allowPasskey !== false && props.store.prfSources.value.length > 0)
 /** Passkey 入口是否启用：探测完成且能力可用（C17 按浏览器能力显隐） */
 const passkeySupported = computed(() => prfCap.value === true)
+
+/** autoPasskey 自动发起（spec §B）：能力探测落定为 true 且入口可见时触发一次；autoFired 防
+ *  prfCap 抖动/重探测导致二次弹窗。探测 false 或无绑定（showPasskey=false 不探测）永不触发 */
+let autoPasskeyFired = false
+watch(prfCap, (cap) => {
+  if (!props.autoPasskey || autoPasskeyFired || cap !== true || !showPasskey.value) return
+  autoPasskeyFired = true
+  void onPasskeyUnlock()
+})
+
+/** 按钮点击分派：external 模式不上抛 WebAuthn（popup 夺焦销毁），交宿主开解锁窗 */
+function onPasskeyClick(): void {
+  if (props.passkeyMode === 'external') {
+    emit('external-unlock')
+    return
+  }
+  void onPasskeyUnlock()
+}
 
 onMounted(() => {
   // 1) PRF 能力探测：仅在入口可见时执行；探测完前按钮 disabled 防用户点击
@@ -164,7 +189,7 @@ async function onPasskeyUnlock(): Promise<void> {
       class="passkey"
       :disabled="busy || !passkeySupported"
       :title="passkeySupported ? undefined : t('lock.passkeyUnsupported')"
-      @click="onPasskeyUnlock"
+      @click="onPasskeyClick"
     >
       {{ t('lock.unlockWithPasskey') }}
     </MdButton>
