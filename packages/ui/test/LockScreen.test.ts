@@ -321,7 +321,13 @@ describe('LockScreen passkeyMode / autoPasskey（spec §B）', () => {
       securitySettings: ref(null),
     })
     const w = mount(LockScreen, { props: { store, passkeyMode: 'external' }, global: { plugins: [createTestI18n()] } })
-    for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 5))
+    // 等 prfSupported 探测落定（挂账 #8：vi.waitFor 替手写轮询，慢机不误报）。用 DOM property
+    // 判真实启用态——attribute 形态的 disabled="" 是空串，toBeFalsy 会把禁用态误判为已启用
+    await vi.waitFor(() => {
+      const btn = w.find('button.passkey')
+      expect(btn.exists()).toBe(true)
+      expect((btn.element as HTMLButtonElement).disabled).toBe(false)
+    }, { timeout: 2000, interval: 10 })
     await w.find('button.passkey').trigger('click')
     expect(w.emitted('external-unlock')).toHaveLength(1)
     expect(w.emitted('unlocked')).toBeUndefined()
@@ -349,19 +355,23 @@ describe('LockScreen passkeyMode / autoPasskey（spec §B）', () => {
       static getClientCapabilities = vi.fn().mockResolvedValue({ prf: false })
     }
     Object.defineProperty(globalThis, 'PublicKeyCredential', { configurable: true, value: Stub, writable: true })
-    const { security, salt } = await prfFixture()
-    const getSpy = vi.fn()
-    ;(navigator as unknown as { credentials: unknown }).credentials = { get: getSpy }
-    mount(LockScreen, {
-      props: { store: mockStore({ prfSources: computed(() => [{ credentialId: 'Y3JlZC0x', salt }]), securitySettings: ref(security) }), autoPasskey: true },
-      global: { plugins: [createTestI18n()] },
-    })
-    mount(LockScreen, {
-      props: { store: mockStore({ prfSources: computed(() => []), securitySettings: ref(null) }), autoPasskey: true },
-      global: { plugins: [createTestI18n()] },
-    })
-    await new Promise((r) => setTimeout(r, 60))
-    expect(getSpy).not.toHaveBeenCalled()
-    stubPrfSupported() // 恢复全局 stub 供后续用例
+    try {
+      const { security, salt } = await prfFixture()
+      const getSpy = vi.fn()
+      ;(navigator as unknown as { credentials: unknown }).credentials = { get: getSpy }
+      mount(LockScreen, {
+        props: { store: mockStore({ prfSources: computed(() => [{ credentialId: 'Y3JlZC0x', salt }]), securitySettings: ref(security) }), autoPasskey: true },
+        global: { plugins: [createTestI18n()] },
+      })
+      mount(LockScreen, {
+        props: { store: mockStore({ prfSources: computed(() => []), securitySettings: ref(null) }), autoPasskey: true },
+        global: { plugins: [createTestI18n()] },
+      })
+      await new Promise((r) => setTimeout(r, 60))
+      expect(getSpy).not.toHaveBeenCalled()
+    } finally {
+      // 挂账 #9：断言失败也必须恢复全局 stub，防泄漏进后续用例（credentials 由文件级 afterEach 清）
+      stubPrfSupported()
+    }
   })
 })

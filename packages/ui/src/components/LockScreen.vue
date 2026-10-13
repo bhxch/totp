@@ -53,10 +53,11 @@ const showPasskey = computed(() => props.allowPasskey !== false && props.store.p
 const passkeySupported = computed(() => prfCap.value === true)
 
 /** autoPasskey 自动发起（spec §B）：能力探测落定为 true 且入口可见时触发一次；autoFired 防
- *  prfCap 抖动/重探测导致二次弹窗。探测 false 或无绑定（showPasskey=false 不探测）永不触发 */
+ *  prfCap 抖动/重探测导致二次弹窗。探测 false 或无绑定（showPasskey=false 不探测）永不触发；
+ *  busy 期不发起（防御：口令提交在途时不叠 WebAuthn——探测先于交互，实际窗口极小，挂账 #10） */
 let autoPasskeyFired = false
 watch(prfCap, (cap) => {
-  if (!props.autoPasskey || autoPasskeyFired || cap !== true || !showPasskey.value) return
+  if (!props.autoPasskey || autoPasskeyFired || cap !== true || !showPasskey.value || busy.value) return
   autoPasskeyFired = true
   void onPasskeyUnlock()
 })
@@ -90,6 +91,9 @@ onMounted(() => {
         if (props.store.locked.value) dpapiFailed.value = true
       }, 1000)
     }
+  }).catch((e) => {
+    // helper 全路径自捕获，此处仅兜 computed getter 同步抛错的理论路径（挂账 #5），留痕不弹 UI
+    console.warn('[lock] OS 自动解锁编排异常', e)
   })
 })
 

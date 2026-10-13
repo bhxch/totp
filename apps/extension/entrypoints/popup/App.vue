@@ -64,12 +64,16 @@ function openUnlockWindow(): void {
   if (unlockWindowOpening) return
   unlockWindowOpening = true
   try {
-    void ext!.windows.create({
-      url: ext!.runtime.getURL('unlock.html?unlock=passkey'),
-      type: 'popup',
-      width: 400,
-      height: 560,
-    })
+    // 挂账 #12：promise rejection（如 unlock.html 缺失）与同步异常双兜底——回调式宿主
+    // 返回 undefined 时 .catch 取值抛 TypeError 同样落入外层 catch，语义一致
+    void ext!.windows
+      .create({
+        url: ext!.runtime.getURL('unlock.html?unlock=passkey'),
+        type: 'popup',
+        width: 400,
+        height: 560,
+      })
+      .catch((e) => { console.warn('[popup] 打开解锁窗口失败', e) })
   } catch (e) {
     console.warn('[popup] 打开解锁窗口失败', e)
   }
@@ -170,6 +174,12 @@ const filterResult = computed(() => resolvePopupVisible({
 const visible = computed(() => filterResult.value.visible)
 /** 过滤行行内缀（spec §C）：回退 hint 与「匹配 N 条」同位互斥 */
 const rowAffix = computed(() => popupFilterRowAffix(filterResult.value, filterOn.value))
+/** 行内缀渲染文本（挂账 #7：hint 态 title+插值各取一次词，收敛为单次求值；locale 响应式不变） */
+const rowAffixText = computed(() => {
+  const a = rowAffix.value
+  if (!a) return ''
+  return a.kind === 'hint' ? t(a.key) : t('popup.matchCount', { count: a.count })
+})
 const toggleFilter = async () => {
   settings.urlFilterEnabled = !settings.urlFilterEnabled
   await commitSettings()
@@ -373,8 +383,8 @@ function cancelAutoClose(): void {
     <div class="filter-row" v-if="tabUrl">
       <!-- M3 MdCheckbox(审查 X10):原 UA 原生 checkbox 深色 scheme 下未选中即深灰填充,即「复选框底色偏深」根因 -->
       <MdCheckbox :model-value="filterOn" :label="t('popup.filterBySite')" @update:model-value="toggleFilter" />
-      <span v-if="rowAffix" class="hint row-affix" :title="rowAffix.kind === 'hint' ? t(rowAffix.key) : undefined">
-        {{ rowAffix.kind === 'hint' ? t(rowAffix.key) : t('popup.matchCount', { count: rowAffix.count }) }}
+      <span v-if="rowAffix" class="hint row-affix" :title="rowAffix.kind === 'hint' ? rowAffixText : undefined">
+        {{ rowAffixText }}
       </span>
     </div>
     <!-- 独立 hint 行仅剩无 tabUrl 场景（读不到当前标签页时过滤行不存在，回退提示仍须可达） -->

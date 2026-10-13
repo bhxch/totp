@@ -11,7 +11,7 @@
 // @vitest-environment jsdom
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { nextTick, type Ref } from 'vue'
+import { nextTick, type Component, type Ref } from 'vue'
 import { useToast } from '@totp/ui'
 
 vi.mock('../src/store', async () => {
@@ -83,6 +83,7 @@ import { installChromeShim, type ChromeShim } from './helpers/chromeShim'
 import { addEntryOp, commitSettings, initStore, locked, settings, storageAdapter, store, updateEntryOp, vault } from '../src/store'
 import { SOURCES_KEY } from '@totp/core'
 import { encodePending } from '../src/pendingOtpauth'
+import { ext } from '../src/extApi'
 
 /** P3a 补齐用例的 shim 槽：按需注入（chromeShim 注入 globalThis.chrome，extApiMock 惰性桥实时可见） */
 let shim: ChromeShim | undefined
@@ -100,8 +101,14 @@ const TagFilterRowStub = {
   emits: ['update:selectedIds', 'update:mode'],
   template: `<div data-test="tag-filter-stub" />`,
 }
+/** LockScreen 桩（挂账 #13）：点击 emit external-unlock，供 popup 开窗接线断言 */
+const LockScreenEmitStub = {
+  name: 'LockScreen',
+  emits: ['external-unlock'],
+  template: `<button data-test="ls-emit-stub" @click="$emit('external-unlock')" />`,
+}
 
-async function mountApp(opts?: { otpListItem?: typeof OtpListItemStub; autoFollow?: boolean }) {
+async function mountApp(opts?: { otpListItem?: typeof OtpListItemStub; autoFollow?: boolean; lockScreen?: Component }) {
   // 默认关跟随拉取 gate：绝大多数用例不测同步，mount 首拉的真实 runner 执行只会产生
   // [cloudAutoSync] 噪音；「跟随拉取」describe 显式传 autoFollow: true 保持被测状态
   settings.syncPrefs.autoFollow = opts?.autoFollow ?? false
@@ -109,7 +116,7 @@ async function mountApp(opts?: { otpListItem?: typeof OtpListItemStub; autoFollo
     global: {
       plugins: [createTestI18n()],
       stubs: {
-        LockScreen: true,
+        LockScreen: opts?.lockScreen ?? true,
         EntryForm: true,
         // 面板内 OtpListItem 桩掉：行内容与本测试无关，桩掉后按需换 OtpListItemStub 透出 code
         OtpListItem: opts?.otpListItem ?? true,
@@ -128,7 +135,7 @@ const lockedRef = locked as unknown as Ref<boolean>
 /** P3a 用例的活动实例槽位：mountTracked 记录、afterEach 统一卸载——
  *  泄漏实例的 watch(locked) 会在后续用例 afterEach 置 lockedRef=false 时触发跟随拉取噪音 */
 let active: VueWrapper | null = null
-async function mountTracked(opts?: { otpListItem?: typeof OtpListItemStub }) {
+async function mountTracked(opts?: { otpListItem?: typeof OtpListItemStub; lockScreen?: Component }) {
   active = await mountApp(opts)
   return active
 }
@@ -1015,6 +1022,34 @@ describe('popup 锁定态与标签筛选恢复（B3-11/14）', () => {
     expect(wrapper.find('lock-screen-stub').exists()).toBe(true)
     expect(wrapper.findComponent({ name: 'LockScreen' }).props('passkeyMode')).toBe('external')
     expect(wrapper.find('main').exists()).toBe(false)
+  })
+
+  it('external-unlock 接线：开 unlock.html 解锁窗（popup 形态 400×560）且双击防重入（挂账 #12/#13）', async () => {
+    shim = installChromeShim()
+    const createSpy = vi.fn(async (_opts: { url: string; type: string; width: number; height: number }) => ({}))
+    ;(globalThis as unknown as { chrome: Record<string, unknown> }).chrome.windows = { create: createSpy }
+    try {
+      lockedRef.value = true
+      const wrapper = await mountTracked({ lockScreen: LockScreenEmitStub })
+      const expectedUrl = ext!.runtime.getURL('unlock.html?unlock=passkey') as string
+
+      await wrapper.find('[data-test="ls-emit-stub"]').trigger('click')
+      expect(createSpy).toHaveBeenCalledTimes(1)
+      const arg = createSpy.mock.calls[0]![0]
+      expect(arg.url).toBe(expectedUrl)
+      expect(arg.type).toBe('popup')
+      expect(arg.width).toBe(400)
+      expect(arg.height).toBe(560)
+
+      // 防重入（终审 Minor）：发起后同实例再触发不开第二窗
+      await wrapper.find('[data-test="ls-emit-stub"]').trigger('click')
+      expect(createSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      // shim 注入的 chrome 全局必须还原：泄漏进后续用例会把「ext 不可用」容错路径变成真实通道
+      delete (globalThis as unknown as { chrome: Record<string, unknown> }).chrome.windows
+      shim?.restore()
+      shim = undefined
+    }
   })
 
   it('rememberTagFilter 恢复：悬空 id 剔除、有效选中恢复并透传面板内 TagFilterRow', async () => {

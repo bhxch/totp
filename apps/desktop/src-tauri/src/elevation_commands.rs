@@ -412,11 +412,16 @@ mod tests {
     #[test]
     fn abe_unwrap_impl_allows_mini_window() {
         // mini webview 内脚本 invoke：门控放行（至 unwrap 阶段因测试环境无服务管道而失败——
-        // 非门控错误即达门控后方）；bind/wrap/remove 仍 mini 拒绝（各自既有测试不动）
+        // 非门控错误即达门控后方）；bind/wrap/remove 仍 mini 拒绝（各自既有测试不动）。
+        // 门控回归检测不限文案（挂账 #2）：新旧门控消息均含「仅主窗口」子串，断言错误不含
+        // 该子串即证未走门控——未来门控文案再变体同样免疫误绿
         let err = abe_unwrap_impl("mini").unwrap_err();
-        assert_ne!(err, "仅主窗口可调用此命令");
+        assert!(!err.contains("仅主窗口"), "mini 被门控拒绝: {err}");
         let err_main = abe_unwrap_impl("main").unwrap_err();
-        assert_ne!(err_main, "仅主窗口可调用此命令");
+        assert!(
+            !err_main.contains("仅主窗口"),
+            "main 被门控拒绝: {err_main}"
+        );
     }
 
     // ---- abe_bind/abe_remove 主窗口门控（I1 终审）----

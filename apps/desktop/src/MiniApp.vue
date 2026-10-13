@@ -86,8 +86,14 @@ async function load() {
       if (dekStillThere === null) s.lock()
     }
     // spec §A：槽空仍锁定 → OS 静默自动解锁（对齐主窗 LockScreen 挂载行为）。失败静默维持
-    // 锁定空态（mini.lockedNote），下次聚焦 load() 重试；打开/聚焦两条路径均汇于本 load()
-    if (s.locked.value) void attemptOsAutoUnlock(s, secPlatform.dpapi, secPlatform.abe)
+    // 锁定空态（mini.lockedNote），下次聚焦 load() 重试；打开/聚焦两条路径均汇于本 load()。
+    // 挂账 #6：在途期间聚焦重载会替换 store 实例，旧实例的解锁结果不驱动新 UI——DEK 已进
+    // windowId 共享会话，解出且实例已被替换时重载一次收敛（新 boot 自会话吃到 DEK 即解锁）
+    if (s.locked.value) {
+      void attemptOsAutoUnlock(s, secPlatform.dpapi, secPlatform.abe).then((ok) => {
+        if (ok && store.value !== s) void load()
+      })
+    }
     // 主题接线:initStore 成功后挂 useTheme(设置已加载为真实值;首帧属性由 html 内联脚本负责)
     useTheme(s)
     const iconStore = createIconStore(adapter)

@@ -53,7 +53,7 @@ describe('attemptOsAutoUnlock', () => {
     expect(dpapi.unprotect).not.toHaveBeenCalled()
   })
 
-  it('ABE 失败（null/异常/注入失败）：无声回退 DPAPI', async () => {
+  it('ABE 失败（注入失败）：无声回退 DPAPI', async () => {
     const dek = randomBytes(32)
     const unlockWithDek = vi.fn()
       .mockRejectedValueOnce(new Error('inject fail'))
@@ -62,6 +62,15 @@ describe('attemptOsAutoUnlock', () => {
     const ok = await attemptOsAutoUnlock(store, makeDpapi({ unprotect: vi.fn().mockResolvedValue(dek) }), makeAbe({ unwrap: vi.fn().mockResolvedValue(dek) }))
     expect(ok).toBe(true)
     expect(store.unlockWithDek).toHaveBeenCalledTimes(2)
+  })
+
+  it('ABE unwrap 返回 null（服务未装/失配折叠）：无声回退 DPAPI（挂账 #3 补直接覆盖）', async () => {
+    const dek = randomBytes(32)
+    const store = mockStore({ abeSource: computed(() => ({ kind: 'abe' })) })
+    const ok = await attemptOsAutoUnlock(store, makeDpapi({ unprotect: vi.fn().mockResolvedValue(dek) }), makeAbe({ unwrap: vi.fn().mockResolvedValue(null) }))
+    expect(ok).toBe(true)
+    // null 分支不注入 ABE 侧（unlockWithDek 仅 DPAPI 回退调用一次）
+    expect(store.unlockWithDek).toHaveBeenCalledTimes(1)
   })
 
   it('ABE 失败且 DPAPI 也失败：false 静默（不抛错）', async () => {
