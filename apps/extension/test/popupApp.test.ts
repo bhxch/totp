@@ -951,11 +951,11 @@ describe('popup 锁定态与标签筛选恢复（B3-11/14）', () => {
     lockedRef.value = false
   })
 
-  it('锁定态：渲染 LockScreen 且 allowPasskey=false（popup 无 WebAuthn 入口）', async () => {
+  it('锁定态：渲染 LockScreen 且 passkeyMode=external（spec §B：认证移交独立解锁窗）', async () => {
     lockedRef.value = true
     const wrapper = await mountTracked()
     expect(wrapper.find('lock-screen-stub').exists()).toBe(true)
-    expect(wrapper.findComponent({ name: 'LockScreen' }).props('allowPasskey')).toBe(false)
+    expect(wrapper.findComponent({ name: 'LockScreen' }).props('passkeyMode')).toBe('external')
     expect(wrapper.find('main').exists()).toBe(false)
   })
 

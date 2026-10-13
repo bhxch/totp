@@ -54,6 +54,22 @@ function openSettings(): void {
   void ext!.tabs.create({ url: ext!.runtime.getURL('options.html#/settings') })
 }
 
+/** Passkey 解锁（spec §B 方案 A）：popup 失焦即销毁、WebAuthn 认证须在真窗口完成——开
+ * 独立解锁窗自动发起 PRF，成功自关后重开 popup 经 session DEK 免密。本 popup 随窗口失焦
+ * 销毁属预期流程，不做回流（action.openPopup 受限不可编程重开） */
+function openUnlockWindow(): void {
+  try {
+    void ext!.windows.create({
+      url: ext!.runtime.getURL('unlock.html?unlock=passkey'),
+      type: 'popup',
+      width: 400,
+      height: 560,
+    })
+  } catch (e) {
+    console.warn('[popup] 打开解锁窗口失败', e)
+  }
+}
+
 const loaded = ref(false)
 const error = ref('')
 const query = ref('')
@@ -329,7 +345,7 @@ function cancelAutoClose(): void {
 </script>
 
 <template>
-  <LockScreen v-if="locked" :store="store" :allow-passkey="false" />
+  <LockScreen v-if="locked" :store="store" passkey-mode="external" @external-unlock="openUnlockWindow" />
   <main v-else>
     <!-- R16⑤（评审 A2 方案 a）：落盘失败常驻告警（锁屏态 store 写路径不可达，仅解锁主体需要） -->
     <PersistErrorBanner :show="persistFailed" :text="t('app.persistError')" />

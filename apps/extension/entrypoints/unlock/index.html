@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <script src="/theme-seed.js"></script>
+    <!-- 首帧防闪：与 tokens.css 默认种子 light/dark surface 值一致（popup/index.html 同款） -->
+    <style>html { background: #fefbff } html[data-mode='dark'] { background: #1b1b1f } @media (prefers-color-scheme: dark) { html[data-mode='auto'] { background: #1b1b1f } }</style>
+    <meta charset="UTF-8" />
+    <title>TOTP</title>
+  </head>
+  <body style="margin: 0">
+    <div id="app"></div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
