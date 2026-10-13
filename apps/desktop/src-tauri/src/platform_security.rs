@@ -7,7 +7,7 @@
 // 故在命令体内按窗口 label 收窄：mini 仅放行解锁类命令（os_auto_unprotect/abe_unwrap，
 // 2026-10-13 spec §A）；导入/写来源/安全卡操作仍仅主窗口，
 // 暴露面其余部分从两个 webview 收窄到主窗口。主窗口 webview 内的脚本仍可调用（该残余边界见各命令注释）。
-// pub(crate)：abe_unwrap（T7 fix 1/5）等跨模块 DEK 出口命令复用同一门控，不复制实现
+// pub(crate)：dek_protect、abe bind/wrap/remove 等 DEK 入出口命令与 WinAuth DPAPI 导入解密复用同一门控，不复制实现
 pub(crate) fn ensure_main_window_label(label: &str) -> Result<(), String> {
     if label == "main" {
         Ok(())

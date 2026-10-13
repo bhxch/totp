@@ -57,7 +57,12 @@ function openSettings(): void {
 /** Passkey 解锁（spec §B 方案 A）：popup 失焦即销毁、WebAuthn 认证须在真窗口完成——开
  * 独立解锁窗自动发起 PRF，成功自关后重开 popup 经 session DEK 免密。本 popup 随窗口失焦
  * 销毁属预期流程，不做回流（action.openPopup 受限不可编程重开） */
+// 双击防重入（终审）：解锁窗在途时重复触发直接吞掉（windows.create 无同步回执可查，前置
+// boolean 即可）；popup 失焦即销毁（spec §B），无需监听窗口关闭复位——重开 popup 是全新实例
+let unlockWindowOpening = false
 function openUnlockWindow(): void {
+  if (unlockWindowOpening) return
+  unlockWindowOpening = true
   try {
     void ext!.windows.create({
       url: ext!.runtime.getURL('unlock.html?unlock=passkey'),

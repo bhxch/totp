@@ -4,6 +4,7 @@
  * - 列表区整体装配 QuickCodesPanel（tagRow/tags/tagMode/query/entries/loading 透传 + copy/dblclick 转发）
  * - 快捷新增仅剩确认态：?uri= / pendingOtpauth → EntryForm 预填 → save 落库（carried 字段透传）
  * - 评审 R1 回归：新建 yandex 条目 digits=8 经 toOtpDigits 收口直传 addEntryOp，不被覆写为 6
+ * - spec §C 过滤行三态：命中「匹配 N 条」/ 无匹配回退 hint 行内缀互斥，无 tabUrl 独立 hint 行
  * store 模块整体 mock：真实模块 import 期即建 chrome 侧 store 单例（src/store.ts 顶层
  * createExtensionStore），node/jsdom 测试环境不可用；组件树其余走真实实现。
  */
@@ -271,6 +272,63 @@ describe('popup QuickCodesPanel 装配（P4 Task 3）', () => {
     settings.urlFilterEnabled = true
     wrapper = await mountTracked()
     expect(wrapper.findComponent({ name: 'QuickCodesPanel' }).props('emptyText')).toBe('暂无条目，点击右上角「打开主界面」录入。')
+  })
+})
+
+describe('popup 过滤行三态渲染接线（spec §C：命中/无匹配回退走 .row-affix，无 tabUrl 走独立 .hint-row）', () => {
+  afterEach(() => {
+    unmountActive()
+    vault.entries.length = 0
+    vault.tags.length = 0
+    settings.urlFilterEnabled = false
+  })
+
+  it('命中态：tabUrl 在位 + 过滤开 + 条目命中当前站 → .row-affix 显示「匹配 N 条」，无独立 hint 行', async () => {
+    shim = installChromeShim({ tabUrls: ['https://github.com/pull/1'] })
+    settings.urlFilterEnabled = true
+    vault.entries.push({
+      uuid: 'e1', type: 'totp', issuer: 'GitHub', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
+      algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 0,
+      matchRules: [{ strategy: 'baseDomain', pattern: 'github.com' }],
+    } as never)
+    const wrapper = await mountTracked()
+
+    expect(wrapper.find('.row-affix').text()).toBe('匹配 1 条')
+    expect(wrapper.find('.hint-row').exists()).toBe(false)
+  })
+
+  it('无匹配态：tabUrl 在位 + 过滤开 + 无命中 → .row-affix 显示站点回退 hint（无匹配文案），无独立 hint 行', async () => {
+    shim = installChromeShim({ tabUrls: ['https://example.com/page'] })
+    settings.urlFilterEnabled = true
+    vault.entries.push({
+      uuid: 'e1', type: 'totp', issuer: 'GitHub', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
+      algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 0,
+    } as never) // 无 matchRules：URL 过滤激活下不命中任何条目
+    const wrapper = await mountTracked()
+
+    // popupFilter.hintSitePlain：hint 优先于匹配数（popupFilterRowAffix），渲染进行内缀
+    expect(wrapper.find('.row-affix').text()).toBe('当前站点无匹配，显示全部')
+    expect(wrapper.find('.hint-row').exists()).toBe(false)
+  })
+
+  it('无 tabUrl 态：读不到标签页（tag 放宽回退 hint）→ 过滤行缺位，独立 .hint-row 承接提示', async () => {
+    shim = installChromeShim({ tabUrls: [] })
+    vault.entries.push({
+      uuid: 'e1', type: 'totp', issuer: 'GitHub', label: 'me', secret: 'JBSWY3DPEHPK3PXP',
+      algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 0,
+    } as never)
+    vault.tags.push({ id: 't1', name: '工作' } as never)
+    const wrapper = await mountTracked()
+    // 构造 tag 放宽回退（HINT_TAG_RELAXED）：选中未命中的标签 + 非空 query（resolvePopupVisible
+    // 的放宽分支要求），此时 tabUrl=null → 过滤行不存在，hint 落独立行
+    const panel = wrapper.findComponent({ name: 'QuickCodesPanel' })
+    panel.vm.$emit('update:selectedTagIds', ['t1'])
+    panel.vm.$emit('update:query', 'Git')
+    await nextTick()
+
+    expect(wrapper.find('.row-affix').exists()).toBe(false)
+    expect(wrapper.find('.hint-row').exists()).toBe(true)
+    expect(wrapper.find('.hint-row').text()).toBe('当前标签下无匹配，已放宽标签过滤')
   })
 })
 

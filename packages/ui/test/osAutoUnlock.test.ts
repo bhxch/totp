@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { randomBytes } from '@totp/core'
 import { attemptOsAutoUnlock } from '../src/components/osAutoUnlock'
 import type { VueStore } from '../src/store'
