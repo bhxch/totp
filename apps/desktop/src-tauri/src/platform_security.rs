@@ -4,14 +4,26 @@
 
 // ---------- DPAPI 解密命令的通用门控（F3） ----------
 // 命令注册给 main/mini 两个窗口，Tauri capabilities 无法约束应用自有命令（仅约束插件权限），
-// 故在命令体内按窗口 label 收窄：mini 恒不执行导入/解锁/安全卡操作（锁定态迷你窗不可用），
-// 暴露面从两个 webview 收窄到主窗口。主窗口 webview 内的脚本仍可调用（该残余边界见各命令注释）。
+// 故在命令体内按窗口 label 收窄：mini 仅放行解锁类命令（os_auto_unprotect/abe_unwrap，
+// 2026-10-13 spec §A）；导入/写来源/安全卡操作仍仅主窗口，
+// 暴露面其余部分从两个 webview 收窄到主窗口。主窗口 webview 内的脚本仍可调用（该残余边界见各命令注释）。
 // pub(crate)：abe_unwrap（T7 fix 1/5）等跨模块 DEK 出口命令复用同一门控，不复制实现
 pub(crate) fn ensure_main_window_label(label: &str) -> Result<(), String> {
     if label == "main" {
         Ok(())
     } else {
         Err("仅主窗口可调用此命令".into())
+    }
+}
+
+// 解锁类命令门控（2026-10-13 spec §A）：放行 main|mini——mini 打开/聚焦时静默自动解锁与主窗
+// LockScreen 同源同权（同进程同 capabilities 同用户，信任边界见 spec 诚实边界）；写/删来源类
+// （protect/forget/bind/wrap/remove）与 WinAuth 导入仍走 ensure_main_window_label。
+pub(crate) fn ensure_auto_unlock_label(label: &str) -> Result<(), String> {
+    if label == "main" || label == "mini" {
+        Ok(())
+    } else {
+        Err("仅主窗口或 mini 窗口可调用此命令".into())
     }
 }
 
@@ -258,7 +270,7 @@ fn dek_protect_inner(window_label: &str, data_b64: &str) -> Result<String, Strin
 
 #[cfg(windows)]
 fn dek_unprotect_inner(window_label: &str, wrapped_b64: &str) -> Result<String, String> {
-    ensure_main_window_label(window_label)?;
+    ensure_auto_unlock_label(window_label)?;
     let raw = base64_decode(wrapped_b64).ok_or("invalid base64")?;
     let plain = if raw.len() > DEK_WRAP_MARKER.len() && raw.starts_with(DEK_WRAP_MARKER) {
         // v2：应用熵绑定——非本应用 protect 产出的任何密文（含被伪造的前缀）恒解密失败
@@ -280,7 +292,7 @@ fn dek_unprotect_inner(window_label: &str, wrapped_b64: &str) -> Result<String, 
 // osAutoUnlock 三平台统一通道（计划 15 T14）：Windows 委托 DPAPI；macOS Keychain / Linux
 // Secret Service 经 keyring。语义与 DPAPI 对齐：OS 保护 DEK 本体（base64 进出），解锁时静默取回。
 // F3：Windows 分支走 v2 DEK 通道（应用附加熵 + 版本前缀 + 32B 旧格式兜底，见 dek_* 注释）；
-// 仅主窗口可调用。
+// 解锁（unprotect）main/mini 均可调用；写入（protect）仅主窗口（2026-10-13 spec §A）。
 // D（诚实边界）：macOS/Linux keyring 分支在 Windows 构建上仅编译门控（cfg 不编译不下载依赖），
 // keyring 运行时行为登记 backlog 待真机验证；Windows 委托路径经 roundtrip 单测实跑。
 #[cfg(windows)]
@@ -317,7 +329,7 @@ pub fn os_auto_unprotect(
     window: tauri::WebviewWindow,
     _wrapped_b64: String,
 ) -> Result<String, String> {
-    ensure_main_window_label(window.label())?;
+    ensure_auto_unlock_label(window.label())?;
     let entry = keyring::Entry::new("totp-desktop", "dek").map_err(|e| e.to_string())?;
     entry.get_password().map_err(|e| e.to_string())
 }
@@ -464,13 +476,29 @@ mod tests {
         );
     }
 
-    // F3：DEK 通道仅主窗口可调用（mini 恒不执行解锁）
+    // 2026-10-13 spec §A：DEK 解锁通道放行 main|mini（mini 打开/聚焦静默自动解锁，与主窗
+    // LockScreen 同权）；protect（写来源）仍 mini 拒绝。WinAuth decrypt_dpapi 的 mini 拒绝
+    // 断言在 decrypt_dpapi_inner_gating_and_shape，不动
     #[cfg(windows)]
     #[test]
-    fn dek_channel_gated_to_main_window() {
-        let data = base64_encode(&[1u8; 32]);
-        assert!(dek_protect_inner("mini", &data).is_err());
-        assert!(dek_unprotect_inner("mini", "AAAA").is_err());
+    fn dek_unprotect_channel_allows_mini() {
+        // 解锁：main 包裹的 DEK mini 可解（roundtrip 跨 label）
+        let wrapped = dek_protect_inner("main", &base64_encode(&[1u8; 32])).expect("protect");
+        let out = dek_unprotect_inner("mini", &wrapped).expect("mini unprotect");
+        assert_eq!(out, base64_encode(&[1u8; 32]));
+        // 写入：mini 恒拒绝（设置动作仅主窗）
+        assert!(dek_protect_inner("mini", &base64_encode(&[1u8; 32])).is_err());
+    }
+
+    // 解锁门控 helper 纯函数三态（全平台编译，无 cfg）
+    #[test]
+    fn auto_unlock_label_gates() {
+        assert!(ensure_auto_unlock_label("main").is_ok());
+        assert!(ensure_auto_unlock_label("mini").is_ok());
+        assert_eq!(
+            ensure_auto_unlock_label("popup").unwrap_err(),
+            "仅主窗口或 mini 窗口可调用此命令"
+        );
     }
 
     // F3：WinAuth 导入命令——用途声明 + 明文 hex-ASCII 形状 + 主窗口门控

@@ -1,6 +1,7 @@
 //! ABE 提权 Tauri 命令层（plan p6 §T4）：abe_status / abe_bind / abe_wrap / abe_remove /
-//! abe_unwrap。I1 终审：bind/wrap/remove/unwrap 四个动状态或动 DEK 的命令均按主窗口
-//! 门控（ensure_main_window_label，先例 db33486 abe_unwrap）；abe_status 只读无门控。
+//! abe_unwrap。I1 终审：bind/wrap/remove 三个动状态或动 DEK 写入侧的命令均按主窗口
+//! 门控（ensure_main_window_label）；abe_unwrap 为解锁出口，放行 main|mini
+//! （ensure_auto_unlock_label，2026-10-13 spec §A）；abe_status 只读无门控。
 //!
 //! 本模块全平台编译：`generate_handler!` 宏不支持条目级 cfg，注册须无条件（审查裁定
 //! 拆 cfg 包装层的样板远贵于 3 个桩）；Windows 真实现经 [`crate::elevation_client`] /
@@ -90,9 +91,10 @@ pub async fn abe_remove(window: tauri::WebviewWindow) -> serde_json::Value {
 /// 32B 规模开销可忽略且 JS 侧 `new Uint8Array(arr)` 直构，不用 base64 省一次编解码往返；
 /// DEK 在 JS 侧 unlockWithDek 注入会话后无密文残留（core 侧 zeroize 责任）。
 /// 错误以 Err(String) 折叠外传——锁屏回退语义下 TS 侧仅 console.warn 留痕并回退 dpapi。
-/// 主窗口门控（T7 fix 1/5）：DEK 出口命令与 dek_unprotect/os_auto_unprotect 同标准——
-/// 命令体内按窗口 label 收窄（Tauri v2 对应用自有 command 无按窗口 ACL 细分），mini
-/// webview 内脚本 invoke 恒 Err「仅主窗口可调用此命令」。DEK 管道 IO 阻塞段收敛
+/// 解锁门控（2026-10-13 spec §A，原 T7 fix 1/5 主窗口门控放宽）：DEK 出口命令与
+/// dek_unprotect/os_auto_unprotect 同标准——命令体内按窗口 label 收窄（Tauri v2 对应用
+/// 自有 command 无按窗口 ACL 细分），放行 main|mini（mini 打开/聚焦静默自动解锁），
+/// 其余 label 拒「仅主窗口或 mini 窗口可调用此命令」。DEK 管道 IO 阻塞段收敛
 /// spawn_blocking（T4 审查 ⚠️）；label 先取再 move，窗口句柄不进 blocking 池
 #[tauri::command]
 pub async fn abe_unwrap(window: tauri::WebviewWindow) -> Result<Vec<u8>, String> {
@@ -170,7 +172,7 @@ fn abe_remove_impl(_window_label: &str) -> serde_json::Value {
 
 #[cfg(windows)]
 fn abe_unwrap_impl(window_label: &str) -> Result<Vec<u8>, String> {
-    crate::platform_security::ensure_main_window_label(window_label)?;
+    crate::platform_security::ensure_auto_unlock_label(window_label)?;
     unwrap_outcome(crate::elevation_client::unwrap_dek())
 }
 
@@ -404,16 +406,17 @@ mod tests {
         );
     }
 
-    // ---- abe_unwrap 主窗口门控（T7 fix 1/5；DEK 出口命令同标准）----
+    // ---- abe_unwrap 解锁通道放行 main|mini（2026-10-13 spec §A）----
 
     #[cfg(windows)]
     #[test]
-    fn abe_unwrap_impl_gates_mini_window() {
-        // mini webview 内脚本 invoke：门控先行，不触达管道即拒（错误消息与 platform_security 同源）
-        assert_eq!(abe_unwrap_impl("mini").unwrap_err(), "仅主窗口可调用此命令");
-        // 主窗口 label 放行（至 unwrap 阶段因测试环境无服务管道而失败——非门控错误即达门控后方）
-        let err = abe_unwrap_impl("main").unwrap_err();
+    fn abe_unwrap_impl_allows_mini_window() {
+        // mini webview 内脚本 invoke：门控放行（至 unwrap 阶段因测试环境无服务管道而失败——
+        // 非门控错误即达门控后方）；bind/wrap/remove 仍 mini 拒绝（各自既有测试不动）
+        let err = abe_unwrap_impl("mini").unwrap_err();
         assert_ne!(err, "仅主窗口可调用此命令");
+        let err_main = abe_unwrap_impl("main").unwrap_err();
+        assert_ne!(err_main, "仅主窗口可调用此命令");
     }
 
     // ---- abe_bind/abe_remove 主窗口门控（I1 终审）----
