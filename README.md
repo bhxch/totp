@@ -128,11 +128,13 @@ vault 加密支持多种解锁来源（KEK 来源）并存，在「安全」页�
   - 浏览器支持面：Chrome/Edge 与桌面版（WebView2）可用；Firefox 扩展页面的 PRF 支持有限，探测不支持时「添加 Passkey 解锁」入口自动隐藏并提示
   - 绑定过程会连续弹出两次认证器窗口（注册 + 求值确认），属预期行为
   - 可绑定多个 Passkey（列表逐个管理）
+  - 扩展 popup 弹出框同样提供「使用 Passkey 解锁」：点击后打开独立解锁窗口自动发起验证（popup 窗口失焦即销毁，认证须在真窗口完成），成功后窗口自动关闭，重新打开 popup 即已解锁
 - **原生自动解锁（仅桌面版）**：
   - 统一 osAutoUnlock 通道：Windows = DPAPI（当前用户）、macOS = 钥匙串（Keychain）、Linux = 密钥环（Secret Service，GNOME Keyring/KWallet）；启用后 DEK 由操作系统安全存储保护，桌面版锁定页打开时静默尝试自动解锁
   - 换系统账户或换机器后解不开属预期：静默失败并回落到口令/Passkey 手动解锁，不报错不打断；Linux 无 keyring 服务 / macOS WKWebView 的 PRF 受限时，对应选项不渲染
   - Windows DPAPI 路径经 roundtrip 单测验证；macOS/Linux keyring 运行时行为待真机验证
   - 插件端不提供此方式
+  - mini 快速窗与主窗口同权：锁定态打开或聚焦 mini 时同样静默自动解锁（未启用 OS 自动解锁时仍提示需主窗口解锁）
 - **应用绑定解锁（ABE 服务，仅 Windows 桌面版）**：
   - 在「安全」页「应用绑定解锁（服务）」区块点「安装服务」，一次 UAC 完成本地系统服务安装与绑定；启用后锁定页静默解锁优先经该服务取 DEK，失败自动回退 Windows 自动解锁（DPAPI）
   - 原理：DEK 密文由 LocalSystem 服务以 SYSTEM 上下文 DPAPI 包裹后存 `HKLM\SOFTWARE\TotpTools\Elevation`；服务对每次连接按调用者 exe 路径 + SHA256 验证后才代理包裹/解包；服务管道 DACL 收窄到安装发起用户（发起用户 SID 存 HKLM CallerSid，值缺失或非法时回退已认证用户兜底；借用他人管理员账户做 UAC 提权的场景仅该管理员可连接，发起用户自动回退 DPAPI）；服务副本二进制放在 ACL 锁定的 `ProgramData\TotpTools\service`（拒绝继承 + OWNER_RIGHTS ACE，抑制「预建目录抢占后所有者重开 DACL」）

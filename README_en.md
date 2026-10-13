@@ -128,11 +128,13 @@ Vault encryption supports multiple unlock sources (KEK sources) coexisting, mana
   - Browser support: Chrome/Edge and the desktop app (WebView2); PRF support on Firefox extension pages is limited — when probing fails the "Add Passkey unlock" entry hides itself with a hint
   - Binding pops two consecutive authenticator prompts (registration + evaluation confirmation); this is expected
   - Multiple Passkeys can be bound (managed individually in a list)
+  - The extension popup offers the same "Unlock with Passkey": clicking it opens a standalone unlock window that starts verification automatically (the popup is destroyed as soon as it loses focus, so authentication must happen in a real window); once verified the window closes itself, and reopening the popup finds it already unlocked
 - **Native auto unlock (desktop only)**:
   - One osAutoUnlock channel: Windows = DPAPI (current user), macOS = Keychain, Linux = Secret Service keyring (GNOME Keyring/KWallet); when enabled the DEK is protected by OS-secure storage and the desktop lock screen silently attempts auto unlock when opened
   - Failing to unlock after switching OS accounts or machines is expected: it fails silently and falls back to manual passphrase/Passkey unlock without errors or interruptions; when no keyring service exists on Linux, or PRF is limited on macOS WKWebView, the corresponding option does not render
   - The Windows DPAPI path is covered by roundtrip unit tests; macOS/Linux keyring runtime behavior awaits real-machine verification
   - Not offered in the extension
+  - The mini quick window is on equal footing with the main window: opening or focusing the mini window while locked also auto unlocks silently (without OS auto unlock enabled it still prompts that the main window must unlock first)
 - **Per-platform naming**: unlock method names on the Security page and lock screen are injected per platform — Windows shows "Windows Hello (Passkey)" / "Windows auto unlock", macOS shows "Touch ID (Passkey)" / "Keychain auto unlock", Linux and the browser extension show "Passkey" (desktop adds "Keyring auto unlock")
 - **Switching devices**: binding data (ciphertext) travels with browser sync; cloud backup/sync (envelope) excludes it. When the Passkey credential lives on the local platform authenticator, PRF cannot be evaluated on another machine and must be re-bound; roaming credentials (e.g. YubiKey) unlock directly; native auto unlock fails silently on foreign machines. The universal path on a new device: unlock with the passphrase first, then re-bind the other methods
 
