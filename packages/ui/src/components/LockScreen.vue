@@ -6,6 +6,7 @@ import { visibility, visibilityOff } from './iconPaths'
 import type { AbeOps, DpapiUnlockOps } from './securityPlatform'
 import { getPrfOutput, prfSupported } from '../prf'
 import type { VueStore } from '../store'
+import { attemptOsAutoUnlock } from './osAutoUnlock'
 import MdButton from './md/MdButton.vue'
 import MdIconButton from './md/MdIconButton.vue'
 import MdTextField from './md/MdTextField.vue'
@@ -51,43 +52,21 @@ onMounted(() => {
       .then((ok) => { prfCap.value = ok })
       .catch(() => { prfCap.value = false })
   }
-  // 2) 静默自动解锁（plan p6 §0.3）：abeSource 已绑定且宿主提供 supported 的 abe 通道
-  //    → 先试服务侧 Unwrap；失败（异常/返回 null/服务不可达）无声回退下方 dpapi 静默路径
-  //    ——回退不打断、不重复报错，失败原因 console.warn 留痕；两者皆败维持 1s 后「重试」UI
-  const abe = props.abe
-  if (abe?.supported && props.store.abeSource.value) {
-    abe.unwrap()
-      .then((dek) => {
-        if (!dek) throw new Error('ABE unwrap 不可用（服务未装/失配/不可达）')
-        return props.store.unlockWithDek(dek)
-      })
-      .then(() => emit('unlocked'))
-      .catch((e) => {
-        console.warn('[lock] ABE 静默解锁失败，回退 OS 自动解锁通道', e)
-        silentDpapiUnlock()
-      })
-    return
-  }
-  silentDpapiUnlock()
-})
-
-/** DPAPI(OS) 静默解锁（原 onMounted 内联路径原样抽出，abe 回退与无 abe 绑定共用）：
- *  unprotect(wrappedDekD) → unlockWithDek → emit unlocked；失败属预期（换机/换用户）
- *  静默处理，停留超 1s 未解锁暴露「重试」入口（部分环境首次解包有竞争/偶发失败） */
-function silentDpapiUnlock(): void {
-  const ops = props.dpapi
-  const src = ops?.source.value
-  if (!ops || !src) return
-  ops.unprotect(src.wrappedDekD)
-    .then((dek) => props.store.unlockWithDek(dek).then(() => emit('unlocked')))
-    .catch(() => {
-      // I44：DPAPI 静默失败属预期（换机/换用户），不打断手动解锁路径；
-      // 但若用户停留在锁定页超 1s 未操作，暴露「重试」入口（部分环境首次解包有竞争/偶发失败）
+  // 2) 静默自动解锁（spec §A 抽至 osAutoUnlock.ts 共享）：abe 优先 dpapi 回退的序列在
+  //    helper 内；此处只消费结果——成功 emit unlocked，静默失败且 DPAPI 已绑定则 1s 后
+  //    暴露「重试」入口（I44，仅 DPAPI 通道与原行为一致：未绑定时不武装）
+  void attemptOsAutoUnlock(props.store, props.dpapi, props.abe).then((ok) => {
+    if (ok) {
+      emit('unlocked')
+      return
+    }
+    if (props.dpapi?.source.value) {
       setTimeout(() => {
         if (props.store.locked.value) dpapiFailed.value = true
       }, 1000)
-    })
-}
+    }
+  })
+})
 
 /** I44：DPAPI 静默失败且本端仍处于锁定态 → 显示「重试」按钮，避免误以为可解锁但无入口 */
 const dpapiFailed = ref(false)
