@@ -3,10 +3,12 @@ import { invoke } from '@tauri-apps/api/core'
 import { emit, listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { filterByTags, type TagFilterMode } from '@totp/core'
-import { PersistErrorBanner, QuickCodesPanel, ToastHost, close, createIconStore, EmptyState, searchEntries, useOtpCodes, useTheme, useToast, type IconStore, type VueStore } from '@totp/ui'
+import { attemptOsAutoUnlock, PersistErrorBanner, QuickCodesPanel, ToastHost, close, createIconStore, EmptyState, searchEntries, useOtpCodes, useTheme, useToast, type IconStore, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, shallowRef, watch } from 'vue'
 import { createTauriFs } from './tauriFs'
 import { bootDesktopStore, persistFailed, useDesktopI18n } from './desktopShell'
+import { createSecurityPlatform } from './securityPlatform'
+import { desktopUaFlags, unlockNamingFor } from './unlockNaming'
 import { createCopyAutoHide } from './miniAutoHide'
 import { sortMiniEntries } from './miniSort'
 import { createDesktopCopy } from './desktopCopy'
@@ -28,6 +30,18 @@ const loadFailed = ref(false)
 // 捕获；mini 的 store 在每次聚焦重载时重建（既有模式，useTheme 同样重新接线）——i18n 插件只能
 // 装入一次，mountI18n 内部仅首次生效，重载为 no-op；tr 兜底回原文 key 仅极端时序可见
 const { tr, mountI18n } = useDesktopI18n()
+
+// OS 静默自动解锁通道（spec §A）：与主窗同源 createSecurityPlatform——mini 不渲染
+// SecurityCard，dpapi/abe ops 仅供锁定 boot 时的 attemptOsAutoUnlock 使用（LockScreen 同款
+// 静默路径）；naming 调用时求值保持 locale 响应式，与 App.vue 口径一致
+const uaFlags = desktopUaFlags(navigator.userAgent)
+const secPlatform = createSecurityPlatform({
+  getStore: () => store.value,
+  tr,
+  naming: () => unlockNamingFor(uaFlags, tr),
+  flags: uaFlags,
+  ua: navigator.userAgent,
+})
 
 async function load() {
   try {
@@ -71,6 +85,9 @@ async function load() {
       const dekStillThere = await invoke<string | null>('peek_mini_dek').catch(() => 'gone')
       if (dekStillThere === null) s.lock()
     }
+    // spec §A：槽空仍锁定 → OS 静默自动解锁（对齐主窗 LockScreen 挂载行为）。失败静默维持
+    // 锁定空态（mini.lockedNote），下次聚焦 load() 重试；打开/聚焦两条路径均汇于本 load()
+    if (s.locked.value) void attemptOsAutoUnlock(s, secPlatform.dpapi, secPlatform.abe)
     // 主题接线:initStore 成功后挂 useTheme(设置已加载为真实值;首帧属性由 html 内联脚本负责)
     useTheme(s)
     const iconStore = createIconStore(adapter)

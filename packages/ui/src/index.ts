@@ -32,6 +32,8 @@ export { default as TagFilterRow } from './components/TagFilterRow.vue'
 export { default as QuickCodesPanel } from './components/QuickCodesPanel.vue'
 export { default as OtpQrDialog } from './components/OtpQrDialog.vue'
 export { default as LockScreen } from './components/LockScreen.vue'
+// OS 静默自动解锁共享编排（spec 2026-10-13 §A）：desktop MiniApp 锁定 boot 第二通道（LockScreen 同款）
+export { attemptOsAutoUnlock } from './components/osAutoUnlock'
 export { default as BackupCard } from './components/BackupCard.vue'
 export { default as BackupSecretCard } from './components/BackupSecretCard.vue'
 export { default as CloudCard } from './components/CloudCard.vue'
