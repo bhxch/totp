@@ -47,6 +47,8 @@ export interface PagePropsDeps {
   mcpPlatform: McpPlatform | null
   devtoolsPlatform: DevtoolsPlatform | null
   releasePlatform: ReleasePlatform | null
+  /** 本应用版本号（扩展 manifest version / 桌面 Tauri app version）；缺省时设置页版本行显示占位符 */
+  appVersion?: string
 }
 
 /** 路由名 → 页面 props 映射（R16③）：pageProps 装配表的值类型逐页锁定，恢复此前
@@ -56,7 +58,7 @@ export interface PagePropsByName {
   import: { store: VueStore | null; platform: BackupPlatform | null; schemesApi: ImportSchemesApi | null }
   sync: { store: VueStore | null; platform: BackupPlatform | null; cloudPlatform: CloudPlatform | null; syncPlatform: SyncPlatform | null; cloudAuthFailed: boolean }
   security: { securityPlatform: SecurityPlatform | null }
-  settings: { store: VueStore | null; securityPlatform: SecurityPlatform | null; showDesktop: boolean; showExtension: boolean; mcpPlatform: McpPlatform | null; devtoolsPlatform: DevtoolsPlatform | null; releasePlatform: ReleasePlatform | null }
+  settings: { store: VueStore | null; securityPlatform: SecurityPlatform | null; showDesktop: boolean; showExtension: boolean; mcpPlatform: McpPlatform | null; devtoolsPlatform: DevtoolsPlatform | null; releasePlatform: ReleasePlatform | null; appVersion?: string }
 }
 
 /** 页面 props 装配表（映射类型：每键的返回形状由 PagePropsByName[N] 单独核对，键完整性
@@ -66,5 +68,5 @@ export const pagePropsBuilders: { [N in keyof PagePropsByName]: (p: PagePropsDep
   import: (p) => ({ store: p.store, platform: p.platform, schemesApi: p.schemesApi }),
   sync: (p) => ({ store: p.store, platform: p.platform, cloudPlatform: p.cloudPlatform, syncPlatform: p.syncPlatform, cloudAuthFailed: p.cloudAuthFailed }),
   security: (p) => ({ securityPlatform: p.securityPlatform }),
-  settings: (p) => ({ store: p.store, securityPlatform: p.securityPlatform, showDesktop: (p.railActions?.length ?? 0) > 0, showExtension: p.syncPlatform != null, mcpPlatform: p.mcpPlatform ?? null, devtoolsPlatform: p.devtoolsPlatform ?? null, releasePlatform: p.releasePlatform ?? null }),
+  settings: (p) => ({ store: p.store, securityPlatform: p.securityPlatform, showDesktop: (p.railActions?.length ?? 0) > 0, showExtension: p.syncPlatform != null, mcpPlatform: p.mcpPlatform ?? null, devtoolsPlatform: p.devtoolsPlatform ?? null, releasePlatform: p.releasePlatform ?? null, appVersion: p.appVersion }),
 }

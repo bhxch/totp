@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { getVersion } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { StorageAdapter } from '@totp/core'
@@ -117,6 +118,12 @@ const shell = createDesktopShell({
 onMounted(() => { void shell.init() })
 onScopeDispose(() => shell.dispose())
 
+// 设置页「关于」卡版本号（core:default capability 已含 getVersion 许可）；失败静默，页面显示占位符
+const appVersion = ref('')
+onMounted(() => {
+  getVersion().then((v) => { appVersion.value = v }).catch((e) => console.warn('[appVersion]', e))
+})
+
 /** Rail 底部「隐藏到托盘」：原 header 按钮迁移为 Shell 动作（失焦自动隐藏开关迁至设置页）。
  *  label 用 getter 读取时取词（Shell 渲染期晚于 i18n 装入，随 locale 联动） */
 const railActions = [{ get label() { return tr('desktop.hideToTray') }, onClick: () => void getCurrentWindow().hide() }]
@@ -127,7 +134,7 @@ const railActions = [{ get label() { return tr('desktop.hideToTray') }, onClick:
   <div v-if="loadError && !store" class="error">{{ tr('desktop.loadFailed', { message: loadError }) }}</div>
   <!-- 解锁成功回调补跑迁移（plan16 T14，幂等）：口令/PRF 解锁各路径在 LockScreen 内 emit unlocked -->
   <LockScreen v-else-if="store && locked" :store="store" :dpapi="dpapiOps" :abe="abeOps" @unlocked="runLegacyMigrations" />
-  <NavigationShell v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :cloud-platform="cloudPlatform" :icons="icons" :schemes-api="schemesApi" :rail-actions="railActions" :mcp-platform="mcpPlatform" :devtools-platform="devtoolsPlatform" :release-platform="releasePlatform" @copy="onCopy" />
+  <NavigationShell v-else-if="store" :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :cloud-platform="cloudPlatform" :icons="icons" :schemes-api="schemesApi" :rail-actions="railActions" :mcp-platform="mcpPlatform" :devtools-platform="devtoolsPlatform" :release-platform="releasePlatform" :app-version="appVersion" @copy="onCopy" />
   <!-- MCP 首连审批/工具确认独立于上方 v-if 链：锁定态也要能弹（plan17 T10）；t 走壳层 tr（desktop 无 useI18n 注入） -->
   <!-- 关闭（Esc/遮罩/工具 Deny）按通道分流 deny：首连回执进 60s 冷却，工具确认回 result:false（逐次即焚）——
        否则 "approval pending" 诱导 AI 每 10s 重试、对话框反复重开抢焦点 -->

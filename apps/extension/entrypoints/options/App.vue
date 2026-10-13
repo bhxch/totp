@@ -11,6 +11,7 @@ import {
 } from '../../src/optionsPlatforms'
 import { createIdleLockWatcher } from '../../src/lockEnforcer'
 import { createDekSession } from '../../src/dekSession'
+import { ext } from '../../src/extApi'
 import { createExtensionStore, persistFailed, storageAdapter } from '../../src/store'
 
 // spec §7 末尾：options 窗口独立解锁——windowId='options' 与 popup 隔离，各持各的 DEK。
@@ -201,6 +202,12 @@ const cloudPlatform = createOptionsCloudPlatform({
     cloudAuthFailed.value = followScheduler.authFailed()
   },
 })
+
+// 设置页「关于」卡版本号：manifest version 由 wxt 从 package.json 注入（与发布版本同源）。
+// 能力探测（extApi 惯例）：非扩展宿主/测试桩的 runtime 可能缺 getManifest
+const appVersion = typeof ext?.runtime.getManifest === 'function'
+  ? ext.runtime.getManifest().version ?? ''
+  : ''
 </script>
 
 <template>
@@ -216,7 +223,7 @@ const cloudPlatform = createOptionsCloudPlatform({
       <div v-if="migrateNote" class="migrate-note">{{ migrateNote }}</div>
       <div v-if="legacyNote" class="migrate-note">{{ legacyNote }}</div>
       <!-- 同构五页:与桌面同一 Shell(无 railActions → 设置页不渲染桌面专属项;传 syncPlatform → 渲染扩展专属项) -->
-      <NavigationShell :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :sync-platform="syncPlatform" :cloud-platform="cloudPlatform" :cloud-auth-failed="cloudAuthFailed" :icons="icons" :schemes-api="schemesApi" @copy="copyToClipboard" />
+      <NavigationShell :store="store" :platform="backupPlatform" :security-platform="securityPlatform" :sync-platform="syncPlatform" :cloud-platform="cloudPlatform" :cloud-auth-failed="cloudAuthFailed" :icons="icons" :schemes-api="schemesApi" :app-version="appVersion" @copy="copyToClipboard" />
     </template>
   </template>
   <!-- 全局 toast 渲染端（P3 item-layout toast 设计）：模板根级、独立于锁定态 v-if 链，无 props 直读模块态 -->

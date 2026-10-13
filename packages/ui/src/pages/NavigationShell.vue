@@ -47,6 +47,8 @@ const props = withDefaults(defineProps<{
   devtoolsPlatform?: DevtoolsPlatform | null
   /** 释放策略平台实现(桌面端 release_policy_* 命令);null/缺省 settings 页释放卡不渲染 */
   releasePlatform?: ReleasePlatform | null
+  /** 本应用版本号(扩展 manifest version / 桌面 Tauri app version);缺省设置页版本行显示占位符 */
+  appVersion?: string
 }>(), { store: null, platform: null, securityPlatform: null, syncPlatform: null, cloudPlatform: null, cloudAuthFailed: false, icons: null, schemesApi: null, mcpPlatform: null, devtoolsPlatform: null, releasePlatform: null })
 
 const route = useRoute()

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { AppSettings } from '@totp/core'
 import { useI18n } from 'vue-i18n'
 import type { DevtoolsPlatform } from '../components/devtoolsPlatform'
@@ -9,6 +9,7 @@ import type { SecurityPlatform } from '../components/securityPlatform'
 import DevtoolsCard from '../components/DevtoolsCard.vue'
 import McpServerCard from '../components/McpServerCard.vue'
 import ReleaseCard from '../components/ReleaseCard.vue'
+import MdButton from '../components/md/MdButton.vue'
 import MdCard from '../components/md/MdCard.vue'
 import MdSegmentedButton from '../components/md/MdSegmentedButton.vue'
 import MdSelect from '../components/md/MdSelect.vue'
@@ -16,6 +17,7 @@ import MdSwitch from '../components/md/MdSwitch.vue'
 import MdTextField from '../components/md/MdTextField.vue'
 import type { VueStore } from '../store'
 import { THEME_PALETTES, useTheme } from '../theme/useTheme'
+import { compareVersions, fetchLatestRelease, type LatestRelease } from '../updateCheck'
 
 const props = withDefaults(defineProps<{
   /** 全局响应式 store（settings 读写源；NavigationShell pageProps 按 /settings 分发） */
@@ -32,6 +34,9 @@ const props = withDefaults(defineProps<{
   devtoolsPlatform?: DevtoolsPlatform | null
   /** 释放策略平台实现（桌面宿主桥接 release_policy_* 命令）；null 时释放卡不渲染（桌面专属） */
   releasePlatform?: ReleasePlatform | null
+  /** 本应用版本号（扩展宿主取 manifest version、桌面宿主取 Tauri app version）；缺省显示占位符，
+   *  更新检查仍可用（仅展示远端最新版本号） */
+  appVersion?: string
 }>(), { securityPlatform: null, showDesktop: false, showExtension: false, mcpPlatform: null, devtoolsPlatform: null, releasePlatform: null })
 
 // 解构出顶层 writable computed：模板自动解包，v-model/赋值直达 useTheme 的 set
@@ -97,6 +102,33 @@ async function setPopupDelay(v: string): Promise<void> {
 const hasClipboardClear = computed(() => typeof props.securityPlatform?.setClipboardClear === 'function')
 // 通用卡恒渲染：即使宿主无 desktop/extension/剪贴板能力，也有「记住标签筛选」开关兜底
 const hasGeneralItems = computed(() => true)
+
+// ---------- 关于卡：版本展示 + 手动检查 GitHub 最新 release（updateCheck.ts，cloudFetch 通道） ----------
+/** 纯手动触发：打开设置页不自动出网（零后台请求，匿名 GET 不涉及用户数据但尊重最小联网原则） */
+const checking = ref(false)
+const latest = ref<LatestRelease | null>(null)
+const checkError = ref('')
+
+async function checkUpdate(): Promise<void> {
+  if (checking.value) return
+  checking.value = true
+  checkError.value = ''
+  try {
+    latest.value = await fetchLatestRelease()
+  } catch (e) {
+    // cloudFetch/ensureHttpOk 已把网络/HTTP 错误转成带上下文的消息，原样展示
+    checkError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    checking.value = false
+  }
+}
+
+/** 检查结果归类：upToDate=本地不落后远端；newer=远端有新版本（或本地版本未知，仅展示远端号） */
+const updateState = computed<'idle' | 'uptodate' | 'newer'>(() => {
+  if (!latest.value) return 'idle'
+  if (props.appVersion && compareVersions(latest.value.version, props.appVersion) <= 0) return 'uptodate'
+  return 'newer'
+})
 </script>
 
 <template>
@@ -201,6 +233,33 @@ const hasGeneralItems = computed(() => true)
     <MdCard v-if="showDesktop && devtoolsPlatform" class="block">
       <DevtoolsCard :platform="devtoolsPlatform" />
     </MdCard>
+
+    <!-- 关于（两端恒渲染）：当前版本 + 手动检查 GitHub 最新 release；检查中禁用按钮防重入，
+         结果走 hint/独立行（role=alert 错误 / 外链新版本，同 ReleaseCard 卡内反馈形态） -->
+    <MdCard class="block about-card">
+      <template #header>{{ t('settingsPage.about') }}</template>
+      <div class="row">
+        <span class="row-label">{{ t('settingsPage.currentVersion') }}</span>
+        <span class="version-value" data-test="app-version">{{ appVersion ? `v${appVersion}` : '—' }}</span>
+      </div>
+      <div class="row">
+        <span class="row-label">
+          {{ t('settingsPage.latestVersion') }}
+          <span v-if="updateState === 'uptodate'" class="row-hint" data-test="update-uptodate">{{ t('settingsPage.upToDate') }}</span>
+          <span v-else-if="updateState === 'newer' && !appVersion" class="row-hint" data-test="update-latest-unknown">v{{ latest?.version }}</span>
+        </span>
+        <MdButton
+          class="check-update" variant="outlined" data-test="check-update" :disabled="checking"
+          @click="checkUpdate"
+        >{{ checking ? t('settingsPage.checking') : t('settingsPage.checkUpdate') }}</MdButton>
+      </div>
+      <p v-if="checkError" class="update-error" role="alert" data-test="update-error">
+        {{ t('settingsPage.checkFailed') }}：{{ checkError }}
+      </p>
+      <p v-else-if="updateState === 'newer' && appVersion" class="update-note" data-test="update-note">
+        <a :href="latest?.url" target="_blank" rel="noopener noreferrer">{{ t('settingsPage.newVersion', { version: `v${latest?.version}` }) }}</a>
+      </p>
+    </MdCard>
   </section>
 </template>
 
@@ -223,4 +282,10 @@ const hasGeneralItems = computed(() => true)
 .theme-dot__check { color: #fff; font-size: var(--md-sys-typescale-body-medium); line-height: 1; text-shadow: 0 0 2px rgba(0, 0, 0, .6); }
 .theme-resolved { font-size: var(--md-sys-typescale-body-small); opacity: .65; margin: 0; }
 .set-popup-delay { max-width: 220px; }
+/* 关于卡：版本值列同 label 字号；结果行同 ReleaseCard 卡内反馈形态（error 色/primary 链接） */
+.version-value { font-size: var(--md-sys-typescale-body-medium); font-variant-numeric: tabular-nums; }
+.check-update { height: 36px; padding: 0 16px; }
+.update-error { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); margin: 0; }
+.update-note { margin: 0; font-size: var(--md-sys-typescale-body-small); }
+.update-note a { color: var(--md-sys-color-primary); }
 </style>

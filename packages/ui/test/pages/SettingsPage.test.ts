@@ -1,7 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
 import { computed } from 'vue'
-import { createMemoryStorage } from '@totp/core'
+import { __resetCloudFetchForTest, createMemoryStorage, setCloudFetch } from '@totp/core'
 import { createVueStore } from '../../src/store'
 import SettingsPage from '../../src/pages/SettingsPage.vue'
 import { createTestI18n } from '../helpers/i18n'
@@ -24,6 +24,10 @@ function secPlatform(): SecurityPlatform {
 
 beforeEach(() => {
   localStorage.clear()
+})
+
+afterEach(() => {
+  __resetCloudFetchForTest()
 })
 
 describe('SettingsPage 外观区', () => {
@@ -136,5 +140,79 @@ describe('SettingsPage 通用区', () => {
     expect(s.settings.clipboardClearEnabled).toBe(true)
     await w2.find('.set-clipboard-clear input').setValue(false)
     expect(s.settings.clipboardClearEnabled).toBe(false)
+  })
+})
+
+/** 更新检查 stub：返回指定 tag 的 release JSON */
+function stubLatest(tag: string): void {
+  setCloudFetch(async () => new Response(JSON.stringify({ tag_name: tag, html_url: `https://github.com/bhxch/totp/releases/tag/${tag}` }), { status: 200, headers: { 'content-type': 'application/json' } }))
+}
+
+describe('SettingsPage 关于卡（版本行 + 检查更新）', () => {
+  it('版本行显示宿主注入的 appVersion；缺省显示占位符', async () => {
+    const s = await readyStore()
+    const w = mount(SettingsPage, { global: { plugins: [createTestI18n()] }, props: { store: s, appVersion: '1.0.2' } })
+    expect(w.find('[data-test="app-version"]').text()).toBe('v1.0.2')
+    const w2 = mount(SettingsPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    expect(w2.find('[data-test="app-version"]').text()).toBe('—')
+  })
+
+  it('检查更新：远端更新 → note 外链（含 href），按钮恢复可用', async () => {
+    stubLatest('v1.1.0')
+    const s = await readyStore()
+    const w = mount(SettingsPage, { global: { plugins: [createTestI18n()] }, props: { store: s, appVersion: '1.0.2' } })
+    await w.find('[data-test="check-update"]').trigger('click')
+    await flushPromises()
+    const note = w.find('[data-test="update-note"] a')
+    expect(note.exists()).toBe(true)
+    expect(note.text()).toContain('v1.1.0')
+    expect(note.attributes('href')).toBe('https://github.com/bhxch/totp/releases/tag/v1.1.0')
+    expect((w.find('[data-test="check-update"]').element as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('远端不高于本地 → 「已是最新」hint，无外链行', async () => {
+    stubLatest('v1.0.2')
+    const s = await readyStore()
+    const w = mount(SettingsPage, { global: { plugins: [createTestI18n()] }, props: { store: s, appVersion: '1.0.2' } })
+    await w.find('[data-test="check-update"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-test="update-uptodate"]').exists()).toBe(true)
+    expect(w.find('[data-test="update-note"]').exists()).toBe(false)
+  })
+
+  it('本地版本未知（appVersion 缺省）→ hint 展示远端版本号，不出比较外链', async () => {
+    stubLatest('v1.1.0')
+    const s = await readyStore()
+    const w = mount(SettingsPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    await w.find('[data-test="check-update"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-test="update-latest-unknown"]').text()).toBe('v1.1.0')
+    expect(w.find('[data-test="update-note"]').exists()).toBe(false)
+  })
+
+  it('检查失败 → role=alert 错误行展示原因', async () => {
+    setCloudFetch(async () => new Response('rate limited', { status: 403 }))
+    const s = await readyStore()
+    const w = mount(SettingsPage, { global: { plugins: [createTestI18n()] }, props: { store: s, appVersion: '1.0.2' } })
+    await w.find('[data-test="check-update"]').trigger('click')
+    await flushPromises()
+    const err = w.find('[data-test="update-error"]')
+    expect(err.attributes('role')).toBe('alert')
+    expect(err.text()).toContain('403')
+  })
+
+  it('检查中按钮禁用防重入，完成后恢复', async () => {
+    let release!: () => void
+    setCloudFetch(() => new Promise<Response>((resolve) => {
+      release = () => resolve(new Response(JSON.stringify({ tag_name: 'v1.1.0', html_url: 'https://github.com/bhxch/totp/releases/tag/v1.1.0' }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    }))
+    const s = await readyStore()
+    const w = mount(SettingsPage, { global: { plugins: [createTestI18n()] }, props: { store: s, appVersion: '1.0.2' } })
+    await w.find('[data-test="check-update"]').trigger('click')
+    expect((w.find('[data-test="check-update"]').element as HTMLButtonElement).disabled).toBe(true)
+    expect(w.find('[data-test="check-update"]').text()).toContain('检查中')
+    release()
+    await flushPromises()
+    expect((w.find('[data-test="check-update"]').element as HTMLButtonElement).disabled).toBe(false)
   })
 })
