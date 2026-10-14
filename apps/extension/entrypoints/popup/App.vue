@@ -381,8 +381,9 @@ function cancelAutoClose(): void {
 
     <!-- URL 过滤行留在面板上方（宿主管辖）：行内缀 = 回退 hint 与「匹配 N 条」同位互斥（spec §C） -->
     <div class="filter-row" v-if="tabUrl">
-      <!-- M3 MdCheckbox(审查 X10):原 UA 原生 checkbox 深色 scheme 下未选中即深灰填充,即「复选框底色偏深」根因 -->
-      <MdCheckbox :model-value="filterOn" :label="t('popup.filterBySite')" @update:model-value="toggleFilter" />
+      <!-- M3 MdCheckbox(审查 X10):原 UA 原生 checkbox 深色 scheme 下未选中即深灰填充,即「复选框底色偏深」根因。
+           dense=密度 -2 档（40px 行高/触达，与 mini 40px 命中先例对齐）：popup 窄幅紧凑语境 opt-in -->
+      <MdCheckbox :model-value="filterOn" :label="t('popup.filterBySite')" dense @update:model-value="toggleFilter" />
       <span v-if="rowAffix" class="hint row-affix" :title="rowAffix.kind === 'hint' ? rowAffixText : undefined">
         {{ rowAffixText }}
       </span>

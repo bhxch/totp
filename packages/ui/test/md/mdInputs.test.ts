@@ -227,6 +227,17 @@ describe('MdCheckbox', () => {
     const src = readFileSync(join(__dirname, '../../src/components/md/MdCheckbox.vue'), 'utf8')
     expect(src).toMatch(/\.md-checkbox__label\s*{[^}]*display:\s*flex[^}]*align-items:\s*center/)
   })
+  it('dense 密度 -2 档：挂 --dense class，默认不挂（opt-in 契约）', () => {
+    const plain = mount(MdCheckbox, { props: { modelValue: false, label: '按站点过滤' } })
+    const dense = mount(MdCheckbox, { props: { modelValue: false, label: '按站点过滤', dense: true } })
+    expect(dense.classes()).toContain('md-checkbox--dense')
+    expect(plain.classes()).not.toContain('md-checkbox--dense')
+  })
+  it('dense 档形状：label 40px + 命中层 -11px（18+22=40，每档 -4dp 口径；源码断言）', () => {
+    const src = readFileSync(join(__dirname, '../../src/components/md/MdCheckbox.vue'), 'utf8')
+    expect(src).toMatch(/\.md-checkbox--dense \.md-checkbox__label\s*{[^}]*min-height:\s*40px/)
+    expect(src).toMatch(/\.md-checkbox--dense::after\s*{[^}]*inset:\s*-11px/)
+  })
 })
 describe('MdSegmentedButton', () => {
   const options = [

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-const props = withDefaults(defineProps<{ modelValue: boolean; label?: string; ariaLabel?: string; disabled?: boolean }>(), { modelValue: false, label: '', disabled: false })
+const props = withDefaults(defineProps<{ modelValue: boolean; label?: string; ariaLabel?: string; disabled?: boolean; dense?: boolean }>(), { modelValue: false, label: '', disabled: false, dense: false })
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
 const checked = ref(props.modelValue)
 watch(() => props.modelValue, v => { checked.value = v })
@@ -10,7 +10,7 @@ function onChange(e: Event) {
 }
 </script>
 <template>
-  <label class="md-checkbox" :class="{ 'md-checkbox--checked': checked, 'md-checkbox--disabled': disabled }">
+  <label class="md-checkbox" :class="{ 'md-checkbox--checked': checked, 'md-checkbox--disabled': disabled, 'md-checkbox--dense': dense }">
     <input type="checkbox" class="md-checkbox__input" :aria-label="ariaLabel" :checked="checked" :disabled="disabled" @change="onChange" />
     <span class="md-checkbox__box" aria-hidden="true" />
     <span v-if="label" class="md-checkbox__label">{{ label }}</span>
@@ -51,4 +51,9 @@ function onChange(e: Event) {
  * 48dp 目标固有代价：纵向列表相邻命中带重叠，topmost 胜出（MD3 允许，同 Chip）；
  * label 行 min-height 48 已落地（见 .md-checkbox__label 规则） */
 .md-checkbox::after { content: ''; position: absolute; inset: -15px; }
+/* 密度 -2 档（density 每档 -4dp，opt-in、不缩字号）：label min-height 40px + 命中层
+ * inset -11px（18+22=40px 触达，仍过 WCAG AA）——紧凑语境（popup 过滤行）显式传 dense；
+ * 列表/设置语境维持 48px 全尺寸档 */
+.md-checkbox--dense .md-checkbox__label { min-height: 40px; }
+.md-checkbox--dense::after { inset: -11px; }
 </style>
