@@ -1,4 +1,4 @@
-export const CORE_VERSION = '1.0.2'
+export const CORE_VERSION = '1.0.3'
 
 export * from './encoding/base32'
 export * from './sync/chunks'
