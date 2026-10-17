@@ -19,7 +19,7 @@ Design doc: [docs/plans/2026-09-13-totp-tool-design.md](docs/plans/2026-09-13-to
 
 - Download the extension zips from [GitHub Releases](https://github.com/bhxch/totp/releases): `totp-extension-chromium-<version>.zip` / `totp-extension-firefox-<version>.zip` (releases include a `sha256sums.txt`)
   - Chrome/Edge: unzip, open `chrome://extensions`, enable "Developer mode" → "Load unpacked" and pick the unzipped folder
-  - Firefox: requires Firefox 140+ (`strict_min_version: 140.0`; Firefox for Android requires 142+, the platform requirement of the data-collection declaration); the unsigned zip can be loaded via `about:debugging` → "This Firefox" → "Load Temporary Add-on"; the store (AMO) package is uploaded manually from the zip
+  - Firefox: requires Firefox 140+ (`strict_min_version: 140.0`; Firefox for Android requires 142+, the platform requirement of the data-collection declaration); install directly from [Firefox Add-ons (AMO)](https://addons.mozilla.org/firefox/addon/totp-%E9%AA%8C%E8%AF%81%E7%A0%81%E5%B7%A5%E5%85%B7/); the unsigned zip can also be loaded via `about:debugging` → "This Firefox" → "Load Temporary Add-on"
 - Build from source: the Chrome target `pnpm --filter @totp/extension build` produces `.output/chrome-mv3`; the Firefox target is built separately with `pnpm --filter @totp/extension exec wxt build -b firefox`, producing `.output/firefox-mv3` (CI builds the two targets separately and asserts each manifest is MV3, see the [Assert MV3 artifacts step](.github/workflows/build.yml))
 
 ### Desktop (Tauri 2)

@@ -19,7 +19,7 @@
 
 - 从 [GitHub Releases](https://github.com/bhxch/totp/releases) 下载扩展 zip：`totp-extension-chromium-<版本>.zip` / `totp-extension-firefox-<版本>.zip`（Release 附 `sha256sums.txt` 校验）
   - Chrome/Edge：解压后进入 `chrome://extensions` 开启「开发者模式」→「加载已解压的扩展程序」选中解压目录
-  - Firefox：要求 Firefox 140+（`strict_min_version: 140.0`；Firefox for Android 需 142+，数据收集声明的平台要求）；未签名 zip 可经 `about:debugging` →「此 Firefox」→「临时载入附加组件」加载，商店（AMO）上架包以 zip 人工上传
+  - Firefox：要求 Firefox 140+（`strict_min_version: 140.0`；Firefox for Android 需 142+，数据收集声明的平台要求）；已上架 [Firefox Add-ons（AMO）](https://addons.mozilla.org/zh-CN/firefox/addon/totp-%E9%AA%8C%E8%AF%81%E7%A0%81%E5%B7%A5%E5%85%B7/)，直接安装即可；未签名 zip 也可经 `about:debugging` →「此 Firefox」→「临时载入附加组件」加载
 - 自建：Chrome 目标 `pnpm --filter @totp/extension build` 产出 `.output/chrome-mv3`；Firefox 目标另跑 `pnpm --filter @totp/extension exec wxt build -b firefox` 产出 `.output/firefox-mv3`（CI 对双目标分别构建并断言 manifest 均为 MV3，见 [Assert MV3 artifacts 步](.github/workflows/build.yml)）
 
 ### 桌面（Tauri 2）
