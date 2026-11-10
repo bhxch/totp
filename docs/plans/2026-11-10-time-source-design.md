@@ -74,7 +74,8 @@
 
 - **`core/src/time/timeSync.ts`**（纯函数 + 常量，无 IO）：
   - 常量：`TIME_SYNC_STATE_KEY='timeSyncState'`、`TIME_SYNC_TTL_MS=6h`、跳变阈值
-    `CLOCK_JUMP_BACKWARD_MS=5s` / `CLOCK_JUMP_FORWARD_MS=60s` / `CLOCK_TICK_MAX_GAP_MS=5s`；
+    `CLOCK_JUMP_BACKWARD_MS=5s` / `CLOCK_JUMP_FORWARD_MS=60s`（勘误 2026-11-11：原
+    `CLOCK_TICK_MAX_GAP_MS` 随 §3-④ 勘误删除）；
   - `HTTPS_TIME_SOURCE_IDS=['taobao-api','suning-api','baidu','qq','gitee','jd','cloudflare-trace']`、
     `NTP_TIME_SOURCE_IDS=['aliyun','tencent','tencent-time1','neu','cn-pool','tuna','windows']`
     （id 清单 core 单一事实源，URL/解析在端实现，i18n label 在 ui）；
@@ -86,12 +87,12 @@
     bootstrap 异步装载本地键；未安装时 `timeSource()` 返回降级实例（offset 恒 0，测试/未接线
     上下文零影响）。
   - `state: shallowRef<TimeSyncState>`（引用替换驱动 watch）、`syncing: ref<boolean>`；
-  - `effectiveNowMs()` / `noteDeviceTick(deviceNow, maxGapMs=5s)`（跳变判定 + TTL 决策 +
-    静默重校；长间隔不判跳变仅更新基准）/ `calibrateNow(opts?)`（手动/切换模式，失败 throw
+  - `effectiveNowMs()` / `noteDeviceTick(deviceNow)`（跳变判定 + TTL 决策 + 静默重校，均仅
+    network 模式生效；勘误 2026-11-11：`maxGapMs` 参数随 §3-④ 勘误删除）/ `calibrateNow(opts?)`（手动/切换模式，失败 throw
     供调用方 toast；state 更新 + 落盘）/ `ensureAutoCalibrate()`（上下文激活入口，幂等互斥）。
 - **出码接线（两处调用点）**：`useOtpCodes.recompute` 每秒 `noteDeviceTick(Date.now())` 后
   `nowMs.value = timeSource.effectiveNowMs()`（缓存键自 nowMs 派生自动一致）；`watch(timeSource.state)`
-  偏移变化立即重算；`mcpBridge.ts:54` 同换（事件驱动长间隔天然不误判跳变）。
+  偏移变化立即重算；`mcpBridge.ts:54` 同换。
 
 ### §3 刷新策略（TTL 与触发时机，已与用户确认）
 
@@ -99,8 +100,8 @@
 |---|---|---|
 | 1 | 手动「立即同步」 | 唯一阻塞式入口，结果 toast（成功：偏差+来源；失败：错误提示），无视退避 |
 | 2 | 模式切到 network | 无有效偏移时立即校准（设置卡切换处触发，允许等待反馈） |
-| 3 | TTL 超龄（6h） | 上下文激活静默后台重校：popup/options 打开、SW 消息唤醒、桌面 boot、每秒 tick、mini 聚焦重载 |
-| 4 | 时钟跳变 | 每秒 tick 检测：回退 >5s 恒触发；前跳 >60s 且采样间隔 ≤5s 触发（长间隔=休眠恢复，offset 仍近似成立不判）→ 静默重校，出码先用旧 offset |
+| 3 | TTL 超龄（6h） | 上下文激活静默后台重校：popup/options 打开、SW 消息唤醒、桌面 boot、每秒 tick、mini 聚焦重载。勘误 2026-11-11：**冷启动入口（ensureAutoCalibrate，上下文全灭后首次激活）用收紧 TTL 10 分钟**，每秒 tick 运行期路径保持 6h——覆盖「上下文全灭期间系统校时」的冷启动盲区（无 tick 可观测跳变，旧 offset 最长错 6h）；`shouldAutoCalibrate` 加 `ttlMs` 参数（默认 6h 保持运行期语义） |
+| 4 | 时钟跳变 | 每秒 tick 检测：回退 ≥5s 或前跳 ≥60s 触发（仅 network 模式）→ 静默重校，出码先用旧 offset。勘误 2026-11-11：原「前跳须采样间隔 ≤5s、长间隔=休眠恢复不判」条件删除——墙钟差=正常间隔+跳变幅度，双采样下不可分（原条件使前跳永不可判）；休眠恢复因此多触发一次无害校准，宁可误判不可漏判（漏判外部拉准会让偏移持续错误） |
 | 5 | 校准失败 | TTL 内不自动重试（防每次打开 popup 打一串失败请求），保留旧 offset + 设置卡提示；手动随时可重试 |
 
 TTL=6h 依据：正常钟晶振漂移每天 1-2s，烂主板可达每天 30s；24h TTL 下烂钟两次校准间可漂 30s
