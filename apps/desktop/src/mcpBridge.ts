@@ -1,4 +1,5 @@
 import { computeEntryCode, entryMatchesUrl, type OtpEntry } from '@totp/core'
+import { timeSource } from '@totp/ui'
 
 /** 响应载荷（mcp_respond 契约，与 Rust BridgeShared 对齐） */
 export type McpResult = { ok: true; result: unknown } | { ok: false; error: string }
@@ -51,7 +52,12 @@ export async function handleMcpRequest(deps: McpBridgeDeps, payload: McpRequestP
       if (!id) return { ok: false, error: 'account_id is required' }
       const e = deps.requireEntries().find((x) => x.uuid === id)
       if (!e) return { ok: false, error: `unknown account_id: ${id}; call list_accounts first` }
-      const r = await computeEntryCode(e, Date.now())
+      // 取时单点（时间源特性 spec §2/§5）：network 模式且有校准偏移时按「设备时刻+偏移」出码，
+      // 否则纯设备时刻（未安装/device 模式零变化）。顺带喂一次设备 tick（跳变判定 + TTL 静默
+      // 重校）——主窗隐藏停表期间 MCP 是唯一取时入口；校准一律后台事务，本次出码不等待网络
+      const ts = timeSource()
+      ts.noteDeviceTick(Date.now())
+      const r = await computeEntryCode(e, ts.effectiveNowMs())
       if (e.type === 'hotp') {
         return { ok: true, result: { code: r.code, counter: r.counter, note: 'HOTP counter was peeked, not advanced' } }
       }

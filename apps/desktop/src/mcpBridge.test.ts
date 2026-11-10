@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createMcpTriggers, filterAccounts, handleMcpRequest, startMcpBridge, type McpBridgeDeps, type McpRequestPayload } from './mcpBridge'
-import type { OtpEntry } from '@totp/core'
+import { computeEntryCode, EMPTY_TIME_SYNC_STATE, type OtpEntry } from '@totp/core'
+import { initTimeSync, timeSource, type CalibrateResult, type TimeSyncController, type TimeSyncDeps } from '@totp/ui'
 
 const mkEntry = (o: Partial<OtpEntry>): OtpEntry => ({
   uuid: 'u1', type: 'totp', issuer: 'GitHub', label: 'a@x.com', secret: 'GEZDGNBVGY3TQOJQ',
@@ -271,5 +272,81 @@ describe('startMcpBridge', () => {
     expect(stop).toBe(unlisten)
     stop()
     expect(unlisten).toHaveBeenCalledOnce()
+  })
+})
+
+describe('handleMcpRequest get_code 取时点（时间源特性 spec §2/§5）', () => {
+  // 1_700_000_000_000 → nowSec mod 30 = 20（窗口剩余 10s）；偏移 95s = 跨 3 个窗口且窗内相位 +5s
+  const T0 = 1_700_000_000_000
+  const OFFSET = 95_000
+  const entry = mkEntry({ uuid: 't1' })
+  const req: McpRequestPayload = { id: 1, tool: 'get_code', args: { account_id: 't1' } }
+  const bridgeDeps: McpBridgeDeps = {
+    requireEntries: () => [entry],
+    tagsOf: () => [],
+    triggerSync: async () => ({ triggered: true }),
+    triggerBackup: async () => ({ triggered: true }),
+  }
+
+  /** 安装 ui 时间源单例（本地键已有 95s 偏移且新鲜）并等装载完成，随后把设备钟钉回 T0
+   *  （vi.waitFor 轮询会推进假时钟）。仅冻结 Date：WebCrypto/微任务照常 */
+  async function installTimeSource(
+    network: boolean,
+    calibrate: TimeSyncDeps['calibrate'] = async (): Promise<CalibrateResult> => ({ offsetMs: OFFSET, sourceId: 'aliyun' }),
+  ): Promise<TimeSyncController> {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(T0)
+    const ctl = initTimeSync({
+      load: async () => ({ ...EMPTY_TIME_SYNC_STATE, offsetMs: OFFSET, syncedAt: T0, lastAttemptAt: T0, sourceId: 'aliyun' }),
+      save: async () => {},
+      isNetworkMode: () => network,
+      calibrate,
+    })
+    await vi.waitFor(() => expect(timeSource().state.value.offsetMs).toBe(OFFSET))
+    expect(timeSource()).toBe(ctl) // mcpBridge 与本测试经 '@totp/ui' 拿到同一模块单例
+    vi.setSystemTime(T0)
+    return ctl
+  }
+
+  afterEach(() => {
+    vi.useRealTimers()
+    // 单例无卸载入口：还原为 device 模式空实例，不让本组的偏移/在途校准外溢到其他用例
+    initTimeSync({
+      load: async () => null,
+      save: async () => {},
+      isNetworkMode: () => false,
+      calibrate: async () => { throw new Error('unused') },
+    })
+  })
+
+  it('network+偏移：码与剩余秒按 effectiveNowMs（偏移后的窗口），而非设备时刻', async () => {
+    await installTimeSource(true)
+    const r = await handleMcpRequest(bridgeDeps, req)
+    const want = await computeEntryCode(entry, T0 + OFFSET)
+    expect(r).toEqual({ ok: true, result: { code: want.code, expires_in_seconds: want.remaining, period: 30 } })
+    expect(want.remaining).toBe(5) // 设备时刻为 10s
+    // 用例自证：该偏移确实跨窗（设备时刻的码不同），上面的相等断言才有鉴别力
+    expect((await computeEntryCode(entry, T0)).code).not.toBe(want.code)
+  })
+
+  it('device 模式：已存偏移不生效，按设备时刻出码（零行为变化）', async () => {
+    await installTimeSource(false)
+    const r = await handleMcpRequest(bridgeDeps, req)
+    const want = await computeEntryCode(entry, T0)
+    expect(r).toEqual({ ok: true, result: { code: want.code, expires_in_seconds: want.remaining, period: 30 } })
+  })
+
+  it('顺带喂设备 tick：两次 get_code 间设备钟被前拨 ≥60s → 静默重校，出码不等待校准', async () => {
+    // 校准永不落定：出码若等待网络，本用例即超时
+    const calibrate = vi.fn(() => new Promise<CalibrateResult>(() => {}))
+    const ctl = await installTimeSource(true, calibrate)
+    await handleMcpRequest(bridgeDeps, req) // 首次：建立 tick 基准（新鲜状态不触发校准）
+    expect(calibrate).not.toHaveBeenCalled()
+    vi.setSystemTime(T0 + 5 * 60 * 1000) // 前拨 5min（远小于 6h TTL：只有跳变分支可触发）
+    const r = await handleMcpRequest(bridgeDeps, req)
+    expect(calibrate).toHaveBeenCalledTimes(1)
+    expect(ctl.syncing.value).toBe(true) // 校准仍在途
+    const want = await computeEntryCode(entry, T0 + 5 * 60 * 1000 + OFFSET) // 旧偏移照常出码
+    expect(r).toEqual({ ok: true, result: { code: want.code, expires_in_seconds: want.remaining, period: 30 } })
   })
 })
