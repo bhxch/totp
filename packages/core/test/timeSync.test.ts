@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createMemoryStorage } from '../src/storage/memory'
 import {
-  CLOCK_JUMP_BACKWARD_MS, CLOCK_JUMP_FORWARD_MS, EMPTY_TIME_SYNC_STATE,
+  CLOCK_JUMP_BACKWARD_MS, CLOCK_JUMP_FORWARD_MS, COLD_START_TTL_MS, EMPTY_TIME_SYNC_STATE,
   TIME_SYNC_STATE_KEY, TIME_SYNC_TTL_MS, computeOffsetMs, createAdapterTimeSyncIo,
   clockJumpKind, normalizeTimeSyncState, shouldAutoCalibrate, HTTPS_TIME_SOURCE_IDS, NTP_TIME_SOURCE_IDS,
 } from '../src/time/timeSync'
@@ -25,6 +25,16 @@ describe('shouldAutoCalibrate（plan24 §3）', () => {
     expect(shouldAutoCalibrate({ ...OK, syncedAt: 1000 }, true, 1000 + TIME_SYNC_TTL_MS - 1)).toBe(false)
     expect(shouldAutoCalibrate({ ...OK, syncedAt: 1000 }, true, 1000 + TIME_SYNC_TTL_MS)).toBe(true)
     expect(shouldAutoCalibrate({ ...OK, syncedAt: null }, true, 0)).toBe(true)
+  })
+  it('自定义 ttlMs（冷启动收紧 R13）：syncedAt 判据按传入 ttlMs 生效', () => {
+    const synced = 10_000
+    expect(shouldAutoCalibrate({ ...OK, syncedAt: synced }, true, synced + COLD_START_TTL_MS, COLD_START_TTL_MS)).toBe(true)
+    expect(shouldAutoCalibrate({ ...OK, syncedAt: synced }, true, synced + COLD_START_TTL_MS - 1, COLD_START_TTL_MS)).toBe(false)
+  })
+  it('自定义 ttlMs（冷启动收紧 R13）：退避分支同样按 ttlMs 生效', () => {
+    const failed = { ...EMPTY_TIME_SYNC_STATE, lastAttemptAt: 1000, lastAttemptFailed: true }
+    expect(shouldAutoCalibrate(failed, true, 1000 + COLD_START_TTL_MS - 1, COLD_START_TTL_MS)).toBe(false)
+    expect(shouldAutoCalibrate(failed, true, 1000 + COLD_START_TTL_MS, COLD_START_TTL_MS)).toBe(true)
   })
 })
 

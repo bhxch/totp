@@ -25,6 +25,9 @@ export interface TimeSyncState {
 export const TIME_SYNC_STATE_KEY = 'timeSyncState'
 /** 自动重校周期（spec §3）：正常钟漂移每天 1-2s、烂钟可达 30s；6h 把最坏累计压进 TOTP 半窗口 */
 export const TIME_SYNC_TTL_MS = 6 * 60 * 60 * 1000
+/** 冷启动入口专用（裁定 R13）——上下文全灭期间系统校时无 tick 可观测，收紧判据覆盖该盲区
+ *  （冷启动入口以此作 shouldAutoCalibrate 的 ttlMs；每秒 tick 路径保持默认 6h） */
+export const COLD_START_TTL_MS = 10 * 60 * 1000
 /** 跳变阈值：回退 ≥5s（系统时间被改）；前跳 ≥60s（被外部拉准）。
  *  前跳不做间隔条件（裁定修订）：wallDelta=正常间隔+跳变幅度，双墙钟采样不可分——
  *  休眠恢复的长前跳会多触发一次校准（无害，校准结果恒正确），漏判则 offset 持续错误致出码错；
@@ -55,15 +58,16 @@ export function normalizeTimeSyncState(raw: unknown): TimeSyncState {
 }
 
 /** 自动校准决策（纯函数）：network 模式下 TTL 超龄 / 从未成功且退避期已过。
- *  手动校准（立即同步）不走此函数，恒允许 */
-export function shouldAutoCalibrate(state: TimeSyncState, networkMode: boolean, deviceNowMs: number): boolean {
+ *  ttlMs 为超龄与退避的共用判据，默认 TIME_SYNC_TTL_MS（6h，既有运行期语义不变）；
+ *  冷启动入口传 COLD_START_TTL_MS 收紧（裁定 R13）。手动校准（立即同步）不走此函数，恒允许 */
+export function shouldAutoCalibrate(state: TimeSyncState, networkMode: boolean, deviceNowMs: number, ttlMs: number = TIME_SYNC_TTL_MS): boolean {
   if (!networkMode) return false
   if (state.offsetMs === null) {
     if (state.lastAttemptAt === null) return true // 从未尝试（含首次开启）
-    return deviceNowMs - state.lastAttemptAt >= TIME_SYNC_TTL_MS // 失败退避：TTL 内不自动重试
+    return deviceNowMs - state.lastAttemptAt >= ttlMs // 失败退避：ttlMs 内不自动重试
   }
   if (state.syncedAt === null) return true // 病态归一（有偏移无时刻）：按需重校
-  return deviceNowMs - state.syncedAt >= TIME_SYNC_TTL_MS
+  return deviceNowMs - state.syncedAt >= ttlMs
 }
 
 export type ClockJumpKind = 'none' | 'backward' | 'forward'

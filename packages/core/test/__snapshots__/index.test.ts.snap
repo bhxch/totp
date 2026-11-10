@@ -7,6 +7,7 @@ exports[`@totp/core 桶导出面（防漏导出/改名破坏消费方） > 导�
   "BACKUP_NAME_RE",
   "CLOCK_JUMP_BACKWARD_MS",
   "CLOCK_JUMP_FORWARD_MS",
+  "COLD_START_TTL_MS",
   "CORE_VERSION",
   "CloudHttpError",
   "DEFAULT_KDF_PROFILE",
