@@ -1,9 +1,13 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import { computed } from 'vue'
-import { __resetCloudFetchForTest, createMemoryStorage, setCloudFetch } from '@totp/core'
+import { computed, nextTick } from 'vue'
+import { __resetCloudFetchForTest, createMemoryStorage, EMPTY_TIME_SYNC_STATE, HTTPS_TIME_SOURCE_IDS, setCloudFetch } from '@totp/core'
+import type { TimeSyncState } from '@totp/core'
 import { createVueStore } from '../../src/store'
 import SettingsPage from '../../src/pages/SettingsPage.vue'
+import MdSelect from '../../src/components/md/MdSelect.vue'
+import { timeSource } from '../../src/timeSource'
+import { useToast } from '../../src/composables/useToast'
 import { createTestI18n } from '../helpers/i18n'
 import type { SecurityPlatform } from '../../src/components/securityPlatform'
 
@@ -214,5 +218,130 @@ describe('SettingsPage 关于卡（版本行 + 检查更新）', () => {
     release()
     await flushPromises()
     expect((w.find('[data-test="check-update"]').element as HTMLButtonElement).disabled).toBe(false)
+  })
+})
+
+/** 时间源单例跨用例复位（模块级单例防线）：state 回空形态 + 清全局 toast 队列 */
+function resetTimeSync(): void {
+  timeSource().state.value = { ...EMPTY_TIME_SYNC_STATE }
+  useToast().toasts.value.splice(0, useToast().toasts.value.length)
+}
+
+/** calibrateNow mock 用成功态（TimeSyncState 全形；sourceId 缺省 baidu） */
+function calibratedState(offsetMs: number, sourceId = 'baidu'): TimeSyncState {
+  const now = Date.now()
+  return { v: 1, offsetMs, syncedAt: now, sourceId, lastAttemptAt: now, lastAttemptFailed: false, preferredSourceId: null }
+}
+
+/** 已挂 network 模式的 store（时间源卡展开态前提：template v-if 依赖 settings.timeSource） */
+async function readyNetworkStore() {
+  const s = await readyStore()
+  s.settings.timeSource = 'network'
+  return s
+}
+
+/** 时间源卡首选源 MdSelect 组件包装器（凭 set-time-source class 与 locale 下拉区分） */
+function timePreferredSelect(w: ReturnType<typeof mount>) {
+  const sel = w.findAllComponents(MdSelect).find((c) => c.classes().includes('set-time-source'))
+  expect(sel, '首选源 MdSelect 应已渲染').toBeDefined()
+  return sel!
+}
+
+describe('时间源卡（plan24 spec §6）', () => {
+  beforeEach(() => {
+    resetTimeSync()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('device 模式：仅模式行渲染，无首选源/同步按钮', async () => {
+    const s = await readyStore()
+    const w = mount(SettingsPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    const items = w.findAll('[data-test="time-mode"] .md-seg__item')
+    expect(items.map((b) => b.text())).toEqual(['设备时间', '网络时间'])
+    expect(w.find('[data-test="time-preferred"]').exists()).toBe(false)
+    expect(w.find('[data-test="time-sync-now"]').exists()).toBe(false)
+    expect(w.find('[data-test="time-status"]').exists()).toBe(false)
+  })
+
+  it('切到 network：展开首选源与同步区', async () => {
+    const s = await readyStore()
+    // 模式切换在 offsetMs===null 时会触发一次校准（spec §3-②），spy 掉避免走降级实例的恒败路径
+    vi.spyOn(timeSource(), 'calibrateNow').mockResolvedValue(calibratedState(100))
+    const commit = vi.spyOn(s, 'commitSettings')
+    const w = mount(SettingsPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    await w.findAll('[data-test="time-mode"] .md-seg__item').find((b) => b.text() === '网络时间')!.trigger('click')
+    expect(s.settings.timeSource).toBe('network')
+    expect(commit).toHaveBeenCalled()
+    expect(w.find('[data-test="time-preferred"]').exists()).toBe(true)
+    expect(w.find('[data-test="time-sync-now"]').exists()).toBe(true)
+    await flushPromises()
+  })
+
+  it('首选源 options：扩展端为 HTTPS 七源+auto（showDesktop=false）', async () => {
+    const s = await readyNetworkStore()
+    const w = mount(SettingsPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    const options = timePreferredSelect(w).props('options') as Array<{ value: string; label: string }>
+    expect(options.map((o) => o.value)).toEqual(['auto', ...HTTPS_TIME_SOURCE_IDS])
+    expect(options[0]!.label).toBe('自动（按内置优先级）')
+  })
+
+  it('首选源变更：setPreferredSource 落盘不触发校准', async () => {
+    const s = await readyNetworkStore()
+    const calibrate = vi.spyOn(timeSource(), 'calibrateNow').mockResolvedValue(calibratedState(0, 'gitee'))
+    const w = mount(SettingsPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    // 默认 auto：选中值显示「自动（按内置优先级）」
+    expect(w.find('[data-test="time-preferred"] .md-select__value').text()).toBe('自动（按内置优先级）')
+    await w.find('[data-test="time-preferred"] .md-select__trigger').trigger('click')
+    await w.findAll('[data-test="time-preferred"] .md-select__option').find((o) => o.text() === 'Gitee')!.trigger('click')
+    await flushPromises()
+    expect(timeSource().state.value.preferredSourceId).toBe('gitee')
+    expect(calibrate).not.toHaveBeenCalled()
+    expect(w.find('[data-test="time-preferred"] .md-select__value').text()).toBe('Gitee')
+  })
+
+  it('立即同步成功：toast 方向文案（offset>0 落后）', async () => {
+    const s = await readyNetworkStore()
+    vi.spyOn(timeSource(), 'calibrateNow').mockResolvedValue(calibratedState(2500))
+    const w = mount(SettingsPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    await w.find('[data-test="time-sync-now"]').trigger('click')
+    await flushPromises()
+    const messages = useToast().toasts.value
+    expect(messages.some((t) => t.kind === 'success' && t.message.includes('2.5'))).toBe(true)
+  })
+
+  it('立即同步失败：toast error', async () => {
+    const s = await readyNetworkStore()
+    vi.spyOn(timeSource(), 'calibrateNow').mockRejectedValue(new Error('network down'))
+    const w = mount(SettingsPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    await w.find('[data-test="time-sync-now"]').trigger('click')
+    await flushPromises()
+    const messages = useToast().toasts.value
+    expect(messages.some((t) => t.kind === 'error' && t.message.includes('时间同步失败'))).toBe(true)
+  })
+
+  it('状态行：从未同步 / 上次成功含来源与偏差 / 上次失败', async () => {
+    const s = await readyNetworkStore()
+    const w = mount(SettingsPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    // ① 空形态（含装载闸门未落定的降级形态）→「尚未同步」
+    expect(w.find('[data-test="time-status"]').text()).toBe('尚未同步')
+    // ② 上次成功：时刻+来源+偏差方向
+    timeSource().state.value = {
+      v: 1, offsetMs: 2500, syncedAt: Date.now(), sourceId: 'gitee',
+      lastAttemptAt: Date.now(), lastAttemptFailed: false, preferredSourceId: null,
+    }
+    await nextTick()
+    expect(w.find('[data-test="time-status"]').text()).toContain('上次同步')
+    expect(w.find('[data-test="time-status"]').text()).toContain('Gitee')
+    expect(w.find('[data-test="time-status"]').text()).toContain('本机落后 2.5 秒')
+    // ③ 上次失败：无偏移，仅失败时刻
+    timeSource().state.value = {
+      v: 1, offsetMs: null, syncedAt: null, sourceId: null,
+      lastAttemptAt: Date.now(), lastAttemptFailed: true, preferredSourceId: null,
+    }
+    await nextTick()
+    expect(w.find('[data-test="time-status"]').text()).toContain('上次同步失败')
   })
 })

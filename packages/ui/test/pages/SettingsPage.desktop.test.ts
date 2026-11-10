@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
-import { createMemoryStorage } from '@totp/core'
+import { createMemoryStorage, NTP_TIME_SOURCE_IDS } from '@totp/core'
 import { createVueStore } from '../../src/store'
 import SettingsPage from '../../src/pages/SettingsPage.vue'
+import MdSelect from '../../src/components/md/MdSelect.vue'
 import type { DevtoolsConfigDto, DevtoolsPlatform } from '../../src/components/devtoolsPlatform'
 import type { ReleasePolicyDto, ReleasePlatform } from '../../src/components/releasePlatform'
 import { createTestI18n } from '../helpers/i18n'
@@ -231,5 +232,17 @@ describe('SettingsPage 主题对比度与云同步跟随', () => {
     await w.find('.set-auto-follow input').setValue(true)
     expect(store.settings.syncPrefs.autoFollow).toBe(true)
     expect(commit).toHaveBeenCalled()
+  })
+})
+
+describe('SettingsPage 时间源卡（桌面 NTP 源组）', () => {
+  it('showDesktop=true：首选源 options 为 auto+NTP 七源', async () => {
+    const store = await readyStore()
+    store.settings.timeSource = 'network'
+    const w = mount(SettingsPage, { global: { plugins: [createTestI18n()] }, props: { store, showDesktop: true } })
+    const sel = w.findAllComponents(MdSelect).find((c) => c.classes().includes('set-time-source'))
+    expect(sel, '桌面端首选源 MdSelect 应已渲染').toBeDefined()
+    const options = sel!.props('options') as Array<{ value: string; label: string }>
+    expect(options.map((o) => o.value)).toEqual(['auto', ...NTP_TIME_SOURCE_IDS])
   })
 })

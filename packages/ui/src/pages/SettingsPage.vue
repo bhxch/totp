@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { AppSettings } from '@totp/core'
+import { HTTPS_TIME_SOURCE_IDS, NTP_TIME_SOURCE_IDS } from '@totp/core'
 import { useI18n } from 'vue-i18n'
 import type { DevtoolsPlatform } from '../components/devtoolsPlatform'
 import type { McpPlatform } from '../components/mcpCard'
@@ -17,6 +18,8 @@ import MdSwitch from '../components/md/MdSwitch.vue'
 import MdTextField from '../components/md/MdTextField.vue'
 import type { VueStore } from '../store'
 import { THEME_PALETTES, useTheme } from '../theme/useTheme'
+import { timeSource } from '../timeSource'
+import { useTimeSyncAction } from '../composables/useTimeSyncAction'
 import { compareVersions, fetchLatestRelease, type LatestRelease } from '../updateCheck'
 
 const props = withDefaults(defineProps<{
@@ -98,6 +101,70 @@ async function setPopupDelay(v: string): Promise<void> {
   await props.store.commitSettings()
 }
 
+// ---------- 时间源卡（plan24 spec §6）：模式切换/首选源/立即同步/状态行 ----------
+const ts = timeSource()
+const { syncing: timeSyncing, syncNow: timeSyncNow } = useTimeSyncAction()
+
+/** 源 id → i18n label 键映射（id 单一事实源在 core；两组合并供状态行「来源 xx」展示，
+ *  桌面 SNTP 降级可能命中 taobao-api，故扩展源 label 在桌面状态行同样可达） */
+const SOURCE_LABEL_KEYS: Record<string, string> = {
+  'taobao-api': 'settingsPage.timeSourceSrcTaobaoApi',
+  'suning-api': 'settingsPage.timeSourceSrcSuningApi',
+  baidu: 'settingsPage.timeSourceSrcBaidu',
+  qq: 'settingsPage.timeSourceSrcQq',
+  gitee: 'settingsPage.timeSourceSrcGitee',
+  jd: 'settingsPage.timeSourceSrcJd',
+  'cloudflare-trace': 'settingsPage.timeSourceSrcCloudflareTrace',
+  aliyun: 'settingsPage.timeSourceSrcAliyun',
+  tencent: 'settingsPage.timeSourceSrcTencent',
+  'tencent-time1': 'settingsPage.timeSourceSrcTencentTime1',
+  neu: 'settingsPage.timeSourceSrcNeu',
+  'cn-pool': 'settingsPage.timeSourceSrcCnPool',
+  tuna: 'settingsPage.timeSourceSrcTuna',
+  windows: 'settingsPage.timeSourceSrcWindows',
+}
+function sourceLabel(id: string | null): string {
+  return id && SOURCE_LABEL_KEYS[id] ? t(SOURCE_LABEL_KEYS[id]!) : (id ?? '')
+}
+
+const TIME_SOURCE_MODE_OPTIONS = computed<Array<{ value: 'device' | 'network'; label: string }>>(() => [
+  { value: 'device', label: t('settingsPage.timeSourceModeDevice') },
+  { value: 'network', label: t('settingsPage.timeSourceModeNetwork') },
+])
+/** 首选源 options：auto + 平台源组（桌面=NTP 池，扩展=HTTPS 源） */
+const PREFERRED_OPTIONS = computed<Array<{ value: string; label: string }>>(() => [
+  { value: 'auto', label: t('settingsPage.timeSourcePreferredAuto') },
+  ...(props.showDesktop ? NTP_TIME_SOURCE_IDS : HTTPS_TIME_SOURCE_IDS).map((id) => ({ value: id, label: sourceLabel(id) })),
+])
+const preferredSelectValue = computed(() => ts.state.value.preferredSourceId ?? 'auto')
+async function setTimeSourceMode(v: string) {
+  const next = v === 'network' ? 'network' : 'device'
+  props.store.settings.timeSource = next
+  await props.store.commitSettings()
+  // 切到 network 且无有效偏移：立即校准一次（spec §3-②，结果走 toast）
+  if (next === 'network' && ts.state.value.offsetMs === null) void timeSyncNow()
+}
+// MdSelect emit 值为泛化 string|number（同 setLocale 先例）：源 id 皆为 string，赋值前收敛
+function setPreferredSource(v: string | number) {
+  void ts.setPreferredSource(v === 'auto' ? null : String(v))
+}
+/** 状态行（data-test="time-status"）：从未同步 / 失败 / 上次成功（时刻+来源+偏差方向） */
+const timeSyncStatus = computed<string | null>(() => {
+  const st = ts.state.value
+  if (st.offsetMs !== null && st.syncedAt !== null) {
+    const drift = Math.abs(st.offsetMs) < 50
+      ? t('settingsPage.timeSourceDriftAligned')
+      : st.offsetMs > 0
+        ? t('settingsPage.timeSourceDriftBehind', { seconds: (st.offsetMs / 1000).toFixed(1) })
+        : t('settingsPage.timeSourceDriftAhead', { seconds: (Math.abs(st.offsetMs) / 1000).toFixed(1) })
+    return `${t('settingsPage.timeSourceLastSync', { time: new Date(st.syncedAt).toLocaleTimeString(), source: sourceLabel(st.sourceId) })} · ${drift}`
+  }
+  if (st.lastAttemptFailed && st.lastAttemptAt !== null) {
+    return t('settingsPage.timeSourceLastFailed', { time: new Date(st.lastAttemptAt).toLocaleTimeString() })
+  }
+  return null
+})
+
 // 剪贴板自动清除：与 SecurityCard 内开关同语义，设置页同步提供一份；无该能力的宿主不渲染
 const hasClipboardClear = computed(() => typeof props.securityPlatform?.setClipboardClear === 'function')
 // 通用卡恒渲染：即使宿主无 desktop/extension/剪贴板能力，也有「记住标签筛选」开关兜底
@@ -168,6 +235,31 @@ const updateState = computed<'idle' | 'uptodate' | 'newer'>(() => {
         />
       </div>
       <p class="theme-resolved">{{ t('settingsPage.resolved', { label: resolvedLabel, suffix: mode === 'auto' ? t('settingsPage.autoSuffix') : '' }) }}</p>
+    </MdCard>
+
+    <MdCard class="block">
+      <template #header>{{ t('settingsPage.timeSource') }}</template>
+      <div class="appearance-rows">
+        <div class="row">
+          <span class="row-label">{{ t('settingsPage.timeSourceMode') }}<span class="row-hint">{{ t('settingsPage.timeSourceModeHint') }}</span></span>
+          <MdSegmentedButton :model-value="store.settings.timeSource" :options="TIME_SOURCE_MODE_OPTIONS" data-test="time-mode" @update:model-value="setTimeSourceMode" />
+        </div>
+        <template v-if="store.settings.timeSource === 'network'">
+          <div class="row">
+            <span class="row-label">{{ t('settingsPage.timeSourcePreferred') }}</span>
+            <MdSelect
+              class="set-time-source" data-test="time-preferred" :label="t('settingsPage.timeSourcePreferred')" :aria-label="t('settingsPage.timeSourcePreferred')"
+              :model-value="preferredSelectValue" :options="PREFERRED_OPTIONS" @update:model-value="setPreferredSource"
+            />
+          </div>
+          <div class="row">
+            <span class="row-label" data-test="time-status">{{ timeSyncStatus ?? t('settingsPage.timeSourceNeverSynced') }}</span>
+            <MdButton data-test="time-sync-now" :disabled="timeSyncing" @click="timeSyncNow">
+              {{ timeSyncing ? t('settingsPage.timeSourceSyncing') : t('settingsPage.timeSourceSyncNow') }}
+            </MdButton>
+          </div>
+        </template>
+      </div>
     </MdCard>
 
     <MdCard v-if="hasGeneralItems" class="block">
