@@ -27,6 +27,7 @@ import { publishMiniLock, publishMiniUnlock } from './miniSession'
 import { createMcpApprovalQueue, isToolConfirmItem, type McpApprovalAction } from './mcpApprovalQueue'
 import { createMcpTriggers, startMcpBridge, type McpBridgeDeps } from './mcpBridge'
 import { createTauriFs } from './tauriFs'
+import { installDesktopTimeSync } from './timeSyncPlatform'
 import { legacyRetention, BACKUP_MODE_KEY, BACKUP_KEEP_N_KEY } from './desktopPrefs'
 import { DisposableBag, requireAdapter, requireStore, safeListen, storeGuards } from './storeAccess'
 
@@ -81,7 +82,7 @@ export function useDesktopI18n(): DesktopI18n {
 export const persistFailed = ref(false)
 
 /** 双窗口 store boot 共享（spec §7 末尾：windowId 独立解锁——DEK/locked 按 windowId 索引）：
- *  createVueStore + initStore 两步序列（原主窗 init 与 mini load 各持一份）；
+ *  createVueStore + initStore + installDesktopTimeSync 三步序列（原主窗 init 与 mini load 各持一份）；
  *  onPersistError：落盘失败上报（未传保持 ui 层 console.error 兜底） */
 export async function bootDesktopStore(
   adapter: StorageAdapter,
@@ -105,6 +106,9 @@ export async function bootDesktopStore(
     dekPersist: opts.dekPersist,
   })
   await s.initStore()
+  // 时间源装配（时间源特性 spec §5）：main/mini 双窗各自安装 ui timeSource 单例
+  // （localStorage 本地键共享、invoke 校准器）；幂等覆盖，mini 聚焦重建 store 后同样生效
+  installDesktopTimeSync(s)
   return s
 }
 
