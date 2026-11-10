@@ -36,6 +36,19 @@ describe('shouldAutoCalibrate（plan24 §3）', () => {
     expect(shouldAutoCalibrate(failed, true, 1000 + COLD_START_TTL_MS - 1, COLD_START_TTL_MS)).toBe(false)
     expect(shouldAutoCalibrate(failed, true, 1000 + COLD_START_TTL_MS, COLD_START_TTL_MS)).toBe(true)
   })
+  it('回拨判陈旧（R13b）：deviceNow 早于 syncedAt 恒触发重校（默认 ttl）', () => {
+    // syncedAt 是校准时刻的设备钟读数，钟单调前进时 now ≥ syncedAt 恒成立；
+    // now < syncedAt ⟹ 钟被回拨 ⟹ 旧 offset 失效（负差值下 >= ttl 比较失真，须单独守卫）
+    expect(shouldAutoCalibrate({ ...OK, syncedAt: 10_000 }, true, 10_000 - 3_600_000)).toBe(true) // 回拨 1h
+    expect(shouldAutoCalibrate({ ...OK, syncedAt: 10_000 }, true, 10_000 - 1)).toBe(true) // 差 1ms 也算回拨
+    expect(shouldAutoCalibrate({ ...OK, syncedAt: 10_000 }, true, 10_000)).toBe(false) // 零差值=刚校准，不判（防自触发成环）
+  })
+  it('回拨判陈旧（R13b）：退避分支同型——lastAttemptAt 在未来恒触发重试', () => {
+    // 退避期以「距上次尝试的时长」为前提；now < lastAttemptAt 时该前提失效，不再按退避压制
+    const failed = { ...EMPTY_TIME_SYNC_STATE, lastAttemptAt: 10_000, lastAttemptFailed: true }
+    expect(shouldAutoCalibrate(failed, true, 10_000 - 3_600_000)).toBe(true) // 回拨 1h
+    expect(shouldAutoCalibrate(failed, true, 10_000)).toBe(false) // 零差值仍在退避期内
+  })
 })
 
 // 裁定修订：wallDelta=正常间隔+跳变幅度，双墙钟采样不可分，故前跳不做间隔条件（无 maxGap 参数）；

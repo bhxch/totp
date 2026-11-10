@@ -59,15 +59,22 @@ export function normalizeTimeSyncState(raw: unknown): TimeSyncState {
 
 /** 自动校准决策（纯函数）：network 模式下 TTL 超龄 / 从未成功且退避期已过。
  *  ttlMs 为超龄与退避的共用判据，默认 TIME_SYNC_TTL_MS（6h，既有运行期语义不变）；
- *  冷启动入口传 COLD_START_TTL_MS 收紧（裁定 R13）。手动校准（立即同步）不走此函数，恒允许 */
+ *  冷启动入口传 COLD_START_TTL_MS 收紧（裁定 R13）。手动校准（立即同步）不走此函数，恒允许。
+ *  回拨守卫（裁定 R13b）：syncedAt/lastAttemptAt 是记录时刻的设备钟读数，钟单调前进时
+ *  now ≥ 记录值恒成立；now < 记录值 ⟹ 钟被回拨 ⟹ 旧 offset 与退避期前提双双失效，恒判陈旧
+ *  （负差值下 `>= ttlMs` 比较失真，须先于 ttlMs 比较单独守卫；零差值不算回拨） */
 export function shouldAutoCalibrate(state: TimeSyncState, networkMode: boolean, deviceNowMs: number, ttlMs: number = TIME_SYNC_TTL_MS): boolean {
   if (!networkMode) return false
   if (state.offsetMs === null) {
     if (state.lastAttemptAt === null) return true // 从未尝试（含首次开启）
-    return deviceNowMs - state.lastAttemptAt >= ttlMs // 失败退避：ttlMs 内不自动重试
+    const since = deviceNowMs - state.lastAttemptAt
+    if (since < 0) return true // 回拨：退避期前提失效
+    return since >= ttlMs // 失败退避：ttlMs 内不自动重试
   }
   if (state.syncedAt === null) return true // 病态归一（有偏移无时刻）：按需重校
-  return deviceNowMs - state.syncedAt >= ttlMs
+  const age = deviceNowMs - state.syncedAt
+  if (age < 0) return true // 回拨：旧 offset 失效
+  return age >= ttlMs
 }
 
 export type ClockJumpKind = 'none' | 'backward' | 'forward'
