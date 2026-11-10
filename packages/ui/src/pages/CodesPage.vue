@@ -3,13 +3,14 @@ import { buildOtpUri, defaultDigitsFor, filterByTags, getBuiltinIcons, type OtpD
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useOtpCodes } from '../composables/useOtpCodes'
+import { useTimeSyncAction } from '../composables/useTimeSyncAction'
 import { useToast } from '../composables/useToast'
 import { iconView, type IconStore } from '../iconStore'
 import { fullIconsReady } from '../fullIcons'
 import { searchEntries } from '../popupFilter'
 import { moveToIndex, moveWithinPartition, sortEntries } from '../entriesSort'
 import { createEdgeAutoScroll, findScrollHost, type ScrollHostLike } from '../edgeAutoScroll'
-import { add, dragIndicator } from '../components/iconPaths'
+import { add, dragIndicator, sync as syncIcon } from '../components/iconPaths'
 import EmptyState from '../components/EmptyState.vue'
 import type { VueStore } from '../store'
 import EntryFormDialog from '../components/EntryFormDialog.vue'
@@ -43,6 +44,12 @@ const emit = defineEmits<{ copy: [code: string]; 'open-tags': [] }>()
 const { t } = useI18n()
 // 全局 toast（P3）：模块级单例，ToastHost（宿主根组件挂载）直读同一状态渲染
 const toast = useToast()
+
+// 网络时间「立即同步」（plan24 spec §6）：仅 network 模式渲染于 .card-head，与「选择」钮齐平不增行；
+// 校准与三态 toast 在 useTimeSyncAction 内收口，本页只管触发与在途禁用（syncing 互斥下重复
+// 点击返回旧 state，按钮 :disabled 防在途重复触发——Task 6 评审指针）
+const { syncing: timeSyncing, syncNow: timeSyncNow } = useTimeSyncAction()
+const timeSourceMode = computed(() => props.store.settings.timeSource)
 
 const query = ref('')
 /** I49：搜 secret 开关（默认关闭，开启后过滤会包含 secret 串匹配；用户主动启用避免密钥常驻列表） */
@@ -401,9 +408,18 @@ function openSheet() {
     <MdCard ref="editorHost" class="codes-card" padding="compact">
       <div class="card-head">
         <h2>{{ t('codesPage.entryCount', { count: store.vault.entries.length }) }}</h2>
-        <MdButton v-if="sorted.length > 0" data-test="select-mode" variant="text" @click="toggleSelectMode">
-          {{ selecting ? t('codesPage.cancelSelect') : t('codesPage.select') }}
-        </MdButton>
+        <!-- 头部动作组（plan24 Task 7）：同步钮在前、与「选择」钮同组齐平不增行 -->
+        <div class="card-head-ops">
+          <MdIconButton
+            v-if="timeSourceMode === 'network'" data-test="codes-sync-now"
+            :disabled="timeSyncing"
+            :title="t('codesPage.syncNow')" :aria-label="t('codesPage.syncNow')"
+            :class="{ 'sync-spinning': timeSyncing }" @click="timeSyncNow"
+          ><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path :d="syncIcon.d" /></svg></MdIconButton>
+          <MdButton v-if="sorted.length > 0" data-test="select-mode" variant="text" @click="toggleSelectMode">
+            {{ selecting ? t('codesPage.cancelSelect') : t('codesPage.select') }}
+          </MdButton>
+        </div>
       </div>
       <!-- 冻结容器（P3）：搜索行+标签筛选行 sticky 挂滚动祖先（NavigationShell 内容区），
            列表滚动时保持可见。背景取页面同色 surface；padding-bottom 隔开与列表的贴边 -->
@@ -534,6 +550,10 @@ function openSheet() {
 .page { padding: 16px; padding-bottom: 88px; display: flex; flex-direction: column; gap: 12px; /* R5-M6：MdCard padding compact 8px = .frozen 两侧缝隙宽（见下） */ --frozen-bleed: 8px; }
 .codes-card { display: flex; flex-direction: column; gap: 4px; }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+/* 同步钮与「选择」同行（plan24 Task 7）：ops 组 flex 对齐；syncing 时图标旋转反馈 */
+.card-head-ops { display: flex; align-items: center; gap: 4px; }
+.sync-spinning svg { animation: sync-rotate 1s linear infinite; }
+@keyframes sync-rotate { to { transform: rotate(360deg); } }
 .row-check { flex: none; margin-right: 4px; }
 h2 { margin: 0; font-size: var(--md-sys-typescale-title-medium); }
 .chips-row { display: flex; flex-wrap: wrap; gap: 8px; }

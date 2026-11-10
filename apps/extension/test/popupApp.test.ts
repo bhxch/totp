@@ -12,7 +12,7 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick, type Component, type Ref } from 'vue'
-import { useToast } from '@totp/ui'
+import { timeSource, useToast } from '@totp/ui'
 
 vi.mock('../src/store', async () => {
   const { reactive, ref } = await import('vue')
@@ -28,6 +28,7 @@ vi.mock('../src/store', async () => {
     syncEnabled: false,
     syncPrefs: { autoFollow: true }, // 跨端同步 T3：跟随拉取 gate 读取（真实 loadSettings 归一化产物形状）
     backupKdfProfile: 'balanced', // runner kdfProfile deps 读取位（真实 settings 形状）
+    timeSource: 'device', // 时间源模式（plan24）：顶栏同步钮按此条件渲染（真实 settings 形状）
   })
   const vault = reactive({ entries: [] as unknown[], tags: [] })
   const locked = ref(false)
@@ -81,7 +82,7 @@ import App from '../entrypoints/popup/App.vue'
 import { createTestI18n } from './helpers/i18n'
 import { installChromeShim, type ChromeShim } from './helpers/chromeShim'
 import { addEntryOp, commitSettings, initStore, locked, settings, storageAdapter, store, updateEntryOp, vault } from '../src/store'
-import { SOURCES_KEY } from '@totp/core'
+import { EMPTY_TIME_SYNC_STATE, SOURCES_KEY } from '@totp/core'
 import { encodePending } from '../src/pendingOtpauth'
 import { ext } from '../src/extApi'
 
@@ -1085,5 +1086,39 @@ describe('popup App entryIcons 全量 ready 依赖（2026-10-05 full-icons Task 
     // getBuiltinIcons 返回活引用，内容断言无法区分是否重算；同一性变化才能证明 ready 已被依赖追踪
     expect(form.props('icons')).not.toBe(before)
     fullIconsReady.value = false // 模块级单例复位，不污染其他用例
+  })
+})
+
+describe('popup 时间源同步按钮（plan24 spec §6，齐平不增行）', () => {
+  afterEach(() => {
+    unmountActive()
+    settings.timeSource = 'device' // 复位防跨用例泄漏
+  })
+
+  it('device 模式：不渲染同步按钮', async () => {
+    const wrapper = await mountTracked()
+    expect(wrapper.find('[data-test="popup-sync-now"]').exists()).toBe(false)
+  })
+
+  it('network 模式：渲染于 .header-ops 内（与既有两钮同父，齐平不增行）', async () => {
+    settings.timeSource = 'network'
+    const wrapper = await mountTracked()
+    const btn = wrapper.find('[data-test="popup-sync-now"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.attributes('title')).toBe('立即同步网络时间')
+    // 齐平不增行：同步钮直接挂 .header-ops（既有「打开主界面」「设置」同父），共 3 钮
+    const ops = wrapper.find('.header-ops')
+    expect(ops.exists()).toBe(true)
+    expect(btn.element.parentElement).toBe(ops.element)
+    expect(ops.findAll('button')).toHaveLength(3)
+  })
+
+  it('点击触发 calibrateNow（mock timeSource）', async () => {
+    settings.timeSource = 'network'
+    const spy = vi.spyOn(timeSource(), 'calibrateNow').mockResolvedValue({ ...EMPTY_TIME_SYNC_STATE })
+    const wrapper = await mountTracked()
+    await wrapper.find('[data-test="popup-sync-now"]').trigger('click')
+    expect(spy).toHaveBeenCalledTimes(1)
+    spy.mockRestore()
   })
 })

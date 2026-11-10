@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { getBuiltinIcons, parsePastedText, toOtpDigits, type OtpEntry, type TagFilterMode } from '@totp/core'
-import { createIconStore, EntryForm, fullIconsReady, LockScreen, MdButton, MdCheckbox, MdIconButton, NAV_ICONS, normalizeExtOtpauth, parseUriToEntryData, PersistErrorBanner, popupFilterRowAffix, prefillFromParsed, QuickCodesPanel, resolvePopupVisible, sortEntries, ToastHost, useOtpCodes, useTheme, useToast, type EntryFormData } from '@totp/ui'
+import {
+  createIconStore, EntryForm, fullIconsReady, LockScreen, MdButton, MdCheckbox, MdIconButton, NAV_ICONS,
+  normalizeExtOtpauth, parseUriToEntryData, PersistErrorBanner, popupFilterRowAffix, prefillFromParsed,
+  QuickCodesPanel, resolvePopupVisible, sortEntries, sync as SYNC_ICON_PATH, ToastHost, useOtpCodes,
+  useTheme, useTimeSyncAction, useToast, type EntryFormData,
+} from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { decodePending, isPendingExpired, PENDING_OTPAUTH_KEY } from '../../src/pendingOtpauth'
@@ -47,6 +52,11 @@ onScopeDispose(() => syncFollow.stop())
  *  设置齿轮直达 /settings。openOptionsPage 不支持 hash 故统一用 tabs.create */
 const SETTINGS_ICON_PATH = NAV_ICONS.settings
 const MAIN_ICON_PATH = NAV_ICONS.codes
+
+// 网络时间「立即同步」（plan24 spec §6）：仅 network 模式渲染于顶栏，与既有钮齐平不增行；
+// 校准与三态 toast 在 useTimeSyncAction 内收口，本壳只管触发与在途禁用（Task 6 评审指针）
+const { syncing: timeSyncing, syncNow: timeSyncNow } = useTimeSyncAction()
+const timeSourceMode = computed(() => settings.timeSource)
 function openMain(): void {
   void ext!.tabs.create({ url: ext!.runtime.getURL('options.html#/codes') })
 }
@@ -367,6 +377,16 @@ function cancelAutoClose(): void {
     <header>
       <h1>{{ t('popup.title') }}</h1>
       <div class="header-ops">
+        <!-- 时间源「立即同步」（plan24 Task 7）：仅 network 模式渲染，插最前与既有钮齐平不增行；
+             syncing 时按钮禁用且图标旋转（svg 形态照既有钮 width 20；sync 为 IconPath 对象取 .d） -->
+        <MdIconButton
+          v-if="timeSourceMode === 'network'" data-test="popup-sync-now"
+          :disabled="timeSyncing"
+          :title="t('popup.syncNow')" :aria-label="t('popup.syncNow')"
+          :class="{ 'sync-spinning': timeSyncing }" @click="timeSyncNow"
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path :d="SYNC_ICON_PATH.d" fill="currentColor" /></svg>
+        </MdIconButton>
         <!-- P4 精简：管理面移交主界面态，「打开主界面」直达 options#/codes；快捷新增仅剩 pending 确认态 -->
         <MdIconButton :title="t('popup.openMain')" :aria-label="t('popup.openMain')" @click="openMain">
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path :d="MAIN_ICON_PATH" fill="currentColor" /></svg>
@@ -433,6 +453,10 @@ body { font-family: system-ui, sans-serif; margin: 0; padding: 8px; }
 main { display: flex; flex-direction: column; gap: 4px; --frozen-bleed: 8px; }
 header { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 8px; }
 .header-ops { display: flex; align-items: center; gap: 6px; }
+/* 时间源「立即同步」钮（plan24 Task 7）：syncing 时图标旋转反馈（popup style 非 scoped，
+   sync-spinning 类名与 CodesPage 各居不同上下文不冲突） */
+.sync-spinning svg { animation: sync-rotate 1s linear infinite; }
+@keyframes sync-rotate { to { transform: rotate(360deg); } }
 h1 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .error { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); }
 .filter-row { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-small); padding: 0 4px; }

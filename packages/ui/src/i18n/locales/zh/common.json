@@ -737,7 +737,8 @@
     "pin": "置顶",
     "unpin": "取消置顶",
     "batchImported": "已入库 {n} 条",
-    "copyInvalid": "密钥非法，无法复制"
+    "copyInvalid": "密钥非法，无法复制",
+    "syncNow": "立即同步网络时间"
   },
   "settingsPage": {
     "appearance": "外观",
@@ -847,7 +848,8 @@
     "noMatch": "无匹配结果",
     "importNone": "未识别出可导入的条目",
     "batchImportHint": "识别到 {count} 条，请打开主界面导入页完成批量添加",
-    "pendingExpired": "添加请求已过期，请重新右键添加"
+    "pendingExpired": "添加请求已过期，请重新右键添加",
+    "syncNow": "立即同步网络时间"
   },
   "options": {
     "migrated": "已迁移 {count} 个云目标到新模型",

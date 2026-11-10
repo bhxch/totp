@@ -737,7 +737,8 @@
     "pin": "Pin",
     "unpin": "Unpin",
     "batchImported": "{n} entries imported",
-    "copyInvalid": "Invalid secret, nothing to copy"
+    "copyInvalid": "Invalid secret, nothing to copy",
+    "syncNow": "Sync network time now"
   },
   "settingsPage": {
     "appearance": "Appearance",
@@ -847,7 +848,8 @@
     "noMatch": "No matching results",
     "importNone": "No importable entries recognized",
     "batchImportHint": "Recognized {count} entries. Open the main window's import page to add them in bulk",
-    "pendingExpired": "The add request expired. Right-click to add it again"
+    "pendingExpired": "The add request expired. Right-click to add it again",
+    "syncNow": "Sync network time now"
   },
   "options": {
     "migrated": "Migrated {count} cloud targets to the new model",

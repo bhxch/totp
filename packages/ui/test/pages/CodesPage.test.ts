@@ -1,9 +1,10 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
-import { createMemoryStorage, newEntryFromUri, type OtpEntry } from '@totp/core'
+import { createMemoryStorage, EMPTY_TIME_SYNC_STATE, newEntryFromUri, type OtpEntry } from '@totp/core'
 import { createVueStore } from '../../src/store'
 import { fullIconsReady } from '../../src/fullIcons'
+import { timeSource } from '../../src/timeSource'
 import { useToast } from '../../src/composables/useToast'
 import CodesPage from '../../src/pages/CodesPage.vue'
 import EntryFormDialog from '../../src/components/EntryFormDialog.vue'
@@ -518,5 +519,42 @@ describe('CodesPage entryIcons 全量 ready 依赖（2026-10-05 full-icons Task 
     expect(after.builtin).toBe(before.builtin)
     expect(after.stored).toEqual(before.stored)
     fullIconsReady.value = false // 模块级单例复位，不污染同文件其他用例
+  })
+})
+
+describe('时间源同步按钮（plan24 spec §6，齐平不增行）', () => {
+  it('device 模式：不渲染同步按钮', async () => {
+    const s = await readyStore()
+    s.settings.timeSource = 'device'
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    await vi.waitFor(() => expect(w.text()).toContain('GitHub'))
+    expect(w.find('[data-test="codes-sync-now"]').exists()).toBe(false)
+  })
+
+  it('network 模式：渲染于 .card-head-ops（与 select-mode 同父且位于 .card-head 内，齐平不增行）', async () => {
+    const s = await readyStore()
+    s.settings.timeSource = 'network'
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    await vi.waitFor(() => expect(w.text()).toContain('GitHub'))
+    const btn = w.find('[data-test="codes-sync-now"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.attributes('title')).toBe('立即同步网络时间')
+    // R9 口径：同步钮与「选择」钮同父（.card-head-ops），ops 组位于 .card-head 内
+    const ops = w.find('.card-head-ops')
+    expect(ops.exists()).toBe(true)
+    expect(btn.element.parentElement).toBe(ops.element)
+    expect(ops.find('[data-test="select-mode"]').exists()).toBe(true)
+    expect(w.find('.card-head').element.contains(ops.element)).toBe(true)
+  })
+
+  it('点击触发 calibrateNow（mock timeSource）', async () => {
+    const s = await readyStore()
+    s.settings.timeSource = 'network'
+    const spy = vi.spyOn(timeSource(), 'calibrateNow').mockResolvedValue({ ...EMPTY_TIME_SYNC_STATE })
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    await vi.waitFor(() => expect(w.text()).toContain('GitHub'))
+    await w.find('[data-test="codes-sync-now"]').trigger('click')
+    expect(spy).toHaveBeenCalledTimes(1)
+    spy.mockRestore()
   })
 })
