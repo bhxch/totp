@@ -321,7 +321,12 @@ describe('handleMcpRequest get_code 取时点（时间源特性 spec §2/§5）'
 
   it('network+偏移：码与剩余秒按 effectiveNowMs（偏移后的窗口），而非设备时刻', async () => {
     await installTimeSource(true)
+    const tick = vi.spyOn(timeSource(), 'noteDeviceTick')
     const r = await handleMcpRequest(bridgeDeps, req)
+    // 喂给 noteDeviceTick 的是设备墙钟 Date.now()，不是带偏移的有效时刻（裁定 R11：基准只存设备墙钟；评审 MN-4 desktop 侧）
+    expect(tick).toHaveBeenCalledTimes(1)
+    expect(tick).toHaveBeenCalledWith(T0)
+    expect(tick).not.toHaveBeenCalledWith(T0 + OFFSET)
     const want = await computeEntryCode(entry, T0 + OFFSET)
     expect(r).toEqual({ ok: true, result: { code: want.code, expires_in_seconds: want.remaining, period: 30 } })
     expect(want.remaining).toBe(5) // 设备时刻为 10s
