@@ -92,6 +92,62 @@ describe('shouldAutoCalibrate（plan24 §3）', () => {
   })
 })
 
+// 复审 Major-1/2（裁定 R18，方案 B）：回拨见证判陈旧——「上次尝试失败且 lastAttemptAt 早于
+// syncedAt」是持久的回拨见证，与 age<0、超龄同权判需重校并共用同一退避判据；首试失败后的
+// 恢复延迟由此从 e′+ttl 收敛到恰 ttl。S1–S7 断言组与 task-1-rereview.md §Major-1 一致
+// （S7 期望值按裁定改为 true），另补两类受影响格的保护断言。
+describe('shouldAutoCalibrate R18 语义（回拨见证判陈旧 + 退避共用）', () => {
+  const now = 1_000_000_000, H = 3_600_000
+  /** 回拨态：成功写入 syncedAt=lastAttemptAt 同一读数后钟被回拨（两者都落到当前钟面的未来）；since 相对当前钟面 */
+  const back = (since: number, failed = true) => ({ ...OK, syncedAt: now + H, lastAttemptAt: now - since, lastAttemptFailed: failed })
+  /** 超龄态：syncedAt 在过去 age 处；since 相对当前钟面 */
+  const aged = (since: number, age = 7 * H, failed = true) => ({ ...OK, syncedAt: now - age, lastAttemptAt: now - since, lastAttemptFailed: failed })
+
+  it('S1/S2 显式 COLD_START_TTL_MS：回拨臂与超龄臂的退避窗都按传入 ttl 生效', () => {
+    expect(shouldAutoCalibrate(back(COLD_START_TTL_MS - 1), true, now, COLD_START_TTL_MS)).toBe(false)
+    expect(shouldAutoCalibrate(back(COLD_START_TTL_MS), true, now, COLD_START_TTL_MS)).toBe(true)
+    expect(shouldAutoCalibrate(back(COLD_START_TTL_MS), true, now)).toBe(false) // 对照：默认 6h 下 10min 仍在退避期
+    expect(shouldAutoCalibrate(aged(COLD_START_TTL_MS - 1), true, now, COLD_START_TTL_MS)).toBe(false)
+    expect(shouldAutoCalibrate(aged(COLD_START_TTL_MS), true, now, COLD_START_TTL_MS)).toBe(true)
+    expect(shouldAutoCalibrate(aged(COLD_START_TTL_MS), true, now)).toBe(false) // 对照：默认 6h 下未超龄
+  })
+  it('S3/S4 精确边界 0 / ttl−1 / ttl（默认 6h）：回拨臂与超龄臂对称', () => {
+    for (const st of [back, (s: number) => aged(s, 13 * H)] as const) {
+      expect(shouldAutoCalibrate(st(0), true, now)).toBe(false) // since=0：退避期内
+      expect(shouldAutoCalibrate(st(TIME_SYNC_TTL_MS - 1), true, now)).toBe(false) // ttl−1
+      expect(shouldAutoCalibrate(st(TIME_SYNC_TTL_MS), true, now)).toBe(true) // =ttl：退避期满
+    }
+  })
+  it('S5 生产形态回拨态：成功写入 syncedAt=lastAttemptAt（failed=false）→ 恒判陈旧', () => {
+    // 唯一真实写入方每次成功写同一读数：回拨后 failed=false 是生产常态，不得因无失败记录而漏判
+    const rolled = { ...OK, syncedAt: now + H, lastAttemptAt: now + H, lastAttemptFailed: false }
+    expect(shouldAutoCalibrate(rolled, true, now)).toBe(true)
+    expect(shouldAutoCalibrate(rolled, true, now, COLD_START_TTL_MS)).toBe(true)
+  })
+  it('S6 超龄退避须 lastAttemptFailed：上次尝试成功（failed=false）不退避', () => {
+    expect(shouldAutoCalibrate({ ...aged(H), lastAttemptFailed: false }, true, now)).toBe(true)
+  })
+  it('S7 回拨态 failed=false：age<0 只看负差见证，恒判陈旧（R18 对称化）', () => {
+    expect(shouldAutoCalibrate({ ...back(5 * 60_000), lastAttemptFailed: false }, true, now)).toBe(true)
+  })
+  it('R18 第三类格：0≤age<ttl 且有回拨见证且退避期满 → true（恢复延迟收敛至 ttl）', () => {
+    // 场景：校准成功（syncedAt=−1h）后钟被回拨 e′，回拨前 6h 的失败尝试早于 syncedAt → 持久见证；
+    // since=6h 已满 ttl → 立即重校（修复前该格为 false，错误偏移要多用 e′+ttl）
+    const st = { ...OK, syncedAt: now - H, lastAttemptAt: now - 6 * H, lastAttemptFailed: true }
+    expect(shouldAutoCalibrate(st, true, now)).toBe(true) // 见证：lastAttemptAt(−6h) < syncedAt(−1h)，since=6h ≥ ttl
+    expect(shouldAutoCalibrate(st, true, now, COLD_START_TTL_MS)).toBe(true) // since=6h ≥ 10min 同样期满
+  })
+  it('R18-Minor2：病态格（offset≠null 且 syncedAt=null）受同一退避约束', () => {
+    const sick = { ...OK, syncedAt: null, lastAttemptAt: now - 5 * 60_000, lastAttemptFailed: true }
+    expect(shouldAutoCalibrate(sick, true, now)).toBe(false) // 退避期内不再每 tick 重试
+    expect(shouldAutoCalibrate({ ...sick, lastAttemptAt: now - COLD_START_TTL_MS }, true, now, COLD_START_TTL_MS)).toBe(true) // 期满重试
+  })
+  it('R18-见证须失败：failed=false 且 lastAttemptAt<syncedAt 只是「旧失败后又有一次成功」→ 按年龄判定', () => {
+    const st = { ...OK, syncedAt: now - H, lastAttemptAt: now - 2 * H, lastAttemptFailed: false }
+    expect(shouldAutoCalibrate(st, true, now)).toBe(false) // age=1h 未超龄；见证因 failed=false 不成立
+  })
+})
+
 // 裁定修订：wallDelta=正常间隔+跳变幅度，双墙钟采样不可分，故前跳不做间隔条件（无 maxGap 参数）；
 // 休眠恢复的长前跳会多触发一次校准（无害），漏判外部拉准则 offset 持续错误——宁误判不漏判
 describe('clockJumpKind（跳变检测；裁定修订：无间隔条件）', () => {

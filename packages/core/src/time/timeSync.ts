@@ -57,43 +57,25 @@ export function normalizeTimeSyncState(raw: unknown): TimeSyncState {
   }
 }
 
-/** 自动校准决策（纯函数）：network 模式下 TTL 超龄 / 从未成功且退避期已过。
- *  ttlMs 为超龄与退避的共用判据，默认 TIME_SYNC_TTL_MS（6h，既有运行期语义不变）；
+/** 自动校准决策（纯函数）：network 模式下，回拨见证 / 负差（回拨）/ TTL 超龄 / 病态归一判陈旧
+ *  （需重校），且全部陈旧分类共用同一退避判据——上次尝试失败且 now−lastAttemptAt ∈ [0, ttlMs)
+ *  时退避（裁定 R15/R17/R18，spec §3-⑤）。ttlMs 默认 TIME_SYNC_TTL_MS（6h，既有运行期语义不变），
  *  冷启动入口传 COLD_START_TTL_MS 收紧（裁定 R13）。手动校准（立即同步）不走此函数，恒允许。
- *  回拨守卫（裁定 R13b）：syncedAt/lastAttemptAt 是记录时刻的设备钟读数，钟单调前进时
- *  now ≥ 记录值恒成立；now < 记录值 ⟹ 钟被回拨 ⟹ 旧 offset 与退避期前提双双失效，判陈旧
- *  （负差值下 `>= ttlMs` 比较失真，须先于 ttlMs 比较单独守卫；零差值不算回拨）。
- *  R17 修订：回拨后已失败且退避期内则退避——恒判陈旧在连续失败场景退化为每 tick 风暴。
- *  超龄退避（裁定 R15）：offsetMs!==null 分支超龄后同样受退避约束——TTL 过后首次尝试失败即
- *  退避 ttlMs、期满再试一次（出码全程用旧 offset），防「已成功+超龄+失败」时每个 tick 都
- *  重试的离线失败风暴（spec §3-⑤） */
+ *  回拨见证（裁定 R18，方案 B）：lastAttemptFailed 且 lastAttemptAt < syncedAt ⟹ 失败发生在
+ *  syncedAt（=成功校准的钟读数）之前 ⟹ 钟在校准后被回拨，旧 offset 与退避期前提双双失效——
+ *  与 age<0（回拨的负差见证，R13b）、age ≥ ttlMs（超龄，R15）同权判陈旧。R17 的「负差恒判
+ *  陈旧」只闭合无界段，首试失败后的恢复延迟实测为 e′+ttlMs（e′=回拨量被追平前的负差时长，
+ *  默认 tick 路径趋近 2×ttl）；按见证判陈旧后恢复延迟恰为 ttlMs。零差值不算回拨；
+ *  病态格（offset≠null 且 syncedAt=null）R18 起同样受退避约束（修复前为每 tick 风暴）。 */
 export function shouldAutoCalibrate(state: TimeSyncState, networkMode: boolean, deviceNowMs: number, ttlMs: number = TIME_SYNC_TTL_MS): boolean {
   if (!networkMode) return false
-  if (state.offsetMs === null) {
-    if (state.lastAttemptAt === null) return true // 从未尝试（含首次开启）
-    const since = deviceNowMs - state.lastAttemptAt
-    if (since < 0) return true // 回拨：退避期前提失效
-    return since >= ttlMs // 失败退避：ttlMs 内不自动重试
-  }
-  if (state.syncedAt === null) return true // 病态归一（有偏移无时刻）：按需重校
+  const backoff = state.lastAttemptFailed && state.lastAttemptAt !== null
+    && deviceNowMs - state.lastAttemptAt >= 0 && deviceNowMs - state.lastAttemptAt < ttlMs
+  if (state.syncedAt === null) return !backoff // 病态归一（有偏移无时刻）：按需重校，R18 起受退避约束
   const age = deviceNowMs - state.syncedAt
-  if (age < 0) {
-    // R17：回拨+失败组合的每 tick 风暴防线——R13b 的恒判陈旧在连续失败场景退化为风暴
-    // （失败只更新 lastAttemptAt、不改 syncedAt，回拨量被追平前 age 恒负），退避判据对 age<0 共用：
-    // 失败会把 lastAttemptAt 写为回拨后的钟读数，故 since ∈ [0, ttlMs) 表示「回拨后已试过一次并失败」
-    if (state.lastAttemptAt === null) return true
-    const since = deviceNowMs - state.lastAttemptAt
-    if (since >= 0 && since < ttlMs) return false
-    return true
-  }
-  if (age >= ttlMs) {
-    if (state.lastAttemptFailed && state.lastAttemptAt !== null) {
-      const since = deviceNowMs - state.lastAttemptAt
-      if (since >= 0 && since < ttlMs) return false // 超龄但上次失败仍在退避期内；since<0（回拨）不压制
-    }
-    return true
-  }
-  return false // 未超龄：继续用旧 offset
+  const rolledBack = age < 0 || (state.lastAttemptFailed && state.lastAttemptAt !== null && state.lastAttemptAt < state.syncedAt)
+  if (rolledBack || age >= ttlMs) return !backoff
+  return false
 }
 
 export type ClockJumpKind = 'none' | 'backward' | 'forward'
