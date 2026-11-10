@@ -221,8 +221,16 @@ export default defineBackground(() => {
       return handleCloudFetchMessage(msg, sender, sendResponse, ext!.runtime.id)
     }
     // 时间源校准（时间源特性 spec §4）：popup/options 经消息驱动 SW 执行源序校准。
-    // 异步应答：返回 true 保持 sendResponse 通道（cloud-fetch 同款），校准最长 12s
+    // 异步应答：返回 true 保持 sendResponse 通道（cloud-fetch 同款），校准最坏 ≈15s（G3 口径）
+    // 时间-I3（终审 G1，与云-I3 对称的 invariant）：仅本扩展内部页面可驱动（sender.id === 自身
+    // runtime id）；外部来源同步回结构化拒绝。无 externally_connectable 时外部页面 sender.id 为
+    // undefined 天然被拒——与 cloud-fetch 同款口径，不静默扩大驱动面。
+    // TODO（终审 G1 硬门槛）：将来加任何 content script 前必须先补全此校验的面（含其余消息分支）。
     if (msg?.type === 'time-sync-calibrate') {
+      if ((sender as { id?: unknown } | null)?.id !== ext!.runtime.id) {
+        sendResponse({ ok: false })
+        return false // 同步应答已给出，无需保持通道开放（cloud-fetch 拒绝分支同口径）
+      }
       void (async () => {
         try {
           const r = await calibrateNetworkTime(typeof msg.preferred === 'string' ? msg.preferred : null)

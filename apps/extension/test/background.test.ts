@@ -11,13 +11,15 @@
  * - 右键点击 qr-decode-image：fetch（含 data: URL 同链路）→arrayBuffer→解码成功→pending 信封
  *   kind=uri + 带 id 可点击通知（M4 复用 totp-pending-add 通道）；fetch 拒绝/解码失败→「图中未识别」通知；
  * - 消息协议：schedule-clipboard-clear（delayMs 缺省/非 number→30s 兜底）、sync-push（1s 合并
- *   窗口防抖）、sync-pull（立即）、未知 type 忽略；
+ *   窗口防抖）、sync-pull（立即）、未知 type 忽略；time-sync-calibrate（终审 G1：sender.id 与
+ *   自身 runtime id 不符/缺失 → 结构化拒绝 ok:false 不出网，内部 sender 放行——cloud-fetch 口径对称）；
  * - alarm clipboard-clear 到点→ensureOffscreenDocument+sendMessage+ack 结算（1s 超时重试，
  *   最多 3 轮；createDocument 失败吞掉不阻断）；
  * - storage.onChanged 且 area='sync'→pullSyncIfNewer（local 区不触发）。
  *
  * mock 边界：syncEngine 的 push/pull 以 vi.fn 替身注入（真实引擎的 LWW 语义由 syncEngine.test.ts
  * 承载，此处聚焦 SW 的路由与编排）；decodeImageBytesToUri 替身同理（QR 解码本体在 qrDecode/ui）；
+ * calibrateNetworkTime 替身（校准器本体在 timeSyncCalibrator.test.ts，此处只验消息路由与 sender 守卫）；
  * extApi 经 extApiMock 惰性桥——ext 每次现读 globalThis.chrome，与 installChromeShim 逐用例注入合用。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -25,10 +27,13 @@ import { installChromeShim, type ChromeShim } from './helpers/chromeShim'
 import { stubDefineBackground } from './helpers/defineBackground'
 import { decodePending } from '../src/pendingOtpauth'
 
-const { pullSyncIfNewer, pushSync, decodeImageBytesToUri } = vi.hoisted(() => ({
+const { pullSyncIfNewer, pushSync, decodeImageBytesToUri, calibrateNetworkTime } = vi.hoisted(() => ({
   pullSyncIfNewer: vi.fn(async () => {}),
   pushSync: vi.fn(async () => {}),
   decodeImageBytesToUri: vi.fn(async (): Promise<string | null> => null),
+  calibrateNetworkTime: vi.fn(async (): Promise<{ offsetMs: number; sourceId: string }> => {
+    throw new Error('time source: all sources failed')
+  }),
 }))
 
 vi.mock('../src/extApi', async () => (await import('./helpers/extApiMock')).extApiMock())
@@ -41,6 +46,7 @@ vi.mock('../src/syncEngine', () => ({
   SYNC_STATUS_KEY: 'sync:status',
 }))
 vi.mock('../src/qrDecode', () => ({ decodeImageBytesToUri }))
+vi.mock('../src/timeSyncCalibrator', () => ({ calibrateNetworkTime }))
 
 /** 合法 otpauth URI（parsePastedText 走 @totp/core 真实实现） */
 const VALID_URI = 'otpauth://totp/GitHub:me?secret=JBSWY3DPEHPK3PXP'
@@ -391,6 +397,38 @@ describe('消息协议（B1-6）', () => {
     expect(pullSyncIfNewer).toHaveBeenCalledTimes(2)
     expect(pushSync).not.toHaveBeenCalled()
     expect(shim.alarms.created).toHaveLength(0)
+  })
+})
+
+describe('消息 time-sync-calibrate（终审 G1：sender 校验与 cloud-fetch 口径对称）', () => {
+  /** shim 的 runtime 默认无 id 字段：置上后内外 sender 才可区分（background 读 ext.runtime.id） */
+  function markSelfId(): void {
+    ;(shim.chrome.runtime as { id?: string }).id = 'test-id'
+  }
+
+  it('外部 sender（id 不符）→ 同步结构化拒绝 ok:false，不发起校准', async () => {
+    await loadBackground()
+    markSelfId()
+    const r = await shim.runtime.receive({ type: 'time-sync-calibrate' }, { id: 'evil-page-id' })
+    expect(r).toEqual({ ok: false })
+    expect(calibrateNetworkTime).not.toHaveBeenCalled()
+  })
+
+  it('无 id sender（无 externally_connectable 的外部页面）→ 同样拒绝', async () => {
+    await loadBackground()
+    markSelfId()
+    const r = await shim.runtime.receive({ type: 'time-sync-calibrate' }, {})
+    expect(r).toEqual({ ok: false })
+    expect(calibrateNetworkTime).not.toHaveBeenCalled()
+  })
+
+  it('内部 sender（id 匹配）→ 放行：校准执行并异步回 ok:true 应答（保持通道）', async () => {
+    calibrateNetworkTime.mockResolvedValueOnce({ offsetMs: 120, sourceId: 'baidu' })
+    await loadBackground()
+    markSelfId()
+    const r = await shim.runtime.receive({ type: 'time-sync-calibrate', preferred: 'baidu' }, { id: 'test-id' })
+    expect(calibrateNetworkTime).toHaveBeenCalledWith('baidu')
+    expect(r).toEqual({ ok: true, offsetMs: 120, sourceId: 'baidu' })
   })
 })
 
