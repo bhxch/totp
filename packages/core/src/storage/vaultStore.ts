@@ -146,6 +146,9 @@ export interface AppSettings {
   themeContrast: 'standard' | 'amoled'
   /** 云同步跟随偏好（跨端同步 T3） */
   syncPrefs: SyncPrefs
+  /** 时间源（时间源特性，spec §1）：device=跟随设备时钟；network=用网络校准偏移取码。
+   *  偏移量本身存设备本地键（timeSyncState），不随备份/浏览器同步漂移 */
+  timeSource: 'device' | 'network'
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -164,6 +167,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   locale: 'auto',
   themeContrast: 'standard',
   syncPrefs: { autoFollow: true },
+  timeSource: 'device',
 }
 
 /** syncPrefs 归一化（跨端同步 T3）：整体非对象或缺字段逐位回默认；autoFollow 仅认显式
@@ -196,6 +200,7 @@ const SETTINGS_VALIDATORS: { [K in keyof AppSettings]: (v: unknown) => AppSettin
   locale: (v) => (v === 'zh' || v === 'en' || v === 'auto' ? v : DEFAULT_SETTINGS.locale),
   themeContrast: (v) => (v === 'amoled' ? v : DEFAULT_SETTINGS.themeContrast),
   syncPrefs: (v) => normalizeSyncPrefs(v),
+  timeSource: (v) => (v === 'network' ? 'network' : DEFAULT_SETTINGS.timeSource),
 }
 
 function settingsFromParsed(parsed: Record<string, unknown>): AppSettings {
