@@ -50,6 +50,8 @@ mod platform_security;
 mod session_vaults;
 // settings.json 读写基础件（路径/单键读取/原子写；各分节配置读写见消费方）
 mod settings_io;
+// 网络时间校准（时间源特性 plan24）：SNTPv4 池 racing（UDP 123 主路径）+ 毫秒 API HTTPS 降级
+mod time_sync;
 
 use dialog_grants::{
     dir_token_os, list_backup_files_os, load_grants, pick_dir_os, pick_open_file_os,
@@ -1184,6 +1186,7 @@ pub fn run() {
             mcp_server::mcp_respond,
             mcp_server::mcp_revoke_approvals,
             cloud_http::cloud_http_fetch,
+            time_sync::time_calibrate,
             elevation_commands::abe_status,
             elevation_commands::abe_bind,
             elevation_commands::abe_wrap,
