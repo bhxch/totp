@@ -49,6 +49,29 @@ describe('shouldAutoCalibrate（plan24 §3）', () => {
     expect(shouldAutoCalibrate(failed, true, 10_000 - 3_600_000)).toBe(true) // 回拨 1h
     expect(shouldAutoCalibrate(failed, true, 10_000)).toBe(false) // 零差值仍在退避期内
   })
+  it('超龄分支受退避约束（R15-a）：已成功+超龄+上次尝试失败且退避期内 → false', () => {
+    // 修复前该分支只看 syncedAt 年龄：「已成功+超龄+校准失败」时每个 tick 都重试，
+    // 离线用户形成秒级失败风暴（Task 2 实证，违反 spec §3-⑤）
+    const now = 1_000_000_000
+    const st = { ...OK, syncedAt: now - 7 * 3_600_000, lastAttemptAt: now - 3_600_000, lastAttemptFailed: true }
+    expect(shouldAutoCalibrate(st, true, now)).toBe(false) // 超龄但距上次失败仅 1h < 6h：期满再试一次
+  })
+  it('超龄分支退避期满重试（R15-b）', () => {
+    const now = 1_000_000_000
+    const st = { ...OK, syncedAt: now - 7 * 3_600_000, lastAttemptAt: now - 7 * 3_600_000, lastAttemptFailed: true }
+    expect(shouldAutoCalibrate(st, true, now)).toBe(true) // 距上次失败尝试已满 ttl：再试一次
+  })
+  it('超龄分支回拨组合（R15-c）：退避参照在未来 → 跳过退避判据', () => {
+    // lastAttemptAt 在未来 ⟹ 钟被回拨，退避期前提失效，与 R13b 同口径
+    const now = 1_000_000_000
+    const st = { ...OK, syncedAt: now - 7 * 3_600_000, lastAttemptAt: now + 3_600_000, lastAttemptFailed: true }
+    expect(shouldAutoCalibrate(st, true, now)).toBe(true)
+  })
+  it('未超龄不受退避影响（R15-d 回归锚）：有新鲜 offset 时不重校', () => {
+    const now = 1_000_000_000
+    const st = { ...OK, syncedAt: now - 3_600_000, lastAttemptAt: now - 1_800_000, lastAttemptFailed: true }
+    expect(shouldAutoCalibrate(st, true, now)).toBe(false) // offset 未超龄：出码继续用旧 offset
+  })
 })
 
 // 裁定修订：wallDelta=正常间隔+跳变幅度，双墙钟采样不可分，故前跳不做间隔条件（无 maxGap 参数）；
