@@ -72,6 +72,24 @@ describe('shouldAutoCalibrate（plan24 §3）', () => {
     const st = { ...OK, syncedAt: now - 3_600_000, lastAttemptAt: now - 1_800_000, lastAttemptFailed: true }
     expect(shouldAutoCalibrate(st, true, now)).toBe(false) // offset 未超龄：出码继续用旧 offset
   })
+  it('回拨+失败组合退避（R17-a）：回拨后已失败一次且退避期内 → false', () => {
+    // R13b 的「负差恒判陈旧」在连续失败场景退化为每 tick 风暴：失败会把 lastAttemptAt 写为
+    // 回拨后的钟读数，故 since ∈ [0, ttlMs) 表示「回拨后已试过一次并失败」，须退避
+    const now = 1_000_000_000
+    const st = { ...OK, syncedAt: now + 3_600_000, lastAttemptAt: now - 5 * 60_000, lastAttemptFailed: true }
+    expect(shouldAutoCalibrate(st, true, now)).toBe(false) // syncedAt 在未来 1h，距上次失败 5min < ttl
+  })
+  it('回拨后未尝试（R17-b）：lastAttemptAt 也在未来（since<0）→ 首次判定照常重校', () => {
+    // lastAttemptAt 是回拨前写下的（也在未来）：退避期前提失效，不压制首次判定
+    const now = 1_000_000_000
+    const st = { ...OK, syncedAt: now + 3_600_000, lastAttemptAt: now + 1_800_000, lastAttemptFailed: true }
+    expect(shouldAutoCalibrate(st, true, now)).toBe(true)
+  })
+  it('回拨后退避期满（R17-c）：lastAttemptAt = 当前钟面−7h → 重校', () => {
+    const now = 1_000_000_000
+    const st = { ...OK, syncedAt: now + 3_600_000, lastAttemptAt: now - 7 * 3_600_000, lastAttemptFailed: true }
+    expect(shouldAutoCalibrate(st, true, now)).toBe(true) // 距上次失败已满 ttl：再试一次
+  })
 })
 
 // 裁定修订：wallDelta=正常间隔+跳变幅度，双墙钟采样不可分，故前跳不做间隔条件（无 maxGap 参数）；
