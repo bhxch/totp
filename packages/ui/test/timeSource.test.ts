@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { watch } from 'vue'
-import { EMPTY_TIME_SYNC_STATE, TIME_SYNC_TTL_MS, type TimeSyncState } from '@totp/core'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { effectScope, nextTick, ref, watch, type Ref } from 'vue'
+import { computeEntryCode, EMPTY_TIME_SYNC_STATE, TIME_SYNC_TTL_MS, type OtpEntry, type TimeSyncState } from '@totp/core'
+import { useOtpCodes } from '../src/composables/useOtpCodes'
 import { initTimeSync, timeSource } from '../src/timeSource'
 
 /** 已成功但陈旧的状态：syncedAt=1000（1970 年），远超任何 TTL 判据 */
@@ -344,5 +345,85 @@ describe('state 替换触发 watch（出码联动）', () => {
     await vi.waitFor(() => expect(seen.length).toBeGreaterThan(0))
     stop()
     expect(seen[seen.length - 1]!.offsetMs).toBe(1234)
+  })
+})
+
+describe('useOtpCodes 出码取时接线（spec §2）', () => {
+  const entry: OtpEntry = {
+    uuid: 'a', type: 'totp', issuer: 'GitHub', label: 'me@ex.com', secret: 'JBSWY3DPEHPK3PXP',
+    algorithm: 'SHA1', digits: 6, period: 30, tagIds: [], order: 0, createdAt: 0,
+  }
+  // 1_700_000_000_000 → nowSec mod 30 = 20（窗口剩余 10s）；偏移 95s = 跨 3 个窗口且窗内相位 +5s
+  const T0 = 1_700_000_000_000
+  const OFFSET = 95_000
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(T0)
+  })
+
+  /** effectScope 内起一份 useOtpCodes 并等首算出码（scope.stop 清理定时器与 watch）。
+   *  firstNowMs=首算同步段的取时（vi.waitFor 轮询会推进假时钟，须在其前采样） */
+  async function mountCodes() {
+    const startedAt = Date.now()
+    const scope = effectScope()
+    const api = scope.run(() => useOtpCodes(ref([entry]) as Ref<OtpEntry[]>))!
+    const firstNowMs = api.nowMs.value
+    await vi.waitFor(() => expect(api.codes.value.get('a')).toBeDefined())
+    return { scope, api, startedAt, firstNowMs }
+  }
+
+  it('network+偏移：nowMs/码值/剩余秒取 effectiveNowMs（偏移后的窗口），而非设备时刻', async () => {
+    const { deps } = makeDeps({ ...NETWORK, load: vi.fn(async () => freshState(OFFSET)) })
+    initTimeSync(deps)
+    await vi.waitFor(() => expect(timeSource().state.value.offsetMs).toBe(OFFSET))
+    const { scope, api, startedAt, firstNowMs } = await mountCodes()
+    expect(firstNowMs).toBe(startedAt + OFFSET)
+    const want = await computeEntryCode(entry, startedAt + OFFSET)
+    const got = api.codes.value.get('a')!
+    expect(got.code).toBe(want.code)
+    expect(got.remaining).toBe(want.remaining) // 5s（设备时刻为 10s）
+    // 用例自证：该偏移确实跨窗（设备时刻的码不同），上面的相等断言才有鉴别力
+    expect((await computeEntryCode(entry, startedAt)).code).not.toBe(want.code)
+    scope.stop()
+  })
+
+  it('偏移变化（state 引用替换）→ 立即重算，不等下一秒 tick', async () => {
+    const { deps, calibrate } = makeDeps({ ...NETWORK, load: vi.fn(async () => freshState(0)) })
+    calibrate.mockResolvedValue({ offsetMs: OFFSET, sourceId: 'baidu' })
+    initTimeSync(deps)
+    await vi.waitFor(() => expect(timeSource().state.value.syncedAt).not.toBeNull())
+    const { scope, api, startedAt, firstNowMs } = await mountCodes()
+    expect(firstNowMs).toBe(startedAt) // 偏移 0：设备时刻
+    await timeSource().calibrateNow() // 校准成功 → state 引用替换（偏移 0 → 95s）
+    await nextTick() // 冲刷 watch（pre 队列）；自首算起未推进过定时器
+    expect(api.nowMs.value).toBe(Date.now() + OFFSET)
+    scope.stop()
+  })
+
+  it('每秒 tick 喂 noteDeviceTick(Date.now())：设备钟被前拨 ≥60s → 检出跳变静默重校', async () => {
+    const { deps, calibrate } = makeDeps({ ...NETWORK, load: vi.fn(async () => freshState(0)) })
+    initTimeSync(deps)
+    await vi.waitFor(() => expect(timeSource().state.value.syncedAt).not.toBeNull())
+    const { scope } = await mountCodes()
+    expect(calibrate).not.toHaveBeenCalled() // 新鲜状态：装载与首算均不触发
+    vi.setSystemTime(Date.now() + 5 * 60 * 1000) // 前拨 5min（远小于 6h TTL：只有跳变分支可触发）
+    await vi.advanceTimersByTimeAsync(1000) // 下一秒 tick
+    expect(calibrate).toHaveBeenCalledTimes(1)
+    scope.stop()
+  })
+
+  it('宿主晚于 useOtpCodes 安装/覆盖安装（mini 窗序）：下一 tick 起按当前实例取时', async () => {
+    initTimeSync(makeDeps().deps) // 起点：device 模式实例（等价未接线）
+    const { scope, api, startedAt, firstNowMs } = await mountCodes()
+    expect(firstNowMs).toBe(startedAt)
+    const { deps } = makeDeps({ ...NETWORK, load: vi.fn(async () => freshState(OFFSET)) })
+    initTimeSync(deps) // 覆盖安装（如 mini 聚焦重建 store 后）
+    await vi.waitFor(() => expect(timeSource().state.value.offsetMs).toBe(OFFSET))
+    await vi.advanceTimersByTimeAsync(1000) // 至少过一次 tick
+    const lag = Date.now() + OFFSET - api.nowMs.value // nowMs=最近一次 tick 时刻+偏移
+    expect(lag).toBeGreaterThanOrEqual(0)
+    expect(lag).toBeLessThan(1000)
+    scope.stop()
   })
 })

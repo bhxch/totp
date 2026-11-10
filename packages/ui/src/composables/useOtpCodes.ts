@@ -1,5 +1,6 @@
 import { computeEntryCode, type OtpEntry } from '@totp/core'
-import { onScopeDispose, ref, type Ref } from 'vue'
+import { onScopeDispose, ref, watch, type Ref } from 'vue'
+import { timeSource } from '../timeSource'
 
 export interface CodeState {
   /** 验证码；secret 非法时为 'INVALID'，渲染层据此显红 */
@@ -29,7 +30,7 @@ interface CodeCacheEntry {
 }
 
 export function useOtpCodes(entries: Ref<OtpEntry[]>) {
-  const nowMs = ref(Date.now())
+  const nowMs = ref(timeSource().effectiveNowMs())
   const codes = ref(new Map<string, CodeState>())
   const cache = new Map<string, CodeCacheEntry>()
   let timer: ReturnType<typeof setInterval> | null = null
@@ -39,7 +40,13 @@ export function useOtpCodes(entries: Ref<OtpEntry[]>) {
     if (computing) return // 上一轮未完成（大库/慢机）时跳过本 tick，下一秒自然重算
     computing = true
     try {
-      nowMs.value = Date.now()
+      // 取时单点（时间源特性 spec §2）：先喂设备 tick（跳变判定 + TTL 静默重校，spec §3-③④），
+      // 再取有效时刻（network 且有偏移=设备时刻+偏移，否则纯设备时刻）；nowSec/counter 均自
+      // nowMs 派生，窗口缓存键自动一致。单例每轮现取、不在 setup 捕获：宿主可晚于本 composable
+      // 安装或覆盖安装（mini 聚焦重建 store），下一 tick 即按当前实例取时
+      const ts = timeSource()
+      ts.noteDeviceTick(Date.now())
+      nowMs.value = ts.effectiveNowMs()
       const next = new Map<string, CodeState>()
       const nowSec = Math.floor(nowMs.value / 1000)
       for (const e of entries.value) {
@@ -101,6 +108,10 @@ export function useOtpCodes(entries: Ref<OtpEntry[]>) {
   void recompute()
   startTimer()
   document.addEventListener('visibilitychange', onVisibilityChange)
+  // 偏移变化（校准成功/本地键装载 → state 引用替换）→ 立即重算一次，不等下一秒 tick。
+  // 绑定的是 setup 当刻的单例：其后才安装/被覆盖安装的实例不触发本 watch，其偏移变化由
+  // 下一秒 tick（每轮现取单例）兜底生效
+  watch(timeSource().state, () => { void recompute() })
   onScopeDispose(() => {
     document.removeEventListener('visibilitychange', onVisibilityChange)
     stopTimer()
