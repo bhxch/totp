@@ -120,9 +120,11 @@ TTL=6h 依据：正常钟晶振漂移每天 1-2s，烂主板可达每天 30s；2
 
 - **`src-tauri/src/time_sync.rs`**：SNTPv4 客户端（48B 包构造 LI=0/VN=4/Mode=3，transmit
   timestamp 后 8 字节，1900→1970 纪元换算）+ 池 racing（tokio spawn 全池并发，单查询 4s 超时，
-  取首个有效响应；`preferred` 参数置顶该源仍全池兜底）；HTTPS 降级 reqwest HEAD（baidu→qq，
-  `Date` 头秒级，rustls 校验系统时间——UDP 全断时降级，时钟严重错误时降级失败属可接受边界，
-  SNTP 不经 TLS 恰为主路径）。命令 `time_calibrate(preferred: Option<String>) -> Result<{offset_ms, source_id}>`。
+  取首个有效响应；`preferred` 参数置顶该源仍全池兜底）；HTTPS 降级 reqwest GET 毫秒 API
+  （勘误 2026-11-11，plan24 落地裁定：原拟 baidu→qq `Date` 头，但 Rust 侧无 RFC7231 日期解析
+  依赖——改用与扩展端同 id 的 taobao-api→suning-api 毫秒 API，serde_json 解析，降级源 id 跨端
+  一致；rustls 校验系统时间——UDP 全断时降级，时钟严重错误时降级失败属可接受边界，SNTP 不经
+  TLS 恰为主路径）。命令 `time_calibrate(preferred: Option<String>) -> Result<{offset_ms, source_id}>`。
 - **前端安装**：desktopShell 双窗 boot 后安装 ui 单例（localStorage IO 包装 + invoke calibrator）；
   `mcpBridge.ts:54` 换 `effectiveNowMs()`。主路径 SNTP 不受 TLS 时间边界限制（时钟错几年也能校准）。
 
