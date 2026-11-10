@@ -98,10 +98,10 @@ describe('shouldAutoCalibrate（plan24 §3）', () => {
 // （S7 期望值按裁定改为 true），另补两类受影响格的保护断言。
 describe('shouldAutoCalibrate R18 语义（回拨见证判陈旧 + 退避共用）', () => {
   const now = 1_000_000_000, H = 3_600_000
-  /** 回拨态：成功写入 syncedAt=lastAttemptAt 同一读数后钟被回拨（两者都落到当前钟面的未来）；since 相对当前钟面 */
-  const back = (since: number, failed = true) => ({ ...OK, syncedAt: now + H, lastAttemptAt: now - since, lastAttemptFailed: failed })
+  /** 回拨态：成功校准后钟被回拨、且回拨后已失败过一次（lastAttemptAt 在过去、syncedAt 在未来 1h → 见证成立）；since 相对当前钟面 */
+  const back = (since: number) => ({ ...OK, syncedAt: now + H, lastAttemptAt: now - since, lastAttemptFailed: true })
   /** 超龄态：syncedAt 在过去 age 处；since 相对当前钟面 */
-  const aged = (since: number, age = 7 * H, failed = true) => ({ ...OK, syncedAt: now - age, lastAttemptAt: now - since, lastAttemptFailed: failed })
+  const aged = (since: number, age = 7 * H) => ({ ...OK, syncedAt: now - age, lastAttemptAt: now - since, lastAttemptFailed: true })
 
   it('S1/S2 显式 COLD_START_TTL_MS：回拨臂与超龄臂的退避窗都按传入 ttl 生效', () => {
     expect(shouldAutoCalibrate(back(COLD_START_TTL_MS - 1), true, now, COLD_START_TTL_MS)).toBe(false)
@@ -109,7 +109,7 @@ describe('shouldAutoCalibrate R18 语义（回拨见证判陈旧 + 退避共用�
     expect(shouldAutoCalibrate(back(COLD_START_TTL_MS), true, now)).toBe(false) // 对照：默认 6h 下 10min 仍在退避期
     expect(shouldAutoCalibrate(aged(COLD_START_TTL_MS - 1), true, now, COLD_START_TTL_MS)).toBe(false)
     expect(shouldAutoCalibrate(aged(COLD_START_TTL_MS), true, now, COLD_START_TTL_MS)).toBe(true)
-    expect(shouldAutoCalibrate(aged(COLD_START_TTL_MS), true, now)).toBe(false) // 对照：默认 6h 下未超龄
+    expect(shouldAutoCalibrate(aged(COLD_START_TTL_MS), true, now)).toBe(false) // 对照：默认 6h 判据下虽已超龄（age=7h），但距上次失败 10min 仍在退避期内
   })
   it('S3/S4 精确边界 0 / ttl−1 / ttl（默认 6h）：回拨臂与超龄臂对称', () => {
     for (const st of [back, (s: number) => aged(s, 13 * H)] as const) {
@@ -131,8 +131,9 @@ describe('shouldAutoCalibrate R18 语义（回拨见证判陈旧 + 退避共用�
     expect(shouldAutoCalibrate({ ...back(5 * 60_000), lastAttemptFailed: false }, true, now)).toBe(true)
   })
   it('R18 第三类格：0≤age<ttl 且有回拨见证且退避期满 → true（恢复延迟收敛至 ttl）', () => {
-    // 场景：校准成功（syncedAt=−1h）后钟被回拨 e′，回拨前 6h 的失败尝试早于 syncedAt → 持久见证；
-    // since=6h 已满 ttl → 立即重校（修复前该格为 false，错误偏移要多用 e′+ttl）
+    // 场景：成功校准（syncedAt=−1h）后钟被回拨 e′；回拨之后那次失败尝试（6h 前）早于 syncedAt → 持久见证
+    // （写入方契约：成功之前的失败已被成功覆写，不构成见证）；since=6h 已满 ttl → 立即重校
+    // （修复前该格为 false，错误偏移要多用 e′+ttl）
     const st = { ...OK, syncedAt: now - H, lastAttemptAt: now - 6 * H, lastAttemptFailed: true }
     expect(shouldAutoCalibrate(st, true, now)).toBe(true) // 见证：lastAttemptAt(−6h) < syncedAt(−1h)，since=6h ≥ ttl
     expect(shouldAutoCalibrate(st, true, now, COLD_START_TTL_MS)).toBe(true) // since=6h ≥ 10min 同样期满
@@ -142,9 +143,26 @@ describe('shouldAutoCalibrate R18 语义（回拨见证判陈旧 + 退避共用�
     expect(shouldAutoCalibrate(sick, true, now)).toBe(false) // 退避期内不再每 tick 重试
     expect(shouldAutoCalibrate({ ...sick, lastAttemptAt: now - COLD_START_TTL_MS }, true, now, COLD_START_TTL_MS)).toBe(true) // 期满重试
   })
-  it('R18-见证须失败：failed=false 且 lastAttemptAt<syncedAt 只是「旧失败后又有一次成功」→ 按年龄判定', () => {
+  it('R18-见证须失败：failed=false 时见证不成立 → 按年龄判定（防御性：写入方契约下此形态不可达）', () => {
+    // 写入方契约：成功会把 lastAttemptAt 覆写为 syncedAt 并清失败标记，故「lastAttemptAt<syncedAt
+    // 且 failed=false」不会由真实写入方产生；此断言是防御性的——防实现把见证误用在 failed=false 上
     const st = { ...OK, syncedAt: now - H, lastAttemptAt: now - 2 * H, lastAttemptFailed: false }
     expect(shouldAutoCalibrate(st, true, now)).toBe(false) // age=1h 未超龄；见证因 failed=false 不成立
+  })
+})
+
+describe('shouldAutoCalibrate 无偏移路径（R18-Major-1 回归钉）', () => {
+  const now = 1_000_000_000
+  // 无偏移（offsetMs=null）即需校准：残留的 syncedAt 不得让它被当作「未超龄」而抑制首启
+  const noOffset = { ...EMPTY_TIME_SYNC_STATE, syncedAt: now - 5 * 60_000 }
+  it('无偏移即需校准：残留 syncedAt 不抑制首启（默认 6h 与冷启动 10min 判据下均立即重校）', () => {
+    expect(shouldAutoCalibrate(noOffset, true, now)).toBe(true)
+    expect(shouldAutoCalibrate(noOffset, true, now, COLD_START_TTL_MS)).toBe(true)
+  })
+  it('null 分支三态：从未尝试 → true；退避期内 → false；退避期满 → true', () => {
+    expect(shouldAutoCalibrate({ ...EMPTY_TIME_SYNC_STATE }, true, now)).toBe(true) // lastAttemptAt=null：从未尝试
+    expect(shouldAutoCalibrate({ ...noOffset, lastAttemptAt: now - 60_000, lastAttemptFailed: true }, true, now)).toBe(false) // since=1min ∈ [0, ttl)
+    expect(shouldAutoCalibrate({ ...noOffset, lastAttemptAt: now - 7 * 3_600_000, lastAttemptFailed: true }, true, now)).toBe(true) // since=7h ≥ ttl
   })
 })
 

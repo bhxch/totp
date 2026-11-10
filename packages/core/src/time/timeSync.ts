@@ -10,13 +10,16 @@ export interface TimeSyncState {
   v: 1
   /** 校准偏移毫秒（=网络时间-设备时间，effectiveNow=device+offset）；null=从未成功 */
   offsetMs: number | null
-  /** 上次成功校准时刻（设备时钟 ms）；offsetMs 非 null 时有效 */
+  /** 上次成功校准时刻（设备时钟 ms）；offsetMs 非 null 时有效。
+   *  写入方契约：成功时与 lastAttemptAt 写同一 Date.now() 读数并清 lastAttemptFailed——
+   *  shouldAutoCalibrate 的回拨见证（失败读数早于 syncedAt ⟹ 钟在校准后被回拨）依赖该契约 */
   syncedAt: number | null
   /** 上次成功校准的来源 id（HTTPS/NTP 源清单内） */
   sourceId: string | null
   /** 上次尝试时刻（设备时钟 ms，成败均记；自动重试退避依据） */
   lastAttemptAt: number | null
-  /** 上次尝试失败标记：TTL 内不自动重试，手动「立即同步」不受限 */
+  /** 上次尝试失败标记：TTL 内不自动重试，手动「立即同步」不受限。
+   *  回拨见证语义见 syncedAt 注释：failed=true 且 lastAttemptAt < syncedAt ⟹ 钟在校准后被回拨 */
   lastAttemptFailed: boolean
   /** 用户首选源 id；null=自动（端内置顺序） */
   preferredSourceId: string | null
@@ -57,21 +60,23 @@ export function normalizeTimeSyncState(raw: unknown): TimeSyncState {
   }
 }
 
-/** 自动校准决策（纯函数）：network 模式下，回拨见证 / 负差（回拨）/ TTL 超龄 / 病态归一判陈旧
- *  （需重校），且全部陈旧分类共用同一退避判据——上次尝试失败且 now−lastAttemptAt ∈ [0, ttlMs)
- *  时退避（裁定 R15/R17/R18，spec §3-⑤）。ttlMs 默认 TIME_SYNC_TTL_MS（6h，既有运行期语义不变），
- *  冷启动入口传 COLD_START_TTL_MS 收紧（裁定 R13）。手动校准（立即同步）不走此函数，恒允许。
+/** 自动校准决策（纯函数）：network 模式下，从未成功（无偏移）/ 回拨见证 / 负差（回拨）/
+ *  TTL 超龄 / 病态归一判陈旧（需重校），且全部陈旧分类共用同一退避判据——上次尝试失败且
+ *  now−lastAttemptAt ∈ [0, ttlMs) 时退避（裁定 R15/R17/R18，spec §3-⑤）。ttlMs 默认
+ *  TIME_SYNC_TTL_MS（6h），冷启动入口传 COLD_START_TTL_MS 收紧（裁定 R13）。手动校准
+ *  （立即同步）不走此函数，恒允许。
  *  回拨见证（裁定 R18，方案 B）：lastAttemptFailed 且 lastAttemptAt < syncedAt ⟹ 失败发生在
- *  syncedAt（=成功校准的钟读数）之前 ⟹ 钟在校准后被回拨，旧 offset 与退避期前提双双失效——
- *  与 age<0（回拨的负差见证，R13b）、age ≥ ttlMs（超龄，R15）同权判陈旧。R17 的「负差恒判
- *  陈旧」只闭合无界段，首试失败后的恢复延迟实测为 e′+ttlMs（e′=回拨量被追平前的负差时长，
- *  默认 tick 路径趋近 2×ttl）；按见证判陈旧后恢复延迟恰为 ttlMs。零差值不算回拨；
- *  病态格（offset≠null 且 syncedAt=null）R18 起同样受退避约束（修复前为每 tick 风暴）。 */
+ *  syncedAt（=成功校准的钟读数）之前——该推断依赖写入方契约（成功覆写 lastAttemptAt=syncedAt
+ *  并清失败标记，见 TimeSyncState 字段注释），故此形态只可能是成功之后钟被回拨 ⟹ 旧 offset
+ *  失效，判陈旧；退避仍适用——回拨后写下的 lastAttemptAt 是有效退避参照，期满即重校，恢复
+ *  延迟恰 ttlMs（取代 R17 实测上界 e′+ttlMs）。「退避期前提失效」仅指负差（lastAttemptAt 在
+ *  未来，R13b）的情形。零差值不算回拨；无偏移（offsetMs=null）即需校准、不受见证影响，仅受
+ *  失败退避约束；病态归一（offset≠null 且 syncedAt=null）同样受退避约束（R18 前为每 tick 风暴）。 */
 export function shouldAutoCalibrate(state: TimeSyncState, networkMode: boolean, deviceNowMs: number, ttlMs: number = TIME_SYNC_TTL_MS): boolean {
   if (!networkMode) return false
   const backoff = state.lastAttemptFailed && state.lastAttemptAt !== null
     && deviceNowMs - state.lastAttemptAt >= 0 && deviceNowMs - state.lastAttemptAt < ttlMs
-  if (state.syncedAt === null) return !backoff // 病态归一（有偏移无时刻）：按需重校，R18 起受退避约束
+  if (state.offsetMs === null || state.syncedAt === null) return !backoff // 从未成功（无偏移，含首次开启）或病态归一（有偏移无时刻）：按需重校，受失败退避约束
   const age = deviceNowMs - state.syncedAt
   const rolledBack = age < 0 || (state.lastAttemptFailed && state.lastAttemptAt !== null && state.lastAttemptAt < state.syncedAt)
   if (rolledBack || age >= ttlMs) return !backoff
