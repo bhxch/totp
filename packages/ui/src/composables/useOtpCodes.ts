@@ -35,10 +35,14 @@ export function useOtpCodes(entries: Ref<OtpEntry[]>) {
   const cache = new Map<string, CodeCacheEntry>()
   let timer: ReturnType<typeof setInterval> | null = null
   let computing = false
+  /** 在途一轮的时间基准已过期：它取时之后时间源状态变了（本地键装载落定 / 校准成功）。
+   *  该轮按旧偏移算出的结果不发布，结束后立即补算一轮（评审 I-2） */
+  let stale = false
 
   async function recompute() {
     if (computing) return // 上一轮未完成（大库/慢机）时跳过本 tick，下一秒自然重算
     computing = true
+    stale = false
     try {
       // 取时单点（时间源特性 spec §2）：先喂设备 tick（跳变判定 + TTL 静默重校，spec §3-③④），
       // 再取有效时刻（network 且有偏移=设备时刻+偏移，否则纯设备时刻）；nowSec/counter 均自
@@ -78,10 +82,20 @@ export function useOtpCodes(entries: Ref<OtpEntry[]>) {
           })
         }
       }
-      codes.value = next
+      // 在途期间时间源变了：这一轮是按旧偏移取的时，发布出去就是错窗码（装载落定撞上首算
+      // 时即首屏错码）——作废，由 finally 的补算发布
+      if (!stale) codes.value = next
     } finally {
       computing = false
+      if (stale) void recompute()
     }
+  }
+
+  /** 时间源状态变化入口（watch 触发）：立即重算。恰有一轮在途时 recompute 会直接返回，故先
+   *  把在途那轮标记为过期，它结束后补算——不同于每秒 tick 的「在途即跳过」 */
+  function recomputeOnTimeSourceChange(): void {
+    stale = true
+    void recompute()
   }
 
   // 后台节流：页面不可见（主窗到托盘 / mini 失焦自动隐藏 / popup 关闭前）时停表，
@@ -108,10 +122,10 @@ export function useOtpCodes(entries: Ref<OtpEntry[]>) {
   void recompute()
   startTimer()
   document.addEventListener('visibilitychange', onVisibilityChange)
-  // 偏移变化（校准成功/本地键装载 → state 引用替换）→ 立即重算一次，不等下一秒 tick。
-  // 绑定的是 setup 当刻的单例：其后才安装/被覆盖安装的实例不触发本 watch，其偏移变化由
-  // 下一秒 tick（每轮现取单例）兜底生效
-  watch(timeSource().state, () => { void recompute() })
+  // 偏移变化（校准成功/本地键装载 → state 引用替换）→ 立即重算，不等下一秒 tick；撞上在途的
+  // 一轮时该轮结果作废并补算（见 stale）。绑定的是 setup 当刻的单例：其后才安装/被覆盖安装的
+  // 实例不触发本 watch，其偏移变化由下一秒 tick（每轮现取单例）兜底生效
+  watch(timeSource().state, recomputeOnTimeSourceChange)
   onScopeDispose(() => {
     document.removeEventListener('visibilitychange', onVisibilityChange)
     stopTimer()

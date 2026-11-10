@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { effectScope, nextTick, ref, watch, type Ref } from 'vue'
 import { computeEntryCode, EMPTY_TIME_SYNC_STATE, TIME_SYNC_TTL_MS, type OtpEntry, type TimeSyncState } from '@totp/core'
 import { useOtpCodes } from '../src/composables/useOtpCodes'
-import { initTimeSync, timeSource } from '../src/timeSource'
+import { initTimeSync, timeSource, type TimeSyncController } from '../src/timeSource'
 
 /** 已成功但陈旧的状态：syncedAt=1000（1970 年），远超任何 TTL 判据 */
 function okState(offsetMs = 500): TimeSyncState {
@@ -32,6 +32,21 @@ function makeDeps(overrides: Partial<Parameters<typeof initTimeSync>[0]> = {}) {
 const NETWORK = { isNetworkMode: () => true }
 /** 让出一个宏任务：等在途微任务链（bootstrap/静默校准）全部落定 */
 const macrotask = () => new Promise<void>((r) => setTimeout(r, 0))
+/** 可控装载：模拟本地键 IO 尚未回包（扩展端 storage.local.get 是真异步），由用例决定何时落定 */
+function deferredLoad() {
+  let settle!: (s: TimeSyncState | null) => void
+  let fail!: (e: unknown) => void
+  const load = vi.fn(() => new Promise<TimeSyncState | null>((res, rej) => { settle = res; fail = rej }))
+  return { load, settle: (s: TimeSyncState | null) => settle(s), fail: (e: unknown) => fail(e) }
+}
+/** 可控校准器：让下一次校准请求挂起，由用例决定何时成功/失败落定 */
+function deferCalibrate(calibrate: ReturnType<typeof makeDeps>['calibrate']) {
+  type R = { offsetMs: number; sourceId: string }
+  let ok!: (r: R) => void
+  let fail!: (e: unknown) => void
+  calibrate.mockImplementationOnce(() => new Promise<R>((res, rej) => { ok = res; fail = rej }))
+  return { ok: (r: R) => ok(r), fail: (e: unknown) => fail(e) }
+}
 
 afterEach(() => {
   vi.useRealTimers() // 个别用例冻结 Date 推进 TTL，统一还原
@@ -93,21 +108,116 @@ describe('initTimeSync 装配', () => {
     await expect(timeSource().calibrateNow()).resolves.toMatchObject({ offsetMs: 1234 })
   })
   it('覆盖安装：装载在途即被取代的旧实例放弃 bootstrap（不写状态、不发起校准）', async () => {
-    let resolveOld!: (s: TimeSyncState | null) => void
-    const old = makeDeps({
-      ...NETWORK,
-      load: vi.fn(() => new Promise<TimeSyncState | null>((r) => { resolveOld = r })),
-    })
+    const oldLoad = deferredLoad()
+    const old = makeDeps({ ...NETWORK, load: oldLoad.load })
     const oldCtl = initTimeSync(old.deps)
     const cur = makeDeps({ load: vi.fn(async () => okState(700)) })
     const curCtl = initTimeSync(cur.deps)
     expect(timeSource()).toBe(curCtl)
     await vi.waitFor(() => expect(curCtl.state.value.offsetMs).toBe(700))
-    resolveOld(okState(9999)) // 旧实例的装载此刻才完成
+    oldLoad.settle(okState(9999)) // 旧实例的装载此刻才完成
     await macrotask()
     expect(oldCtl.state.value).toEqual(EMPTY_TIME_SYNC_STATE)
     expect(old.calibrate).not.toHaveBeenCalled() // network + 陈旧本应重校：已被取代故放弃
     expect(curCtl.state.value.offsetMs).toBe(700)
+    // 被取代实例的闸门不再打开：即便有人继续调它的自动入口，也不会对空状态做决策
+    oldCtl.ensureAutoCalibrate()
+    oldCtl.noteDeviceTick(Date.now())
+    await macrotask()
+    expect(old.calibrate).not.toHaveBeenCalled()
+  })
+})
+
+describe('装载闸门：本地键装载落定前不做自动决策（评审 I-1 / MN-1 / MN-5）', () => {
+  it('落定前零校准请求：tick / 跳变 / 冷启动入口只更新基准；落定后按装载值决策（新鲜 → 仍为 0）', async () => {
+    const d = deferredLoad()
+    const { deps, calibrate } = makeDeps({ ...NETWORK, load: d.load })
+    const ctl = initTimeSync(deps)
+    const t = Date.now()
+    ctl.noteDeviceTick(t) // 安装后立即 tick：若对空状态做 TTL 决策，此刻就会发起
+    ctl.ensureAutoCalibrate()
+    ctl.noteDeviceTick(t - 10_000) // 回退 10s：落定前不判跳变
+    expect(calibrate).not.toHaveBeenCalled()
+    expect(ctl.syncing.value).toBe(false)
+    expect(Math.abs(ctl.effectiveNowMs() - Date.now())).toBeLessThan(50) // 尚无偏移：设备时刻
+    d.settle({ ...freshState(2000), preferredSourceId: 'jd' })
+    await vi.waitFor(() => expect(ctl.state.value.offsetMs).toBe(2000))
+    // 基准在落定前已随 tick 更新到 t-10s：落定后的下一个正常 tick 不被判成跳变
+    ctl.noteDeviceTick(t - 9_000)
+    await macrotask()
+    expect(calibrate).not.toHaveBeenCalled() // 刚成功：冷启动决策与 tick 决策都不该发起
+    expect(ctl.state.value.preferredSourceId).toBe('jd')
+  })
+  it('落定前的 tick 已建立基准：落定后首个 tick 即可判跳变', async () => {
+    const d = deferredLoad()
+    const { deps, calibrate } = makeDeps({ ...NETWORK, load: d.load })
+    const ctl = initTimeSync(deps)
+    const t = Date.now()
+    ctl.noteDeviceTick(t)
+    d.settle(freshState())
+    await vi.waitFor(() => expect(ctl.state.value.offsetMs).toBe(500))
+    expect(calibrate).not.toHaveBeenCalled()
+    ctl.noteDeviceTick(t - 10_000) // 相对落定前建立的基准回退 10s
+    expect(calibrate).toHaveBeenCalledTimes(1)
+  })
+  it('落定后按装载值做冷启动决策：陈旧 → 恰 1 次，且用已存首选源', async () => {
+    const d = deferredLoad()
+    const { deps, calibrate } = makeDeps({ ...NETWORK, load: d.load })
+    const ctl = initTimeSync(deps)
+    ctl.noteDeviceTick(Date.now())
+    expect(calibrate).not.toHaveBeenCalled()
+    d.settle({ ...okState(100), syncedAt: Date.now() - 20 * 60 * 1000, preferredSourceId: 'jd' })
+    await vi.waitFor(() => expect(calibrate).toHaveBeenCalledTimes(1))
+    expect(calibrate).toHaveBeenCalledWith('jd') // 落定前抢跑的话入参会是 null（忽略已存首选源）
+    await vi.waitFor(() => expect(ctl.syncing.value).toBe(false))
+    ctl.noteDeviceTick(Date.now())
+    expect(calibrate).toHaveBeenCalledTimes(1)
+    expect(ctl.state.value).toMatchObject({ offsetMs: 1234, sourceId: 'jd', preferredSourceId: 'jd' })
+  })
+  it.each([
+    ['从未成功、5s 前刚失败', (now: number): TimeSyncState => ({ ...EMPTY_TIME_SYNC_STATE, lastAttemptAt: now - 5_000, lastAttemptFailed: true })],
+    ['已有偏移且超龄、1min 前重校失败', (now: number): TimeSyncState => ({ ...okState(100), lastAttemptAt: now - 60_000, lastAttemptFailed: true })],
+  ])('落定后按装载值决策：退避期内（%s）→ 0 次，失败记录不被刷新', async (_label, make) => {
+    const d = deferredLoad()
+    const { deps, calibrate } = makeDeps({ ...NETWORK, load: d.load })
+    const ctl = initTimeSync(deps)
+    ctl.noteDeviceTick(Date.now())
+    const loaded = make(Date.now())
+    d.settle(loaded)
+    await vi.waitFor(() => expect(ctl.state.value).toBe(loaded))
+    ctl.noteDeviceTick(Date.now())
+    await macrotask()
+    expect(calibrate).not.toHaveBeenCalled()
+    expect(ctl.state.value).toBe(loaded) // 失败记录（lastAttemptAt）原样保留
+  })
+  it('装载失败也算落定：闸门打开，network 从未尝试 → 自动校准 1 次', async () => {
+    const d = deferredLoad()
+    const { deps, calibrate } = makeDeps({ ...NETWORK, load: d.load })
+    const ctl = initTimeSync(deps)
+    ctl.noteDeviceTick(Date.now())
+    expect(calibrate).not.toHaveBeenCalled()
+    d.fail(new Error('io'))
+    await vi.waitFor(() => expect(calibrate).toHaveBeenCalledTimes(1))
+    expect(calibrate).toHaveBeenCalledWith(null)
+  })
+  it('装载晚到不覆盖内存态：落定前的手动校准结果保留（评审 MN-1）', async () => {
+    const d = deferredLoad()
+    const { deps } = makeDeps({ load: d.load })
+    const ctl = initTimeSync(deps)
+    const st = await ctl.calibrateNow() // 手动路径不受闸门约束
+    expect(st.offsetMs).toBe(1234)
+    d.settle(okState(7))
+    await macrotask()
+    expect(ctl.state.value).toBe(st)
+  })
+  it('装载晚到不覆盖内存态：落定前改的首选源保留（评审 MN-1）', async () => {
+    const d = deferredLoad()
+    const { deps } = makeDeps({ load: d.load })
+    const ctl = initTimeSync(deps)
+    await ctl.setPreferredSource('gitee')
+    d.settle({ ...okState(7), preferredSourceId: 'jd' })
+    await macrotask()
+    expect(ctl.state.value.preferredSourceId).toBe('gitee')
   })
 })
 
@@ -190,6 +300,55 @@ describe('自动重校：TTL 与退避（spec §3-③⑤）', () => {
     expect(ctl.state.value.offsetMs).toBe(42)
     ctl.ensureAutoCalibrate() // 刚成功（<10min）：不再触发
     expect(calibrate).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('退避的集成阳性：校准恒败时自动路径不连环重试（core R15 / R17 / R18，回滚任一条本组即转红）', () => {
+  /** 校准恒败的 network 装配，等 bootstrap 首试失败落定后返回 */
+  async function installFailing(loaded: TimeSyncState) {
+    const { deps, calibrate } = makeDeps({ ...NETWORK, load: vi.fn(async () => loaded) })
+    calibrate.mockRejectedValue(new Error('offline'))
+    const ctl = initTimeSync(deps)
+    await vi.waitFor(() => expect(ctl.state.value.lastAttemptFailed).toBe(true)) // bootstrap 首试失败
+    await vi.waitFor(() => expect(ctl.syncing.value).toBe(false))
+    return { ctl, calibrate }
+  }
+  /** 连续 n 个正常 tick（设备钟自然流逝，不构成跳变），每个 tick 后等可能发起的校准落定 */
+  async function tickTimes(ctl: TimeSyncController, n: number) {
+    for (let i = 0; i < n; i++) {
+      ctl.noteDeviceTick(Date.now())
+      await vi.waitFor(() => expect(ctl.syncing.value).toBe(false))
+    }
+  }
+
+  it('已成功 + syncedAt 超龄：bootstrap 与其后 20 个 tick 合计恰 1 次请求（R15：超龄分支退避）', async () => {
+    const { ctl, calibrate } = await installFailing({ ...okState(100), syncedAt: Date.now() - 7 * 60 * 60 * 1000 })
+    await tickTimes(ctl, 20)
+    expect(calibrate).toHaveBeenCalledTimes(1)
+    expect(ctl.state.value.offsetMs).toBe(100) // 旧偏移保留，出码继续用它
+  })
+  it('回拨态（syncedAt 在未来）+ 首试失败：同样恰 1 次（R17：负差路径共用退避）', async () => {
+    const future = Date.now() + 60 * 60 * 1000 // 设备钟被回拨 1h：上次成功的钟读数落在「未来」
+    const { ctl, calibrate } = await installFailing({ ...okState(100), syncedAt: future, lastAttemptAt: future })
+    await tickTimes(ctl, 20)
+    expect(calibrate).toHaveBeenCalledTimes(1)
+  })
+  it('回拨 1h + 首试失败：退避期满（ttl）即重试，不必等回拨量被追平后再过一个 ttl（R18：回拨见证）', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const syncedAt = Date.now() + 60 * 60 * 1000
+    const { ctl, calibrate } = await installFailing({ ...okState(100), syncedAt, lastAttemptAt: syncedAt })
+    const failedAt = ctl.state.value.lastAttemptAt!
+    // 每 59s 一个 tick（不足 60s，不构成前跳），走到退避期满前的最后一个 tick
+    let t = failedAt
+    while (t + 59_000 < failedAt + TIME_SYNC_TTL_MS) {
+      t += 59_000
+      vi.setSystemTime(t)
+      ctl.noteDeviceTick(t)
+    }
+    expect(calibrate).toHaveBeenCalledTimes(1) // 退避期内一次不重试——含回拨量被追平（1h）之后的 5h
+    vi.setSystemTime(failedAt + TIME_SYNC_TTL_MS)
+    ctl.noteDeviceTick(failedAt + TIME_SYNC_TTL_MS)
+    expect(calibrate).toHaveBeenCalledTimes(2) // 期满即重试
   })
 })
 
@@ -317,6 +476,66 @@ describe('calibrateNow（Review Focus 3）', () => {
   })
 })
 
+describe('在途期间改首选源不被回滚（评审 MJ-1）', () => {
+  it('自动校准在途改偏好 → 成功落定后保留新偏好（内存与落盘）；请求入参仍是发起时的偏好', async () => {
+    const stale = { ...okState(100), preferredSourceId: 'a' } // 超龄：bootstrap 落定即自动校准
+    const { deps, calibrate } = makeDeps({ ...NETWORK, load: vi.fn(async () => stale) })
+    const c = deferCalibrate(calibrate)
+    const ctl = initTimeSync(deps)
+    await vi.waitFor(() => expect(calibrate).toHaveBeenCalledTimes(1))
+    expect(calibrate).toHaveBeenCalledWith('a')
+    await ctl.setPreferredSource('b') // 校准在途，用户换源
+    c.ok({ offsetMs: 42, sourceId: 'a' })
+    await vi.waitFor(() => expect(ctl.syncing.value).toBe(false))
+    expect(ctl.state.value).toMatchObject({ offsetMs: 42, sourceId: 'a', preferredSourceId: 'b', lastAttemptFailed: false })
+    expect(deps.save).toHaveBeenLastCalledWith(expect.objectContaining({ offsetMs: 42, preferredSourceId: 'b' }))
+  })
+  it('自动校准在途改回「自动」（null）→ 失败落定后同样不回滚（失败分支回写的也是落定时刻的偏好）', async () => {
+    const stale = { ...okState(100), preferredSourceId: 'a' }
+    const { deps, calibrate } = makeDeps({ ...NETWORK, load: vi.fn(async () => stale) })
+    const c = deferCalibrate(calibrate)
+    const ctl = initTimeSync(deps)
+    await vi.waitFor(() => expect(calibrate).toHaveBeenCalledWith('a'))
+    await ctl.setPreferredSource(null)
+    c.fail(new Error('down'))
+    await vi.waitFor(() => expect(ctl.syncing.value).toBe(false))
+    expect(ctl.state.value).toMatchObject({ offsetMs: 100, preferredSourceId: null, lastAttemptFailed: true })
+    expect(deps.save).toHaveBeenLastCalledWith(expect.objectContaining({ preferredSourceId: null, lastAttemptFailed: true }))
+  })
+  it('手动 calibrateNow 在途改偏好：落定后保留新偏好', async () => {
+    const { deps, calibrate } = makeDeps({ load: vi.fn(async () => ({ ...EMPTY_TIME_SYNC_STATE, preferredSourceId: 'a' })) })
+    const ctl = initTimeSync(deps)
+    await vi.waitFor(() => expect(ctl.state.value.preferredSourceId).toBe('a'))
+    const c = deferCalibrate(calibrate)
+    const p = ctl.calibrateNow()
+    expect(calibrate).toHaveBeenCalledWith('a')
+    await ctl.setPreferredSource('b')
+    c.ok({ offsetMs: 42, sourceId: 'a' })
+    const st = await p
+    expect(st.preferredSourceId).toBe('b')
+    expect(ctl.state.value).toBe(st)
+  })
+  it('显式指定源：发起时即记为偏好，失败也保留；在途的重复调用不改偏好；途中再改以后改的为准', async () => {
+    const { deps, calibrate } = makeDeps()
+    const ctl = initTimeSync(deps)
+    await macrotask()
+    calibrate.mockRejectedValueOnce(new Error('down'))
+    await expect(ctl.calibrateNow({ preferredSourceId: 'x' })).rejects.toThrow('down')
+    expect(ctl.state.value).toMatchObject({ preferredSourceId: 'x', lastAttemptFailed: true })
+    expect(deps.save).toHaveBeenLastCalledWith(expect.objectContaining({ preferredSourceId: 'x', lastAttemptFailed: true }))
+    const c = deferCalibrate(calibrate)
+    const p = ctl.calibrateNow({ preferredSourceId: 'y' })
+    expect(calibrate).toHaveBeenLastCalledWith('y')
+    expect(ctl.state.value.preferredSourceId).toBe('y') // 发起当刻即生效
+    const dup = await ctl.calibrateNow({ preferredSourceId: 'z' }) // 在途：未实际发起
+    expect(dup.preferredSourceId).toBe('y')
+    await ctl.setPreferredSource('w') // 途中用户又改
+    c.ok({ offsetMs: 42, sourceId: 'y' })
+    expect((await p).preferredSourceId).toBe('w')
+    expect(calibrate).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('setPreferredSource', () => {
   it('仅更新偏好并落盘，不触发校准', async () => {
     const { deps, calibrate } = makeDeps()
@@ -377,8 +596,12 @@ describe('useOtpCodes 出码取时接线（spec §2）', () => {
     const { deps } = makeDeps({ ...NETWORK, load: vi.fn(async () => freshState(OFFSET)) })
     initTimeSync(deps)
     await vi.waitFor(() => expect(timeSource().state.value.offsetMs).toBe(OFFSET))
+    const tick = vi.spyOn(timeSource(), 'noteDeviceTick')
     const { scope, api, startedAt, firstNowMs } = await mountCodes()
     expect(firstNowMs).toBe(startedAt + OFFSET)
+    // 喂给 noteDeviceTick 的是设备墙钟 Date.now()，不是带偏移的有效时刻（裁定 R11：基准只存设备墙钟；评审 MN-4）
+    expect(tick).toHaveBeenCalledWith(startedAt)
+    expect(tick).not.toHaveBeenCalledWith(startedAt + OFFSET)
     const want = await computeEntryCode(entry, startedAt + OFFSET)
     const got = api.codes.value.get('a')!
     expect(got.code).toBe(want.code)
@@ -398,6 +621,45 @@ describe('useOtpCodes 出码取时接线（spec §2）', () => {
     await timeSource().calibrateNow() // 校准成功 → state 引用替换（偏移 0 → 95s）
     await nextTick() // 冲刷 watch（pre 队列）；自首算起未推进过定时器
     expect(api.nowMs.value).toBe(Date.now() + OFFSET)
+    scope.stop()
+  })
+
+  it('安装后立即挂载：装载落定前首算与 tick 都不发起校准，落定后按装载值决策（评审 I-1 接线侧）', async () => {
+    const d = deferredLoad()
+    const { deps, calibrate } = makeDeps({ ...NETWORK, load: d.load })
+    initTimeSync(deps)
+    const { scope } = await mountCodes() // 不等装载：首算（含喂 tick）已跑完
+    expect(calibrate).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1000) // 落定前再过一个 tick
+    expect(calibrate).not.toHaveBeenCalled()
+    // 本地键回包：陈旧 + 已存首选源 → 恰 1 次，且用的是已存首选源
+    d.settle({ ...okState(0), syncedAt: Date.now() - 20 * 60 * 1000, preferredSourceId: 'jd' })
+    await vi.waitFor(() => expect(calibrate).toHaveBeenCalledTimes(1))
+    expect(calibrate).toHaveBeenCalledWith('jd')
+    scope.stop()
+  })
+
+  it('装载落定撞上在途首算：按旧偏移算出的结果不发布，随即补算——首个出码即偏移后的码，不等下一秒 tick（评审 I-2）', async () => {
+    const d = deferredLoad()
+    const { deps } = makeDeps({ ...NETWORK, load: d.load })
+    initTimeSync(deps)
+    const startedAt = Date.now()
+    const published: string[] = []
+    const scope = effectScope()
+    const api = scope.run(() => {
+      const a = useOtpCodes(ref([entry]) as Ref<OtpEntry[]>)
+      watch(a.codes, (m) => { const c = m.get('a'); if (c) published.push(c.code) }, { flush: 'sync' })
+      return a
+    })!
+    expect(api.nowMs.value).toBe(startedAt) // 装载未落定：首算按 0 偏移取时，HMAC 在途
+    d.settle(freshState(OFFSET)) // 本地键此刻回包，首算仍在途
+    await vi.waitFor(() => expect(published.length).toBeGreaterThan(0))
+    const want = await computeEntryCode(entry, startedAt + OFFSET)
+    const deviceCode = (await computeEntryCode(entry, startedAt)).code
+    expect(deviceCode).not.toBe(want.code) // 用例自证：该偏移确实跨窗
+    expect(published).not.toContain(deviceCode) // 错窗码从未发布
+    expect(published[0]).toBe(want.code)
+    expect(Date.now() - startedAt).toBeLessThan(1000) // 假时钟只被轮询推进：尚未到下一秒 tick
     scope.stop()
   })
 
