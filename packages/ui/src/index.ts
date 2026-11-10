@@ -1,5 +1,8 @@
 export * from './composables/useOtpCodes'
 export * from './store'
+// 时间源模块级单例（时间源特性 spec §2）：宿主 initTimeSync(deps) 注入本地键 IO 与端校准器，
+// 出码层/设置卡经 timeSource() 消费；未安装返回降级实例（零偏移、零网络）
+export * from './timeSource'
 export * from './theme/palette'
 export * from './theme/useTheme'
 export * from './prf'
