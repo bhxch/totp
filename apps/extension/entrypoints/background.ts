@@ -3,6 +3,7 @@ import { PENDING_OTPAUTH_KEY, encodePending } from '../src/pendingOtpauth'
 import { decodeImageBytesToUri } from '../src/qrDecode'
 import { pullSyncIfNewer, pushSync } from '../src/syncEngine'
 import { handleCloudFetchMessage } from '../src/cloudFetchHandler'
+import { calibrateNetworkTime } from '../src/timeSyncCalibrator'
 import { canOpenPopup, ext } from '../src/extApi'
 
 /** 清剪贴板 alarm 名（同名 create 即覆盖 = 重复复制重置计时） */
@@ -218,6 +219,19 @@ export default defineBackground(() => {
     // 也不会静默变成任意网页可驱动的出网中继。
     if (msg?.type === 'cloud-fetch') {
       return handleCloudFetchMessage(msg, sender, sendResponse, ext!.runtime.id)
+    }
+    // 时间源校准（时间源特性 spec §4）：popup/options 经消息驱动 SW 执行源序校准。
+    // 异步应答：返回 true 保持 sendResponse 通道（cloud-fetch 同款），校准最长 12s
+    if (msg?.type === 'time-sync-calibrate') {
+      void (async () => {
+        try {
+          const r = await calibrateNetworkTime(typeof msg.preferred === 'string' ? msg.preferred : null)
+          sendResponse({ ok: true, offsetMs: r.offsetMs, sourceId: r.sourceId })
+        } catch {
+          sendResponse({ ok: false })
+        }
+      })()
+      return true
     }
     // popup/options 复制后发 {type:'schedule-clipboard-clear', delayMs}——popup 即将关闭，30s 清空须由后台承载
     if (msg?.type === 'schedule-clipboard-clear') {

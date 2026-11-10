@@ -12,6 +12,7 @@ import {
 import { createIdleLockWatcher } from '../../src/lockEnforcer'
 import { createDekSession } from '../../src/dekSession'
 import { ext } from '../../src/extApi'
+import { installExtensionTimeSync } from '../../src/timeSyncInstall'
 import { createExtensionStore, persistFailed, storageAdapter } from '../../src/store'
 
 // spec §7 末尾：options 窗口独立解锁——windowId='options' 与 popup 隔离，各持各的 DEK。
@@ -28,6 +29,7 @@ const store = createExtensionStore('options', {
     persistFailed.value = true
   },
 })
+installExtensionTimeSync(store) // 时间源单例装配（store 就地创建处安装；ui 单例自带装载闸门）
 // D1 i18n 挂载：store 在本组件 setup 创建（页面生命周期内唯一实例），装入当前 app 供全部子组件
 // useI18n/$t。appContext.app 须在 setup 同步段取；装入发生在 setup 中段，本组件自身的 script setup
 // 内 useI18n() 不可用（注入尚未就绪），壳层翻译走 i18n.global.t——子组件不受限
