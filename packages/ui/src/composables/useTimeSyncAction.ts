@@ -6,8 +6,9 @@ import { timeSource } from '../timeSource'
 import { useI18n } from 'vue-i18n'
 import { useToast } from './useToast'
 
-/** 已对齐阈值：|offset| < 50ms 视为同步无偏差（toast 用「已对齐」文案） */
-const ALIGNED_EPS_MS = 50
+/** 已对齐阈值：|offset| < 50ms 视为同步无偏差（toast 用「已对齐」文案）。设置页状态行共用
+ *  此常量（终审 G2 hoist：单一事实源，消除 toast 与状态行的口径漂移） */
+export const ALIGNED_EPS_MS = 50
 
 export function useTimeSyncAction(): { syncing: import('vue').Ref<boolean>; syncNow(): Promise<void> } {
   const ts = timeSource()

@@ -463,6 +463,19 @@ describe('calibrateNow（Review Focus 3）', () => {
     expect(Number.isFinite(timeSource().effectiveNowMs())).toBe(true)
     await vi.waitFor(() => expect(timeSource().syncing.value).toBe(false))
   })
+  it('幅值护栏（终审 G5）：offsetMs=25h 超一天上界 → 视为垃圾值走失败分支：保留旧偏移、记失败、rethrow', async () => {
+    const { deps, calibrate } = makeDeps({ load: vi.fn(async () => okState(700)) })
+    initTimeSync(deps)
+    await vi.waitFor(() => expect(timeSource().state.value.offsetMs).toBe(700))
+    calibrate.mockResolvedValueOnce({ offsetMs: 25 * 60 * 60 * 1000, sourceId: 'baidu' })
+    await expect(timeSource().calibrateNow()).rejects.toThrow('implausible offset')
+    const st = timeSource().state.value
+    expect(st.offsetMs).toBe(700) // 旧偏移不被污染
+    expect(st.syncedAt).toBe(1000)
+    expect(st.lastAttemptFailed).toBe(true)
+    expect(deps.save).toHaveBeenLastCalledWith(expect.objectContaining({ offsetMs: 700, lastAttemptFailed: true }))
+    expect(timeSource().syncing.value).toBe(false)
+  })
   it('落盘失败不影响内存态：成功校准仍被采纳、不误记失败', async () => {
     const { deps } = makeDeps({ save: vi.fn(async () => { throw new Error('quota') }) })
     initTimeSync(deps)

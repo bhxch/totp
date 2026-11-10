@@ -80,7 +80,7 @@
     `NTP_TIME_SOURCE_IDS=['aliyun','tencent','tencent-time1','neu','cn-pool','tuna','windows']`
     （id 清单 core 单一事实源，URL/解析在端实现，i18n label 在 ui）；
   - 纯函数：`normalizeTimeSyncState`（逐位宽容归一，与 loadSettings 同口径）、
-    `shouldAutoCalibrate(state, networkMode, deviceNowMs)`、`clockJumpKind(prev, now, maxGap)`、
+    `shouldAutoCalibrate(state, networkMode, deviceNowMs)`、`clockJumpKind(prevMs, nowMs)`、
     `computeOffsetMs(serverMs, t0, t1)`（NTP 中点公式 `server - (t0+t1)/2`）。
 - **`ui/src/timeSource.ts`**（模块级单例，useToast 同款装配模式）：
   - `initTimeSync(deps)`：deps = `{ load, save, isNetworkMode, calibrate(preferred) }`；

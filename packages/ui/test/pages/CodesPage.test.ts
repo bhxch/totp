@@ -557,4 +557,22 @@ describe('时间源同步按钮（plan24 spec §6，齐平不增行）', () => {
     expect(spy).toHaveBeenCalledTimes(1)
     spy.mockRestore()
   })
+
+  it('syncing 在途：同步钮 disabled（终审 G4 钉住 Task 7 移交的互斥约束：syncing=true → :disabled）', async () => {
+    const s = await readyStore()
+    s.settings.timeSource = 'network'
+    const w = mount(CodesPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    await vi.waitFor(() => expect(w.text()).toContain('GitHub'))
+    // syncing 是可写 ref（timeSource.ts 单例暴露）：直接置 true 模拟在途，无需 initTimeSync 装配；
+    // finally 复位防泄漏到同文件其他用例
+    timeSource().syncing.value = true
+    try {
+      await nextTick()
+      expect(w.find('[data-test="codes-sync-now"]').attributes('disabled')).toBeDefined()
+    } finally {
+      timeSource().syncing.value = false
+    }
+    await nextTick()
+    expect(w.find('[data-test="codes-sync-now"]').attributes('disabled')).toBeUndefined()
+  })
 })

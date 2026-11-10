@@ -19,7 +19,7 @@ import MdTextField from '../components/md/MdTextField.vue'
 import type { VueStore } from '../store'
 import { THEME_PALETTES, useTheme } from '../theme/useTheme'
 import { timeSource } from '../timeSource'
-import { useTimeSyncAction } from '../composables/useTimeSyncAction'
+import { ALIGNED_EPS_MS, useTimeSyncAction } from '../composables/useTimeSyncAction'
 import { compareVersions, fetchLatestRelease, type LatestRelease } from '../updateCheck'
 
 const props = withDefaults(defineProps<{
@@ -152,7 +152,7 @@ function setPreferredSource(v: string | number) {
 const timeSyncStatus = computed<string | null>(() => {
   const st = ts.state.value
   if (st.offsetMs !== null && st.syncedAt !== null) {
-    const drift = Math.abs(st.offsetMs) < 50
+    const drift = Math.abs(st.offsetMs) < ALIGNED_EPS_MS
       ? t('settingsPage.timeSourceDriftAligned')
       : st.offsetMs > 0
         ? t('settingsPage.timeSourceDriftBehind', { seconds: (st.offsetMs / 1000).toFixed(1) })

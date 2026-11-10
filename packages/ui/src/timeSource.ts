@@ -92,6 +92,10 @@ function createController(deps: TimeSyncDeps, bootstrapped: boolean): Controller
       // 端校准器解析异常防御（Task 1 评审 M4：core computeOffsetMs 纯透传，守卫归消费端）：
       // NaN/±Infinity 一旦采纳，effectiveNowMs 即非有限值、全部条目出码异常——视为校准失败
       if (!Number.isFinite(r.offsetMs)) throw new Error('time sync: non-finite offset from calibrator')
+      // 幅值护栏（终审 G5——端校准器解析异常的第二道防线）：真实偏移不可能超过一天。毫秒 API
+      // 上游 schema 变化（如 currentTime 变秒值）或畸形应答产生的天文数字偏移一旦采纳即全局
+      // 错码，与非有限值同判：视为校准失败走失败分支（保留旧偏移 + 失败留痕退避）
+      if (Math.abs(r.offsetMs) >= 24 * 60 * 60 * 1000) throw new Error('time sync: implausible offset from calibrator')
       const now = Date.now()
       return await commit({
         v: 1, offsetMs: r.offsetMs, syncedAt: now, sourceId: r.sourceId,
