@@ -29,7 +29,10 @@ const NTP_POOL: &[(&str, &str)] = &[
 
 /// HTTPS 降级毫秒 API（id 与扩展端对齐；测试锚点用真实响应形状）
 const HTTPS_FALLBACK: &[(&str, &str)] = &[
-    ("taobao-api", "https://acs.m.taobao.com/gw/mtop.common.getTimestamp/"),
+    (
+        "taobao-api",
+        "https://acs.m.taobao.com/gw/mtop.common.getTimestamp/",
+    ),
     ("suning-api", "https://f.m.suning.com/api/ct.do"),
 ];
 
@@ -110,7 +113,11 @@ async fn sntp_pool_offset(preferred: Option<&str>) -> Option<TimeCalibrateResult
     let (tx, rx) = mpsc::channel::<(&'static str, i64, i64, i64)>();
     let mut spawned = 0usize;
     for id in pool_order(preferred) {
-        let host = NTP_POOL.iter().find(|(i, _)| *i == id).map(|(_, h)| *h).unwrap_or_default();
+        let host = NTP_POOL
+            .iter()
+            .find(|(i, _)| *i == id)
+            .map(|(_, h)| *h)
+            .unwrap_or_default();
         let tx = tx.clone();
         std::thread::spawn(move || {
             if let Some((server_ms, t0, t1)) = sntp_query_once(host) {
@@ -144,7 +151,10 @@ async fn sntp_pool_offset(preferred: Option<&str>) -> Option<TimeCalibrateResult
 
 /// SNTP 全败后的毫秒 API 降级（serde_json 解析，免日期字符串处理）；任一成功即返回
 async fn https_fallback() -> Option<TimeCalibrateResult> {
-    let client = reqwest::Client::builder().timeout(HTTPS_TIMEOUT).build().ok()?;
+    let client = reqwest::Client::builder()
+        .timeout(HTTPS_TIMEOUT)
+        .build()
+        .ok()?;
     for (id, url) in HTTPS_FALLBACK {
         let t0 = now_unix_ms();
         let resp = match client.get(*url).send().await {
@@ -181,7 +191,9 @@ pub async fn time_calibrate(preferred: Option<String>) -> Result<TimeCalibrateRe
     if let Some(r) = sntp_pool_offset(preferred.as_deref()).await {
         return Ok(r);
     }
-    https_fallback().await.ok_or_else(|| "time calibrate: all sources failed".to_string())
+    https_fallback()
+        .await
+        .ok_or_else(|| "time calibrate: all sources failed".to_string())
 }
 
 #[cfg(test)]
@@ -221,7 +233,10 @@ mod tests {
         // 与 core computeOffsetMs 同式（Review Focus 2）：server - (t0+t1)/2
         assert_eq!(offset_from(100_000, 1000, 2000), 98_500);
         // R7 修正：server 1_791_753_600_500，(t0+t1)/2 = 2_000 → 1_791_753_598_500
-        assert_eq!(offset_from(1_791_753_600_500, 1_000, 3_000), 1_791_753_598_500);
+        assert_eq!(
+            offset_from(1_791_753_600_500, 1_000, 3_000),
+            1_791_753_598_500
+        );
     }
 
     #[test]

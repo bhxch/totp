@@ -430,6 +430,14 @@ describe('消息 time-sync-calibrate（终审 G1：sender 校验与 cloud-fetch 
     expect(calibrateNetworkTime).toHaveBeenCalledWith('baidu')
     expect(r).toEqual({ ok: true, offsetMs: 120, sourceId: 'baidu' })
   })
+
+  it('内部 sender + 校准全败 → 异步回结构化 ok:false（覆盖 catch 分支）', async () => {
+    await loadBackground()
+    markSelfId()
+    const r = await shim.runtime.receive({ type: 'time-sync-calibrate' }, { id: 'test-id' })
+    expect(calibrateNetworkTime).toHaveBeenCalledTimes(1)
+    expect(r).toEqual({ ok: false })
+  })
 })
 
 describe('alarm clipboard-clear → 清剪贴板重试链（B1-7）', () => {

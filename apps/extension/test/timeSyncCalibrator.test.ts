@@ -105,6 +105,23 @@ describe('calibrateNetworkTime 源序与解析（spec §4）', () => {
     await expect(calibrateNetworkTime(null)).rejects.toThrow()
   })
 
+  it('前五源全败 → 兜底到 jd（覆盖 jd 源 parse 臂）', async () => {
+    const now = Date.now()
+    const f = stubFetch({
+      'https://acs.m.taobao.com/gw/mtop.common.getTimestamp/': 'reject',
+      'https://f.m.suning.com/api/ct.do': 'reject',
+      'https://www.baidu.com': 'reject',
+      'https://www.qq.com': 'reject',
+      'https://gitee.com': 'reject',
+      'https://www.jd.com': headRes(new Date(now + 2000).toUTCString()),
+    })
+    vi.stubGlobal('fetch', f)
+    vi.setSystemTime(new Date(now))
+    const r = await calibrateNetworkTime(null)
+    expect(r.sourceId).toBe('jd')
+    vi.useRealTimers()
+  })
+
   it('fetch 带 cache:no-store（防缓存层吃掉 Date 新鲜度）', async () => {
     const f = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => ({ ok: true, status: 200, headers: new Headers(), json: async () => ({ data: { t: String(Date.now()) } }) }))
     vi.stubGlobal('fetch', f)
