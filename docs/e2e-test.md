@@ -177,6 +177,7 @@ SW 休眠（chrome://serviceworker-internals 手动 Stop 或等空闲）→ 唤�
 
 | 日期 | 范围 | 结果 | 记录文件 |
 |---|---|---|---|
+| 2026-11-11 | plan24 网络时间源校准真机走查：桌面（Rust SNTP 真实校准/偏移注入窗口边界实证/双窗 localStorage 共享/持久化/控制台）+ 扩展端（Edge load-extension + 原生 CDP 驱动，真实淘宝毫秒 API 校准/SW 消息通道/popup 齐平按钮/toast/状态行/回切） | 桌面 D1-D9 全 ✅（D7 部分实证、断网降级单测覆盖标注）、扩展 X1-X7 ✅（X5 下拉单测保证）；扩展 -730ms 与桌面 -728ms 交叉印证偏移准确性；两通道零 error 零 warn | `docs/e2e/2026-11-11-time-source-checklist.md` |
 | 2026-10-07 | P2 导入增强批真机清单建立：大 zip 导入/上限边界、桌面端旧数据升级（旧单键 icons 迁移 + urlcache 原名文件映射迁移，R4-C1 配套）、ADS/特殊字符 id 场景、WinAuth Steam txt（R4-I1）、批量写并行与失败回滚（R4-I2/I3） | 清单建立，真机执行待安排（键名映射/迁移容错/混合状态等单测断言已随本批 commit 全绿） | `docs/e2e/2026-10-07-p2-import-checklist.md` |
 | 2026-10-06 | 四问题批真机执行（controller 直跑） | docs/e2e/2026-10-06-miniapp-sorting-cloud-checklist.md | 13/16 自动化达成：序号移动（+新缺陷修复 796aed4）/搜索/pin/建目录/错误日志/目录语义全绿；拖拽升级 WebView2 层 abort 待报批 pointer 方案；A2/A3 拖拽/C3/B2 注入挂人工或后续 |
 | 2026-10-06 | 四问题批真机清单建立：A miniapp 搜索/托盘/无边框/pin、B 销毁档重开白屏（触发参数勘误 0/1）、C 管理页排序、D 云备份 404（spec §1.6/§2.6/§3.5/§4.6 逐条，标注人工/可自动化）；附录归档 Task 9（白屏不可复现 + is_visible 待排查）与 Task 12（drag-drop handler 根因 + 序号遮挡根因 + vault rev 82→86 数据处置） | 清单建立，真机执行待安排（D-4 单测断言已随本批 commit 全绿） | `docs/e2e/2026-10-06-miniapp-sorting-cloud-checklist.md` |

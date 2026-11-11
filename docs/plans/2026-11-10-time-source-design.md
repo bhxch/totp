@@ -127,7 +127,7 @@ TTL=6h 依据：正常钟晶振漂移每天 1-2s，烂主板可达每天 30s；2
   一致；rustls 校验系统时间——UDP 全断时降级，时钟严重错误时降级失败属可接受边界，SNTP 不经
   TLS 恰为主路径）。命令 `time_calibrate(preferred: Option<String>) -> Result<{offset_ms, source_id}>`。
 - **前端安装**：desktopShell 双窗 boot 后安装 ui 单例（localStorage IO 包装 + invoke calibrator）；
-  `mcpBridge.ts:54` 换 `effectiveNowMs()`。主路径 SNTP 不受 TLS 时间边界限制（时钟错几年也能校准）。
+  `mcpBridge.ts:54` 换 `effectiveNowMs()`。主路径 SNTP 不受 TLS 时间边界限制（时钟错几年也能校准；勘误 2026-11-11 勾稽：校准采纳侧有 |offset|<24h 幅值护栏（终审 G5），「错几年」场景由 SNTP 逐源重试 + 手动「立即同步」的端侧 serverMs 语义兜底，护栏挡的是 schema 级垃圾值而非合法大幅偏移）。
 
 ### §6 UI
 

@@ -3,7 +3,7 @@
  * （wxt.config.ts:33），SW fetch 不受 CORS 限制；popup/options 经 sendMessage 通道驱动。
  * 源序 = core HTTPS_TIME_SOURCE_IDS（毫秒 API 在前，动态生成免疫 CDN 缓存；海外 trace 兜底，
  * 无代理设备自然超时跳过）。单源 5s 超时（AbortController）为每请求硬界；总体 12s 为循环顶
- * 的快速失败阈值而非硬上界（判据见 calibrateNetworkTime，最坏 ≈7×5s=15s，终审 G3 如实声明）。
+ * 的快速失败阈值而非硬上界（判据见 calibrateNetworkTime，最坏 = 3×5s=15s（12s 阈值前最多启动 3 个慢源，终审 G3 如实声明））。
  * fetch 带 cache:'no-store' 防缓存层吃掉 Date 新鲜度（实测：淘宝 HEAD Date 滞后 43s 的教训）。
  */
 import { computeOffsetMs, HTTPS_TIME_SOURCE_IDS, type HttpsTimeSourceId } from '@totp/core'
@@ -11,7 +11,7 @@ import type { CalibrateResult } from '@totp/ui'
 
 const SOURCE_TIMEOUT_MS = 5000
 /** 总体快速失败阈值（终审 G3）：判据仅在循环顶——已开始的最后一源可再跑满单源 5s 硬界，
- *  全部源均超时时最坏 ≈7×5s=15s。它是「尽快放弃」阈值而非硬上界；硬界由每请求
+ *  全部源均超时时最坏 = 3×5s=15s（12s 阈值前最多启动 3 个慢源）。它是「尽快放弃」阈值而非硬上界；硬界由每请求
  *  AbortController（SOURCE_TIMEOUT_MS）保证 */
 const TOTAL_TIMEOUT_MS = 12_000
 
