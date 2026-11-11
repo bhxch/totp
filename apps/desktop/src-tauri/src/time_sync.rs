@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use std::net::UdpSocket;
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// NTP 1900 基准 → Unix 1970 基准（毫秒）
 const NTP_EPOCH_DELTA_MS: i64 = 2_208_988_800_000;
@@ -130,22 +130,15 @@ async fn sntp_pool_offset(preferred: Option<&str>) -> Option<TimeCalibrateResult
     if spawned == 0 {
         return None;
     }
-    let deadline = Instant::now() + POOL_DEADLINE;
-    loop {
-        let remain = deadline.saturating_duration_since(Instant::now());
-        if remain.is_zero() {
-            return None;
-        }
-        match rx.recv_timeout(remain) {
-            Ok((source_id, server_ms, t0, t1)) => {
-                return Some(TimeCalibrateResult {
-                    offset_ms: offset_from(server_ms, t0, t1),
-                    source_id: source_id.to_string(),
-                });
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => return None,
-            Err(mpsc::RecvTimeoutError::Disconnected) => return None,
-        }
+    // 单次 recv_timeout 即可：成功/超时/断开三分支均直接返回（首个成功响应即采纳，
+    // 总控超时 POOL_DEADLINE 兜底全部慢源）
+    match rx.recv_timeout(POOL_DEADLINE) {
+        Ok((source_id, server_ms, t0, t1)) => Some(TimeCalibrateResult {
+            offset_ms: offset_from(server_ms, t0, t1),
+            source_id: source_id.to_string(),
+        }),
+        Err(mpsc::RecvTimeoutError::Timeout) => None,
+        Err(mpsc::RecvTimeoutError::Disconnected) => None,
     }
 }
 
