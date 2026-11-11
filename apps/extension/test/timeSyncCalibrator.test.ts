@@ -122,6 +122,22 @@ describe('calibrateNetworkTime 源序与解析（spec §4）', () => {
     vi.useRealTimers()
   })
 
+  it('垃圾时间戳（Number(null)=0 形态）被下界拒绝 → 源兜底（终审 Task3-①/修 6）', async () => {
+    const now = Date.now()
+    const f = stubFetch({
+      'https://acs.m.taobao.com/gw/mtop.common.getTimestamp/': jsonRes({ data: { t: '0' } }),
+      'https://f.m.suning.com/api/ct.do': jsonRes({ currentTime: 0 }),
+      'https://www.baidu.com': headRes(new Date(1_600_000_000_000).toUTCString()), // 2020，早于下界
+      'https://www.qq.com': headRes(new Date(now + 5000).toUTCString()),
+    })
+    vi.stubGlobal('fetch', f)
+    vi.setSystemTime(new Date(now))
+    const r = await calibrateNetworkTime(null)
+    expect(r.sourceId).toBe('qq')
+    expect(r.offsetMs).toBeGreaterThan(4000) // Date 头秒级截断：offset ∈ (4000, 5000]
+    vi.useRealTimers()
+  })
+
   it('fetch 带 cache:no-store（防缓存层吃掉 Date 新鲜度）', async () => {
     const f = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => ({ ok: true, status: 200, headers: new Headers(), json: async () => ({ data: { t: String(Date.now()) } }) }))
     vi.stubGlobal('fetch', f)

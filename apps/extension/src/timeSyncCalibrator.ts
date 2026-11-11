@@ -14,6 +14,10 @@ const SOURCE_TIMEOUT_MS = 5000
  *  全部源均超时时最坏 = 3×5s=15s（12s 阈值前最多启动 3 个慢源）。它是「尽快放弃」阈值而非硬上界；硬界由每请求
  *  AbortController（SOURCE_TIMEOUT_MS）保证 */
 const TOTAL_TIMEOUT_MS = 12_000
+/** 服务器时刻合理下界（2023-11-14）：schema 级垃圾值防线（终审 G5 同源，与 Rust 侧
+ *  SERVER_MS_FLOOR 一致）——合法历史偏移不受影响，只挡解析错误/边缘缓存产出的明显
+ *  不可能时间戳（如 Number(null|'')=0 穿透 isFinite 的形态，终审 Task3-①） */
+const SERVER_MS_FLOOR = 1_700_000_000_000
 
 interface HttpsTimeSource {
   id: HttpsTimeSourceId
@@ -22,13 +26,19 @@ interface HttpsTimeSource {
   parse: (res: Response) => Promise<number>
 }
 
+/** 服务器时刻下界统一校验：各 parse 产出后调用，垃圾值抛错走源兜底 */
+function assertServerMs(serverMs: number): number {
+  if (serverMs < SERVER_MS_FLOOR) throw new Error('time source: server time below floor')
+  return serverMs
+}
+
 /** RFC7231 Date 头 → epoch ms（秒级精度，TOTP 30s 窗口足够） */
 function parseDateHeader(res: Response): number {
   const v = res.headers.get('date')
   if (!v) throw new Error('time source: no date header')
   const t = new Date(v).getTime()
   if (!Number.isFinite(t)) throw new Error('time source: bad date header')
-  return t
+  return assertServerMs(t)
 }
 
 const SOURCES: HttpsTimeSource[] = [
@@ -37,7 +47,7 @@ const SOURCES: HttpsTimeSource[] = [
     parse: async (res) => {
       const t = Number((await res.json())?.data?.t)
       if (!Number.isFinite(t)) throw new Error('time source: bad taobao payload')
-      return t
+      return assertServerMs(t)
     },
   },
   {
@@ -45,7 +55,7 @@ const SOURCES: HttpsTimeSource[] = [
     parse: async (res) => {
       const t = Number((await res.json())?.currentTime)
       if (!Number.isFinite(t)) throw new Error('time source: bad suning payload')
-      return t
+      return assertServerMs(t)
     },
   },
   { id: 'baidu', url: 'https://www.baidu.com', method: 'HEAD', parse: async (res) => parseDateHeader(res) },
@@ -57,7 +67,7 @@ const SOURCES: HttpsTimeSource[] = [
     parse: async (res) => {
       const m = /ts=(\d+(?:\.\d+)?)/.exec(await res.text())
       if (!m) throw new Error('time source: bad trace payload')
-      return Number(m[1]) * 1000
+      return assertServerMs(Number(m[1]) * 1000)
     },
   },
 ]

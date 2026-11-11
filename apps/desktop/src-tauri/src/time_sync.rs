@@ -3,7 +3,7 @@
 //! 日期解析）。源池/源序为 2026-11-10 国内直连实测序（spec 事实基础），preferred 置顶仍全池兜底。
 
 use serde::{Deserialize, Serialize};
-use std::net::UdpSocket;
+use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -15,6 +15,9 @@ const SNTP_READ_TIMEOUT: Duration = Duration::from_secs(4);
 const POOL_DEADLINE: Duration = Duration::from_secs(5);
 /// HTTPS 降级单请求超时
 const HTTPS_TIMEOUT: Duration = Duration::from_secs(5);
+/// 服务器时刻合理下界（2023-11-14）：schema 级垃圾值防线（终审 G5 同源）——合法偏移不受影响，
+/// 只挡解析错误/未同步服务器产出的明显不可能时间戳
+const SERVER_MS_FLOOR: i64 = 1_700_000_000_000;
 
 /// SNTP 池（id 与 core NTP_TIME_SOURCE_IDS 对齐；ui 源 label 按 id 取 i18n）
 const NTP_POOL: &[(&str, &str)] = &[
@@ -50,17 +53,32 @@ fn build_request() -> [u8; 48] {
     p
 }
 
-/// 解析 transmit timestamp（包尾 8 字节）→ Unix epoch ms；sec=0（KoD/零戳）与短包拒绝
+/// 解析 transmit timestamp（包尾 8 字节）→ Unix epoch ms。拒绝：
+/// - 短包 / sec=0（KoD 零戳）；
+/// - stratum=0（RFC 4330 KoD 应答的正解判别——KoD 应答 transmit 可能非零，sec==0 抓不住，
+///   终审 Task4-M1）；
+/// - leap indicator=3（RI-4 unsynchronized：服务器自报未同步，alarm 态）；
+/// - server 时刻早于 SERVER_MS_FLOOR（schema 级垃圾值，终审 G5 同源）
 fn parse_transmit_ms(buf: &[u8]) -> Option<i64> {
     if buf.len() < 48 {
         return None;
+    }
+    if buf[1] == 0 {
+        return None; // stratum=0：KoD/ kiss-of-death 应答
+    }
+    if buf[0] >> 6 == 3 {
+        return None; // leap indicator 3：服务器自报未同步
     }
     let sec = u32::from_be_bytes([buf[40], buf[41], buf[42], buf[43]]) as i64;
     if sec == 0 {
         return None;
     }
     let frac = u32::from_be_bytes([buf[44], buf[45], buf[46], buf[47]]) as i64;
-    Some(sec * 1000 + frac * 1000 / (1u64 << 32) as i64 - NTP_EPOCH_DELTA_MS)
+    let server_ms = sec * 1000 + frac * 1000 / (1u64 << 32) as i64 - NTP_EPOCH_DELTA_MS;
+    if server_ms < SERVER_MS_FLOOR {
+        return None;
+    }
+    Some(server_ms)
 }
 
 /// 与 core computeOffsetMs 同式（中点假设）
@@ -76,12 +94,29 @@ fn now_unix_ms() -> i64 {
 }
 
 /// 单域名阻塞查询（std::thread 内执行；read timeout 防线程泄漏）。
-/// 返回 (server_ms, t0, t1)——send/recv 前后本地毫秒随结果回传，主循环精确中点补偿 RTT
+/// 返回 (server_ms, t0, t1)——send/recv 前后本地毫秒随结果回传，主循环精确中点补偿 RTT。
+/// 修 2（终审 Task4-M2）：解析全部地址逐 IP 尝试——connect 单地址只试首解析 IP，且
+/// AAAA-only 域名此前直接失败；DNS 解析同样在本线程阻塞（无超时），慢 DNS 使该源线程
+/// 晚于池总控 deadline 返回（主控不等、自行终止）→ 自然落 HTTPS 降级，行为合理（修 3 说明）
 fn sntp_query_once(host: &str) -> Option<(i64, i64, i64)> {
-    // UDP：先 bind 本地随机端口，再 connect 固定对端（UdpSocket::connect 是实例方法，
-    // 与 TcpStream::connect 关联函数形态不同）
-    let sock = UdpSocket::bind(("0.0.0.0", 0)).ok()?;
-    sock.connect((host, 123)).ok()?;
+    let addrs: Vec<SocketAddr> = (host, 123u16).to_socket_addrs().ok()?.collect();
+    for addr in addrs {
+        if let Some(r) = sntp_query_addr(addr) {
+            return Some(r);
+        }
+    }
+    None
+}
+
+/// 对单个已解析地址做一次 SNTP 查询（bind 本地随机端口 + connect 固定对端）
+fn sntp_query_addr(addr: SocketAddr) -> Option<(i64, i64, i64)> {
+    let bind_addr: SocketAddr = if addr.is_ipv4() {
+        "0.0.0.0:0".parse().ok()?
+    } else {
+        "[::]:0".parse().ok()?
+    };
+    let sock = UdpSocket::bind(bind_addr).ok()?;
+    sock.connect(addr).ok()?;
     sock.set_read_timeout(Some(SNTP_READ_TIMEOUT)).ok()?;
     let req = build_request();
     let t0 = now_unix_ms();
@@ -108,8 +143,9 @@ fn pool_order(preferred: Option<&str>) -> Vec<&'static str> {
     order
 }
 
-/// 池 racing：全池并发线程 + mpsc 收首个成功；总控超时后转 HTTPS 降级
-async fn sntp_pool_offset(preferred: Option<&str>) -> Option<TimeCalibrateResult> {
+/// 池 racing：全池并发线程 + mpsc 收首个成功；总控超时后转 HTTPS 降级（同步实现，
+/// 由命令侧经 tokio spawn_blocking 调度——修 4：SNTP 阻塞收参不得占用 tokio worker）
+fn sntp_pool_offset(preferred: Option<&str>) -> Option<TimeCalibrateResult> {
     let (tx, rx) = mpsc::channel::<(&'static str, i64, i64, i64)>();
     let mut spawned = 0usize;
     for id in pool_order(preferred) {
@@ -178,10 +214,15 @@ async fn https_fallback() -> Option<TimeCalibrateResult> {
     None
 }
 
-/// Tauri 命令：SNTP 池 racing → 全败转 HTTPS 降级 → 全败报错（调用方回退设备时间）
+/// Tauri 命令：SNTP 池 racing → 全败转 HTTPS 降级 → 全败报错（调用方回退设备时间）。
+/// 修 4（终审 Task4-M4）：SNTP 的阻塞收参（spawn 线程 join 语义 + recv_timeout 最长 5s）
+/// 经 spawn_blocking 移出 tokio worker；HTTPS 降级保持异步
 #[tauri::command]
 pub async fn time_calibrate(preferred: Option<String>) -> Result<TimeCalibrateResult, String> {
-    if let Some(r) = sntp_pool_offset(preferred.as_deref()).await {
+    let sntp = tokio::task::spawn_blocking(move || sntp_pool_offset(preferred.as_deref()))
+        .await
+        .map_err(|e| format!("time calibrate: blocking task join error: {e}"))?;
+    if let Some(r) = sntp {
         return Ok(r);
     }
     https_fallback()
@@ -208,6 +249,8 @@ mod tests {
         let sec: u32 = 1_791_753_600 + 2_208_988_800;
         let frac: u32 = 2_147_483_648; // 0.5s
         let mut buf = [0u8; 48];
+        buf[0] = 0x24; // LI=0 VN=4 Mode=4(server)，leap 正常
+        buf[1] = 2; // stratum=2（合法，非 KoD）
         buf[40..44].copy_from_slice(&sec.to_be_bytes());
         buf[44..48].copy_from_slice(&frac.to_be_bytes());
         let ms = parse_transmit_ms(&buf).expect("valid packet");
@@ -219,6 +262,42 @@ mod tests {
         let buf = [0u8; 48];
         assert!(parse_transmit_ms(&buf).is_none()); // sec=0（KoD/零戳）
         assert!(parse_transmit_ms(&buf[..40]).is_none()); // 短包
+    }
+
+    /// 修 1（终审 Task4-M1）：KoD 应答的 transmit 可能非零——stratum=0 才是正解判别
+    #[test]
+    fn parse_rejects_stratum_zero_kod_with_valid_transmit() {
+        let sec: u32 = 1_791_753_600 + 2_208_988_800;
+        let mut buf = [0u8; 48];
+        buf[0] = 0x24; // LI=0 VN=4 Mode=4(server)，leap 正常
+        buf[1] = 0; // stratum=0（KoD）
+        buf[40..44].copy_from_slice(&sec.to_be_bytes());
+        assert!(parse_transmit_ms(&buf).is_none());
+        // 对照：同戳 stratum≥1 → 有效
+        buf[1] = 2;
+        assert!(parse_transmit_ms(&buf).is_some());
+    }
+
+    /// 修 1（RI-4）：leap indicator=3 = 服务器自报未同步（alarm 态）
+    #[test]
+    fn parse_rejects_unsynchronized_leap_three() {
+        let sec: u32 = 1_791_753_600 + 2_208_988_800;
+        let mut buf = [0u8; 48];
+        buf[1] = 2;
+        buf[40..44].copy_from_slice(&sec.to_be_bytes());
+        assert!(parse_transmit_ms(&buf).is_some());
+        buf[0] = (buf[0] & 0x3f) | 0xc0; // LI=3
+        assert!(parse_transmit_ms(&buf).is_none());
+    }
+
+    /// 修 1（G5 同源）：server 时刻早于合理下界 → schema 级垃圾值拒绝
+    #[test]
+    fn parse_rejects_server_time_below_floor() {
+        let sec: u32 = 1_600_000_000 + 2_208_988_800; // 2020-09-13，早于 SERVER_MS_FLOOR
+        let mut buf = [0u8; 48];
+        buf[1] = 2;
+        buf[40..44].copy_from_slice(&sec.to_be_bytes());
+        assert!(parse_transmit_ms(&buf).is_none());
     }
 
     #[test]
