@@ -3,7 +3,9 @@ import { createMemoryStorage } from '../src/storage/memory'
 import {
   CLOCK_JUMP_BACKWARD_MS, CLOCK_JUMP_FORWARD_MS, COLD_START_TTL_MS, EMPTY_TIME_SYNC_STATE,
   TIME_SYNC_STATE_KEY, TIME_SYNC_TTL_MS, computeOffsetMs, createAdapterTimeSyncIo,
-  clockJumpKind, normalizeTimeSyncState, shouldAutoCalibrate, HTTPS_TIME_SOURCE_IDS, NTP_TIME_SOURCE_IDS,
+  clockJumpKind, normalizeTimeSyncState, shouldAutoCalibrate,
+  HTTPS_TIME_SOURCE_IDS_CN, HTTPS_TIME_SOURCE_IDS_GLOBAL, NTP_TIME_SOURCE_IDS_CN, NTP_TIME_SOURCE_IDS_GLOBAL,
+  httpsTimeSourceIds, ntpTimeSourceIds, normalizeTimeSourceProfile,
 } from '../src/time/timeSync'
 
 const OK: ReturnType<typeof normalizeTimeSyncState> = { ...EMPTY_TIME_SYNC_STATE, offsetMs: 1000, syncedAt: 10_000, sourceId: 'baidu' }
@@ -225,10 +227,39 @@ describe('createAdapterTimeSyncIo', () => {
 })
 
 describe('源 id 清单（spec §2，实测序）', () => {
-  it('HTTPS 七源顺序固定', () => {
-    expect([...HTTPS_TIME_SOURCE_IDS]).toEqual(['taobao-api', 'suning-api', 'baidu', 'qq', 'gitee', 'jd', 'cloudflare-trace'])
+  it('HTTPS 大陆链顺序固定', () => {
+    expect([...HTTPS_TIME_SOURCE_IDS_CN]).toEqual(['taobao-api', 'suning-api', 'baidu', 'qq', 'gitee', 'jd', 'cloudflare-trace'])
   })
-  it('NTP 七源顺序固定', () => {
-    expect([...NTP_TIME_SOURCE_IDS]).toEqual(['aliyun', 'tencent', 'tencent-time1', 'neu', 'cn-pool', 'tuna', 'windows'])
+  it('NTP 大陆链顺序固定', () => {
+    expect([...NTP_TIME_SOURCE_IDS_CN]).toEqual(['aliyun', 'tencent', 'tencent-time1', 'neu', 'cn-pool', 'tuna', 'windows'])
+  })
+  it('HTTPS 国际链顺序固定', () => {
+    expect([...HTTPS_TIME_SOURCE_IDS_GLOBAL]).toEqual(['timeapi', 'cloudflare-trace', 'cloudflare-204', 'microsoft'])
+  })
+  it('NTP 国际链顺序固定', () => {
+    expect([...NTP_TIME_SOURCE_IDS_GLOBAL]).toEqual([
+      'time-cloudflare', 'pool', 'time-nist', 'time-apple', 'nict', 'europe-pool', 'asia-pool', 'ubuntu',
+    ])
+  })
+  it('两链 id 交集仅 cloudflare-trace（同 id 同语义：同 URL 同解析形态）', () => {
+    const cn = new Set<string>([...HTTPS_TIME_SOURCE_IDS_CN, ...NTP_TIME_SOURCE_IDS_CN])
+    const shared = [...HTTPS_TIME_SOURCE_IDS_GLOBAL, ...NTP_TIME_SOURCE_IDS_GLOBAL].filter((id) => cn.has(id))
+    expect(shared).toEqual(['cloudflare-trace'])
+  })
+})
+
+describe('源链剖面（2026-11-13 全球链）', () => {
+  it('normalizeTimeSourceProfile：仅 global 归国际链，其余（含非法值）回大陆链', () => {
+    expect(normalizeTimeSourceProfile('global')).toBe('global')
+    expect(normalizeTimeSourceProfile('cn')).toBe('cn')
+    expect(normalizeTimeSourceProfile(undefined)).toBe('cn')
+    expect(normalizeTimeSourceProfile('GLOBAL')).toBe('cn')
+    expect(normalizeTimeSourceProfile(42)).toBe('cn')
+  })
+  it('httpsTimeSourceIds/ntpTimeSourceIds 按剖面取对应链', () => {
+    expect(httpsTimeSourceIds('cn')).toEqual(HTTPS_TIME_SOURCE_IDS_CN)
+    expect(httpsTimeSourceIds('global')).toEqual(HTTPS_TIME_SOURCE_IDS_GLOBAL)
+    expect(ntpTimeSourceIds('cn')).toEqual(NTP_TIME_SOURCE_IDS_CN)
+    expect(ntpTimeSourceIds('global')).toEqual(NTP_TIME_SOURCE_IDS_GLOBAL)
   })
 })

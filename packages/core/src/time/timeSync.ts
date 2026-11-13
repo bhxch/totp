@@ -99,13 +99,42 @@ export function computeOffsetMs(serverEpochMs: number, requestAtMs: number, resp
   return Math.round(serverEpochMs - (requestAtMs + responseAtMs) / 2)
 }
 
+/** 时间源链剖面（2026-11-13 全球源补齐）：'cn'=大陆链（2026-11-10 实测源序，原样保留），
+ *  'global'=国际链（全球适用源序）。剖面由**界面语言**决定（ui timeSourceProfileFor：
+ *  显式 zh→cn、显式 en→global、auto 按浏览器语言 zh*→cn 其余→global），
+ *  端实现（扩展 background / 桌面 Rust）按剖面取对应链，非本链的 preferred id 忽略走内置序 */
+export type TimeSourceProfile = 'cn' | 'global'
+
+/** 宽容归一（消息/命令入参口径）：非 'global' 一律 'cn'（未知值回默认链，不放宽成国际链） */
+export function normalizeTimeSourceProfile(raw: unknown): TimeSourceProfile {
+  return raw === 'global' ? 'global' : 'cn'
+}
+
 /** HTTPS 时间源 id（扩展端；顺序=内置优先级，2026-11-10 家庭宽带实测）：
  *  毫秒 API 在前（动态生成免疫 CDN 缓存，淘宝 HEAD Date 滞后 43s 已剔除该形态） */
-export const HTTPS_TIME_SOURCE_IDS = ['taobao-api', 'suning-api', 'baidu', 'qq', 'gitee', 'jd', 'cloudflare-trace'] as const
-export type HttpsTimeSourceId = (typeof HTTPS_TIME_SOURCE_IDS)[number]
+export const HTTPS_TIME_SOURCE_IDS_CN = ['taobao-api', 'suning-api', 'baidu', 'qq', 'gitee', 'jd', 'cloudflare-trace'] as const
+/** HTTPS 时间源 id（国际链；2026-11-13 实测）：毫秒 API（timeapi.io 动态生成、亚秒精度）在前，
+ *  trace 文本（Cloudflare anycast、秒级）次之，Date 头源（204/microsoft，无缓存设计）兜底 */
+export const HTTPS_TIME_SOURCE_IDS_GLOBAL = ['timeapi', 'cloudflare-trace', 'cloudflare-204', 'microsoft'] as const
+export type HttpsTimeSourceId = (typeof HTTPS_TIME_SOURCE_IDS_CN)[number] | (typeof HTTPS_TIME_SOURCE_IDS_GLOBAL)[number]
 /** SNTP 源 id（桌面端；顺序=内置优先级；preferred 用户置顶仍全池兜底） */
-export const NTP_TIME_SOURCE_IDS = ['aliyun', 'tencent', 'tencent-time1', 'neu', 'cn-pool', 'tuna', 'windows'] as const
-export type NtpTimeSourceId = (typeof NTP_TIME_SOURCE_IDS)[number]
+export const NTP_TIME_SOURCE_IDS_CN = ['aliyun', 'tencent', 'tencent-time1', 'neu', 'cn-pool', 'tuna', 'windows'] as const
+/** SNTP 源 id（国际链；2026-11-13 实测可达且互相一致 ±15ms）：
+ *  Cloudflare anycast / 全球池 / NIST / Apple / 日本 NICT / 区域池 / Ubuntu */
+export const NTP_TIME_SOURCE_IDS_GLOBAL = [
+  'time-cloudflare', 'pool', 'time-nist', 'time-apple', 'nict', 'europe-pool', 'asia-pool', 'ubuntu',
+] as const
+export type NtpTimeSourceId = (typeof NTP_TIME_SOURCE_IDS_CN)[number] | (typeof NTP_TIME_SOURCE_IDS_GLOBAL)[number]
+
+/** 按剖面取 HTTPS 源序（扩展端内置链；preferred 用户置顶仍全链兜底） */
+export function httpsTimeSourceIds(profile: TimeSourceProfile): readonly string[] {
+  return profile === 'global' ? HTTPS_TIME_SOURCE_IDS_GLOBAL : HTTPS_TIME_SOURCE_IDS_CN
+}
+
+/** 按剖面取 SNTP 源序（桌面端池；preferred 用户置顶仍全池兜底） */
+export function ntpTimeSourceIds(profile: TimeSourceProfile): readonly string[] {
+  return profile === 'global' ? NTP_TIME_SOURCE_IDS_GLOBAL : NTP_TIME_SOURCE_IDS_CN
+}
 
 /** 基于 StorageAdapter 的设备本地键读写（扩展端宿主用；桌面用 localStorage 手写包装） */
 export function createAdapterTimeSyncIo(adapter: import('../storage/adapter').StorageAdapter): {
