@@ -13,8 +13,8 @@ import { installDesktopTimeSync, timeSyncStorage } from '../src/timeSyncPlatform
 const invokeMock = vi.fn()
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invokeMock(...args) }))
 
-function fakeStore(timeSource: 'device' | 'network') {
-  return { settings: { timeSource } } as unknown as import('@totp/ui').VueStore
+function fakeStore(timeSource: 'device' | 'network', locale: 'auto' | 'zh' | 'en' = 'zh') {
+  return { settings: { timeSource, locale } } as unknown as import('@totp/ui').VueStore
 }
 
 describe('timeSyncStorage（localStorage 本地键，spec §1）', () => {
@@ -47,9 +47,17 @@ describe('installDesktopTimeSync', () => {
     installDesktopTimeSync(fakeStore('device'))
     const ts = (await import('@totp/ui')).timeSource()
     await ts.calibrateNow()
-    expect(invokeMock).toHaveBeenCalledWith('time_calibrate', { preferred: null })
+    expect(invokeMock).toHaveBeenCalledWith('time_calibrate', { preferred: null, profile: 'cn' })
     expect(ts.state.value.offsetMs).toBe(123)
     expect(ts.state.value.sourceId).toBe('aliyun')
+  })
+
+  it('剖面随界面语言走（2026-11-13 全球链）：locale=en → profile=global', async () => {
+    invokeMock.mockResolvedValue({ offsetMs: 10, sourceId: 'time-nist' })
+    installDesktopTimeSync(fakeStore('device', 'en'))
+    const ts = (await import('@totp/ui')).timeSource()
+    await ts.calibrateNow()
+    expect(invokeMock).toHaveBeenCalledWith('time_calibrate', { preferred: null, profile: 'global' })
   })
 
   it('preferred 非 null 透传；isNetworkMode 跟随 settings.timeSource', async () => {
@@ -60,7 +68,7 @@ describe('installDesktopTimeSync', () => {
     installDesktopTimeSync(store)
     const ts = (await import('@totp/ui')).timeSource()
     await ts.calibrateNow({ preferredSourceId: 'tuna' })
-    expect(invokeMock).toHaveBeenCalledWith('time_calibrate', { preferred: 'tuna' })
+    expect(invokeMock).toHaveBeenCalledWith('time_calibrate', { preferred: 'tuna', profile: 'cn' })
     ;(store.settings as { timeSource: string }).timeSource = 'network'
     const before = Date.now()
     const got = ts.effectiveNowMs()

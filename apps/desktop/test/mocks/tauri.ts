@@ -86,6 +86,8 @@ export const INVOKE_COMMANDS = [
   'abe_wrap',
   'abe_remove',
   'abe_unwrap',
+  // 网络时间校准（时间源特性 spec §5；SNTP 池 racing + 毫秒 API 降级）
+  'time_calibrate',
 ] as const
 
 /** src 实际 listen 的事件（onFocusChanged 属 window API，见 window mock；mini-session 见 MiniApp 跟随主窗解锁联动） */
