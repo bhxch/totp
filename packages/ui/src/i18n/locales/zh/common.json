@@ -826,7 +826,18 @@
     "timeSourceSrcNeu": "东北大学 NTP",
     "timeSourceSrcCnPool": "NTP Pool 中国区",
     "timeSourceSrcTuna": "清华大学 NTP",
-    "timeSourceSrcWindows": "Microsoft NTP"
+    "timeSourceSrcWindows": "Microsoft NTP",
+    "timeSourceSrcTimeapi": "TimeAPI.io 时间接口",
+    "timeSourceSrcCloudflare204": "Cloudflare 204（无缓存）",
+    "timeSourceSrcMicrosoft": "Microsoft 时间接口",
+    "timeSourceSrcTimeCloudflare": "Cloudflare NTP",
+    "timeSourceSrcPool": "NTP Pool（全球）",
+    "timeSourceSrcTimeNist": "NIST NTP",
+    "timeSourceSrcTimeApple": "Apple NTP",
+    "timeSourceSrcNict": "NICT NTP（日本）",
+    "timeSourceSrcEuropePool": "NTP Pool 欧洲区",
+    "timeSourceSrcAsiaPool": "NTP Pool 亚太区",
+    "timeSourceSrcUbuntu": "Ubuntu NTP"
   },
   "timeSync": {
     "toastBehind": "本机落后网络时间 {seconds} 秒",
@@ -883,7 +894,8 @@
     "copyFailed": "复制失败：剪贴板被占用",
     "pinTitle": "固定窗口（置顶且不自动隐藏）",
     "hideTitle": "收起",
-    "searchEmpty": "无匹配条目"
+    "searchEmpty": "无匹配条目",
+    "syncNow": "立即同步网络时间"
   },
   "cloudRunner": {
     "lockedVault": "库已锁定",

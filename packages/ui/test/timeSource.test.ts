@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { effectScope, nextTick, ref, watch, type Ref } from 'vue'
 import { computeEntryCode, EMPTY_TIME_SYNC_STATE, TIME_SYNC_TTL_MS, type OtpEntry, type TimeSyncState } from '@totp/core'
 import { useOtpCodes } from '../src/composables/useOtpCodes'
-import { initTimeSync, timeSource, type TimeSyncController } from '../src/timeSource'
+import { initTimeSync, timeSource, timeSourceProfileFor, type TimeSyncController } from '../src/timeSource'
 
 /** 已成功但陈旧的状态：syncedAt=1000（1970 年），远超任何 TTL 判据 */
 function okState(offsetMs = 500): TimeSyncState {
@@ -700,5 +700,29 @@ describe('useOtpCodes 出码取时接线（spec §2）', () => {
     expect(lag).toBeGreaterThanOrEqual(0)
     expect(lag).toBeLessThan(1000)
     scope.stop()
+  })
+})
+
+describe('timeSourceProfileFor（界面语言 → 源链剖面，2026-11-13 全球链）', () => {
+  const realLang = navigator.language
+  function setLang(lang: string): void {
+    Object.defineProperty(navigator, 'language', { value: lang, configurable: true })
+  }
+  afterEach(() => { setLang(realLang) })
+
+  it('显式 zh → 大陆链；显式 en → 国际链', () => {
+    expect(timeSourceProfileFor('zh')).toBe('cn')
+    expect(timeSourceProfileFor('en')).toBe('global')
+  })
+
+  it('auto：浏览器语言 zh* → 大陆链；其余 → 国际链', () => {
+    setLang('zh-CN')
+    expect(timeSourceProfileFor('auto')).toBe('cn')
+    setLang('zh-TW')
+    expect(timeSourceProfileFor('auto')).toBe('cn')
+    setLang('en-US')
+    expect(timeSourceProfileFor('auto')).toBe('global')
+    setLang('ja-JP')
+    expect(timeSourceProfileFor('auto')).toBe('global')
   })
 })

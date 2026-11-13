@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { AppSettings } from '@totp/core'
-import { HTTPS_TIME_SOURCE_IDS, NTP_TIME_SOURCE_IDS } from '@totp/core'
+import { httpsTimeSourceIds, ntpTimeSourceIds } from '@totp/core'
 import { useI18n } from 'vue-i18n'
 import type { DevtoolsPlatform } from '../components/devtoolsPlatform'
 import type { McpPlatform } from '../components/mcpCard'
@@ -18,7 +18,7 @@ import MdSwitch from '../components/md/MdSwitch.vue'
 import MdTextField from '../components/md/MdTextField.vue'
 import type { VueStore } from '../store'
 import { THEME_PALETTES, useTheme } from '../theme/useTheme'
-import { timeSource } from '../timeSource'
+import { timeSource, timeSourceProfileFor } from '../timeSource'
 import { ALIGNED_EPS_MS, useTimeSyncAction } from '../composables/useTimeSyncAction'
 import { compareVersions, fetchLatestRelease, type LatestRelease } from '../updateCheck'
 
@@ -122,6 +122,18 @@ const SOURCE_LABEL_KEYS: Record<string, string> = {
   'cn-pool': 'settingsPage.timeSourceSrcCnPool',
   tuna: 'settingsPage.timeSourceSrcTuna',
   windows: 'settingsPage.timeSourceSrcWindows',
+  // 国际链（2026-11-13 全球链补齐）
+  timeapi: 'settingsPage.timeSourceSrcTimeapi',
+  'cloudflare-204': 'settingsPage.timeSourceSrcCloudflare204',
+  microsoft: 'settingsPage.timeSourceSrcMicrosoft',
+  'time-cloudflare': 'settingsPage.timeSourceSrcTimeCloudflare',
+  pool: 'settingsPage.timeSourceSrcPool',
+  'time-nist': 'settingsPage.timeSourceSrcTimeNist',
+  'time-apple': 'settingsPage.timeSourceSrcTimeApple',
+  nict: 'settingsPage.timeSourceSrcNict',
+  'europe-pool': 'settingsPage.timeSourceSrcEuropePool',
+  'asia-pool': 'settingsPage.timeSourceSrcAsiaPool',
+  ubuntu: 'settingsPage.timeSourceSrcUbuntu',
 }
 function sourceLabel(id: string | null): string {
   return id && SOURCE_LABEL_KEYS[id] ? t(SOURCE_LABEL_KEYS[id]!) : (id ?? '')
@@ -131,12 +143,22 @@ const TIME_SOURCE_MODE_OPTIONS = computed<Array<{ value: 'device' | 'network'; l
   { value: 'device', label: t('settingsPage.timeSourceModeDevice') },
   { value: 'network', label: t('settingsPage.timeSourceModeNetwork') },
 ])
-/** 首选源 options：auto + 平台源组（桌面=NTP 池，扩展=HTTPS 源） */
+/** 源链剖面（2026-11-13 全球链）：由界面语言决定——'cn' 大陆链 / 'global' 国际链。
+ *  语言设置可运行时切换，剖面随之联动（首选源下拉只列当前链内的源） */
+const sourceProfile = computed(() => timeSourceProfileFor(props.store.settings.locale))
+/** 首选源 options：auto + 平台源组（桌面=NTP 池，扩展=HTTPS 源），按当前剖面取对应链 */
 const PREFERRED_OPTIONS = computed<Array<{ value: string; label: string }>>(() => [
   { value: 'auto', label: t('settingsPage.timeSourcePreferredAuto') },
-  ...(props.showDesktop ? NTP_TIME_SOURCE_IDS : HTTPS_TIME_SOURCE_IDS).map((id) => ({ value: id, label: sourceLabel(id) })),
+  ...(props.showDesktop ? ntpTimeSourceIds(sourceProfile.value) : httpsTimeSourceIds(sourceProfile.value))
+    .map((id) => ({ value: id, label: sourceLabel(id) })),
 ])
-const preferredSelectValue = computed(() => ts.state.value.preferredSourceId ?? 'auto')
+/** 首选源当前值：已存 id 不在当前链内（语言切换后遗留）→ 显示 auto（端侧同样按内置序兜底，
+ *  该 id 仍留在状态里——切回原语言即恢复该偏好） */
+const preferredSelectValue = computed(() => {
+  const id = ts.state.value.preferredSourceId
+  if (id === null) return 'auto'
+  return PREFERRED_OPTIONS.value.some((o) => o.value === id) ? id : 'auto'
+})
 async function setTimeSourceMode(v: string) {
   const next = v === 'network' ? 'network' : 'device'
   props.store.settings.timeSource = next

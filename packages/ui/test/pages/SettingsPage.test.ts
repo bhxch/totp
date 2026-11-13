@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { computed, nextTick } from 'vue'
-import { __resetCloudFetchForTest, createMemoryStorage, EMPTY_TIME_SYNC_STATE, HTTPS_TIME_SOURCE_IDS, setCloudFetch } from '@totp/core'
+import { __resetCloudFetchForTest, createMemoryStorage, EMPTY_TIME_SYNC_STATE, HTTPS_TIME_SOURCE_IDS_CN, HTTPS_TIME_SOURCE_IDS_GLOBAL, setCloudFetch } from '@totp/core'
 import type { TimeSyncState } from '@totp/core'
 import { createVueStore } from '../../src/store'
 import SettingsPage from '../../src/pages/SettingsPage.vue'
@@ -233,10 +233,13 @@ function calibratedState(offsetMs: number, sourceId = 'baidu'): TimeSyncState {
   return { v: 1, offsetMs, syncedAt: now, sourceId, lastAttemptAt: now, lastAttemptFailed: false, preferredSourceId: null }
 }
 
-/** 已挂 network 模式的 store（时间源卡展开态前提：template v-if 依赖 settings.timeSource） */
+/** 已挂 network 模式的 store（时间源卡展开态前提：template v-if 依赖 settings.timeSource）。
+ *  locale 固定 zh：源链剖面按界面语言判定（auto 在 jsdom 下解析为 en→国际链），
+ *  固定 zh 才能断言大陆链源（Gitee 等）的中文 label */
 async function readyNetworkStore() {
   const s = await readyStore()
   s.settings.timeSource = 'network'
+  s.settings.locale = 'zh'
   return s
 }
 
@@ -280,12 +283,33 @@ describe('时间源卡（plan24 spec §6）', () => {
     await flushPromises()
   })
 
-  it('首选源 options：扩展端为 HTTPS 七源+auto（showDesktop=false）', async () => {
+  it('首选源 options：扩展端为 HTTPS 大陆链七源+auto（locale=zh）', async () => {
     const s = await readyNetworkStore()
     const w = mount(SettingsPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
     const options = timePreferredSelect(w).props('options') as Array<{ value: string; label: string }>
-    expect(options.map((o) => o.value)).toEqual(['auto', ...HTTPS_TIME_SOURCE_IDS])
+    expect(options.map((o) => o.value)).toEqual(['auto', ...HTTPS_TIME_SOURCE_IDS_CN])
     expect(options[0]!.label).toBe('自动（按内置优先级）')
+  })
+
+  it('首选源 options：locale=en 走国际链（2026-11-13 全球链）', async () => {
+    const s = await readyNetworkStore()
+    s.settings.locale = 'en'
+    const w = mount(SettingsPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    const options = timePreferredSelect(w).props('options') as Array<{ value: string; label: string }>
+    expect(options.map((o) => o.value)).toEqual(['auto', ...HTTPS_TIME_SOURCE_IDS_GLOBAL])
+  })
+
+  it('语言切换后遗留首选源（不在当前链）显示为 auto，偏好本身保留', async () => {
+    const s = await readyNetworkStore()
+    // 已存首选源属国际链（timeapi），当前语言为中文（大陆链）→ 不在链内 → 显示 auto
+    timeSource().state.value = { ...EMPTY_TIME_SYNC_STATE, preferredSourceId: 'timeapi' }
+    const w = mount(SettingsPage, { global: { plugins: [createTestI18n()] }, props: { store: s } })
+    expect(w.find('[data-test="time-preferred"] .md-select__value').text()).toBe('自动（按内置优先级）')
+    // 切到国际链：timeapi 在链内 → 显示其 label；偏好值本身始终保留
+    s.settings.locale = 'en'
+    await nextTick()
+    expect(w.find('[data-test="time-preferred"] .md-select__value').text()).toBe('TimeAPI.io 时间接口')
+    expect(timeSource().state.value.preferredSourceId).toBe('timeapi')
   })
 
   it('首选源变更：setPreferredSource 落盘不触发校准', async () => {

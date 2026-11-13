@@ -5,9 +5,25 @@
  * 测试与未接线上下文零影响（spec §7 device 模式零回归）。
  */
 import {
-  COLD_START_TTL_MS, EMPTY_TIME_SYNC_STATE, clockJumpKind, shouldAutoCalibrate, type TimeSyncState,
+  COLD_START_TTL_MS, EMPTY_TIME_SYNC_STATE, clockJumpKind, shouldAutoCalibrate,
+  type TimeSyncState, type TimeSourceProfile,
 } from '@totp/core'
+import type { AppSettings } from '@totp/core'
 import { ref, shallowRef, type Ref, type ShallowRef } from 'vue'
+
+/** 时间源链剖面（core 定义）：'cn'=大陆链、'global'=国际链 */
+export type { TimeSourceProfile }
+
+/** 界面语言 → 时间源链剖面（2026-11-13 全球链）：
+ *  显式 'zh'→cn、显式 'en'→global；'auto' 按**浏览器语言**判定（zh*→cn，其余→global）。
+ *  auto 下界面文案回落中文（见 i18n resolveLocale）不影响源链选择——源链按用户真实语言取：
+ *  非中文浏览器环境用国际链更稳（大陆链源在境外常不可达/被限速），反之亦然 */
+export function timeSourceProfileFor(locale: AppSettings['locale']): TimeSourceProfile {
+  if (locale === 'zh') return 'cn'
+  if (locale === 'en') return 'global'
+  const lang = typeof navigator !== 'undefined' ? (navigator.language ?? '') : ''
+  return /^zh/i.test(lang) ? 'cn' : 'global'
+}
 
 export interface CalibrateResult {
   /** 校准偏移毫秒（=网络时间-设备时间） */

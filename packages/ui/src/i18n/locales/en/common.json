@@ -826,7 +826,18 @@
     "timeSourceSrcNeu": "NEU NTP",
     "timeSourceSrcCnPool": "NTP Pool (CN)",
     "timeSourceSrcTuna": "Tsinghua NTP",
-    "timeSourceSrcWindows": "Microsoft NTP"
+    "timeSourceSrcWindows": "Microsoft NTP",
+    "timeSourceSrcTimeapi": "TimeAPI.io time API",
+    "timeSourceSrcCloudflare204": "Cloudflare 204 (no-cache)",
+    "timeSourceSrcMicrosoft": "Microsoft time API",
+    "timeSourceSrcTimeCloudflare": "Cloudflare NTP",
+    "timeSourceSrcPool": "NTP Pool (Global)",
+    "timeSourceSrcTimeNist": "NIST NTP",
+    "timeSourceSrcTimeApple": "Apple NTP",
+    "timeSourceSrcNict": "NICT NTP (Japan)",
+    "timeSourceSrcEuropePool": "NTP Pool Europe",
+    "timeSourceSrcAsiaPool": "NTP Pool Asia",
+    "timeSourceSrcUbuntu": "Ubuntu NTP"
   },
   "timeSync": {
     "toastBehind": "Device is {seconds}s behind network time",
@@ -883,7 +894,8 @@
     "copyFailed": "Copy failed: clipboard busy",
     "pinTitle": "Pin window (always on top, no auto-hide)",
     "hideTitle": "Hide",
-    "searchEmpty": "No matching entries"
+    "searchEmpty": "No matching entries",
+    "syncNow": "Sync network time now"
   },
   "cloudRunner": {
     "lockedVault": "Vault is locked",

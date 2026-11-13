@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
-import { createMemoryStorage, NTP_TIME_SOURCE_IDS } from '@totp/core'
+import { createMemoryStorage, NTP_TIME_SOURCE_IDS_CN, NTP_TIME_SOURCE_IDS_GLOBAL } from '@totp/core'
 import { createVueStore } from '../../src/store'
 import SettingsPage from '../../src/pages/SettingsPage.vue'
 import MdSelect from '../../src/components/md/MdSelect.vue'
@@ -236,13 +236,25 @@ describe('SettingsPage 主题对比度与云同步跟随', () => {
 })
 
 describe('SettingsPage 时间源卡（桌面 NTP 源组）', () => {
-  it('showDesktop=true：首选源 options 为 auto+NTP 七源', async () => {
+  it('showDesktop=true：首选源 options 为 auto+NTP 大陆链七源（locale=zh）', async () => {
     const store = await readyStore()
     store.settings.timeSource = 'network'
+    store.settings.locale = 'zh'
     const w = mount(SettingsPage, { global: { plugins: [createTestI18n()] }, props: { store, showDesktop: true } })
     const sel = w.findAllComponents(MdSelect).find((c) => c.classes().includes('set-time-source'))
     expect(sel, '桌面端首选源 MdSelect 应已渲染').toBeDefined()
     const options = sel!.props('options') as Array<{ value: string; label: string }>
-    expect(options.map((o) => o.value)).toEqual(['auto', ...NTP_TIME_SOURCE_IDS])
+    expect(options.map((o) => o.value)).toEqual(['auto', ...NTP_TIME_SOURCE_IDS_CN])
+  })
+
+  it('locale=en：首选源 options 走 NTP 国际链八源（2026-11-13 全球链）', async () => {
+    const store = await readyStore()
+    store.settings.timeSource = 'network'
+    store.settings.locale = 'en'
+    const w = mount(SettingsPage, { global: { plugins: [createTestI18n()] }, props: { store, showDesktop: true } })
+    const sel = w.findAllComponents(MdSelect).find((c) => c.classes().includes('set-time-source'))
+    expect(sel, '桌面端首选源 MdSelect 应已渲染').toBeDefined()
+    const options = sel!.props('options') as Array<{ value: string; label: string }>
+    expect(options.map((o) => o.value)).toEqual(['auto', ...NTP_TIME_SOURCE_IDS_GLOBAL])
   })
 })
