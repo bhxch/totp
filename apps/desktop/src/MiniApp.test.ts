@@ -505,3 +505,43 @@ describe('mini-ready 首屏就绪信号（spec §2.4）', () => {
     expect(tauriMock.event.emit).toHaveBeenCalledWith('mini-ready')
   })
 })
+
+describe('mini 时间源「立即同步」钮（2026-11-13 补漏：mini 原无任何同步入口）', () => {
+  /** network 模式设置（timeSource=network → 标题栏渲染同步钮） */
+  function seedNetwork(): void {
+    files.set('settings.json', JSON.stringify({ locale: 'zh', timeSource: 'network' }))
+  }
+
+  it('device 模式：不渲染同步钮（与出码页/popup 同口径——仅 network 模式渲染）', async () => {
+    await seedVault([TOTP])
+    const w = await mountMini()
+    expect(w.find('[data-test="mini-sync-now"]').exists()).toBe(false)
+  })
+
+  it('network 模式：渲染同步钮；点击触发 time_calibrate 并出偏差 toast', async () => {
+    seedNetwork()
+    tauriMock.on('time_calibrate', () => ({ offsetMs: 1500, sourceId: 'time-nist' }))
+    await seedVault([TOTP])
+    const w = await mountMini()
+    const btn = w.find('[data-test="mini-sync-now"]')
+    expect(btn.exists()).toBe(true)
+    // 挂载即触发一次冷启动静默校准（network 模式从未同步 → 自动重校），点击再校一次
+    const before = tauriMock.calls('time_calibrate').length
+    await btn.trigger('click')
+    await flushPromises()
+    const calls = tauriMock.calls('time_calibrate')
+    expect(calls.length).toBe(before + 1)
+    expect(calls.at(-1)?.args).toMatchObject({ preferred: null, profile: 'cn' })
+    expect(w.find('.toast').text()).toContain('本机落后网络时间 1.5 秒')
+  })
+
+  it('network 模式：校准失败 → error toast（失败可见性，出码不回退错误）', async () => {
+    seedNetwork()
+    tauriMock.on('time_calibrate', () => { throw new Error('all sources failed') })
+    await seedVault([TOTP])
+    const w = await mountMini()
+    await w.find('[data-test="mini-sync-now"]').trigger('click')
+    await flushPromises()
+    expect(w.find('.toast--error').text()).toContain('时间同步失败')
+  })
+})

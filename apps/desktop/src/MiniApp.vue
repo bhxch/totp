@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { emit, listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { filterByTags, type TagFilterMode } from '@totp/core'
-import { attemptOsAutoUnlock, PersistErrorBanner, QuickCodesPanel, ToastHost, close, createIconStore, EmptyState, searchEntries, useOtpCodes, useTheme, useToast, type IconStore, type VueStore } from '@totp/ui'
+import { attemptOsAutoUnlock, PersistErrorBanner, QuickCodesPanel, ToastHost, close, createIconStore, EmptyState, searchEntries, sync as syncIcon, useOtpCodes, useTheme, useTimeSyncAction, useToast, type IconStore, type VueStore } from '@totp/ui'
 import { computed, onMounted, onScopeDispose, ref, shallowRef, watch } from 'vue'
 import { createTauriFs } from './tauriFs'
 import { bootDesktopStore, persistFailed, useDesktopI18n } from './desktopShell'
@@ -19,6 +19,8 @@ import { createDesktopCopy } from './desktopCopy'
 const store = shallowRef<VueStore | null>(null)
 /** 模板锁定态（mini 未就绪/未加密库显示条目，锁定显示不可用） */
 const locked = computed(() => store.value?.locked.value ?? false)
+/** 时间源模式（device/network）：network 才渲染标题栏同步钮 */
+const timeSourceMode = computed(() => store.value?.settings.timeSource ?? 'device')
 const icons = ref<IconStore | null>(null)
 /** 搜索行渲染门控（spec §1.2）：SearchBar 内部 useI18n()，须等 i18n 插件装入后才可渲染 */
 const i18nReady = ref(false)
@@ -30,6 +32,11 @@ const loadFailed = ref(false)
 // 捕获；mini 的 store 在每次聚焦重载时重建（既有模式，useTheme 同样重新接线）——i18n 插件只能
 // 装入一次，mountI18n 内部仅首次生效，重载为 no-op；tr 兜底回原文 key 仅极端时序可见
 const { tr, mountI18n } = useDesktopI18n()
+
+// 时间源「立即同步」（2026-11-13 补 mini 右上角同步钮）：mini 无出码页/设置页的同步入口，
+// 补在标题栏右侧（network 模式才渲染）。取词走壳层 tr（mini 的 i18n 插件随 boot 异步装入，
+// setup 同步段取不到 useI18n）——useTimeSyncAction 接受外部取词函数
+const { syncing: timeSyncing, syncNow: timeSyncNow } = useTimeSyncAction(tr)
 
 // OS 静默自动解锁通道（spec §A）：与主窗同源 createSecurityPlatform——mini 不渲染
 // SecurityCard，dpapi/abe ops 仅供锁定 boot 时的 attemptOsAutoUnlock 使用（LockScreen 同款
@@ -254,6 +261,13 @@ async function copy(entry: { uuid: string; type?: string; counter?: number }) {
     <!-- 无边框标题区（spec §1.4）：data-tauri-drag-region 拖拽 + pin/收起自绘 chrome -->
     <header class="titlebar">
       <span class="title-drag" data-tauri-drag-region>TOTP</span>
+      <!-- 时间源「立即同步」（2026-11-13 补漏）：mini 原无任何同步入口，network 模式下补在
+           标题栏右侧（同步钮 → 固定 → 收起）；syncing 时图标旋转反馈，失败走全局 toast -->
+      <button
+        v-if="timeSourceMode === 'network'" class="tb-btn" data-test="mini-sync-now"
+        :disabled="timeSyncing" :class="{ 'sync-spinning': timeSyncing }"
+        :title="tr('mini.syncNow')" :aria-label="tr('mini.syncNow')" @click="timeSyncNow"
+      ><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path :d="syncIcon.d" /></svg></button>
       <button class="tb-btn" data-test="pin-btn" :class="{ active: pinned }" :aria-pressed="pinned" :title="tr('mini.pinTitle')" :aria-label="tr('mini.pinTitle')" @click="togglePin">📌</button>
       <button class="tb-btn" data-test="hide-btn" :title="tr('mini.hideTitle')" :aria-label="tr('mini.hideTitle')" @click="hideMini"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path :d="close.d" /></svg></button>
     </header>
@@ -305,6 +319,11 @@ body { font-family: system-ui, sans-serif; margin: 0; }
 .tb-btn::after { content: ''; position: absolute; inset: -4px; border-radius: inherit; }
 .tb-btn:hover { background: var(--md-sys-color-surface-container-highest, rgba(0, 0, 0, .08)); }
 .tb-btn.active { color: var(--md-sys-color-primary); }
+/* 同步钮（2026-11-13 补漏）：在途禁用置灰；syncing 时图标旋转反馈（与出码页/popup 同款动效） */
+.tb-btn:disabled { opacity: .45; cursor: default; }
+.tb-btn:disabled:hover { background: transparent; }
+.tb-btn.sync-spinning svg { animation: sync-rotate 1s linear infinite; }
+@keyframes sync-rotate { to { transform: rotate(360deg); } }
 /* 空态（原 .empty）：Task 6 收口 EmptyState（32px 0 / body-medium / on-surface-variant） */
 .copy-error { text-align: center; color: var(--md-sys-color-error); background: var(--md-sys-color-error-container); border-radius: var(--md-sys-shape-corner-small); padding: 8px 0; font-size: var(--md-sys-typescale-body-small); }
 /* CSS 装载后接管精确主题色：mini.html 内联底色只保首帧（防加载期白屏），html data-mode 随 useTheme 切换。
