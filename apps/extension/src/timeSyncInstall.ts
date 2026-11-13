@@ -3,9 +3,12 @@
  * 设备本地键=ext.storage.local['timeSyncState']（与 vault/settings 同 adapter 分区，浏览器
  * sync 同步引擎只同步白名单键，timeSyncState 不在列）；校准器=sendMessage 驱动 background
  * 执行（SW 长驻，popup 关闭中断无碍——下次打开再校）。unlock 窗不安装（无出码列表，解锁自关）。
+ *
+ * 源链剖面（2026-11-13 全球链）：由**界面语言**判定（timeSourceProfileFor），随校准消息带给
+ * background——SW 无设置上下文（locale 在 settings，SW 不读），故判定留在页面侧。
  */
 import { normalizeTimeSyncState, TIME_SYNC_STATE_KEY, type TimeSyncState } from '@totp/core'
-import { initTimeSync, type CalibrateResult, type VueStore } from '@totp/ui'
+import { initTimeSync, timeSourceProfileFor, type CalibrateResult, type VueStore } from '@totp/ui'
 import { ext } from './extApi'
 
 /** 消息回包形状（background time-sync-calibrate 分支） */
@@ -16,8 +19,8 @@ interface CalibrateResponse {
 }
 
 /** 页面端校准客户端：发消息给 background，等回包（handler 返回 true 保住 sendResponse 通道） */
-async function calibrateViaBackground(preferred: string | null): Promise<CalibrateResult> {
-  const resp = (await ext!.runtime.sendMessage({ type: 'time-sync-calibrate', preferred })) as CalibrateResponse | undefined
+async function calibrateViaBackground(preferred: string | null, profile: 'cn' | 'global'): Promise<CalibrateResult> {
+  const resp = (await ext!.runtime.sendMessage({ type: 'time-sync-calibrate', preferred, profile })) as CalibrateResponse | undefined
   if (!resp?.ok || typeof resp.offsetMs !== 'number' || typeof resp.sourceId !== 'string') {
     throw new Error('time source: background calibration failed')
   }
@@ -43,6 +46,7 @@ export function installExtensionTimeSync(store: VueStore): void {
       } catch { /* 落盘失败不影响内存态生效（校准结果本会话仍生效） */ }
     },
     isNetworkMode: () => store.settings.timeSource === 'network',
-    calibrate: (preferred) => calibrateViaBackground(preferred),
+    // 剖面现取（语言设置可运行时切换）：locale 变更后下次校准即走对应链
+    calibrate: (preferred) => calibrateViaBackground(preferred, timeSourceProfileFor(store.settings.locale)),
   })
 }

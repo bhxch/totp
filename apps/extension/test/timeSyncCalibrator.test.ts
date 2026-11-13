@@ -145,3 +145,80 @@ describe('calibrateNetworkTime 源序与解析（spec §4）', () => {
     expect(f.mock.calls[0]![1]!.cache).toBe('no-store')
   })
 })
+
+describe('calibrateNetworkTime 国际链（2026-11-13 全球链）', () => {
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()) })
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('profile=global：默认序首选 timeapi（毫秒 API 组件解析）', async () => {
+    const now = Date.now()
+    const f = stubFetch({
+      'https://timeapi.io/api/time/current/zone?timeZone=UTC': jsonRes({
+        year: 2026, month: 11, day: 13, hour: 14, minute: 11, seconds: 6, milliSeconds: 701,
+      }),
+    })
+    vi.stubGlobal('fetch', f)
+    vi.setSystemTime(new Date('2026-11-13T14:11:06.000Z'))
+    const r = await calibrateNetworkTime(null, 'global')
+    expect(r.sourceId).toBe('timeapi')
+    expect(r.offsetMs).toBe(701)
+    expect(f).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
+  })
+
+  it('profile=global：timeapi 失败 → 兜底 cloudflare-trace', async () => {
+    const now = Date.now()
+    const ok = Promise.resolve({ ok: true, status: 200, headers: new Headers(), text: async () => `fl=x\nts=${(now + 2000) / 1000}\n` } as unknown as Partial<Response>)
+    const f = stubFetch({
+      'https://timeapi.io/api/time/current/zone?timeZone=UTC': 'reject',
+      'https://www.cloudflare.com/cdn-cgi/trace': () => ok,
+    })
+    vi.stubGlobal('fetch', f)
+    const r = await calibrateNetworkTime(null, 'global')
+    expect(r.sourceId).toBe('cloudflare-trace')
+    expect(Math.abs(r.offsetMs - 2000)).toBeLessThan(50)
+  })
+
+  it('profile=global：Date 头源（无缓存 204）兜底', async () => {
+    const now = Date.now()
+    const f = stubFetch({
+      'https://timeapi.io/api/time/current/zone?timeZone=UTC': 'reject',
+      'https://www.cloudflare.com/cdn-cgi/trace': 'reject',
+      'https://cp.cloudflare.com/generate_204': headRes(new Date(now + 3000).toUTCString()),
+    })
+    vi.stubGlobal('fetch', f)
+    vi.setSystemTime(new Date(now))
+    const r = await calibrateNetworkTime(null, 'global')
+    expect(r.sourceId).toBe('cloudflare-204')
+    // Date 头秒级截断：offset ∈ (2000, 3000]
+    expect(r.offsetMs).toBeGreaterThan(2000)
+    expect(r.offsetMs).toBeLessThanOrEqual(3000)
+    vi.useRealTimers()
+  })
+
+  it('profile=global：首选源置顶（preferred 属国际链）', async () => {
+    const now = Date.now()
+    const f = stubFetch({ 'https://www.microsoft.com': headRes(new Date(now + 1000).toUTCString()) })
+    vi.stubGlobal('fetch', f)
+    vi.setSystemTime(new Date(now))
+    const r = await calibrateNetworkTime('microsoft', 'global')
+    expect(r.sourceId).toBe('microsoft')
+    vi.useRealTimers()
+  })
+
+  it('profile=global：大陆链 preferred（跨链 id）不被采纳，退回国际链内置序', async () => {
+    const f = stubFetch({ 'https://timeapi.io/api/time/current/zone?timeZone=UTC': jsonRes({
+      year: 2026, month: 11, day: 13, hour: 14, minute: 11, seconds: 6, milliSeconds: 0,
+    }) })
+    vi.stubGlobal('fetch', f)
+    const r = await calibrateNetworkTime('taobao-api', 'global')
+    expect(r.sourceId).toBe('timeapi')
+  })
+
+  it('profile=cn：仍走大陆链（默认序 taobao-api），不受国际链影响', async () => {
+    const f = stubFetch({ 'https://acs.m.taobao.com/gw/mtop.common.getTimestamp/': jsonRes({ data: { t: String(Date.now()) } }) })
+    vi.stubGlobal('fetch', f)
+    const r = await calibrateNetworkTime(null, 'cn')
+    expect(r.sourceId).toBe('taobao-api')
+  })
+})

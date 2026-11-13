@@ -13,7 +13,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { installChromeShim, type ChromeShim } from './helpers/chromeShim'
 
 const { initTimeSync } = vi.hoisted(() => ({ initTimeSync: vi.fn((deps: unknown) => deps) }))
-vi.mock('@totp/ui', () => ({ initTimeSync }))
+// timeSourceProfileFor 走真实现（源链剖面判定是装配层职责，不该被 mock 掉）
+vi.mock('@totp/ui', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@totp/ui')>()),
+  initTimeSync,
+}))
 vi.mock('../src/extApi', async () => (await import('./helpers/extApiMock')).extApiMock())
 
 import { installExtensionTimeSync } from '../src/timeSyncInstall'
@@ -34,7 +38,8 @@ const FULL_STATE: TimeSyncState = { v: 1, offsetMs: -730, syncedAt: 179435522973
 
 let shim: ChromeShim
 let captured: TimeSyncDeps | null = null
-const fakeStore = { settings: { timeSource: 'device' } }
+/** 假 store：locale 决定源链剖面（2026-11-13 全球链） */
+const fakeStore = { settings: { timeSource: 'device', locale: 'zh' } }
 
 function install(): TimeSyncDeps {
   captured = null
@@ -80,13 +85,22 @@ describe('timeSyncInstall.save（落盘失败不影响内存态）', () => {
 })
 
 describe('timeSyncInstall.calibrate（background 消息客户端）', () => {
-  it('ok:true 回包 → 转发 CalibrateResult；preferred 透传', async () => {
+  it('ok:true 回包 → 转发 CalibrateResult；preferred 与剖面透传', async () => {
     const deps = install()
     const stub = vi.fn(async (msg: unknown) => ({ ok: true, offsetMs: 12, sourceId: 'jd', msg }))
     ;(shim.chrome as { runtime: Record<string, unknown> }).runtime.sendMessage = stub
     const r = await deps.calibrate('jd')
     expect(r).toEqual({ offsetMs: 12, sourceId: 'jd' })
-    expect(stub.mock.calls[0]?.[0]).toEqual({ type: 'time-sync-calibrate', preferred: 'jd' })
+    expect(stub.mock.calls[0]?.[0]).toEqual({ type: 'time-sync-calibrate', preferred: 'jd', profile: 'cn' })
+  })
+  it('剖面随界面语言走（2026-11-13 全球链）：locale=en → profile=global', async () => {
+    const deps = install()
+    ;(fakeStore.settings as { locale: string }).locale = 'en'
+    const stub = vi.fn(async (msg: unknown) => ({ ok: true, offsetMs: 12, sourceId: 'jd', msg }))
+    ;(shim.chrome as { runtime: Record<string, unknown> }).runtime.sendMessage = stub
+    await deps.calibrate(null)
+    expect(stub.mock.calls[0]?.[0]).toEqual({ type: 'time-sync-calibrate', preferred: null, profile: 'global' })
+    ;(fakeStore.settings as { locale: string }).locale = 'zh'
   })
   it('ok:false 回包 → throw（失败可见性）', async () => {
     const deps = install()

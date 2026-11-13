@@ -1,4 +1,4 @@
-import { parsePastedText } from '@totp/core'
+import { normalizeTimeSourceProfile, parsePastedText } from '@totp/core'
 import { PENDING_OTPAUTH_KEY, encodePending } from '../src/pendingOtpauth'
 import { decodeImageBytesToUri } from '../src/qrDecode'
 import { pullSyncIfNewer, pushSync } from '../src/syncEngine'
@@ -233,7 +233,12 @@ export default defineBackground(() => {
       }
       void (async () => {
         try {
-          const r = await calibrateNetworkTime(typeof msg.preferred === 'string' ? msg.preferred : null)
+          // profile 决定源链（'cn' 大陆链 / 'global' 国际链，2026-11-13 全球链补齐）：
+          // 由发起页按界面语言判定后随消息带上，SW 无设置上下文不自行判定
+          const r = await calibrateNetworkTime(
+            typeof msg.preferred === 'string' ? msg.preferred : null,
+            normalizeTimeSourceProfile(msg.profile),
+          )
           sendResponse({ ok: true, offsetMs: r.offsetMs, sourceId: r.sourceId })
         } catch {
           sendResponse({ ok: false })

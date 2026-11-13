@@ -427,8 +427,18 @@ describe('消息 time-sync-calibrate（终审 G1：sender 校验与 cloud-fetch 
     await loadBackground()
     markSelfId()
     const r = await shim.runtime.receive({ type: 'time-sync-calibrate', preferred: 'baidu' }, { id: 'test-id' })
-    expect(calibrateNetworkTime).toHaveBeenCalledWith('baidu')
+    // 剖面缺省 → 大陆链（normalizeTimeSourceProfile 只认 'global'）
+    expect(calibrateNetworkTime).toHaveBeenCalledWith('baidu', 'cn')
     expect(r).toEqual({ ok: true, offsetMs: 120, sourceId: 'baidu' })
+  })
+
+  it('内部 sender + profile=global → 校准器收到国际链剖面（2026-11-13 全球链）', async () => {
+    calibrateNetworkTime.mockResolvedValueOnce({ offsetMs: 120, sourceId: 'timeapi' })
+    await loadBackground()
+    markSelfId()
+    const r = await shim.runtime.receive({ type: 'time-sync-calibrate', preferred: null, profile: 'global' }, { id: 'test-id' })
+    expect(calibrateNetworkTime).toHaveBeenCalledWith(null, 'global')
+    expect(r).toEqual({ ok: true, offsetMs: 120, sourceId: 'timeapi' })
   })
 
   it('内部 sender + 校准全败 → 异步回结构化 ok:false（覆盖 catch 分支）', async () => {
