@@ -221,4 +221,54 @@ describe('calibrateNetworkTime 国际链（2026-11-13 全球链）', () => {
     const r = await calibrateNetworkTime(null, 'cn')
     expect(r.sourceId).toBe('taobao-api')
   })
+
+  it('国际链解析护栏：timeapi 缺字段/非对象/下界时间戳 → 该源失败继续兜底', async () => {
+    const now = Date.now()
+    const f = stubFetch({
+      // 缺 hour 分量 → 组件解析抛错
+      'https://timeapi.io/api/time/current/zone?timeZone=UTC': jsonRes({ year: 2026, month: 11, day: 13 }),
+      // 非对象体 → 解析失败
+      'https://www.cloudflare.com/cdn-cgi/trace': 'reject',
+      'https://cp.cloudflare.com/generate_204': headRes(new Date(now + 1500).toUTCString()),
+    })
+    vi.stubGlobal('fetch', f)
+    vi.setSystemTime(new Date(now))
+    const r = await calibrateNetworkTime(null, 'global')
+    expect(r.sourceId).toBe('cloudflare-204')
+    vi.useRealTimers()
+  })
+
+  it('国际链解析护栏：timeapi 早于下界的时间戳 → 拒绝该源', async () => {
+    const now = Date.now()
+    const f = stubFetch({
+      'https://timeapi.io/api/time/current/zone?timeZone=UTC': jsonRes({
+        year: 2020, month: 1, day: 1, hour: 0, minute: 0, seconds: 0, milliSeconds: 0,
+      }),
+      'https://www.cloudflare.com/cdn-cgi/trace': 'reject',
+      'https://cp.cloudflare.com/generate_204': headRes(new Date(now + 1000).toUTCString()),
+      'https://www.microsoft.com': headRes(new Date(now + 1000).toUTCString()),
+    })
+    vi.stubGlobal('fetch', f)
+    vi.setSystemTime(new Date(now))
+    const r = await calibrateNetworkTime(null, 'global')
+    expect(r.sourceId).toBe('cloudflare-204')
+    vi.useRealTimers()
+  })
+
+  it('国际链：trace 报文缺 ts= → 该源失败；HTTP 非 2xx → 该源失败', async () => {
+    const now = Date.now()
+    const noTs = Promise.resolve({ ok: true, status: 200, headers: new Headers(), text: async () => 'fl=abc\ncolo=SJC\n' } as unknown as Partial<Response>)
+    const f = stubFetch({
+      'https://timeapi.io/api/time/current/zone?timeZone=UTC': 'reject',
+      'https://www.cloudflare.com/cdn-cgi/trace': () => noTs,
+      // 非 2xx：ok=false → 视为该源失败
+      'https://cp.cloudflare.com/generate_204': Promise.resolve({ ok: false, status: 503, headers: new Headers() } as unknown as Partial<Response>),
+      'https://www.microsoft.com': headRes(new Date(now + 500).toUTCString()),
+    })
+    vi.stubGlobal('fetch', f)
+    vi.setSystemTime(new Date(now))
+    const r = await calibrateNetworkTime(null, 'global')
+    expect(r.sourceId).toBe('microsoft')
+    vi.useRealTimers()
+  })
 })

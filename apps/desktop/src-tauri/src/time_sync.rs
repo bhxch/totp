@@ -391,6 +391,21 @@ fn parse_http_date(raw: &str) -> Option<i64> {
     Some(secs * 1000)
 }
 
+/// 源解析分派（纯函数，便于单测覆盖四种形态）：body=响应体（Date 头源为空串），
+/// date_header=Date 头原文（仅 DateHeader 形态用）。任一形态解析失败 → None（该源兜底下一源）
+fn parse_source_time(kind: ParseKind, body: &str, date_header: Option<&str>) -> Option<i64> {
+    match kind {
+        ParseKind::JsonMillis => serde_json::from_str::<serde_json::Value>(body)
+            .ok()
+            .and_then(|b| parse_json_millis(&b)),
+        ParseKind::JsonCivil => serde_json::from_str::<serde_json::Value>(body)
+            .ok()
+            .and_then(|b| parse_json_civil(&b)),
+        ParseKind::TraceTs => parse_trace_ts(body),
+        ParseKind::DateHeader => date_header.and_then(parse_http_date),
+    }
+}
+
 /// SNTP 全败后的毫秒 API 降级（serde_json 解析，免日期字符串处理）；任一成功即返回
 async fn https_fallback(sources: &[HttpsSource]) -> Option<TimeCalibrateResult> {
     let client = reqwest::Client::builder()
@@ -407,43 +422,24 @@ async fn https_fallback(sources: &[HttpsSource]) -> Option<TimeCalibrateResult> 
             Ok(r) if r.status().is_success() => r,
             _ => continue,
         };
-        let server_ms = match src.parse {
-            ParseKind::DateHeader => {
-                let date = resp
-                    .headers()
-                    .get(reqwest::header::DATE)
-                    .and_then(|v| v.to_str().ok());
-                match date.and_then(parse_http_date) {
-                    Some(ms) => ms,
-                    None => continue,
-                }
+        // Date 头源只取头不取体（省带宽）；其余形态取体后文本解析（reqwest 未启 json feature，
+        // 零新增依赖约束——text() 后 serde_json 手动解析）
+        let date_header = resp
+            .headers()
+            .get(reqwest::header::DATE)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        let body = if src.head_only {
+            String::new()
+        } else {
+            match resp.text().await {
+                Ok(t) => t,
+                Err(_) => continue,
             }
-            _ => {
-                // 本 crate reqwest 未启 json feature（零新增依赖约束）——text() 后 serde_json 手动解析
-                let text = match resp.text().await {
-                    Ok(t) => t,
-                    Err(_) => continue,
-                };
-                let parsed = match src.parse {
-                    ParseKind::TraceTs => parse_trace_ts(&text),
-                    ParseKind::JsonMillis => match serde_json::from_str::<serde_json::Value>(&text)
-                    {
-                        Ok(b) => parse_json_millis(&b),
-                        Err(_) => None,
-                    },
-                    ParseKind::JsonCivil => {
-                        match serde_json::from_str::<serde_json::Value>(&text) {
-                            Ok(b) => parse_json_civil(&b),
-                            Err(_) => None,
-                        }
-                    }
-                    ParseKind::DateHeader => None,
-                };
-                match parsed {
-                    Some(ms) => ms,
-                    None => continue,
-                }
-            }
+        };
+        let server_ms = match parse_source_time(src.parse, &body, date_header.as_deref()) {
+            Some(ms) => ms,
+            None => continue,
         };
         if server_ms < SERVER_MS_FLOOR {
             continue;
@@ -683,5 +679,63 @@ mod tests {
         // 畸形 → 拒绝
         assert_eq!(parse_http_date("not a date"), None);
         assert_eq!(parse_http_date("Fri, 13 Nov 2026 14:11:06 GMT extra"), None);
+    }
+
+    /// 源解析分派：四种形态各一臂 + 失败臂（纯函数，不触网）
+    #[test]
+    fn parse_source_time_dispatches_all_kinds() {
+        // 毫秒 API（淘宝 data.t / 苏宁 currentTime）
+        assert_eq!(
+            parse_source_time(
+                ParseKind::JsonMillis,
+                r#"{"data":{"t":"1794579066701"}}"#,
+                None
+            ),
+            Some(1_794_579_066_701)
+        );
+        // timeapi 组件
+        assert_eq!(
+            parse_source_time(
+                ParseKind::JsonCivil,
+                r#"{"year":2026,"month":11,"day":13,"hour":14,"minute":11,"seconds":6,"milliSeconds":701}"#,
+                None
+            ),
+            Some(1_794_579_066_701)
+        );
+        // trace 文本
+        assert_eq!(
+            parse_source_time(ParseKind::TraceTs, "ts=1794579066.701\n", None),
+            Some(1_794_579_066_701)
+        );
+        // Date 头
+        assert_eq!(
+            parse_source_time(
+                ParseKind::DateHeader,
+                "",
+                Some("Fri, 13 Nov 2026 14:11:06 GMT")
+            ),
+            Some(1_794_579_066_000)
+        );
+    }
+
+    /// 分派失败臂：畸形 JSON / 缺字段 / 缺 Date 头 / 缺 ts= → None（该源兜底下一源）
+    #[test]
+    fn parse_source_time_rejects_garbage() {
+        assert_eq!(
+            parse_source_time(ParseKind::JsonMillis, "not json", None),
+            None
+        );
+        assert_eq!(parse_source_time(ParseKind::JsonCivil, "{}", None), None);
+        assert_eq!(parse_source_time(ParseKind::TraceTs, "no ts", None), None);
+        assert_eq!(parse_source_time(ParseKind::DateHeader, "", None), None);
+        // Date 头形态给了体也不取体（体非空仍走 Date 头）
+        assert_eq!(
+            parse_source_time(
+                ParseKind::DateHeader,
+                r#"{"data":{"t":"1794579066701"}}"#,
+                Some("Fri, 13 Nov 2026 14:11:06 GMT")
+            ),
+            Some(1_794_579_066_000)
+        );
     }
 }

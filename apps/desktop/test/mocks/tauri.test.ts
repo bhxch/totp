@@ -64,8 +64,8 @@ describe('invoke 分发', () => {
     expect(tauriMock.invoke).toHaveBeenCalledWith('clipboard_clear_if_staged') // vi.fn 断言面同样可用
   })
 
-  it('命令清单覆盖盘点面（36 个 + P6 ABE 五命令 + cloud_http_fetch，共 42 个=注册面一致）', async () => {
-    expect(INVOKE_COMMANDS).toHaveLength(42)
+  it('命令清单覆盖盘点面（36 个 + P6 ABE 五命令 + cloud_http_fetch + time_calibrate，共 43 个=注册面一致）', async () => {
+    expect(INVOKE_COMMANDS).toHaveLength(43)
     for (const cmd of [
       'stage_clipboard_write', 'clipboard_clear_if_staged', 'take_stashed_dek', 'stash_dek', 'clear_stashed_dek',
       'set_mini_dek', 'peek_mini_dek', 'clear_mini_dek', 'mini_pin_get', 'mini_pin_set',
@@ -79,6 +79,7 @@ describe('invoke 分发', () => {
       'devtools_get_config', 'devtools_set_config', 'release_policy_get', 'release_policy_set',
       'cloud_http_fetch',
       'abe_status', 'abe_bind', 'abe_wrap', 'abe_remove', 'abe_unwrap',
+      'time_calibrate',
     ]) {
       expect(INVOKE_COMMANDS).toContain(cmd)
     }
