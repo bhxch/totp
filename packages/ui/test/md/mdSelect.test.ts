@@ -332,4 +332,24 @@ describe('MdSelect', () => {
     expect(src).toMatch(/\.md-select__box--floated,\s*\.md-select__box:focus-within\s*{[^}]*padding-top:\s*24px/)
     expect(src).toMatch(/\.md-select__label--floated,[\s\S]{0,200}?line-height:\s*16px/)
   })
+
+  // ---- 2026-11-14 缺陷：英文下「Interface language」换行两行、压住下方「English」值行 ----
+  // 成因：浮动 label 绝对定位，不计入字段固有宽度；字段宽度只随「选中值」收缩，
+  // 短值（English）+ 长 label（Interface language）时字段容不下 label → label 换行 → 压值行。
+  // 修法：零高度隐藏 sizer 把 label 宽度计入字段固有宽度 + label 单行（nowrap，过窄按 M3 省略号截断）。
+
+  it('㉔sizer 占位：字段固有宽度计入 label 宽度，短值+长 label 时 label 不换行不压值行', () => {
+    const w = mount(MdSelect, { props: { label: 'Interface language', modelValue: 'en', options: [{ value: 'en', label: 'English' }] } })
+    // sizer 与 label 同文，占住字段宽度（不参与纵向布局、不可见、不进读屏）
+    const sizer = w.find('.md-select__sizer')
+    expect(sizer.exists()).toBe(true)
+    expect(sizer.text()).toBe('Interface language')
+    expect(sizer.attributes('aria-hidden')).toBe('true')
+    // 源码断言（jsdom 无布局）：label 单行不换行 + 过窄按 M3 省略号截断；sizer 零高度且不缩
+    const src = readFileSync(join(__dirname, '../../src/components/md/MdSelect.vue'), 'utf8')
+    expect(src).toMatch(/\.md-select__label\s*{[^}]*white-space:\s*nowrap/)
+    expect(src).toMatch(/\.md-select__label\s*{[^}]*text-overflow:\s*ellipsis/)
+    expect(src).toMatch(/\.md-select__sizer\s*{[^}]*flex:\s*0 0 auto/)
+    expect(src).toMatch(/\.md-select__sizer\s*{[^}]*height:\s*0/)
+  })
 })
