@@ -143,6 +143,14 @@ cd apps/desktop && pnpm tauri build --debug   # mcp-bridge 仅 debug 构建注�
 - **预期**：配置期与启动期冲突均明确报错不静默。
 - **源码**：`src-tauri/src/lib.rs`（devtools 判定）、`mcp_server.rs`（start_server_with 空 token/bind 失败）。
 
+### D8 MD 字段浮动标签几何回归（MdSelect / MdTextField）[可自动化：scripts/ui-layout-e2e.mjs]
+
+- **前置**：桌面 debug 构建（mcp-bridge 仅 `#[cfg(debug_assertions)]` 装配）+ 同起 vite dev server（devUrl 1420）；tauri-mcp driver-session 9223 connected；应用未锁屏（LogonUI 下 WebView2 挂起，量测全超时）；已装 release 版须先 taskkill（单实例让位会让 dev 实例直接退出）。
+- **步骤**：`node scripts/ui-layout-e2e.mjs` —— 脚本自检 driver-session → 逐路由（#/codes #/import #/sync #/security #/settings）切 hash 等 Vue patch → 在真 webview 里量测全部 `.md-select` / `.md-text-field` 的 `getBoundingClientRect()`（标签行数 / 标签底 vs 值行顶 / 标签与值的 scrollWidth−clientWidth 裁切）→ 再在设置页点选 English 复测英文态 → 截图落 `.temp/e2e/ui-layout/`。
+- **预期**：FAIL=0——①标签恒单行（labelLines ≤ 1）；②浮动态标签不压值行（overlap ≤ 0）；③标签不被省略号裁切。值被裁切记 WARN 不判负（固定宽度容器的取舍，完整文案在菜单可见）。导入页无字段记 SKIP（需先选文件）。
+- **源码**：`packages/ui/src/components/md/MdSelect.vue`（sizer 宽度占位 + label 单行化）、`packages/ui/src/components/md/MdTextField.vue`（同款）；`scripts/ui-layout-e2e.mjs`；记录 `docs/e2e/2026-11-14-md-field-label-layout-record.md`。
+- **背景**：浮动 label 绝对定位不计入字段固有宽度，字段宽度只随「当前值」收缩 → 短值（English）+ 长 label（Interface language）时 label 换行压值（2026-11-14 用户报障）；同族缺陷在 MdTextField 与多处固定宽字段同样存在。
+
 ### E1 SW 休眠唤醒后右键菜单仍在 [手测·Chrome/Firefox]
 
 SW 休眠（chrome://serviceworker-internals 手动 Stop 或等空闲）→ 唤醒（点 popup）→ 右键页面/图片看菜单项仍在不叠加。源码 `entrypoints/background.ts`（contextMenus.create ×2 + onClicked）。
@@ -177,6 +185,7 @@ SW 休眠（chrome://serviceworker-internals 手动 Stop 或等空闲）→ 唤�
 
 | 日期 | 范围 | 结果 | 记录文件 |
 |---|---|---|---|
+| 2026-11-14 | MD 字段浮动标签几何回归真机走查（用户报障：英文态「Interface language」换行压住「English」）+ 全量同族排查（14 处 MdSelect + 窄容器 MdTextField，中英双语矩阵 28×2） | 真机 FAIL=0：标签恒单行、零压值行、零裁切；切语言链路复测通过；新增可复跑脚本 `scripts/ui-layout-e2e.mjs` | `docs/e2e/2026-11-14-md-field-label-layout-record.md` |
 | 2026-11-11 | plan24 网络时间源校准真机走查：桌面（Rust SNTP 真实校准/偏移注入窗口边界实证/双窗 localStorage 共享/持久化/控制台）+ 扩展端（Edge load-extension + 原生 CDP 驱动，真实淘宝毫秒 API 校准/SW 消息通道/popup 齐平按钮/toast/状态行/回切） | 桌面 D1-D9 全 ✅（D7 部分实证、断网降级单测覆盖标注）、扩展 X1-X7 ✅（X5 下拉单测保证）；扩展 -730ms 与桌面 -728ms 交叉印证偏移准确性；两通道零 error 零 warn | `docs/e2e/2026-11-11-time-source-checklist.md` |
 | 2026-10-07 | P2 导入增强批真机清单建立：大 zip 导入/上限边界、桌面端旧数据升级（旧单键 icons 迁移 + urlcache 原名文件映射迁移，R4-C1 配套）、ADS/特殊字符 id 场景、WinAuth Steam txt（R4-I1）、批量写并行与失败回滚（R4-I2/I3） | 清单建立，真机执行待安排（键名映射/迁移容错/混合状态等单测断言已随本批 commit 全绿） | `docs/e2e/2026-10-07-p2-import-checklist.md` |
 | 2026-10-06 | 四问题批真机执行（controller 直跑） | docs/e2e/2026-10-06-miniapp-sorting-cloud-checklist.md | 13/16 自动化达成：序号移动（+新缺陷修复 796aed4）/搜索/pin/建目录/错误日志/目录语义全绿；拖拽升级 WebView2 层 abort 待报批 pointer 方案；A2/A3 拖拽/C3/B2 注入挂人工或后续 |
@@ -213,6 +222,7 @@ SW 休眠（chrome://serviceworker-internals 手动 Stop 或等空闲）→ 唤�
 
 | 日期 | 变更 | 备注 |
 |---|---|---|
+| 2026-11-14 | 登记 MD 字段浮动标签几何回归用例 D8（§3 增条）+ 执行记录索引（§4 加行） | `docs/e2e/2026-11-14-md-field-label-layout-record.md`：真机 FAIL=0（标签恒单行/零压值/零裁切），英文态「Interface language」缺陷闭环；新增可复跑脚本 `scripts/ui-layout-e2e.mjs`（退出码沿用 mcp-e2e.mjs 约定）；截图落 `.temp/e2e/ui-layout/` 不入库 |
 | 2026-09-27 | 登记遗留清理批次 E 可自动化部分执行记录（§4 索引加行） | `docs/e2e/2026-09-27-refactor-leftover-e2e-record.md`：D2 重跑通过；R1 keep readPath+滚动删除经本地 WebDAV 替身日志级验证；场景 6 全过（R9 外来键/主题重启/销毁档/D6）；E1-E6 与确认流回归列人工配合清单 |
 | 2026-09-27 | 登记重构后桌面 E2E 回归执行记录（§4 索引加行） | `docs/e2e/2026-09-26-refactor-e2e-record.md`：D1–D7（D3 除外）6/7 通过，D2 受阻归因宿主环境（剪贴板被提权进程独占，refactorCaused=false）；文件名沿用批次日期 2026-09-26，实际执行 2026-09-27 |
 | 2026-09-26 | v1.1 执行记录与缺陷登记改为 `docs/e2e/` 按日期归档，§4/§5 改为索引制 | 09-26 批次记录移至 `docs/e2e/2026-09-26-coverage-e2e-checklist.md`（git mv 保留历史） |
