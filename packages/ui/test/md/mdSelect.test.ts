@@ -336,14 +336,14 @@ describe('MdSelect', () => {
   // ---- 2026-11-14 缺陷：英文下「Interface language」换行两行、压住下方「English」值行 ----
   // 成因：浮动 label 绝对定位，不计入字段固有宽度；字段宽度只随「选中值」收缩，
   // 短值（English）+ 长 label（Interface language）时字段容不下 label → label 换行 → 压值行。
-  // 修法：零高度隐藏 sizer 把 label 宽度计入字段固有宽度 + label 单行（nowrap，过窄按 M3 省略号截断）。
+  // 修法：零高度隐藏 sizer 把「标签 + 各选项」宽度计入字段固有宽度 + label 单行（nowrap，过窄按 M3 省略号截断）。
 
   it('㉔sizer 占位：字段固有宽度计入 label 宽度，短值+长 label 时 label 不换行不压值行', () => {
     const w = mount(MdSelect, { props: { label: 'Interface language', modelValue: 'en', options: [{ value: 'en', label: 'English' }] } })
     // sizer 与 label 同文，占住字段宽度（不参与纵向布局、不可见、不进读屏）
     const sizer = w.find('.md-select__sizer')
     expect(sizer.exists()).toBe(true)
-    expect(sizer.text()).toBe('Interface language')
+    expect(sizer.text()).toContain('Interface language')
     expect(sizer.attributes('aria-hidden')).toBe('true')
     // 源码断言（jsdom 无布局）：label 单行不换行 + 过窄按 M3 省略号截断；sizer 零高度且不缩
     const src = readFileSync(join(__dirname, '../../src/components/md/MdSelect.vue'), 'utf8')
@@ -351,5 +351,25 @@ describe('MdSelect', () => {
     expect(src).toMatch(/\.md-select__label\s*{[^}]*text-overflow:\s*ellipsis/)
     expect(src).toMatch(/\.md-select__sizer\s*{[^}]*flex:\s*0 0 auto/)
     expect(src).toMatch(/\.md-select__sizer\s*{[^}]*height:\s*0/)
+  })
+
+  it('㉕宽度自适应：sizer 含「标签 + 各选项文案」，字段宽度取 max 而非相加（切换选中项不跳变）', () => {
+    const w = mount(MdSelect, {
+      props: {
+        label: 'Interface language',
+        modelValue: 'en',
+        options: [
+          { value: 'auto', label: 'Follow browser' },
+          { value: 'en', label: 'English' },
+        ],
+      },
+    })
+    // sizer 逐项承载：标签 + 每个选项文案——字段固有宽度因此恒为 max(标签, 最宽选项)
+    const items = w.findAll('.md-select__sizer-text')
+    expect(items.map((i) => i.text())).toEqual(['Interface language', 'Follow browser', 'English'])
+    // 占位项块级纵向堆叠（width: max-content）→ 父级 max-content 取最大值而非求和
+    const src = readFileSync(join(__dirname, '../../src/components/md/MdSelect.vue'), 'utf8')
+    expect(src).toMatch(/\.md-select__sizer-text\s*{[^}]*display:\s*block/)
+    expect(src).toMatch(/\.md-select__sizer-text\s*{[^}]*width:\s*max-content/)
   })
 })

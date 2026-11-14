@@ -146,10 +146,14 @@ onBeforeUnmount(() => {
   <div ref="rootRef" class="md-select" :class="{ 'md-select--disabled': disabled }">
     <div class="md-select__box" :class="{ 'md-select__box--floated': floated }">
       <span class="md-select__label" :class="{ 'md-select__label--floated': floated }">{{ label }}</span>
-      <!-- 宽度占位：浮动 label 绝对定位，不计入字段固有宽度——字段宽度只随「选中值」收缩。
+      <!-- 宽度自适应：浮动 label 绝对定位，不计入字段固有宽度——字段宽度若只随「当前选中值」收缩，
         短值（English）+ 长 label（Interface language）时字段容不下 label，label 换行压到值行上。
-        零高度隐藏占位把 label 宽度计入字段固有宽度，字段恒容得下 label（M3 标签嵌槽语义） -->
-      <span class="md-select__sizer" aria-hidden="true">{{ label }}</span>
+        零高度隐藏占位把「标签 + 各选项文案」计入字段固有宽度：字段宽度 = max(标签, 最宽选项)，
+        切换选中项不再跳变、选项值不被省略号截断（M3 标签嵌槽 + 菜单等宽语义） -->
+      <span class="md-select__sizer" aria-hidden="true">
+        <span class="md-select__sizer-text">{{ label }}</span>
+        <span v-for="(o, i) in options" :key="`sizer-${i}`" class="md-select__sizer-text">{{ o.label }}</span>
+      </span>
       <!-- aria-activedescendant：读屏跟随键盘高亮（Task 4）；仅弹层开启且高亮 ≥0 时挂引用——
         -1（无匹配选中项）与关闭态（option 已卸载）移除，避免指向不存在节点的悬空引用 -->
       <button ref="triggerRef" type="button" class="md-select__trigger" :disabled="disabled"
@@ -196,10 +200,13 @@ onBeforeUnmount(() => {
      宽度由 sizer 占位保证可容纳；容器过窄时按 M3「标签裁切」语义省略号截断 */
   max-width: calc(100% - 16px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: var(--md-sys-typescale-body-large); color: var(--md-sys-color-on-surface-variant); pointer-events: none; transition: all .15s; }
-/* 宽度占位元素：零高度、不可见、不参与纵向布局；字号取 label 的最大态（body-large），
-   使静置态与浮动态 label 均单行可容纳（flex-shrink 0：字段不被压窄到容不下 label） */
-.md-select__sizer { flex: 0 0 auto; height: 0; min-height: 0; overflow: hidden; visibility: hidden;
-  white-space: nowrap; font-size: var(--md-sys-typescale-body-large); }
+/* 宽度占位元素：零高度、不可见、不参与纵向布局；字号取 label/选项的最大态（body-large），
+   使静置态与浮动态 label 均单行可容纳（flex-shrink 0：字段不被压窄到容不下 label）。
+   内部各文案块级纵向堆叠——块级子元素的 max-content 取「最大值」而非求和，故字段宽度
+   = max(标签, 各选项) 而非标签+选项之和 */
+.md-select__sizer { flex: 0 0 auto; height: 0; min-height: 0; overflow: hidden; visibility: hidden; }
+.md-select__sizer-text { display: block; width: max-content; height: 0; white-space: nowrap;
+  font-size: var(--md-sys-typescale-body-large); }
 .md-select__label--floated,
 .md-select__box:focus-within .md-select__label { top: 8px; transform: none; font-size: var(--md-sys-typescale-body-small); line-height: 16px; }
 /* 浮动态（有选中值/聚焦）内容行下移：与 MdTextField 同款几何修正（浮动 label 顶带 y8..24 与

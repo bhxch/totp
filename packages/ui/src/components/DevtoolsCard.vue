@@ -87,7 +87,9 @@ async function commitDevtools(): Promise<void> {
 .devtools-row { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
 .devtools-warn { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); margin: 0; flex: 1; min-width: 0; }
 .devtools-port-row { align-items: center; }
-.devtools-port { width: 140px; }
+/* 235px：容得下静置态标签「Debug port (default 9222)」（body-large 16px 约 201px + 左右内边距 32px），
+   空值态标签不换行也不被裁切（2026-11-14 真机 e2e 实测） */
+.devtools-port { width: 235px; }
 .devtools-restart { font-size: var(--md-sys-typescale-body-small); opacity: .65; }
 .meta { font-size: var(--md-sys-typescale-body-small); opacity: .75; margin: 0; }
 </style>

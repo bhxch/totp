@@ -213,5 +213,5 @@ function onChoiceSelect(r: RowDecision, v: string | number): void {
 .kind--identical { color: var(--md-sys-color-on-surface-variant); background: var(--md-sys-color-surface-container-highest); }
 .kind--suspect { color: var(--md-sys-color-on-tertiary-container); background: var(--md-sys-color-tertiary-container); }
 .kind--conflict { color: var(--md-sys-color-on-error-container); background: var(--md-sys-color-error-container); }
-.choice { flex: none; width: 168px; }
+.choice { flex: none; width: 176px; } /* 定宽保多行对齐；宽度容得下最长选项「Overwrite existing」（2026-11-14 宽度实测） */
 </style>

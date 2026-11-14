@@ -35,6 +35,9 @@ const inputAttrs = computed(() => {
       空间由其自身 padding-top 承担（见 --multiline 排除规则），box 再加顶 pad 会双重留白 -->
     <label class="md-text-field__box" :class="{ 'md-text-field__box--dense': dense, 'md-text-field__box--multiline': multiline, 'md-text-field__box--floated': !!modelValue || !!placeholder }">
       <span class="md-text-field__label" :class="{ 'md-text-field__label--floated': multiline || !!modelValue || !!placeholder }">{{ label }}</span>
+      <!-- 宽度占位（同 MdSelect 的 md-select__sizer）：浮动 label 绝对定位、不计入字段固有宽度，
+        窄字段（固定 width 的数字框等）里长 label 会换行并压住输入值行（2026-11-14 同族缺陷） -->
+      <span class="md-text-field__sizer" aria-hidden="true">{{ label }}</span>
       <input v-if="!multiline" v-bind="inputAttrs" class="md-text-field__input" :type="type" :value="modelValue" :placeholder="placeholder"
         :aria-label="ariaLabel" :aria-invalid="error ? 'true' : undefined" :aria-describedby="describedBy"
         @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)" />
@@ -69,7 +72,15 @@ const inputAttrs = computed(() => {
 .md-text-field--disabled { opacity: .38; cursor: default; }
 .md-text-field--disabled .md-text-field__input { cursor: default; }
 .md-text-field__label { position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
+  /* 单行不换行：label 换行会压到下方输入行（2026-11-14 同族缺陷：ReleaseCard「minutes (0 = disabled)」
+     在 140px 宽字段里折两行压住数值）。宽度由 sizer 占位保证可容纳；字段被压得极窄时按 M3
+     「标签裁切」语义省略号截断，不再换行压住输入值 */
+  max-width: calc(100% - 16px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: var(--md-sys-typescale-body-large); color: var(--md-sys-color-on-surface-variant); pointer-events: none; transition: all .15s; }
+/* 宽度占位元素：零高度、不可见、不参与纵向布局；字号取 label 最大态（body-large），
+   使静置态与浮动态 label 均单行可容纳（flex-shrink 0：字段不被压窄到容不下 label） */
+.md-text-field__sizer { flex: 0 0 auto; height: 0; min-height: 0; overflow: hidden; visibility: hidden;
+  white-space: nowrap; font-size: var(--md-sys-typescale-body-large); }
 .md-text-field__label--floated,
 .md-text-field__box:focus-within .md-text-field__label { top: 8px; transform: none; font-size: var(--md-sys-typescale-body-small); line-height: 16px; }
 /* 浮动态（有值/占位/聚焦）内容行下移让位：浮动 label 顶带 y8..24（12px/16px 行高），56 槽居中行

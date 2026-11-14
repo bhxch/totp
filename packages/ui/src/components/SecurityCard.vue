@@ -569,7 +569,7 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .pw-age-hint { font-size: var(--md-sys-typescale-body-small); opacity: .65; margin: 0; }
 .pw-age-warn { font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-error); margin: 0; }
 .kdf-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.kdf-select { width: 260px; }
+.kdf-select { width: 300px; } /* 容得下最长选项「Slower, more brute-force resistant」（2026-11-14 宽度实测） */
 .lock-prefs { display: flex; flex-direction: column; gap: 8px; }
 .lock-prefs h3 { font-size: var(--md-sys-typescale-body-medium); margin: 0; opacity: .8; }
 .idle-min { width: 150px; }

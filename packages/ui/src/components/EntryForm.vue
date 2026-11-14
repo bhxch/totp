@@ -615,7 +615,7 @@ fieldset { border: 1px solid var(--md-sys-color-outline-variant); border-radius:
 .new-tag-row { display: flex; gap: 6px; width: 100%; }
 .new-tag { flex: 1; }
 .rule-row { display: flex; gap: 6px; align-items: center; }
-.rule-strategy { flex: none; width: 128px; } /* MdSelect 根定宽，触发端 100% 填充 */
+.rule-strategy { flex: none; width: 165px; } /* MdSelect 根定宽（触发端 100% 填充）；宽度容得下最长选项「Base domain」（2026-11-14 宽度实测） */
 .rule-row .rule-pattern { flex: 1; }
 .rule-row .rule-pattern.invalid :deep(.md-text-field__box) { border-bottom-color: var(--md-sys-color-error); }
 .rule-error { font-size: var(--md-sys-typescale-body-small); color: var(--md-sys-color-error); flex-basis: 100%; }

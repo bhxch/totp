@@ -131,6 +131,24 @@ describe('MdTextField', () => {
     const src = readFileSync(join(__dirname, '../../src/components/md/MdTextField.vue'), 'utf8')
     expect(src).toMatch(/\.md-text-field:not\(\.md-text-field--disabled\) \.md-text-field__box:hover:not\(:focus-within\)/)
   })
+  // ---- 2026-11-14 同族缺陷：浮动 label 绝对定位、不计入字段固有宽度 → 长 label 在窄字段里
+  // 换行两行并压住输入行（ReleaseCard「minutes (0 = disabled)」、DevtoolsCard「Debug port (default 9222)」
+  // 于 140px 字段内实测换行）。修法与 MdSelect 同款：零高度隐藏 sizer 占住 label 宽度 + label 单行化。
+  it('label 宽度占位 sizer：与 label 同文、不可见、不进读屏（字段固有宽度含 label）', () => {
+    const w = mount(MdTextField, { props: { modelValue: '', label: 'Debug port (default 9222)' } })
+    const sizer = w.find('.md-text-field__sizer')
+    expect(sizer.exists()).toBe(true)
+    expect(sizer.text()).toBe('Debug port (default 9222)')
+    expect(sizer.attributes('aria-hidden')).toBe('true')
+  })
+  it('label 单行化 + sizer 零高度：长 label 不换行压输入行，过窄按 M3 省略号裁切（源码断言）', () => {
+    const src = readFileSync(join(__dirname, '../../src/components/md/MdTextField.vue'), 'utf8')
+    expect(src).toMatch(/\.md-text-field__label\s*{[^}]*white-space:\s*nowrap/)
+    expect(src).toMatch(/\.md-text-field__label\s*{[^}]*text-overflow:\s*ellipsis/)
+    expect(src).toMatch(/\.md-text-field__label\s*{[^}]*max-width:\s*calc\(100% - 16px\)/)
+    expect(src).toMatch(/\.md-text-field__sizer\s*{[^}]*flex:\s*0 0 auto/)
+    expect(src).toMatch(/\.md-text-field__sizer\s*{[^}]*height:\s*0/)
+  })
 })
 describe('MdSwitch', () => {
   it('点击只 emit update,不自行改视觉(受控)', async () => {

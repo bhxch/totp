@@ -582,7 +582,7 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .auto-item { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); }
 .auto-status { font-size: var(--md-sys-typescale-body-small); opacity: .65; }
 .profile-row { display: flex; flex-direction: column; gap: 4px; }
-.profile-select { max-width: 280px; }
+.profile-select { max-width: 300px; } /* 容得下最长选项「Slower, more brute-force resistant」（2026-11-14 宽度实测） */
 .ok { color: var(--md-sys-color-primary); font-size: var(--md-sys-typescale-body-medium); }
 .err { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-medium); }
 .hint { opacity: .65; font-size: var(--md-sys-typescale-body-medium); margin: 0; }

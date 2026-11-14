@@ -324,7 +324,7 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .status-ok { color: var(--md-sys-color-primary); opacity: 1; }
 .status-error { color: var(--md-sys-color-error); opacity: 1; }
 .cfg-row { display: flex; gap: 12px; flex-wrap: wrap; }
-.mode-select { width: 280px; max-width: 100%; }
+.mode-select { width: 350px; max-width: 100%; } /* 容得下最长选项「Token only (any client holding the token)」（2026-11-14 宽度实测） */
 .port-field { width: 140px; }
 /* 随机端口按钮：与端口输入框垂直居中对齐 */
 .random-port { align-self: center; flex: none; }
@@ -336,7 +336,9 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .pattern-row { display: flex; align-items: center; gap: 8px; }
 .pattern { font-size: var(--md-sys-typescale-body-small); opacity: .8; }
 .pattern-add { display: flex; gap: 8px; align-items: center; }
-.pattern-input { width: 240px; }
+/* 300px：容得下静置态标签「Add pattern, * wildcard supported」（body-large 16px 约 261px + 左右内边距 32px），
+   该字段常态为空值（标签即提示文案），不裁切才读得全（2026-11-14 真机 e2e 实测） */
+.pattern-input { width: 300px; }
 .token-block { display: flex; flex-direction: column; gap: 6px; }
 .revoke-block { display: flex; flex-direction: column; gap: 6px; }
 .token-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

@@ -119,7 +119,9 @@ async function onReleaseFlag(field: 'lockOnPause' | 'lockOnDestroy', v: boolean)
 .release-card h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .release-error { color: var(--md-sys-color-error); font-size: var(--md-sys-typescale-body-small); margin: 0; }
 .release-row { display: flex; align-items: center; justify-content: flex-start; gap: 12px; flex-wrap: wrap; }
-.release-min { width: 140px; }
+/* 205px：容得下静置态标签「minutes (0 = disabled)」（body-large 16px 约 172px + 左右内边距 32px），
+   空值态标签不换行也不被裁切（2026-11-14 真机 e2e 实测） */
+.release-min { width: 205px; }
 .release-hint { font-size: var(--md-sys-typescale-body-small); opacity: .65; margin: 0; }
 .row-label { font-size: var(--md-sys-typescale-body-medium); }
 </style>

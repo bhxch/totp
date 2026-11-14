@@ -825,7 +825,7 @@ h2 { font-size: var(--md-sys-typescale-title-medium); margin: 0; }
 .formats summary { cursor: pointer; }
 .formats ul { margin: 4px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.actions .format-select { min-width: 0; flex: 1; max-width: 320px; }
+.actions .format-select { min-width: 0; flex: 1; max-width: 360px; } /* 上限容得下最长选项「TOTP Authenticator (plain/external share)」（2026-11-14 宽度实测） */
 .map-row { display: flex; align-items: center; gap: 8px; font-size: var(--md-sys-typescale-body-medium); }
 .map-row .map-field { flex: 1; }
 .schemes { display: flex; flex-direction: column; gap: 6px; border-top: 1px dashed var(--md-sys-color-outline-variant); padding-top: 8px; }
