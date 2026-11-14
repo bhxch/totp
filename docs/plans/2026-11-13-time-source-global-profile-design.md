@@ -32,6 +32,11 @@
 - **Date 头新鲜度教训**：`https://www.apple.com` 的 `Date` 滞后 **542s**（`Age: 542`，CDN 缓存）。
   故 Date 头源只作链末位兜底，动态源（毫秒 API / trace）在前——沿用 2026-11-10「淘宝 HEAD Date
   滞后 43s」的同源教训（spec §事实基础）。
+- **缓存证据盘点（2026-11-13 实测各源响应头）**：`gitee.com` → `s-maxage=60, stale-while-revalidate=120`、
+  `jd.com` → `max-age=120` + `Age: 1`（**两者的 Date 头可滞后数十秒~数分钟**）；
+  `baidu.com` → `private, no-cache, no-store`（新鲜）、`cp.cloudflare.com/generate_204` → 无缓存头、
+  `www.microsoft.com` → `max-age=0, no-cache, no-store`（新鲜）、`timeapi.io` / 淘宝毫秒 API → 无缓存头、
+  Cloudflare trace → `Expires: 1970`（等效不缓存）。→ 缓存护栏（§3）。
 - **RTT 偏置教训（2026-11-13 真源探针，两轮独立复现）**：HTTP JSON 接口与 Date 头的时间戳在
   **响应构建时**生成，而中点公式（`server - (t0+t1)/2`）假设服务端时刻落在请求/响应中点——
   origin 排队数秒再出响应时该假设失效：实测 `timeapi.io` 与 `cp.cloudflare.com/generate_204`
@@ -106,6 +111,18 @@ Rust 侧 `HTTPS_TRUSTED_RTT_MS` + `rtt_trusted(rtt_ms)`。HTTP 源的应答 RTT 
 （该源兜底下一源）：origin 排队数秒时中点公式的残差偏置可达 ±RTT/2（实测 RTT 8.1s → +4.0s），
 慢应答宁弃勿采——宁可换源，也不可采纳一个错几秒的偏移（错 4s ≈ 每 30s 窗口有 8s 取错码）。
 SNTP 不受此限（协议自带精确时戳与 RTT 补偿），桌面主路径不受影响。
+*口径说明*：客户端实测 RTT 含 DNS/TCP/TLS 建连与读体时间，而偏置只取决于**服务端处理延迟**
+（`bias ≈ (服务端处理 − 传输)/2`）——故该护栏**保守**：慢链路上可能误杀可用源（宁可换源，
+不可采信坏值），最坏后果是本轮校准失败 → 回退设备时间（既有行为，无回归）。
+
+**缓存护栏（两端同口径）**：应答若带**缓存证据**（`Age > 0` 或 `Cache-Control` 含正
+`max-age`/`s-maxage`）即**不采信**（该源兜底下一源）——被 CDN 缓存过的应答，其 Date 头/JSON 时刻
+可滞后数十秒起（实测 gitee `s-maxage=60+swr=120`、jd `max-age=120`），滞后量级足以让偏移错上百秒
+（偏移被采纳后 6h 内出码错）。无缓存证据者（`no-store`/`no-cache`/`max-age=0`/无 Cache-Control）
+照常采信。
+*对大陆链的影响*：清单与源序**不变**（用户裁定「中文时用现在的」），只是运行时拒绝带缓存证据的
+应答——即 gitee/jd 在其响应被 CDN 缓存时自动跳过（实测两者确实带正 TTL），大陆链实际可用源
+收敛为 淘宝/苏宁毫秒 API → 百度 → Cloudflare trace（仍足够），且不再有「采纳滞后 Date」的隐患。
 
 ### §4 端实现接线（剖面谁判、谁传）
 
@@ -153,8 +170,13 @@ settings、Rust 无 i18n）——故判定留在前端，端侧只按传入值�
   **RTT 护栏**：慢应答（>800ms）不采信 → 兜底下一源；消息带 profile、background 归一
   （`timeSyncCalibrator.test.ts` / `background.test.ts` / `timeSyncInstall.test.ts`）。
 - **桌面（Rust）**：池按剖面选择、剖面归一、两链 id 不重叠、`days_from_civil` 闰年锚点、
-  `civil_to_epoch_ms` 越界拒绝、JSON/trace/Date 四种解析形态、Date 头畸形拒绝、`rtt_trusted` 边界。
+  `civil_to_epoch_ms` 越界/不存在日期拒绝（31 Feb）、JSON/trace/Date 四种解析形态、Date 头畸形拒绝、
+  `rtt_trusted` 边界、`cc_has_positive_ttl` 缓存指令判别。
 - **桌面（前端）**：invoke 带 `profile`（随界面语言）；mini 同步钮渲染条件 / 点击校准 / 失败 toast。
+- **单例响应性**：ui `timeSource` 单例改由 `shallowRef` 持有——宿主覆盖安装（桌面 mini 聚焦重载
+  store 后再装一次）会换掉实例，普通变量替换不触发响应式，消费方（`useTimeSyncAction` 的 syncing
+  computed、设置页状态行）会一直盯着被换掉的旧实例（旋转/禁用失效、状态行停在旧快照）；
+  设置页改为每次现取 `timeSource()`，不再在 setup 期捕获实例。
 
 ### §8 未决与风险
 

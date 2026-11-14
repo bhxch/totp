@@ -304,9 +304,29 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     era * 146097 + doe - 719468
 }
 
-/// 公历时刻（UTC）→ epoch 毫秒；分量越界返回 None（防畸形应答）
+/// 该年该月的天数（公历；闰年规则：能被 4 整除且（非 100 整除或能被 400 整除））
+fn days_in_month(y: i64, mo: i64) -> i64 {
+    match mo {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 {
+                29
+            } else {
+                28
+            }
+        }
+        _ => 0,
+    }
+}
+
+/// 公历时刻（UTC）→ epoch 毫秒；分量越界返回 None（防畸形应答）。
+/// 日按「该年该月实际天数」校验（拒绝 2 月 31 日这类静默滚月）；年份限 1..=9999（防溢出）
 fn civil_to_epoch_ms(y: i64, mo: i64, d: i64, h: i64, mi: i64, s: i64, ms: i64) -> Option<i64> {
-    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) {
+    if !(1..=9999).contains(&y) || !(1..=12).contains(&mo) {
+        return None;
+    }
+    if d < 1 || d > days_in_month(y, mo) {
         return None;
     }
     if !(0..=23).contains(&h)
@@ -393,9 +413,56 @@ fn parse_http_date(raw: &str) -> Option<i64> {
     if !(0..=23).contains(&h) || !(0..=59).contains(&mi) || !(0..=60).contains(&sec) {
         return None;
     }
+    // 日按「该年该月实际天数」校验（拒绝 31 Feb 这类静默滚月）；年份限 1..=9999（防溢出）
+    if !(1..=9999).contains(&y) || d < 1 || d > days_in_month(y, m) {
+        return None;
+    }
     let days = days_from_civil(y, m, d);
     let secs = days * 86_400 + h * 3600 + mi * 60 + sec.min(59);
     Some(secs * 1000)
+}
+
+/// Cache-Control 是否带**正 TTL**（max-age>0 / s-maxage>0）：带则应答可来自 CDN 缓存，
+/// 其内含时间戳（Date 头 / JSON 时刻）可能滞后数秒~数分钟——2026-11-13 实测 gitee
+/// `s-maxage=60, stale-while-revalidate=120` 与 jd `max-age=120`（Age:1）即属此类，
+/// 滞后量级足以让偏移错上百秒（偏移被采纳后 6h 内出码错）。故缓存过的应答不采信。
+/// `max-age=0` / `no-store` / `no-cache` / 无 Cache-Control 皆视为未缓存 ✓
+fn cc_has_positive_ttl(cc: &str) -> bool {
+    for part in cc.split(',') {
+        let p = part.trim().to_ascii_lowercase();
+        // 指令名为 s-maxage（无 max-age 连字符）；strip_prefix 天然区分二者
+        for key in ["s-maxage=", "max-age="] {
+            if let Some(rest) = p.strip_prefix(key) {
+                let v = rest.split(';').next().unwrap_or("").trim();
+                if let Ok(n) = v.parse::<i64>() {
+                    if n > 0 {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// 应答是否「未缓存」（可作时间源）：Age>0 或 Cache-Control 带正 TTL → 拒绝
+fn response_fresh(resp: &reqwest::Response) -> bool {
+    let age_ok = resp
+        .headers()
+        .get(reqwest::header::AGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .map(|a| a <= 0)
+        .unwrap_or(true);
+    if !age_ok {
+        return false;
+    }
+    let cc = resp
+        .headers()
+        .get(reqwest::header::CACHE_CONTROL)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    !cc_has_positive_ttl(cc)
 }
 
 /// 源解析分派（纯函数，便于单测覆盖四种形态）：body=响应体（Date 头源为空串），
@@ -429,6 +496,11 @@ async fn https_fallback(sources: &[HttpsSource]) -> Option<TimeCalibrateResult> 
             Ok(r) if r.status().is_success() => r,
             _ => continue,
         };
+        // 缓存护栏：被 CDN 缓存过的应答，其时间戳可能滞后数十秒起（实测 gitee s-maxage=60 /
+        // jd max-age=120）→ 不采信（兜底下一源）。须在消费 body 之前判定（resp.text() 会移走 resp）
+        if !response_fresh(&resp) {
+            continue;
+        }
         // Date 头源只取头不取体（省带宽）；其余形态取体后文本解析（reqwest 未启 json feature，
         // 零新增依赖约束——text() 后 serde_json 手动解析）
         let date_header = resp
@@ -609,7 +681,9 @@ mod tests {
         assert_eq!(profile_from(None), Profile::Cn);
     }
 
-    /// 两链 id 不重叠（core 同约束：同 id 在两链语义不得不同）
+    /// 桌面侧两链 id 不重叠（本 crate 的池与降级表各自成链）。
+    /// 注：core 的两条 **HTTPS** 链共用 `cloudflare-trace`（同 id 同 URL 同解析形态，语义无冲突），
+    /// 故 core 侧的约束是「同 id 跨链须语义一致」而非「不相交」
     #[test]
     fn chains_have_disjoint_ids() {
         let cn: Vec<&str> = NTP_POOL_CN
@@ -733,6 +807,40 @@ mod tests {
             ),
             Some(1_794_579_066_000)
         );
+    }
+
+    /// 缓存护栏：Cache-Control 带正 TTL（max-age/s-maxage>0）→ 应答可能来自 CDN 缓存，
+    /// 其时间戳可滞后数十秒起（实测 gitee s-maxage=60、jd max-age=120）→ 不采信
+    #[test]
+    fn cc_has_positive_ttl_detects_cacheable_responses() {
+        assert!(cc_has_positive_ttl("max-age=120"));
+        assert!(cc_has_positive_ttl(
+            "public, s-maxage=60, stale-while-revalidate=120"
+        ));
+        assert!(cc_has_positive_ttl("max-age=60, must-revalidate"));
+        // 未缓存形态（实测 baidu/microsoft/cf-204/timeapi/taobao 属此类）
+        assert!(!cc_has_positive_ttl(
+            "private, no-cache, no-store, proxy-revalidate"
+        ));
+        assert!(!cc_has_positive_ttl("max-age=0, no-cache, no-store"));
+        assert!(!cc_has_positive_ttl(""));
+        assert!(!cc_has_positive_ttl("public"));
+        assert!(!cc_has_positive_ttl("no-cache"));
+    }
+
+    /// 日历校验：拒绝不存在的日期（31 Feb / 2 月 30 日）、接受闰日；年份越界拒绝
+    #[test]
+    fn civil_and_date_reject_impossible_dates() {
+        assert!(civil_to_epoch_ms(2026, 2, 31, 0, 0, 0, 0).is_none());
+        assert!(civil_to_epoch_ms(2026, 2, 30, 0, 0, 0, 0).is_none());
+        assert!(civil_to_epoch_ms(2025, 2, 29, 0, 0, 0, 0).is_none());
+        // 2024 是闰年 → 2 月 29 日合法
+        assert!(civil_to_epoch_ms(2024, 2, 29, 0, 0, 0, 0).is_some());
+        // 年份越界
+        assert!(civil_to_epoch_ms(10_000, 1, 1, 0, 0, 0, 0).is_none());
+        // Date 头同样拒绝 31 Feb
+        assert_eq!(parse_http_date("Tue, 31 Feb 2026 08:49:37 GMT"), None);
+        assert!(parse_http_date("Tue, 29 Feb 2024 08:49:37 GMT").is_some());
     }
 
     /// RTT 护栏（2026-11-13 实测）：慢应答不采信（origin 排队数秒 → 中点公式残差偏置可达秒级）

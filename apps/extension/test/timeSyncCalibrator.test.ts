@@ -272,8 +272,49 @@ describe('calibrateNetworkTime 国际链（2026-11-13 全球链）', () => {
     vi.useRealTimers()
   })
 
-  it('RTT 护栏（2026-11-13 实测）：慢应答不采信 → 该源兜底下一源', async () => {
-    vi.useFakeTimers()
+  it('缓存护栏：被 CDN 缓存过的应答不采信（实测 gitee s-maxage=60 / jd max-age=120）', async () => {
+    const now = Date.now()
+    const cached = Promise.resolve({
+      ok: true, status: 200,
+      headers: new Headers({ 'cache-control': 'public, s-maxage=60, stale-while-revalidate=120' }),
+      json: async () => ({ year: 2026, month: 11, day: 13, hour: 14, minute: 11, seconds: 6, milliSeconds: 0 }),
+    } as unknown as Partial<Response>)
+    const aged = Promise.resolve({
+      ok: true, status: 200,
+      headers: new Headers({ age: '1' }),
+      json: async () => ({ year: 2026, month: 11, day: 13, hour: 14, minute: 11, seconds: 6, milliSeconds: 0 }),
+    } as unknown as Partial<Response>)
+    const f = stubFetch({
+      'https://timeapi.io/api/time/current/zone?timeZone=UTC': () => cached,
+      'https://www.cloudflare.com/cdn-cgi/trace': 'reject',
+      'https://cp.cloudflare.com/generate_204': () => aged,
+      'https://www.microsoft.com': headRes(new Date(now + 800).toUTCString()),
+    })
+    vi.stubGlobal('fetch', f)
+    vi.setSystemTime(new Date(now))
+    const r = await calibrateNetworkTime(null, 'global')
+    // 前三源分别因缓存/带 Age 被拒 → 落到 microsoft（无缓存证据）
+    expect(r.sourceId).toBe('microsoft')
+    vi.useRealTimers()
+  })
+
+  it('缓存护栏：无缓存证据的应答照常采信（max-age=0 / no-store / 无 Cache-Control）', async () => {
+    const now = Date.now()
+    const f = stubFetch({
+      'https://timeapi.io/api/time/current/zone?timeZone=UTC': Promise.resolve({
+        ok: true, status: 200,
+        headers: new Headers({ 'cache-control': 'max-age=0' }),
+        json: async () => ({ year: 2026, month: 11, day: 13, hour: 14, minute: 11, seconds: 6, milliSeconds: 0 }),
+      } as unknown as Partial<Response>),
+    })
+    vi.stubGlobal('fetch', f)
+    vi.setSystemTime(new Date(now))
+    const r = await calibrateNetworkTime(null, 'global')
+    expect(r.sourceId).toBe('timeapi')
+    vi.useRealTimers()
+  })
+
+  it('RTT 护栏（2026-11-13 实测）：慢应答不采信 → 该源兜底下一源', async () => {    vi.useFakeTimers()
     try {
       const now = Date.now()
       // 首个源（timeapi）应答慢（推进 2s）→ 残差偏置不可信 → 跳过；第二源（trace）应答快 → 采信

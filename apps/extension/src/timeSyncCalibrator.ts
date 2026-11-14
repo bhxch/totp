@@ -38,6 +38,20 @@ function assertServerMs(serverMs: number): number {
   return serverMs
 }
 
+/** 缓存新鲜度护栏：带正 TTL（max-age/s-maxage>0）或 Age>0 的应答，其内含时间戳（Date 头 /
+ *  JSON 时刻）可能滞后数秒~数分钟——2026-11-13 实测 gitee `s-maxage=60, stale-while-revalidate=120`
+ *  与 jd `max-age=120`（Age:1）即属此类，滞后量级足以让偏移错上百秒（偏移被采纳后 6h 内出码错）。
+ *  故缓存过的应答不采信（该源兜底下一源）；无缓存证据的应答（no-store/no-cache/max-age=0/
+ *  无 Cache-Control）照常采信 */
+function isFreshResponse(res: Response): boolean {
+  const age = Number(res.headers.get('age') ?? '0')
+  if (Number.isFinite(age) && age > 0) return false
+  const cc = res.headers.get('cache-control') ?? ''
+  // 指令名为 s-maxage（无 max-age 连字符）；前缀锚定避免把 s-maxage 误当 max-age
+  const m = /(?:^|[\s,])s?-maxage\s*=\s*(\d+)/i.exec(cc)
+  return !(m && Number(m[1]) > 0)
+}
+
 /** RFC7231 Date 头 → epoch ms（秒级精度，TOTP 30s 窗口足够） */
 function parseDateHeader(res: Response): number {
   const v = res.headers.get('date')
@@ -138,6 +152,8 @@ export async function calibrateNetworkTime(preferredSourceId: string | null, pro
         clearTimeout(timer)
       }
       if (!res.ok) throw new Error(`time source: http ${res.status}`)
+      // 缓存护栏：被 CDN 缓存过的应答，其时间戳可能滞后数十秒起 → 不采信（兜底下一源）
+      if (!isFreshResponse(res)) throw new Error('time source: cached response')
       const serverMs = await src.parse(res)
       const t1 = Date.now()
       // RTT 护栏（2026-11-13 实测）：HTTP 源的时间戳在响应构建时生成，origin 排队数秒时

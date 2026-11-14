@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { effectScope, nextTick, ref, watch, type Ref } from 'vue'
 import { computeEntryCode, EMPTY_TIME_SYNC_STATE, TIME_SYNC_TTL_MS, type OtpEntry, type TimeSyncState } from '@totp/core'
 import { useOtpCodes } from '../src/composables/useOtpCodes'
+import { useTimeSyncAction } from '../src/composables/useTimeSyncAction'
 import { initTimeSync, timeSource, timeSourceProfileFor, type TimeSyncController } from '../src/timeSource'
 
 /** 已成功但陈旧的状态：syncedAt=1000（1970 年），远超任何 TTL 判据 */
@@ -700,6 +701,34 @@ describe('useOtpCodes 出码取时接线（spec §2）', () => {
     expect(lag).toBeGreaterThanOrEqual(0)
     expect(lag).toBeLessThan(1000)
     scope.stop()
+  })
+})
+
+describe('单例替换的响应性（2026-11-13 审查修复：mini 聚焦重载后 syncing 失效）', () => {
+  const OFFSET = 95_000
+  it('initTimeSync 覆盖安装后，timeSource() 跟随新实例（消费方 computed 能重算）', async () => {
+    const first = initTimeSync(makeDeps().deps)
+    expect(timeSource()).toBe(first)
+    // 覆盖安装（桌面 mini 聚焦重载 store 后再装一次）
+    const { deps } = makeDeps({ ...NETWORK, load: vi.fn(async () => freshState(OFFSET)) })
+    const second = initTimeSync(deps)
+    expect(timeSource()).toBe(second)
+    expect(timeSource()).not.toBe(first)
+    // 响应式：等新实例装载落定，状态偏移可见
+    await vi.waitFor(() => expect(timeSource().state.value.offsetMs).toBe(OFFSET))
+  })
+
+  it('useTimeSyncAction 的 syncing 跟随当前实例（在途互斥态随实例替换刷新）', async () => {
+    const { deps, calibrate } = makeDeps({ ...NETWORK, load: vi.fn(async () => freshState(OFFSET)) })
+    initTimeSync(deps)
+    const { syncing } = useTimeSyncAction((k) => k)
+    await vi.waitFor(() => expect(timeSource().state.value.offsetMs).toBe(OFFSET))
+    expect(syncing.value).toBe(false)
+    // 覆盖安装另一个实例后，syncing 仍指向当前实例（不挂在被换掉的旧实例上）
+    const { deps: deps2 } = makeDeps({ ...NETWORK, load: vi.fn(async () => freshState(OFFSET)) })
+    initTimeSync(deps2)
+    expect(syncing.value).toBe(false)
+    expect(calibrate).not.toHaveBeenCalled()
   })
 })
 

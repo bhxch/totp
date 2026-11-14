@@ -197,18 +197,22 @@ const fallback = createController({
   calibrate: async () => { throw new Error('time sync not installed') },
 }, true).controller
 
-let singleton: TimeSyncController = fallback
+/** 单例持有（shallowRef 而非普通变量）：宿主覆盖安装（桌面 mini 聚焦重载 store 后再装一次）
+ *  会换掉实例——普通变量替换不触发响应式，消费方（useTimeSyncAction 的 syncing computed、
+ *  设置页状态行）会一直盯着被换掉的旧实例（旋转/禁用失效、状态行停在旧快照）。
+ *  改为 shallowRef 后，实例替换即令依赖它的 computed 重算 */
+const singletonRef = shallowRef<TimeSyncController>(fallback)
 
 /** 宿主安装（覆盖式；mini 窗聚焦重建 store 后可重复安装）：bootstrap 异步装载本地键，落定时
  *  一次性完成「采纳装载值 + 开闸 + 冷启动 TTL 决策」（network 模式超龄即静默重校）。落定之前
  *  出码层照常取时（零偏移）、喂 tick（只更新基准），不发起任何自动校准 */
 export function initTimeSync(deps: TimeSyncDeps): TimeSyncController {
   const { controller, settle } = createController(deps, false)
-  singleton = controller
+  singletonRef.value = controller
   // 装载在途期间被再次覆盖安装的实例不落定：闸门保持关闭、不写状态——它拿不到装载值，
   // 放行就是对空状态做决策；出码层每轮现取单例，也不会再用到它
   const done = (loaded: TimeSyncState | null): void => {
-    if (singleton === controller) settle(loaded)
+    if (singletonRef.value === controller) settle(loaded)
   }
   // 装载失败按空状态落定：否则闸门永不打开，本上下文的自动校准就此失效
   void deps.load().then(done, () => done(null)).catch(() => {})
@@ -218,5 +222,5 @@ export function initTimeSync(deps: TimeSyncDeps): TimeSyncController {
 /** 消费入口：未安装（未调 initTimeSync）返回降级实例。单例可被覆盖安装——需跟随最新实例的
  *  调用方应每次现取，勿长期持有返回值 */
 export function timeSource(): TimeSyncController {
-  return singleton
+  return singletonRef.value
 }

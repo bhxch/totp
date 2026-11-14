@@ -102,7 +102,8 @@ async function setPopupDelay(v: string): Promise<void> {
 }
 
 // ---------- 时间源卡（plan24 spec §6）：模式切换/首选源/立即同步/状态行 ----------
-const ts = timeSource()
+// 单例可被宿主覆盖安装（桌面 mini 聚焦重载 store 后再装一次）——不捕获实例，一律现取
+// timeSource()，避免读到被换掉的旧实例的状态
 const { syncing: timeSyncing, syncNow: timeSyncNow } = useTimeSyncAction()
 
 /** 源 id → i18n label 键映射（id 单一事实源在 core；两组合并供状态行「来源 xx」展示，
@@ -155,7 +156,7 @@ const PREFERRED_OPTIONS = computed<Array<{ value: string; label: string }>>(() =
 /** 首选源当前值：已存 id 不在当前链内（语言切换后遗留）→ 显示 auto（端侧同样按内置序兜底，
  *  该 id 仍留在状态里——切回原语言即恢复该偏好） */
 const preferredSelectValue = computed(() => {
-  const id = ts.state.value.preferredSourceId
+  const id = timeSource().state.value.preferredSourceId
   if (id === null) return 'auto'
   return PREFERRED_OPTIONS.value.some((o) => o.value === id) ? id : 'auto'
 })
@@ -164,15 +165,15 @@ async function setTimeSourceMode(v: string) {
   props.store.settings.timeSource = next
   await props.store.commitSettings()
   // 切到 network 且无有效偏移：立即校准一次（spec §3-②，结果走 toast）
-  if (next === 'network' && ts.state.value.offsetMs === null) void timeSyncNow()
+  if (next === 'network' && timeSource().state.value.offsetMs === null) void timeSyncNow()
 }
 // MdSelect emit 值为泛化 string|number（同 setLocale 先例）：源 id 皆为 string，赋值前收敛
 function setPreferredSource(v: string | number) {
-  void ts.setPreferredSource(v === 'auto' ? null : String(v))
+  void timeSource().setPreferredSource(v === 'auto' ? null : String(v))
 }
 /** 状态行（data-test="time-status"）：从未同步 / 失败 / 上次成功（时刻+来源+偏差方向） */
 const timeSyncStatus = computed<string | null>(() => {
-  const st = ts.state.value
+  const st = timeSource().state.value
   if (st.offsetMs !== null && st.syncedAt !== null) {
     const drift = Math.abs(st.offsetMs) < ALIGNED_EPS_MS
       ? t('settingsPage.timeSourceDriftAligned')
