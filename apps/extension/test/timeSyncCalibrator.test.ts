@@ -271,4 +271,29 @@ describe('calibrateNetworkTime 国际链（2026-11-13 全球链）', () => {
     expect(r.sourceId).toBe('microsoft')
     vi.useRealTimers()
   })
+
+  it('RTT 护栏（2026-11-13 实测）：慢应答不采信 → 该源兜底下一源', async () => {
+    vi.useFakeTimers()
+    try {
+      const now = Date.now()
+      // 首个源（timeapi）应答慢（推进 2s）→ 残差偏置不可信 → 跳过；第二源（trace）应答快 → 采信
+      let call = 0
+      const f = vi.fn(async (input: string | URL | Request) => {
+        call++
+        if (call === 1) vi.advanceTimersByTime(2000)
+        const url = String(input)
+        if (url.includes('timeapi.io')) {
+          return { ok: true, status: 200, headers: new Headers(), json: async () => ({ year: 2026, month: 11, day: 13, hour: 14, minute: 11, seconds: 6, milliSeconds: 0 }) }
+        }
+        return { ok: true, status: 200, headers: new Headers(), text: async () => `ts=${(Date.now() + 500) / 1000}\n` }
+      })
+      vi.stubGlobal('fetch', f)
+      vi.setSystemTime(new Date(now))
+      const r = await calibrateNetworkTime(null, 'global')
+      expect(r.sourceId).toBe('cloudflare-trace')
+      expect(f).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

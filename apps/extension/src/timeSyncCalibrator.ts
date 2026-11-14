@@ -11,7 +11,7 @@
  * 2026-11-13 追加教训：apple.com Date 滞后 542s——Date 头源只作末位兜底，动态源在前）。
  */
 import {
-  computeOffsetMs, httpsTimeSourceIds, type HttpsTimeSourceId, type TimeSourceProfile,
+  computeOffsetMs, httpsTimeSourceIds, isTrustedHttpRtt, type HttpsTimeSourceId, type TimeSourceProfile,
 } from '@totp/core'
 import type { CalibrateResult } from '@totp/ui'
 
@@ -139,7 +139,12 @@ export async function calibrateNetworkTime(preferredSourceId: string | null, pro
       }
       if (!res.ok) throw new Error(`time source: http ${res.status}`)
       const serverMs = await src.parse(res)
-      return { offsetMs: computeOffsetMs(serverMs, t0, Date.now()), sourceId: src.id }
+      const t1 = Date.now()
+      // RTT 护栏（2026-11-13 实测）：HTTP 源的时间戳在响应构建时生成，origin 排队数秒时
+      // 中点公式的残差偏置可达秒级（RTT 8.1s → 偏置 +4.0s；RTT 0.2s → +10ms）。
+      // 慢应答不采信（该源兜底下一源），避免采纳一个错几秒的偏移量
+      if (!isTrustedHttpRtt(t1 - t0)) throw new Error('time source: untrusted rtt')
+      return { offsetMs: computeOffsetMs(serverMs, t0, t1), sourceId: src.id }
     } catch { /* 该源失败：按序兜底下一源 */ }
   }
   throw new Error('time source: all sources failed')

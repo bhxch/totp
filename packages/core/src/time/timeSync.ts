@@ -99,6 +99,19 @@ export function computeOffsetMs(serverEpochMs: number, requestAtMs: number, resp
   return Math.round(serverEpochMs - (requestAtMs + responseAtMs) / 2)
 }
 
+/** HTTPS 源「可采信 RTT 上限」（毫秒；与 Rust 侧 HTTPS_TRUSTED_RTT_MS 一致）：
+ *  HTTP JSON/Date 头的时间戳在**响应构建时**生成，而中点公式假设服务端时刻落在请求/响应
+ *  中点——origin 排队数秒再出响应时该假设失效（2026-11-13 实测：timeapi.io 与 cf-204 在
+ *  RTT≈8.1s 时偏置 +3.9~4.1s，RTT≈0.2s 时偏置仅 +3~11ms）。残差偏置 ≤ RTT/2，故
+ *  RTT 超过上限的应答不采信（源兜底下一源），把误差压回秒级截断的地板（±500ms）。
+ *  SNTP 不受此限（协议自带精确时戳与 RTT 补偿），桌面端主路径不受影响 */
+export const HTTPS_TRUSTED_RTT_MS = 800
+
+/** RTT 是否在可采信范围内（纯函数，端侧共用口径；≤ 上限即采信） */
+export function isTrustedHttpRtt(rttMs: number): boolean {
+  return Number.isFinite(rttMs) && rttMs >= 0 && rttMs <= HTTPS_TRUSTED_RTT_MS
+}
+
 /** 时间源链剖面（2026-11-13 全球源补齐）：'cn'=大陆链（2026-11-10 实测源序，原样保留），
  *  'global'=国际链（全球适用源序）。剖面由**界面语言**决定（ui timeSourceProfileFor：
  *  显式 zh→cn、显式 en→global、auto 按浏览器语言 zh*→cn 其余→global），

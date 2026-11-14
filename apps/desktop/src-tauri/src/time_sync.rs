@@ -23,6 +23,13 @@ const HTTPS_TIMEOUT: Duration = Duration::from_secs(5);
 /// 服务器时刻合理下界（2023-11-14）：schema 级垃圾值防线（终审 G5 同源）——合法偏移不受影响，
 /// 只挡解析错误/未同步服务器产出的明显不可能时间戳
 const SERVER_MS_FLOOR: i64 = 1_700_000_000_000;
+/// HTTPS 源「可采信 RTT 上限」（毫秒；与 core HTTPS_TRUSTED_RTT_MS 一致）：
+/// HTTP JSON/Date 头的时间戳在**响应构建时**生成，而中点公式假设服务端时刻落在请求/响应
+/// 中点——origin 排队数秒再出响应时该假设失效（2026-11-13 实测：timeapi.io 与 cf-204 在
+/// RTT≈8.1s 时偏置 +3.9~4.1s，RTT≈0.2s 时偏置仅 +3~11ms）。残差偏置 ≤ RTT/2，故 RTT
+/// 超过上限的应答不采信（源兜底下一源），把误差压回秒级截断的地板（±500ms）。
+/// SNTP 不受此限（协议自带精确时戳与 RTT 补偿），本文件主路径不受影响
+const HTTPS_TRUSTED_RTT_MS: i64 = 800;
 
 /// 时间源链剖面（与 core TimeSourceProfile 对齐；入参非法值一律回大陆链）
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -445,12 +452,22 @@ async fn https_fallback(sources: &[HttpsSource]) -> Option<TimeCalibrateResult> 
             continue;
         }
         let t1 = now_unix_ms();
+        // RTT 护栏（2026-11-13 实测）：HTTP 源时间戳在响应构建时生成，origin 排队数秒时中点
+        // 公式残差偏置可达秒级（RTT 8.1s → +4.0s；RTT 0.2s → +10ms）。慢应答不采信
+        if !rtt_trusted(t1 - t0) {
+            continue;
+        }
         return Some(TimeCalibrateResult {
             offset_ms: offset_from(server_ms, t0, t1),
             source_id: src.id.to_string(),
         });
     }
     None
+}
+
+/// RTT 是否在可采信范围内（纯函数，与 core isTrustedHttpRtt 同口径）
+fn rtt_trusted(rtt_ms: i64) -> bool {
+    (0..=HTTPS_TRUSTED_RTT_MS).contains(&rtt_ms)
 }
 
 /// Tauri 命令：SNTP 池 racing → 全败转 HTTPS 降级 → 全败报错（调用方回退设备时间）。
@@ -716,6 +733,17 @@ mod tests {
             ),
             Some(1_794_579_066_000)
         );
+    }
+
+    /// RTT 护栏（2026-11-13 实测）：慢应答不采信（origin 排队数秒 → 中点公式残差偏置可达秒级）
+    #[test]
+    fn rtt_trusted_rejects_slow_responses() {
+        assert!(rtt_trusted(0));
+        assert!(rtt_trusted(197));
+        assert!(rtt_trusted(HTTPS_TRUSTED_RTT_MS));
+        assert!(!rtt_trusted(HTTPS_TRUSTED_RTT_MS + 1));
+        assert!(!rtt_trusted(8_100)); // 实测 timeapi.io 慢应答
+        assert!(!rtt_trusted(-1));
     }
 
     /// 分派失败臂：畸形 JSON / 缺字段 / 缺 Date 头 / 缺 ts= → None（该源兜底下一源）

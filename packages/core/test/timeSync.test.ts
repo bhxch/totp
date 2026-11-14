@@ -6,6 +6,7 @@ import {
   clockJumpKind, normalizeTimeSyncState, shouldAutoCalibrate,
   HTTPS_TIME_SOURCE_IDS_CN, HTTPS_TIME_SOURCE_IDS_GLOBAL, NTP_TIME_SOURCE_IDS_CN, NTP_TIME_SOURCE_IDS_GLOBAL,
   httpsTimeSourceIds, ntpTimeSourceIds, normalizeTimeSourceProfile,
+  HTTPS_TRUSTED_RTT_MS, isTrustedHttpRtt,
 } from '../src/time/timeSync'
 
 const OK: ReturnType<typeof normalizeTimeSyncState> = { ...EMPTY_TIME_SYNC_STATE, offsetMs: 1000, syncedAt: 10_000, sourceId: 'baidu' }
@@ -248,8 +249,20 @@ describe('源 id 清单（spec §2，实测序）', () => {
   })
 })
 
-describe('源链剖面（2026-11-13 全球链）', () => {
-  it('normalizeTimeSourceProfile：仅 global 归国际链，其余（含非法值）回大陆链', () => {
+describe('HTTPS 源 RTT 护栏（2026-11-13 实测：慢应答的 timestamp 偏置可达秒级）', () => {
+  it('isTrustedHttpRtt：≤800ms 采信；超限/负值/非有限值拒绝', () => {
+    expect(isTrustedHttpRtt(0)).toBe(true)
+    expect(isTrustedHttpRtt(197)).toBe(true)
+    expect(isTrustedHttpRtt(HTTPS_TRUSTED_RTT_MS)).toBe(true)
+    expect(isTrustedHttpRtt(HTTPS_TRUSTED_RTT_MS + 1)).toBe(false)
+    expect(isTrustedHttpRtt(8_100)).toBe(false)
+    expect(isTrustedHttpRtt(-1)).toBe(false)
+    expect(isTrustedHttpRtt(Number.NaN)).toBe(false)
+    expect(isTrustedHttpRtt(Number.POSITIVE_INFINITY)).toBe(false)
+  })
+})
+
+describe('源链剖面（2026-11-13 全球链）', () => {  it('normalizeTimeSourceProfile：仅 global 归国际链，其余（含非法值）回大陆链', () => {
     expect(normalizeTimeSourceProfile('global')).toBe('global')
     expect(normalizeTimeSourceProfile('cn')).toBe('cn')
     expect(normalizeTimeSourceProfile(undefined)).toBe('cn')

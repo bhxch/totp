@@ -32,6 +32,16 @@
 - **Date 头新鲜度教训**：`https://www.apple.com` 的 `Date` 滞后 **542s**（`Age: 542`，CDN 缓存）。
   故 Date 头源只作链末位兜底，动态源（毫秒 API / trace）在前——沿用 2026-11-10「淘宝 HEAD Date
   滞后 43s」的同源教训（spec §事实基础）。
+- **RTT 偏置教训（2026-11-13 真源探针，两轮独立复现）**：HTTP JSON 接口与 Date 头的时间戳在
+  **响应构建时**生成，而中点公式（`server - (t0+t1)/2`）假设服务端时刻落在请求/响应中点——
+  origin 排队数秒再出响应时该假设失效：实测 `timeapi.io` 与 `cp.cloudflare.com/generate_204`
+  在 RTT≈8.1s 时偏置 **+3.9~4.1s**（两源同量级），而在 RTT≈0.2s 时偏置仅 **+3~11ms**。
+  残差偏置 ≤ RTT/2 → 故设「可采信 RTT 上限 800ms」（§3 护栏），慢应答不采信。
+  另注：Cloudflare trace 的 `ts` 是**整秒**（`…708.000`），即秒级量化（±500ms），但新鲜不缓存
+  （连续三次请求 ts 逐次递增，`cf-cache-status`/`age` 均无）。
+- **真源走查（经 Rust 实际代码路径，临时探针，已移除）**：SNTP 池——大陆链命中 `neu`（36ms）、
+  国际链命中 `nict`（86ms），两者偏移量相差 6ms（互相印证）；HTTPS 降级——大陆链命中
+  `taobao-api`（85ms）、国际链慢 `timeapi` 被护栏拦下后落到 `cloudflare-trace`（2.6s）✓。
 
 ## 设计
 
@@ -91,6 +101,12 @@
 2026-11-10 的设计以「无日期解析依赖」为由回避 Date 头源（spec §5），现国际链需要 Date 头兜底，
 遂就地手写实现（**零新增依赖**，不引 chrono/httpdate），并以单测锁定格式与闰年锚点。
 
+**RTT 护栏（两端同口径）**：core `HTTPS_TRUSTED_RTT_MS = 800` / `isTrustedHttpRtt(rttMs)`，
+Rust 侧 `HTTPS_TRUSTED_RTT_MS` + `rtt_trusted(rtt_ms)`。HTTP 源的应答 RTT 超过上限即**不采信**
+（该源兜底下一源）：origin 排队数秒时中点公式的残差偏置可达 ±RTT/2（实测 RTT 8.1s → +4.0s），
+慢应答宁弃勿采——宁可换源，也不可采纳一个错几秒的偏移（错 4s ≈ 每 30s 窗口有 8s 取错码）。
+SNTP 不受此限（协议自带精确时戳与 RTT 补偿），桌面主路径不受影响。
+
 ### §4 端实现接线（剖面谁判、谁传）
 
 剖面判定需要**界面语言**，而扩展 SW / Rust 端都拿不到界面上下文（locale 在 settings，SW 不读
@@ -134,10 +150,10 @@ settings、Rust 无 i18n）——故判定留在前端，端侧只按传入值�
 - **ui**：`timeSourceProfileFor` 三档判定（显式 zh/en + auto 按浏览器语言）；
   设置页首选源下拉按剖面切换、跨链 id 显示 auto 且偏好保留（`SettingsPage*.test.ts`）。
 - **扩展**：校准器国际链序（timeapi → trace → 204）、组件解析、跨链 preferred 被忽略、cn 链不受影响；
-  消息带 profile、background 归一（`timeSyncCalibrator.test.ts` / `background.test.ts` /
-  `timeSyncInstall.test.ts`）。
+  **RTT 护栏**：慢应答（>800ms）不采信 → 兜底下一源；消息带 profile、background 归一
+  （`timeSyncCalibrator.test.ts` / `background.test.ts` / `timeSyncInstall.test.ts`）。
 - **桌面（Rust）**：池按剖面选择、剖面归一、两链 id 不重叠、`days_from_civil` 闰年锚点、
-  `civil_to_epoch_ms` 越界拒绝、JSON/trace/Date 四种解析形态、Date 头畸形拒绝。
+  `civil_to_epoch_ms` 越界拒绝、JSON/trace/Date 四种解析形态、Date 头畸形拒绝、`rtt_trusted` 边界。
 - **桌面（前端）**：invoke 带 `profile`（随界面语言）；mini 同步钮渲染条件 / 点击校准 / 失败 toast。
 
 ### §8 未决与风险
@@ -145,9 +161,12 @@ settings、Rust 无 i18n）——故判定留在前端，端侧只按传入值�
 - **Date 头源可能滞后**：链末位兜底（实测 apple.com 滞后 542s、taobao 43s）。若动态源全败而
   Date 头源恰好被 CDN 缓存，会采纳一个滞后的偏移——**已知风险**，故 Date 头源不排首位，且
   滞后量级（分钟级）会明显反映在设置页状态行的偏差值上，用户可「立即同步」重试换源。
-- **国际链的境外可达性未在境外实测**：本次实测网络出口在中国大陆（trace 显示 `colo=SJC`，
+- **国际链源的境外可达性未在境外实测**：本次实测网络出口在中国大陆（trace 显示 `colo=SJC`，
   但经代理出网）；国际链源均为全球公开服务的常规用法（NTP Pool / Cloudflare / NIST / Apple /
   NICT / Ubuntu），境外可达性以「公开服务常规用法 + 实测响应自洽」为依据，正式发版前建议
   在境外网络做一次真机走查（`docs/e2e/`）。
 - **auto 口径**：`auto` 按浏览器语言而非界面回落文案判定（§2 勘误备查），若后续产品要求
   「界面显示什么语言就用什么链」，改 `timeSourceProfileFor` 一处即可（其余链路不动）。
+- **RTT 护栏的取舍**：上限 800ms 是「残差偏置 ≤400ms」与「慢链仍可用」的折中——比 800ms 更严
+  会拒掉部分境外可达源（更松则偏置逼近秒级）。实测境外/国内各源的常态 RTT 均在 200~600ms
+  区间内，护栏只在 origin 异常排队时才生效。
