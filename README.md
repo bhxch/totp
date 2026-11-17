@@ -24,10 +24,10 @@
 - **界面**：Material Design 3 设计系统，五页导航（验证码 / 导入 / 同步 / 安全 / 设置），10 种主题色 × 明暗模式（暗色可叠加 AMOLED 纯黑对比度档），主题 CSS 按需懒加载
 - **安全**：两把口令（库口令 + 备份口令）、vault 落盘加密（envelope v2，三档 Argon2id 强度）、DEK 保管区、Passkey（PRF）/ 原生自动解锁、锁定策略（重启后 / 系统锁屏 / 空闲 N 分钟）、剪贴板自动清空与密钥遮蔽
 - **数据**：本地备份（多目录源、每源保留策略）、五后端云同步（同类型多目标、每源独立基线与保留策略）、浏览器间同步、17+ 格式导入（四档去重判定树）、otpauth 链接 / 图片二维码 / 剪贴板多入口录入
-- **校时**：系统时钟不准导致验证码错误时，可切换「网络时间」校准——桌面走 SNTP（阿里云 / 腾讯云 / 教育网 / NTP Pool 中国区等国内源并发竞速，毫秒 API 降级，时钟严重错误也可校准），扩展走 HTTPS 时间源（淘宝 / 苏宁毫秒 API 优先 + 大站响应头 + Cloudflare 海外兜底）；界面语言为中文时用这套国内源，其他语言自动改用全球源链（桌面 NTP Pool / Cloudflare / NIST / Apple 等，扩展 TimeAPI.io / Cloudflare 等）；校准偏移仅保存在本设备，出码页、设置页与桌面 mini 快速窗均可「立即同步」
+- **校时**：系统时钟不准导致验证码错误时，可切换「网络时间」校准——桌面走 SNTP 池并发竞速（国内链：阿里云 / 腾讯云 / 东北大学 / 清华 / NTP Pool 中国区 / Microsoft NTP；全球链：Cloudflare / NTP Pool 全球池 / NIST / Apple / NICT / 区域池 / Ubuntu），全池失败再降级毫秒 API（淘宝 / 苏宁）；扩展走 HTTPS 时间源串行逐源尝试（国内链：淘宝 / 苏宁毫秒 API → 百度 / 腾讯门户 / Gitee / 京东响应头 → Cloudflare；全球链：TimeAPI.io → Cloudflare trace / 204 → Microsoft 响应头）。源链按界面语言判定（中文走国内链，其余走全球链；选「自动」时按浏览器语言前缀判定）；应答带缓存头（说明服务端时刻可能滞后）或往返超过 800ms 一律不采信；时钟严重错误也可校准。校准偏移与首选源只存本设备（不进备份与浏览器同步），出码页、扩展 popup、设置页与桌面 mini 快速窗四处均可「立即同步」；安全计时（锁定策略 / 剪贴板清除）不接入校准偏移
 - **桌面**：托盘常驻 + 只读 mini 弹窗（全局快捷键 `Alt+Shift+T`）、窗口资源释放（隐藏 → 暂停 → 销毁三段式）、内置 MCP 服务器（本机 AI 客户端可读取验证码）
 
-设计文档见 [docs/plans/2026-09-13-totp-tool-design.md](docs/plans/2026-09-13-totp-tool-design.md)；实施计划按里程碑分计划存于 [docs/plans/](docs/plans/)；审查与端到端验证报告见 [docs/review/](docs/review/)。
+设计文档见 [docs/plans/2026-09-13-totp-tool-design.md](docs/plans/2026-09-13-totp-tool-design.md)；校时特性设计见 [docs/plans/2026-11-10-time-source-design.md](docs/plans/2026-11-10-time-source-design.md) 与 [全球链与源链剖面](docs/plans/2026-11-13-time-source-global-profile-design.md)；实施计划按里程碑分计划存于 [docs/plans/](docs/plans/)；审查与端到端验证报告见 [docs/review/](docs/review/)。
 
 ## 安装
 
@@ -384,6 +384,7 @@ pnpm typecheck     # 类型检查：core 为纯 tsc；ui/extension/desktop 为 v
 - MCP 服务器设计：[docs/plans/2026-09-21-mcp-server-design.md](docs/plans/2026-09-21-mcp-server-design.md)
 - 实施计划（按里程碑）：[docs/plans/](docs/plans/)
 - 审查与端到端验证报告（含 MCP 真机测试）：[docs/review/](docs/review/)
+- 校时特性设计与真机走查：[设计](docs/plans/2026-11-10-time-source-design.md)、[全球链与源链剖面](docs/plans/2026-11-13-time-source-global-profile-design.md)、[国内链走查](docs/e2e/2026-11-11-time-source-checklist.md)、[全球链走查](docs/e2e/2026-11-18-time-source-global-profile-checklist.md)
 - 更新日志（版本变更记录，release 说明自动取自此处）：[CHANGELOG.md](CHANGELOG.md)
 - 隐私政策（中英双语）：[docs/PRIVACY.md](docs/PRIVACY.md)
 - 界面图库（中英双语，18 张真机截图）：[docs/gallery.md](docs/gallery.md)
