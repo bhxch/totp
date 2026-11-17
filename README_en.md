@@ -4,6 +4,21 @@
 
 A pure front-end TOTP code manager: browser extension (Chrome/Edge/Firefox, all Manifest V3) + Tauri desktop app. No self-hosted backend — your data stays on your devices and your own cloud drives.
 
+![TOTP Code Tool desktop main window: entry list, live codes, countdown progress bars and tag filters](docs/gallery/02-desktop-codes-revealed.png)
+
+## UI preview
+
+| Desktop (Tauri) | Browser extension (MV3) |
+| :---: | :---: |
+| ![Desktop main window](docs/gallery/01-desktop-codes.png) | ![Extension popup](docs/gallery/13-extension-popup.png) |
+| **Main window**: five-page navigation, live codes with countdowns, search and tag filters, drag-to-reorder and pinning | **Popup**: a 360 px panel that opens straight from the toolbar icon, masked by default and revealed for 8 s on double-click |
+| ![Desktop import page](docs/gallery/04-desktop-import.png) | ![Extension options settings](docs/gallery/15-extension-options-settings.png) |
+| **Import**: 17+ formats auto-detected (Aegis / Bitwarden / 2FAS / otpauth URI / JSON / SQLite, …), conflicts skippable, replaceable or mergeable | **Options tab**: the same five-page navigation as the desktop app, with appearance and general settings shared across both ends |
+| ![Desktop security page](docs/gallery/06-desktop-security.png) | ![Extension popup in dark mode](docs/gallery/17-extension-popup-dark.png) |
+| **Security**: vault encrypted at rest (Argon2id + AES-256-GCM), unlock by passphrase / Passkey / OS auto-unlock, three lock policies | **Dark mode**: separate light and dark theme values plus an AMOLED pure-black contrast tier, applied consistently on both ends |
+
+More screens (sync and backup, settings and the MCP server, the mini quick window, the lock screen, the AMOLED tier, …) are collected in the [UI gallery](docs/gallery.md).
+
 ## Features
 
 - **UI**: Material Design 3 design system, five-page navigation (Codes / Import / Sync / Security / Settings), 10 theme colors × light/dark modes (dark mode supports an AMOLED pure-black contrast layer), theme CSS lazy-loaded on demand
@@ -365,6 +380,7 @@ Docs index:
 - Review and end-to-end verification reports (incl. the MCP real-machine test): [docs/review/](docs/review/)
 - Changelog (per-version notes; release descriptions are extracted from here): [CHANGELOG.md](CHANGELOG.md)
 - Privacy policy (bilingual): [docs/PRIVACY.md](docs/PRIVACY.md)
+- UI gallery (bilingual, 18 real-machine screenshots): [docs/gallery.md](docs/gallery.md)
 
 ## Permissions
 

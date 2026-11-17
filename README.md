@@ -4,6 +4,21 @@
 
 纯前端 TOTP 验证码管理：浏览器插件（Chrome/Edge/Firefox，双端均 Manifest V3）+ Tauri 桌面程序。无自建服务端，数据完全留在本机与自备网盘。
 
+![TOTP 验证码工具桌面端主界面：列表、实时验证码、倒计时进度条与标签筛选](docs/gallery/02-desktop-codes-revealed.png)
+
+## 界面预览
+
+| 桌面端（Tauri） | 浏览器扩展（MV3） |
+| :---: | :---: |
+| ![桌面端主界面](docs/gallery/01-desktop-codes.png) | ![扩展 popup 弹窗](docs/gallery/13-extension-popup.png) |
+| **主界面**：五页导航、实时验证码与倒计时、搜索与标签筛选、拖拽排序与置顶 | **popup**：点图标即用的 360px 弹窗，默认打码显示，双击 8 秒展开明文 |
+| ![桌面端导入页](docs/gallery/04-desktop-import.png) | ![扩展 options 设置页](docs/gallery/15-extension-options-settings.png) |
+| **导入**：17+ 格式自动识别（Aegis / Bitwarden / 2FAS / otpauth URI / JSON / SQLite 等），冲突可跳过 / 替换 / 合并 | **options 页**：与桌面端同构的五页导航，外观与通用设置跨端一致 |
+| ![桌面端安全页](docs/gallery/06-desktop-security.png) | ![扩展 popup 暗色模式](docs/gallery/17-extension-popup-dark.png) |
+| **安全**：vault 落盘加密（Argon2id + AES-256-GCM），口令 / Passkey / 系统自动解锁，三种锁定策略 | **popup 暗色档**：明暗两套主题色与 AMOLED 纯黑对比度档，跨端一致生效 |
+
+更多界面（同步与备份、设置与 MCP 服务器、mini 快速窗、锁定页、AMOLED 档等）见 [界面图库 · UI Gallery](docs/gallery.md)。
+
 ## 特性
 
 - **界面**：Material Design 3 设计系统，五页导航（验证码 / 导入 / 同步 / 安全 / 设置），10 种主题色 × 明暗模式（暗色可叠加 AMOLED 纯黑对比度档），主题 CSS 按需懒加载
@@ -371,6 +386,7 @@ pnpm typecheck     # 类型检查：core 为纯 tsc；ui/extension/desktop 为 v
 - 审查与端到端验证报告（含 MCP 真机测试）：[docs/review/](docs/review/)
 - 更新日志（版本变更记录，release 说明自动取自此处）：[CHANGELOG.md](CHANGELOG.md)
 - 隐私政策（中英双语）：[docs/PRIVACY.md](docs/PRIVACY.md)
+- 界面图库（中英双语，18 张真机截图）：[docs/gallery.md](docs/gallery.md)
 
 ## 权限说明
 
