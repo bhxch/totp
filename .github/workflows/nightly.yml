@@ -109,7 +109,17 @@ jobs:
             // 删除旧 nightly release 及其 tag（tag 由下方 softprops 步骤重建）
             const rel = await github.rest.repos.getReleaseByTag({ owner: context.repo.owner, repo: context.repo.repo, tag: 'nightly' }).catch(() => null)
             if (rel) await github.rest.repos.deleteRelease({ owner: context.repo.owner, repo: context.repo.repo, release_id: rel.data.id })
-            await github.rest.git.deleteRef({ owner: context.repo.owner, repo: context.repo.repo, ref: 'refs/tags/nightly' }).catch(() => null)
+            // deleteRef 的 ref 形参只带 "tags/<name>"：API 端点自身拼 "/git/refs/" 前缀，
+            // 传 "refs/tags/nightly" 会拼成 "/git/refs/refs/tags/nightly" → 422 Reference does not
+            // exist，删除静默失败 → 旧 tag 残留，softprops 不移动已存在的 tag，nightly 标签永远
+            // 停在历史 commit（2026-11-17 实测：标签仍指 b0aca74，而产物已是新构建），
+            // 且 check 门禁每夜都判定「有新提交」→ 重复构建发布。删除失败必须显式告警，
+            // 不再静默吞掉。
+            await github.rest.git.deleteRef({
+              owner: context.repo.owner, repo: context.repo.repo, ref: 'tags/nightly'
+            }).catch((e) => {
+              core.warning(`删除旧 nightly tag 失败（tag 可能残留、不会移动到新 commit）：${e.message}`)
+            })
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3（= v3.0.3，annotated tag 解引用后的 commit）
         with:
           tag_name: nightly
@@ -119,3 +129,22 @@ jobs:
           files: |
             artifacts/*
             sha256sums.txt
+      # 发布后校验：nightly 标签必须指向本次构建的 commit（否则「下载源码」与产物不是同一快照，
+      # 且次日 check 门禁会误判「有新提交」→ 每夜重复构建）。失败即判红，不静默放过。
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9（= v9.0.0）
+        with:
+          script: |
+            const ref = await github.rest.git.getRef({
+              owner: context.repo.owner, repo: context.repo.repo, ref: 'tags/nightly'
+            })
+            let sha = ref.data.object.sha
+            if (ref.data.object.type === 'tag') {
+              sha = (await github.rest.git.getTag({
+                owner: context.repo.owner, repo: context.repo.repo, tag_sha: sha
+              })).data.object.sha
+            }
+            if (sha !== context.sha) {
+              core.setFailed(`nightly 标签指向 ${sha}，与本次构建的 ${context.sha} 不一致（tag 未随发布移动？）`)
+              return
+            }
+            core.info(`nightly 标签已指向本次构建 commit ${sha.slice(0, 7)}`)
